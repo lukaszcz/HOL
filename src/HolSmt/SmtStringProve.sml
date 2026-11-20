@@ -25,10 +25,6 @@ struct
           prove target
         end) t
 
-  fun rethrow_resource holerr =
-    if SmtResource.is_resource_gate holerr then raise Feedback.HOL_ERR holerr
-    else ()
-
   (* Keep future first-order string rungs under the shared replay bound. *)
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
   fun with_metis_limit f =
@@ -611,29 +607,29 @@ struct
       else
         (* E1(b): bounded constructor splitting is general for the literal
            concat-refutation shape and fails loudly outside that family. *)
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () =>
         profile "string-symbolic(1)(bounded-concat-split)"
-          bounded_concat_split_refute t
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+          bounded_concat_split_refute t)
+          (fn () =>
          profile "string-symbolic(2)(parametric-seq)"
-           replay_parametric_seq_prove t)
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+           replay_parametric_seq_prove t))
+          (fn () =>
          (* E1(b): normalization plus bounded first-order search is the
             general symbolic String-family procedure and has a loud failure
             boundary. *)
          profile "string-symbolic(3)(general)"
            (fn target =>
+             SmtResource.or_else (fn () =>
+             SmtResource.or_else (fn () =>
              (* The two-orientation concat procedure is part of this general
                 rung; it is not a one-theorem, certificate-shape cache. *)
              profile "string-symbolic(general:concat-family)"
-               (prove_alias_metis symbolic_concat_lemmas) target
-             handle Feedback.HOL_ERR holerr =>
-             (rethrow_resource holerr;
+               (prove_alias_metis symbolic_concat_lemmas) target)
+               (fn () =>
               profile "string-symbolic(general:lemma-set)"
-                (prove_alias_metis symbolic_lemmas) target)
-             handle Feedback.HOL_ERR holerr =>
-             (rethrow_resource holerr;
+                (prove_alias_metis symbolic_lemmas) target))
+               (fn () =>
               with_metis_limit (fn () =>
                 Tactical.prove (target,
                   Tactical.THEN
@@ -974,19 +970,15 @@ struct
     | FamilyFound of int
     | TraversalLimit of int
 
-  (* A pointer-identity visited set; the hash only selects a bucket. *)
-  fun new_pointer_seen bucket_count =
+  (* A pointer-identity visited set; the hash only selects a bucket.  Its
+     fixed 4093 buckets never grow.  [seen] is true on a repeat visit. *)
+  fun new_pointer_seen () =
     let
-      val buckets = Array.array (bucket_count, [] : Term.term list)
+      val table : unit SmtPointerTable.table = SmtPointerTable.new
+        {hint = SmtReplayImport.pointer_bucket 3, initial = 4093,
+         ceiling = 4093}
     in
-      fn term =>
-        let
-          val index = SmtReplayImport.pointer_bucket 3 bucket_count term
-          val bucket = Array.sub (buckets, index)
-        in
-          List.exists (fn saved => Portable.pointer_eq (term, saved)) bucket
-          orelse (Array.update (buckets, index, term :: bucket); false)
-        end
+      fn term => not (SmtPointerTable.mark table term)
     end
 
   fun scan_string_family policy maximum t =
@@ -997,7 +989,7 @@ struct
          generic String classifier's established whole-traversal cap. *)
       fun scan target =
       let
-          val seen = new_pointer_seen 4093
+          val seen = new_pointer_seen ()
           fun children term rest =
             if Term.is_comb term then
               let val (operator, operand) = Term.dest_comb term
@@ -1381,48 +1373,50 @@ struct
       with_string_budget "rewrite" (fn t =>
         (* E1(a): executable evaluation is complete for closed String/regex
            constructor equalities (and structural regex constructors). *)
+        SmtResource.or_else (fn () =>
         profile "string-rewrite(1)(ground-eval)"
-          rewrite_evaluation_prove t
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+          rewrite_evaluation_prove t)
+          (fn () =>
          (* E1(b): the named semantic String normalization family is general
             for its rewrite set and fails loudly outside it. *)
          profile "string-rewrite(2)(normalization)"
            rewrite_simp_prove t)
         handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
-         ((* The same bounded symbolic rung used by String th-lemmas closes
-             solver rewrite nodes involving concat/prefix/suffix/contains. *)
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else
+         SmtResource.or_else (fn () =>
+         (* The same bounded symbolic rung used by String th-lemmas closes
+            solver rewrite nodes involving concat/prefix/suffix/contains. *)
           profile "string-rewrite(3)(symbolic)"
-            symbolic_string_prove t
-          handle Feedback.HOL_ERR symbolic_error =>
-            (rethrow_resource symbolic_error;
+            symbolic_string_prove t)
+            (fn () =>
              (* Preserve the established unsupported-shape boundary when
                 neither rewrite procedure applies. *)
-             raise Feedback.HOL_ERR holerr)))) t
+             raise Feedback.HOL_ERR holerr)) t
 
   fun string_prove_canonical arith_prove t =
     let val () = check_seq_type t in
         (* E1(a): CBV decides the closed executable String fragment. *)
-        profile "string(1)(ground-eval)" ground_eval_prove t
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () =>
+        profile "string(1)(ground-eval)" ground_eval_prove t)
+          (fn () =>
          (* E1(b): length normalization followed by the supplied arithmetic
             procedure is general for the selected length family. *)
          profile "string(2)(length-arith)"
-           (length_arith_prove arith_prove) t)
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+           (length_arith_prove arith_prove) t))
+          (fn () =>
          (* E1(b): the symbolic sub-ladder is general for selected concat,
             prefix, suffix and contains clauses, with loud refusal. *)
-         profile "string(3)(symbolic)" symbolic_string_prove t)
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+         profile "string(3)(symbolic)" symbolic_string_prove t))
+          (fn () =>
          (* E1(b): the regex sub-ladder is general for selected membership
             and aut.accept clauses, with loud refusal. *)
-         profile "string(4)(regex)" regex_prove t)
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
+         profile "string(4)(regex)" regex_prove t))
+          (fn () =>
          (* E1(b): terminal loud String/regex family boundary. *)
          profile "string(5)(unsupported)" (unsupported "seq") t)
     end
@@ -1509,7 +1503,7 @@ struct
              shared spine and can consume the step-time budget before the
              DAG cap is reached.  The resource metric is a physical-DAG
              bound, so pointer identity is the appropriate key here. *)
-          val seen = new_pointer_seen 4093
+          val seen = new_pointer_seen ()
           fun loop _ [] = false
             | loop observed (term :: pending) =
                 if seen term then
@@ -1626,11 +1620,11 @@ struct
           val _ = SmtResource.check_resource_goal
             "String" "char-bitblast" normalized_target
           val proved =
+            SmtResource.or_else (fn () =>
             profile "char(1)(bitblast)"
               (fn t => Tactical.prove (t, Library.replay_BBLAST_TAC))
-              normalized_target
-            handle Feedback.HOL_ERR holerr =>
-              (rethrow_resource holerr;
+              normalized_target)
+              (fn () =>
                profile "char(2)(unsupported)" (unsupported "char")
                  normalized_target)
         in

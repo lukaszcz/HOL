@@ -138,7 +138,8 @@ struct
      in
        Lib.tryfind instantiate rewrite_theorems
        handle Feedback.HOL_ERR _ =>
-         (let
+         SmtResource.or_else (fn () =>
+          let
             (* Exact syntax equality is a sufficient, checked special case
                of language equivalence.  Reuse the String normalizer for
                string computations embedded in regex constructors. *)
@@ -147,10 +148,7 @@ struct
               (boolSyntax.mk_eq endpoints)
           in
             Drule.MATCH_MP smtstringTheory.reglan_eq_imp_equiv equality
-          end
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else metis (rewrite_theorems @ congruence_theorems) target)
+          end)
+          (fn () => metis (rewrite_theorems @ congruence_theorems) target)
      end)
 end

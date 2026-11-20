@@ -198,7 +198,7 @@ struct
 
   fun produce_with instantiate target : product option =
     let
-      fun prepare () =
+      fun prepare () = SmtResource.or_else (fn () =>
         let
           val (left,right) = boolSyntax.dest_eq target
           fun attempt conjunction depth =
@@ -224,11 +224,7 @@ struct
               depths conjunction [SOME 1,SOME 2,SOME 4,SOME 8,NONE]
             else NONE
         in case operator true of NONE => operator false | result => result
-        end
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else NONE
+        end) (fn () => NONE)
       fun work () =
         case prepare () of
           NONE => NONE

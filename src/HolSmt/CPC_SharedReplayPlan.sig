@@ -2,10 +2,13 @@
 signature CPC_SharedReplayPlan =
 sig
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
-  val route : {equal:string * string -> bool,visit:unit -> unit,
-    copies:int -> unit} ->
-    {pop:bool,handler:string} -> route
-  val native_route : {pop:bool,handler:string} -> route
+  (* Scoped when [pop]; else by the handler: resolution, CNF, factoring
+     and reordering have their own routes, the simple Boolean, equality
+     and truth handlers are Simple, every other handler is Bounded. *)
+  val route_of : {pop:bool,handler:CPC_Proof.replay_handler} -> route
+  (* The handlers the arithmetic graph route admits (names starting "arith"
+     or "int_tight_"). *)
+  val arithmetic_handler : CPC_Proof.replay_handler -> bool
   val occurrence_provenance : 'a SmtLib_Parser.construction_occurrence ->
     CPC_Proof.term_provenance
   val occurrence_provenance_observed :
@@ -24,23 +27,15 @@ sig
      provenance_at:'provenance list * int -> 'provenance,
      error:string -> exn} ->
     Term.term -> 'node -> 'provenance -> int -> 'node * 'provenance
+  datatype clausal_rule = NotImpliesElim1 | NotImpliesElim2 | ImpliesElim
+    | EquivElim1 | EquivElim2 | NotEquivElim1 | NotEquivElim2
+    | IteElim1 | IteElim2 | NotIteElim1 | NotIteElim2
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim
-    | SimpleNotImpliesElim1
-    | SimpleNotImpliesElim2
-    | SimpleImpliesElim
-    | SimpleEquivElim1
-    | SimpleEquivElim2
-    | SimpleNotEquivElim1
-    | SimpleNotEquivElim2
-    | SimpleIteElim1
-    | SimpleIteElim2
-    | SimpleNotIteElim1
-    | SimpleNotIteElim2
+    | SimpleClausal of clausal_rule
     | SimpleNotAnd
-  val simple_boolean : (string * string -> bool) -> string ->
-    simple_boolean option
+  val simple_boolean_of : CPC_Proof.replay_handler -> simple_boolean option
   val conjunction : {visit:unit -> unit,truth:unit -> 'node,
     binary:'node * 'node -> 'node} -> 'node list -> 'node
   val child_provenance :
@@ -163,8 +158,11 @@ sig
      error:string -> exn} -> 'fact
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
-  val simple_equality : (string * string -> bool) -> string ->
-    simple_equality option
+  val simple_equality_of : CPC_Proof.replay_handler -> simple_equality option
+  (* The simple handlers that are neither Boolean nor equality rules. *)
+  datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim
+    | TrueIntro | TrueElim | ProcessScope
+  val truth_family_of : CPC_Proof.replay_handler -> truth_family option
   val equality_provenance : CPC_Proof.term_provenance ->
     CPC_Proof.term_provenance * CPC_Proof.term_provenance
   val reflexive : {require_one:string -> 'node list -> 'node,
@@ -230,7 +228,63 @@ sig
      negate:'node -> 'output,
      current:'output -> CPC_Proof.term_provenance -> 'fact,
      error:string -> string -> exn} -> 'premise list -> 'fact
-  val not_implies_elim1 :
+  (* Operand selection of the eleven clausal-elimination rules
+       ~(a ==> b)  NotImpliesElim1 / 2   a (current) / ~b (finished)
+       a ==> b     ImpliesElim           ~a \/ b
+       a = b       EquivElim1 / 2        ~a \/ b / a \/ ~b
+       ~(a = b)    NotEquivElim1 / 2     a \/ b / ~a \/ ~b
+       if c then a else b      IteElim1 / 2       ~c \/ a / c \/ b
+       ~(if c then a else b)   NotIteElim1 / 2    ~c \/ ~a / c \/ ~b
+     The descriptor's constructor is the reader of the premise: an
+     implication with its constructor token and exactly two operands, an
+     equation through the relation [pair] and [equality_provenance], or a
+     conditional with exactly three operands.  Each carries [negated] (the
+     premise, and its provenance, are read below a negation) and a result
+     whose operands are named for that reader, so a literal cannot name an
+     operand its reader lacks.  The conditional rules keep a premise that has
+     reduced to T (see [clausal_keeps_reduced_true]). *)
+  datatype clausal_polarity = ClausalPositive | ClausalNegative
+  datatype binary_operand = ClausalLeft | ClausalRight
+  datatype ternary_operand = ClausalCondition | ClausalThen | ClausalElse
+  type 'operand clausal_literal = 'operand * clausal_polarity
+  datatype implication_result = ClausalCurrent of binary_operand
+    | ClausalFinished of binary_operand
+    | ClausalClause of binary_operand clausal_literal *
+        binary_operand clausal_literal
+  datatype clausal_descriptor =
+      ClausalImplication of {negated:bool,result:implication_result}
+    | ClausalEquivalence of {negated:bool,
+        literals:binary_operand clausal_literal *
+                 binary_operand clausal_literal}
+    | ClausalConditional of {negated:bool,
+        literals:ternary_operand clausal_literal *
+                 ternary_operand clausal_literal}
+  val clausal_descriptor : clausal_rule -> clausal_descriptor
+  (* The handler of each clausal rule: the inverse of
+     [simple_boolean_of] on its [SimpleClausal] results. *)
+  val clausal_handler : clausal_rule -> CPC_Proof.replay_handler
+  (* Whether a premise that has reduced to T is kept as it is, before any
+     operand is read (the conditional rules).  [clausal_elim] decides this
+     before any reader runs; term replay calls the predicate itself;
+     [clausal_literals] never does. *)
+  val clausal_keeps_reduced_true : clausal_descriptor -> bool
+  (* The literals the descriptor derives, in order.  The reader of the
+     descriptor's kind is called once with the descriptor's [negated]; it
+     returns the operands in source order. *)
+  val clausal_literals : clausal_descriptor ->
+    {positive:'a -> 'b,negative:'a -> 'b} ->
+    {implication:bool -> 'a * 'a,equivalence:bool -> 'a * 'a,
+     conditional:bool -> 'a * 'a * 'a} -> 'b list
+  (* Interprets the descriptor over a consumer's callbacks, selecting the
+     literals as [clausal_literals] does, over (node,provenance) pairs.
+     Callback order: for a conditional, [same_constant (one ())] and, when
+     it holds, [atom (one ())]; then [one ()] and [negated] (when
+     stripping); the operand reader; [one_provenance]; [negation_provenance]
+     (when stripping); the provenance reader; the literals in order.  A
+     current result goes to [current]; a finished one is made by [negative]
+     and goes to [finish]; a clause goes to [disjoin].  [handler] names the
+     rule in diagnostics. *)
+  val clausal_elim :
     {negated:'node -> 'node option,one:unit -> 'node,
      operands:Term.term -> int -> 'node -> 'node list,
      child_provenance:string -> int -> CPC_Proof.term_provenance ->
@@ -238,107 +292,16 @@ sig
      negation_provenance:CPC_Proof.term_provenance ->
        CPC_Proof.term_provenance,
      one_provenance:unit -> CPC_Proof.term_provenance,
+     pair:'node -> 'node * 'node,
+     same_constant:'node -> Term.term -> bool,
+     atom:'node -> 'fact,
      current:'node -> CPC_Proof.term_provenance -> 'fact,
-     error:string -> string -> exn} -> string -> 'fact
-  val not_implies_elim2 :
-    {negated:'node -> 'node option,one:unit -> 'node,
-     operands:Term.term -> int -> 'node -> 'node list,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     negation_provenance:CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance ->
-       ('output * CPC_Proof.term_provenance),
-     finish:('output * CPC_Proof.term_provenance) -> 'fact,
+     negative:'node -> CPC_Proof.term_provenance -> 'literal,
+     positive:'node -> CPC_Proof.term_provenance -> 'literal,
+     finish:'literal -> 'fact,
+     disjoin:'literal list -> 'fact,
      error:string -> string -> exn} ->
-    string -> 'fact
-  val implies_elim :
-    {operands:Term.term -> int -> 'node -> 'node list,
-     one:unit -> 'node,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact} -> 'fact
-  val equiv_elim1 :
-    {one:unit -> 'node,pair:'node -> 'node * 'node,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact} -> 'fact
-  val equiv_elim2 :
-    {one:unit -> 'node,pair:'node -> 'node * 'node,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact} -> 'fact
-  val not_equiv_elim1 :
-    {one:unit -> 'node,pair:'node -> 'node * 'node,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact,
-     negated:'node -> 'node option,
-     negation_provenance:CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance,error:string -> string -> exn} ->
-    string -> 'fact
-  val not_equiv_elim2 :
-    {one:unit -> 'node,pair:'node -> 'node * 'node,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact,
-     negated:'node -> 'node option,
-     negation_provenance:CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance,error:string -> string -> exn} ->
-    string -> 'fact
-  val ite_elim1 :
-    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
-     atom:'node -> 'fact,
-     operands:Term.term -> int -> 'node -> 'node list,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact} -> 'fact
-  val ite_elim2 :
-    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
-     atom:'node -> 'fact,
-     operands:Term.term -> int -> 'node -> 'node list,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact} -> 'fact
-  val not_ite_elim1 :
-    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
-     atom:'node -> 'fact,negated:'node -> 'node option,
-     operands:Term.term -> int -> 'node -> 'node list,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negation_provenance:CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact,error:string -> string -> exn} ->
-    string -> 'fact
-  val not_ite_elim2 :
-    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
-     atom:'node -> 'fact,negated:'node -> 'node option,
-     operands:Term.term -> int -> 'node -> 'node list,
-     child_provenance:string -> int -> CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance list,
-     one_provenance:unit -> CPC_Proof.term_provenance,
-     negation_provenance:CPC_Proof.term_provenance ->
-       CPC_Proof.term_provenance,
-     negative:'node -> CPC_Proof.term_provenance -> 'literal,
-     positive:'node -> CPC_Proof.term_provenance -> 'literal,
-     disjoin:'literal list -> 'fact,error:string -> string -> exn} ->
-    string -> 'fact
+    clausal_descriptor -> string -> 'fact
   val and_elim :
     {require_one:string -> 'premise list -> 'premise,
      node:'premise -> 'node,provenance:'premise -> 'provenance,

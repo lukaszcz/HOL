@@ -28,6 +28,7 @@ struct
 
   val cap = RP.AtMost 1000000000
   val index_override = ref (NONE:int option)
+  val template_override = ref (NONE:int option)
   val maximum = 4096
   val version = "1.3.4"
   val goal = ``(task35_option:bool option) = SOME T``
@@ -147,7 +148,8 @@ struct
     {graph= #graph e,scope= #scope e,logic="ALL",sources=sources,
      sorts=D.sort_dictionary_from_types (types e),binder_lists=[],
      import_limit=10000,literal_limit=10000,binder_limit=10000,
-     recipe_limits={template_limit=10000,
+     recipe_limits={template_limit=
+         (case !template_override of NONE => 10000 | SOME n => n),
        index_limit=case !index_override of NONE => 10000 | SOME n => n,
        operand_limit=10000,token_limit=10000},
      special=fn _ => fn _ => NONE,
@@ -156,7 +158,10 @@ struct
     {graph= #graph e,scope= #scope e,logic="ALL",sources=sources,
      sorts=D.sort_dictionary_from_types (types e),binder_lists=[],
      import_limit=cap,literal_limit=cap,binder_limit=cap,
-     recipe_limits={template_limit=cap,operand_limit=cap,token_limit=cap,
+     recipe_limits={template_limit=
+         (case !template_override of NONE => cap
+           | SOME n => RP.AtMost (IntInf.fromInt n)),
+       operand_limit=cap,token_limit=cap,
        index_limit=case !index_override of NONE => cap
          | SOME n => RP.AtMost (IntInf.fromInt n)},
      special=fn _ => fn _ => NONE,
@@ -2419,9 +2424,39 @@ struct
            (!spent<=2 * !baseline+10000)
       end)
 
+  (* The quadratic RegLan distinct guard rejects exactly when
+     16 * count * count exceeds the template limit. Two operands cost 64:
+     63 is refused with the guard's own diagnostic and 64, 65 are
+     accepted. Finite runs the int installer; Policy and Value run the
+     policy installer, so every route is checked at the same boundary. *)
+  fun distinct_guard_boundary () =
+    let
+      val text = "((assume @a (distinct re.none re.all)))"
+      val guard = SOME ("CPC_ProofParser","graph_distinct",
+        "distinct schema exceeds contract")
+      fun outcome route limit = finally (fn () =>
+        (template_override := SOME limit;
+         owned (fn e => failure (fn () => case route of
+             Value => VP.close (value_packet e text)
+           | _ => Packet.close (native_packet route e text)))))
+        (fn () => template_override := NONE)
+    in
+      List.app (fn route => List.app (fn (limit,expected) =>
+        test ("RegLan distinct guard at limit " ^ Int.toString limit ^
+              " / " ^ route_name route) (fn () =>
+          let val actual = outcome route limit
+              fun describe NONE = "accepted"
+                | describe (SOME (origin,where_,message)) =
+                    origin ^ "." ^ where_ ^ ": " ^ message
+          in require ("expected " ^ describe expected ^ ", got " ^
+               describe actual) (actual = expected) end))
+        [(63,guard),(64,NONE),(65,NONE)]) routes
+    end
+
   fun run () =
     let
       val _ = failures := [] val _ = bridges := 0
+      val _ = distinct_guard_boundary ()
       val _ = missing_invariants ()
       val _ = private_binder_aliases ()
       val _ = private_source_sharing ()

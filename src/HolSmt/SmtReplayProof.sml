@@ -10530,6 +10530,21 @@ struct
            val _=realized:=SOME result
          in result end)))
 
+  datatype sce_future_argument=SCEFutureArgument of
+    {name:string,ty:Type.hol_type,child:G.closure_child option ref}
+  fun sce_future_guard graph scope
+      (SCEFutureArgument {name,ty,child})=
+      case !child of NONE=>() | SOME held=>
+        let val node=G.closure_child_node graph scope held
+            val term=G.representative graph node
+            val(actual,domain)=if Term.is_var term then Term.dest_var term
+              else raise ERR "source_argument_guard"
+                "bound argument is not a genuine variable"
+        in if G.node_scope graph node=scope andalso actual=name andalso
+            Type.compare(domain,ty)=EQUAL then ()else
+          raise ERR "source_argument_guard"
+            "bound argument name, type or actual frame changed"end
+
   (* Routes apply to genuine transformed compact evidence. Source Gamma
      names and row witnesses remain unchanged. Binders have lexical IDs. *)
   datatype source_condition_rule_step=EvidenceStep of source_rule_step
@@ -10542,7 +10557,7 @@ struct
     | SCEClauseAnteExists of sr_tree
     | SCEClauseConditionForall of sr_tree | SCEClauseSymmetry
   type sce_clause_instruction=sce_clause_action*sr_tree*sr_tree list
-  datatype source_condition_rule_plan=SCEClausePlan of
+  type sce_clause_core=
     {work:W.portfolio,evidence:source_condition_evidence,
      frame:Scope.receipt,graph:G.graph,caller:G.scope,scope:G.scope,
      children:G.closure_child list,initial:sr_tree,
@@ -10551,8 +10566,21 @@ struct
      origin:sce_origin_tree,
      binders:(int*string*Type.hol_type) list,
      check_type:Type.hol_type -> unit,permutative:bool,used:bool ref}
-  fun sce_clause_guard expected (SCEClausePlan
-      {work,evidence,frame,graph,caller,scope,children,...})=
+  datatype source_condition_rule_plan=SCEClausePlan of sce_clause_core
+  (* The two clause paths that share one interpreter: the plain rule, and
+     the exists-argument clause with its quoted future argument. *)
+  datatype sce_clause_kind=SCERuleClause
+    | SCEArgumentClause of sce_future_argument
+  (* The guard both clause paths share.  It checks, in this order: the
+     plan's Work, its evidence, its frame, the caller scope, the closure
+     children and the quoted future arguments; then it runs the caller's own
+     remaining checks.  The whole guard sits inside one failure wrapper.
+     Kept as one function on purpose: Poly/ML (which has no NOINLINE)
+     inlines small functions at every call site, so splitting off a small
+     part would make that part small enough to be copied into each of the
+     many scr_clause_guard call sites. *)
+  fun sce_shared_clause_guard expected work evidence frame graph caller scope
+      children futures tail=
     sr_fail expected (fn()=>
       (if Portable.pointer_eq(expected,work) then () else
          raise ERR "source_condition_rule" "foreign expected Work";
@@ -10563,41 +10591,58 @@ struct
        end;
        G.validate_scope graph caller;
        List.app(fn child=>ignore(G.closure_child_node graph caller child))
-         children))
-  fun prepare_source_condition_rule expected
-      {evidence,frame,caller,steps,terminal,check_type}=
-    sr_fail expected (fn()=>W.with_step expected (fn()=>
+         children;
+       List.app(sce_future_guard graph scope)futures;
+       tail()))
+  fun sce_core_guard expected kind
+      ({work,evidence,frame,graph,caller,scope,children,...}:sce_clause_core)=
+    sce_shared_clause_guard expected work evidence frame graph caller scope
+      children (case kind of SCERuleClause=>[]
+        | SCEArgumentClause future=>[future]) (fn()=>())
+  fun sce_clause_guard expected (SCEClausePlan core)=
+    sce_core_guard expected SCERuleClause core
+  fun sce_append tick [] tail=tail
+    | sce_append tick (v::rest) tail=(tick 1;v::sce_append tick rest tail)
+  fun sce_step_children steps=List.mapPartial
+    (fn EvidenceStep(SourceSpec child)=>SOME child
+    | EvidenceAntecedentExists child=>SOME child
+    | EvidenceConditionForall child=>SOME child | _=>NONE) steps
+  (* The guard every preparation payment runs first. *)
+  fun sce_prepare_guard expected evidence frame graph caller children ()=
+    (sce_guard expected evidence;
+     Scope.validate_lifetime_for expected frame;
+     List.app(fn child=>ignore(G.closure_child_node graph caller child))
+       children)
+  (* The captured-term builder shared by the plain rule, the exists-argument
+     clause and the canonical clause preparers. Every preparation gets its
+     own budget, identifier, binder, policy and binder-id refs. tick is the
+     caller's payment: it validates the evidence, the frame lifetime and the
+     closure children before it spends, so each builder step is paid in the
+     order the preparer runs it. The builder keeps the lexical origin
+     geometry and numbers and names the binders in capture order. It also
+     returns the shared recorder and the instruction interpreter play. *)
+  local
+  datatype template_variable=TemplateBound of int
+    | TemplateFree of Term.term
+  fun key_equal(TemplateBound a,TemplateBound b)=a=b
+    | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
+    | key_equal _=false
+  fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
+    | variable(SRTree {shape=SRAtom term,...})=
+        if Term.is_var term then SOME(TemplateFree term) else NONE
+    | variable _=NONE
+  in
+  fun sce_same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
+    | sce_same_ty(SRArrow(a,b),SRArrow(c,d))=
+        sce_same_ty(a,c)andalso sce_same_ty(b,d)
+    | sce_same_ty _=false
+  fun source_condition_builder tick=
     let
-      val d=sce_data expected evidence
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
       val budget=ref(0:IntInf.int)
       val policies=ref([]:sr_type list)
       val next=ref 0 val identifiers=ref([]:string list)
       val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
+      fun append v w=sce_append tick v w
       fun types (captured as SRCaptured ty)=
             (tick 1;captured::(if Type.is_vartype ty then
               (tick(String.size(Type.dest_vartype ty));[])
@@ -10653,18 +10698,6 @@ struct
            SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
              "bounded local binder operand";
          capture [] origin term)
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
-        bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
       fun fresh id ty=
         let fun choose n=
               let val name="__smt_sce_binder_"^Int.toString id^"_"^
@@ -10680,7 +10713,6 @@ struct
               | _=>raise ERR "prepare_source_condition_rule" "binder type");
             name_binders b)
         | _=>()
-      val _=List.app name_binders(initial::args)
       fun head thy name(SRTree {shape=SRAtom term,...})=
             Term.is_const term andalso
               let val c=Term.dest_thy_const term
@@ -10742,6 +10774,14 @@ struct
             val constant=atom(SRAtom boolSyntax.universal)
               (SRArrow(SRArrow(domain,bool),bool))
         in app bool constant predicate end
+      val bool=SRCaptured Type.bool
+      fun boolean term=atom(SRAtom term)bool
+      fun combine constant a b=
+        let val arrow=SRArrow(bool,bool)
+            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
+        in app bool (app arrow h a)b end
+      fun equality a b=combine boolSyntax.equality a b
+      fun implication a b=combine boolSyntax.implication a b
       (* Strip SPEC routes WITHOUT substituting the owned arguments.
          Permutation is a property of this template, before matching. *)
       fun original_template [] [] current=current
@@ -10814,21 +10854,9 @@ struct
             in tick 1;original_template rest pending next end
         | original_template _ _ _=
             raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
       fun vperm a b=(tick 1;
         case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
+            sce_same_ty(sr_type a,sr_type b)
         | _=>case(#shape(sr_data a),#shape(sr_data b))of
             (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
           | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
@@ -10851,40 +10879,51 @@ struct
         List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
         andalso List.all(fn y=>List.exists
           (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
-      fun record cap hypotheses result=
+      (* Same balanced shape as the retained realization helper. *)
+      fun balanced values=
+        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
+            fun split 0 pending left=(List.rev left,pending)
+              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
+              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
+            fun walk []=boolean boolSyntax.T | walk [v]=v
+              | walk values=
+                  let val(a,b)=split(size values div 2)values []
+                  in combine boolSyntax.conjunction(walk a)(walk b)end
+        in walk values end
+      fun original_permutative steps args initial terminal=
+        let val original=original_template steps args initial
+        in case terminal of SourceEquality=>
+                  (case binary "min" "=" original of SOME(a,b)=>
+                      vperm a b andalso same_fv(fv a)(fv b)
+                    | _=>raise ERR "source_rule_template" "original equality")
+              | _=>false end
+      (* The Work and size accounting of one recorded local result.  extra
+         prices what a preparer adds per tree: the canonical clause with a
+         closing counts the type constructors; the plain rule, the exists
+         argument clause and the canonical clause without a closing add
+         nothing. *)
+      fun recorder (quota:IntInf.int) (extra:sr_tree -> IntInf.int)
+          cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
                 "prospective local result bound"
             val all=result::hypotheses
             val cost=List.foldl(fn(tree,n)=>(tick 1;
               n+sr_raw tree+sr_inc tree+
-                IntInf.fromInt(length(sr_types tree)))) 0 all
+                IntInf.fromInt(length(sr_types tree))+extra tree)) 0 all
             val _=budget:= !budget+cost
             val _=if !budget<=quota then () else
               raise ERR "prepare_source_condition_rule" "original Work"
         in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
           (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
-      fun align conditions result=
-        (record output conditions (equality result result);
-         record output conditions result)
-      val _=align hyp initial
-      fun play [] [] current conditions instructions=
+      (* The instruction interpreter of the clause preparers.  record and
+         align price a result; with_hyp gives the hypotheses held beside the
+         conditions so far.  Returns the final term, the conditions and the
+         instructions, which execution replays. *)
+      fun run _ [] [] current conditions instructions=
             (current,conditions,List.rev instructions)
-        | play(step::rest) pending current conditions instructions=
+        | run (ops as {record,align,with_hyp,output}) (step::rest)
+            pending current conditions instructions=
             let val _=tick 1
                 val(action,result,pending,conditions)=case step of
                   EvidenceStep(SourceSpec _)=>
@@ -10925,7 +10964,7 @@ struct
                         val _=if head "bool" "T" b then () else
                           raise ERR "prepare_source_condition_rule"
                             "actual truth operand required"
-                        val _=record output (append conditions hyp) current
+                        val _=record output (with_hyp conditions) current
                         val _=record output [] (boolean boolSyntax.T)
                     in(SCEClauseTruth,a,pending,conditions)end
                 | EvidenceAntecedentConj=>
@@ -10937,7 +10976,7 @@ struct
                           SOME pair=>pair | _=>
                             raise ERR "prepare_source_condition_rule"
                               "actual conjunction antecedent required"
-                        val held=append conditions hyp
+                        val held=with_hyp conditions
                         val _=record output [a] a
                         val _=record output [b] b
                         val _=record output [a,b] ant
@@ -10956,7 +10995,7 @@ struct
                             raise ERR "prepare_source_condition_rule"
                               "actual disjunction antecedent required"
                         val selected=if left then a else b
-                        val held=append conditions hyp
+                        val held=with_hyp conditions
                         val _=record output [selected]selected
                         val _=record output [selected]ant
                         val _=record output (selected::held)body
@@ -10977,7 +11016,7 @@ struct
                         val argument=case pending of a::_=>a | _=>
                           raise ERR "prepare_source_condition_rule" "variable"
                         val quantified=quantify true argument ant
-                        val held=append conditions hyp
+                        val held=with_hyp conditions
                         val _=record output [] argument
                         val _=record output [quantified]quantified
                         val _=record output [quantified]ant
@@ -11000,11 +11039,11 @@ struct
                                 "witness must be an actual variable"
                           | _=>raise ERR "prepare_source_condition_rule"
                               "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
+                        val _=if sce_same_ty(sr_type v,sr_type argument)then ()
                           else raise ERR "prepare_source_condition_rule"
                             "existential witness type differs"
                         val instance=subst id argument body
-                        val held=append conditions hyp
+                        val held=with_hyp conditions
                         val _=record output [] argument
                         val _=record output [instance]instance
                         val _=record output [instance]ant
@@ -11020,13 +11059,154 @@ struct
                           raise ERR "prepare_source_condition_rule"
                             "actual false consequent required"
                     in(SCEClauseNotIntro,tneg ant,pending,conditions)end
-                val hypotheses=append conditions hyp
+                val hypotheses=with_hyp conditions
                 val _=record output hypotheses result
                 val _=align hypotheses result
-            in play rest pending result conditions
+            in run ops rest pending result conditions
               ((action,result,conditions)::instructions)end
-        | play _ _ _ _ _=raise ERR "prepare_source_condition_rule" "route"
-      val(body,conditions,instructions)=play steps args initial [] []
+        | run _ _ _ _ _ _=raise ERR "prepare_source_condition_rule" "route"
+      fun play ops steps pending current=run ops steps pending current [] []
+    in {budget=budget, policies=policies, identifiers=identifiers,
+       binders=binders, atom=atom, app=app, capture=capture, bounded=bounded,
+       name_binders=name_binders, head=head, binary=binary, forall=forall,
+       exists=exists, subst=subst,
+       typed_equality=typed_equality, boolean=boolean, combine=combine,
+       equality=equality, implication=implication, balanced=balanced,
+       original_permutative=original_permutative,
+       recorder=recorder, play=play} end
+  end
+  (* Where a clause preparer takes its frame and caller from: the plain rule
+     gives both, the exists-argument clause gives both and additionally
+     demands that the caller is the actual frame, and the canonical clause
+     takes the evidence frame and its scope. *)
+  datatype sce_frames=
+      SCERuleFrame of {frame:Scope.receipt,caller:G.scope}
+    | SCEArgumentFrame of {frame:Scope.receipt,caller:G.scope}
+    | SCEEvidenceFrame
+  (* The preamble shared by the plain rule, the exists-argument clause and
+     the canonical clause preparers. It runs the frame checks in the order
+     the preparers always ran them, in the same single Work step, and builds
+     the per-preparation guard and tick for the builder. The argument frames
+     demand that the caller is the actual frame, right after the foreign
+     frame check. initial, hyp, rows and args are delayed because each
+     preparer pays for them at its own point. *)
+  fun sce_prepare_context expected evidence frames steps=
+    let
+      val d=sce_data expected evidence
+      val frame=case frames of SCERuleFrame {frame,...}=>frame
+        | SCEArgumentFrame {frame,...}=>frame | SCEEvidenceFrame=> #frame d
+      val source=Scope.description_for expected (#frame d)
+      val actual=Scope.description_for expected frame
+      val graph= #graph actual val scope= #scope actual
+      val caller=case frames of SCERuleFrame {caller,...}=>caller
+        | SCEArgumentFrame {caller,...}=>caller | SCEEvidenceFrame=>scope
+      val _=if Portable.pointer_eq(graph,#graph source) andalso
+          Portable.pointer_eq(#sources actual,#sources source) andalso
+          #root actual= #root source andalso
+          G.scope_visible graph scope (#scope source) then () else
+        raise ERR "prepare_source_condition_rule" "foreign Source frame"
+      val _=case frames of SCEArgumentFrame _=>
+          (if caller=scope then ()else raise ERR
+            "prepare_source_argument" "caller must be the actual frame")
+        | SCERuleFrame _=>() | SCEEvidenceFrame=>()
+      val _=G.validate_scope graph caller
+      val children=sce_step_children steps
+      val guard=sce_prepare_guard expected evidence frame graph
+        caller children
+      fun tick n=(guard();W.spend expected n)
+      val limits=W.semantic_limits expected
+      val output=IntInf.fromInt(#output_limit limits)
+      val template=IntInf.fromInt(#template_limit limits)
+      val quota=IntInf.fromInt(W.work_limit expected)
+      val builder=source_condition_builder tick
+      val {bounded,...}=builder
+      fun initial()=bounded(#output_limit limits)
+        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
+      fun hyp()=List.map(bounded(#template_limit limits)NONE)
+        (Thm.hyp(#proof d))
+      fun rows()=List.map(fn(value,_)=>
+        bounded(#template_limit limits)NONE value)(#rows d)
+      fun args()=List.map(fn child=>
+        let val node=G.closure_child_node graph caller child
+            val _=if G.scope_visible graph scope (G.node_scope graph node)
+              then () else raise ERR "prepare_source_condition_rule"
+                "argument escapes actual frame"
+        in bounded(#output_limit limits)NONE(G.representative graph node) end)
+        children
+    in {d=d, frame=frame, graph=graph, scope=scope, caller=caller,
+       children=children, guard=guard, tick=tick, limits=limits,
+       output=output, template=template, quota=quota, builder=builder,
+       initial=initial, hyp=hyp, rows=rows, args=args} end
+  (* The preparation shared by the plain rule and the exists-argument
+     clause.  The argument clause creates its quoted future argument before
+     the binders are named, extends the instructions with the existential
+     step on it, and discharges its conditions with the remaining ones held;
+     the plain rule does none of these. *)
+  fun sce_prepare_clause expected kind
+      {evidence,frame,caller,steps,terminal,check_type}:sce_clause_core=
+    sr_fail expected (fn()=>W.with_step expected (fn()=>
+    let
+      val ctx=sce_prepare_context expected evidence
+        (case kind of
+           SCERuleClause=>SCERuleFrame {frame=frame,caller=caller}
+         | SCEArgumentClause _=>SCEArgumentFrame {frame=frame,caller=caller})
+        steps
+      val {graph,scope,children,guard,tick,output,template,quota,...}=ctx
+      fun append v w=sce_append tick v w
+      val {budget,policies,identifiers,binders,atom,name_binders,head,
+        binary,exists,subst,boolean,equality,implication,balanced,
+        original_permutative,recorder,play,...}=
+        #builder ctx
+      val initial= #initial ctx ()
+      val hyp= #hyp ctx ()
+      val rows= #rows ctx ()
+      val args= #args ctx ()
+      val future_tree=case kind of SCERuleClause=>NONE
+        | SCEArgumentClause(SCEFutureArgument {name,ty,...})=>
+            (tick(String.size name+1);
+             identifiers:=name:: !identifiers;
+             SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
+      val _=List.app name_binders(initial::args)
+      val permutative=
+        original_permutative steps args initial terminal
+      val record=recorder quota (fn _=>0)
+      fun align conditions result=
+        (record output conditions (equality result result);
+         record output conditions result)
+      val _=align hyp initial
+      val(body,conditions,instructions)=
+        play {record=record,align=align,output=output,
+          with_hyp=fn conditions=>append conditions hyp}
+          steps args initial
+      val(body,conditions,instructions)=case future_tree of NONE=>
+            (body,conditions,instructions)
+        | SOME argument=>
+            let val(ant,result)=case binary "min" "==>" body of
+                  SOME pair=>pair | _=>raise ERR "prepare_source_argument"
+                    "actual implication required"
+                val(id,v,part)=case exists ant of SOME triple=>triple
+                  | _=>raise ERR "prepare_source_argument"
+                    "actual existential antecedent required"
+                val _=if sce_same_ty(sr_type v,sr_type argument)then ()else
+                  raise ERR "prepare_source_argument"
+                    "prospective argument type differs"
+                val instance=subst id argument part
+                val held=append conditions hyp
+                val _=record output [] argument
+                val _=record output [] instance
+                val _=record output [instance]instance
+                val _=record output [instance]ant
+                val _=record output (instance::held)result
+                val next=implication instance result
+                val _=record output held next
+                val _=align held next
+                val extended=instance::conditions
+                val _=record output [instance]instance
+                val _=record output (append extended hyp)result
+                val _=align (append extended hyp)result
+            in (result,extended,instructions@[
+              (SCEClauseAnteExists argument,next,conditions),
+              (SCEClauseNative SRCondition,result,extended)])end
       val hypotheses=append conditions hyp
       val result=case terminal of SourceEquality=>
             (case binary "min" "=" body of SOME _=>body | _=>
@@ -11043,22 +11223,19 @@ struct
                 val _=record output hypotheses(equality body result)
             in result end
       val _=record output hypotheses result
-      val final=List.foldl(fn(condition,current)=>
-        let val next=implication condition current
-        in record output hyp next;next end)result conditions
+      val final=case kind of
+          SCERuleClause=>List.foldl(fn(condition,current)=>
+            let val next=implication condition current
+            in record output hyp next;next end)result conditions
+        | SCEArgumentClause _=>
+            let fun discharge [] current=current
+                  | discharge(condition::rest)current=
+                      let val next=implication condition current
+                          val _=record output (append rest hyp)next
+                      in discharge rest next end
+            in discharge conditions result end
       val _=record template hyp final
       val _=align hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
       val context=balanced rows
       val _=record template [] context
       val _=record template [] (implication context final)
@@ -11067,164 +11244,207 @@ struct
       val origin=sr_lexical_origin tick final
       val _=pay expected (!budget)
       val _=guard()
-    in SCEClausePlan {work=expected,evidence=evidence,frame=frame,graph=graph,
+    in {work=expected,evidence=evidence,frame=frame,graph=graph,
       caller=caller,scope=scope,children=children,initial=initial,
       instructions=instructions,terminal=terminal,result=final,
       conditions=conditions,types= !policies,binders= !binders,
-      origin=origin,
-      check_type=check_type,permutative=permutative,used=ref false} end))
+      origin=origin,check_type=check_type,permutative=permutative,
+      used=ref false} end))
+  fun prepare_source_condition_rule expected args=
+    SCEClausePlan(sce_prepare_clause expected SCERuleClause args)
 
-  fun execute_source_condition_rule expected
-      (plan as SCEClausePlan {evidence,frame,graph,caller,children,initial,
+  (* Execution primitives of the shared clause instructions.  guard is the
+     plan guard of the path; it brackets every kernel step. *)
+  (* Run one kernel step between two guard checks. *)
+  fun sce_guarded guard operation=
+    (guard();let val value=operation()in guard();value end)
+  (* Align a theorem with the captured conclusion term. *)
+  fun sce_align guard term theorem=
+    if Portable.pointer_eq(Thm.concl theorem,term) then theorem
+    else let val bridge=sce_guarded guard(fn()=>
+               SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
+         in sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.EQ_MP bridge theorem)
+         end
+  (* Materialize the retained policy types and check each, guarded. *)
+  fun sce_check_policies guard check_type types=
+    let fun materialize(SRCaptured ty)=sce_guarded guard(fn()=>ty)
+          | materialize(SRArrow(a,b))=
+              let val left=materialize a val right=materialize b
+              in sce_guarded guard(fn()=>Type.mk_thy_type
+                {Thy="min",Tyop="fun",Args=[left,right]})end
+        val policy_types=List.map materialize types
+    in List.app(fn ty=>sce_guarded guard(fn()=>check_type ty))
+         policy_types end
+  (* One native instruction.  emit rebuilds a captured tree; before_assume
+     is called with the theorem and the condition just before the ASSUME of
+     a condition (the canonical path logs it). *)
+  fun sce_execute_action {guard,emit,before_assume} action theorem=
+    case action of SCEClauseNative(SRSpec arg)=>
+        let val term=emit arg
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.SPEC term theorem)end
+    | SCEClauseNative(SRConjunct left)=>
+        sce_guarded guard(fn()=>if left then
+          SmtReplayRuleObservation.CONJUNCT1 theorem else
+          SmtReplayRuleObservation.CONJUNCT2 theorem)
+    | SCEClauseNative SRCondition=>
+        let val condition= #1
+              (boolSyntax.dest_imp(Thm.concl theorem))
+            val _=before_assume theorem condition
+            val premise=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME condition)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.MP theorem premise)end
+    | SCEClauseTruth=>sce_guarded guard(fn()=>Drule.EQT_ELIM theorem)
+    | SCEClauseAnteConj=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(a,b)=boolSyntax.dest_conj ant
+            val pa=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME a)
+            val pb=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME b)
+            val both=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.CONJ pa pb)
+            val body=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem both)
+            val right=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.DISCH b body)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH a right)end
+    | SCEClauseAnteDisj left=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(a,b)=boolSyntax.dest_disj ant
+            val selected=if left then a else b
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME selected)
+            val either=sce_guarded guard(fn()=>if left then
+              SmtReplayRuleObservation.DISJ1 assumption b
+              else SmtReplayRuleObservation.DISJ2 a assumption)
+            val body=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem either)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH selected body)end
+    | SCEClauseSymmetry=>sce_guarded guard(fn()=>
+        SmtReplayRuleObservation.SYM theorem)
+    | SCEClauseConditionForall argument=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val variable=emit argument
+            val quantified=sce_guarded guard(fn()=>
+              boolSyntax.mk_forall(variable,ant))
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME quantified)
+            val condition=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.SPEC variable assumption)
+            val result=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem condition)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH quantified result)end
+    | SCEClauseAnteExists argument=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(v,body)=boolSyntax.dest_exists ant
+            val witness=emit argument
+            val instance=sce_guarded guard(fn()=>Term.subst
+              [{redex=v,residue=witness}]body)
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME instance)
+            val existential=sce_guarded guard(fn()=>
+              Thm.EXISTS(ant,witness)assumption)
+            val result=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem existential)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH instance result)end
+    | SCEClauseNotIntro=>sce_guarded guard(fn()=>
+        Thm.NOT_INTRO theorem)
+  (* The execution shared by the plain rule and the exists-argument clause.
+     The plain rule completes its policies here and refuses any external
+     vocabulary; the argument clause completed them in its ready phase,
+     resolves its quoted vocabulary to the bound argument and retains that
+     argument as a child. *)
+  fun sce_execute_clause expected kind
+      (core as {evidence,frame,graph,caller,children,initial,
         instructions,terminal,result,conditions,types,binders,check_type,
-        used,permutative,origin,...})=
+        used,permutative,origin,...}:sce_clause_core)=
     sr_fail expected (fn()=>
-      (sce_clause_guard expected plan;
+      (sce_core_guard expected kind core;
        if !used then raise ERR "execute_source_condition_rule" "consumed"
          else ();
        W.with_step expected (fn()=>
        let
-         val _=sce_clause_guard expected plan val _=used:=true
-         fun guarded operation=
-           (sce_clause_guard expected plan;
-            let val value=operation()
-            in sce_clause_guard expected plan;value end)
-         fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-           | materialize(SRArrow(a,b))=
-               let val left=materialize a val right=materialize b
-               in guarded(fn()=>Type.mk_thy_type
-                 {Thy="min",Tyop="fun",Args=[left,right]})end
-         val policy_types=List.map materialize types
-         val _=List.app(fn ty=>guarded(fn()=>check_type ty))policy_types
+         fun guard()=sce_core_guard expected kind core
+         val _=guard() val _=used:=true
+         val _=case kind of
+             SCERuleClause=>sce_check_policies guard check_type types
+           | SCEArgumentClause _=>()
          val variables=List.map(fn(id,name,ty)=>
-           (id,guarded(fn()=>Term.mk_var(name,ty))))binders
+           (id,sce_guarded guard(fn()=>Term.mk_var(name,ty))))binders
          fun bound id=case List.find(fn(old,_)=>old=id)variables of
              SOME(_,term)=>term | _=>raise ERR "execute_source_condition_rule"
                "missing lexical binder"
+         fun fresh name ty=case kind of
+             SCERuleClause=>raise ERR "execute_source_condition_rule"
+               "unexpected external vocabulary"
+           | SCEArgumentClause(SCEFutureArgument
+                 {name=held,ty=actual,child,...})=>sce_guarded guard(fn()=>
+               if name=held andalso Type.compare(ty,actual)=EQUAL then
+                 (case !child of SOME argument=>
+                    G.representative graph
+                      (G.closure_child_node graph
+                        (#scope(Scope.description_for expected frame))
+                        argument)
+                  | NONE=>raise ERR "execute_source_argument"
+                      "argument has not been bound")
+               else raise ERR "execute_source_argument"
+                 "prospective argument identity changed")
          fun emit(SRTree {shape,...})=case shape of SRAtom term=>term
            | SRBound(id,_)=>bound id
-           | SRFresh _=>raise ERR "execute_source_condition_rule"
-               "unexpected external vocabulary"
+           | SRFresh(name,ty)=>fresh name ty
            | SRLam(id,_,body)=>
                let val term=emit body
-               in guarded(fn()=>Term.mk_abs(bound id,term))end
+               in sce_guarded guard(fn()=>Term.mk_abs(bound id,term))end
            | SRApp(SRTree {shape=SRAtom h,...},
                (argument as SRTree {shape=SRLam(id,_,body),...}))=>
                if Term.is_const h andalso
                    Term.same_const h boolSyntax.universal then
                  let val term=emit body
-                 in guarded(fn()=>boolSyntax.mk_forall(bound id,term))end
+                 in sce_guarded guard(fn()=>
+                      boolSyntax.mk_forall(bound id,term))end
                else let val term=emit argument
-                    in guarded(fn()=>Term.mk_comb(h,term))end
+                    in sce_guarded guard(fn()=>Term.mk_comb(h,term))end
            | SRApp(SRTree {shape=SRApp
                (SRTree {shape=SRAtom h,...},a),...},b)=>
                if Term.is_const h andalso
                    Term.same_const h boolSyntax.equality then
                  let val left=emit a val right=emit b
-                 in guarded(fn()=>boolSyntax.mk_eq(left,right))end
+                 in sce_guarded guard(fn()=>boolSyntax.mk_eq(left,right))end
                else let val argument=emit a
-                        val operator=guarded(fn()=>Term.mk_comb(h,argument))
+                        val operator=sce_guarded guard(fn()=>
+                          Term.mk_comb(h,argument))
                         val operand=emit b
-                    in guarded(fn()=>Term.mk_comb(operator,operand))end
+                    in sce_guarded guard(fn()=>
+                         Term.mk_comb(operator,operand))end
            | SRApp(a,b)=>let val left=emit a val right=emit b
-               in guarded(fn()=>Term.mk_comb(left,right))end
-         fun align term theorem=
-           if Portable.pointer_eq(Thm.concl theorem,term) then theorem
-           else let val bridge=guarded(fn()=>
-                      SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
-             in guarded(fn()=>SmtReplayRuleObservation.EQ_MP bridge theorem)
-             end
+               in sce_guarded guard(fn()=>Term.mk_comb(left,right))end
+         val align=sce_align guard
          val d=sce_data expected evidence
          val initial=align(emit initial)(#proof d)
+         val action={guard=guard,emit=emit,before_assume=fn _ => fn _ => ()}
          fun play [] theorem=theorem
-           | play((action,next,_)::rest)theorem=
-               let val theorem=case action of SCEClauseNative(SRSpec arg)=>
-                     let val term=emit arg
-                     in guarded(fn()=>
-                       SmtReplayRuleObservation.SPEC term theorem)end
-                   | SCEClauseNative(SRConjunct left)=>
-                     guarded(fn()=>if left then
-                       SmtReplayRuleObservation.CONJUNCT1 theorem else
-                       SmtReplayRuleObservation.CONJUNCT2 theorem)
-                   | SCEClauseNative SRCondition=>
-                       let val condition= #1
-                             (boolSyntax.dest_imp(Thm.concl theorem))
-                           val premise=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.MP theorem premise)end
-                   | SCEClauseTruth=>guarded(fn()=>Drule.EQT_ELIM theorem)
-                   | SCEClauseAnteConj=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_conj ant
-                           val pa=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME a)
-                           val pb=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME b)
-                           val both=guarded(fn()=>
-                             SmtReplayRuleObservation.CONJ pa pb)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem both)
-                           val right=guarded(fn()=>
-                             SmtReplayRuleObservation.DISCH b body)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH a right)end
-                   | SCEClauseAnteDisj left=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_disj ant
-                           val selected=if left then a else b
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME selected)
-                           val either=guarded(fn()=>if left then
-                             SmtReplayRuleObservation.DISJ1 assumption b
-                             else SmtReplayRuleObservation.DISJ2 a assumption)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem either)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH selected body)end
-                   | SCEClauseSymmetry=>guarded(fn()=>
-                       SmtReplayRuleObservation.SYM theorem)
-                   | SCEClauseConditionForall argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val variable=emit argument
-                           val quantified=guarded(fn()=>
-                             boolSyntax.mk_forall(variable,ant))
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME quantified)
-                           val condition=guarded(fn()=>
-                             SmtReplayRuleObservation.SPEC variable assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH quantified result)end
-                   | SCEClauseAnteExists argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(v,body)=boolSyntax.dest_exists ant
-                           val witness=emit argument
-                           val instance=guarded(fn()=>Term.subst
-                             [{redex=v,residue=witness}]body)
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME instance)
-                           val existential=guarded(fn()=>
-                             Thm.EXISTS(ant,witness)assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem existential)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH instance result)end
-                   | SCEClauseNotIntro=>guarded(fn()=>
-                       Thm.NOT_INTRO theorem)
+           | play((step,next,_)::rest)theorem=
+               let val theorem=sce_execute_action action step theorem
                in play rest (align(emit next)theorem)end
          val body=play instructions initial
          val body=case terminal of SourceEquality=>body
-           | SourceTruth=>guarded(fn()=>Drule.EQT_INTRO body)
-           | SourceFalse=>guarded(fn()=>Drule.EQF_INTRO body)
+           | SourceTruth=>sce_guarded guard(fn()=>Drule.EQT_INTRO body)
+           | SourceFalse=>sce_guarded guard(fn()=>Drule.EQF_INTRO body)
          val proof=List.foldl(fn(condition,theorem)=>
            let val value=emit condition
-           in guarded(fn()=>SmtReplayRuleObservation.DISCH value theorem)end)
+           in sce_guarded guard(fn()=>
+                SmtReplayRuleObservation.DISCH value theorem)end)
            body conditions
          val proof=align(emit result)proof
          val _=if clean proof then () else
@@ -11236,9 +11456,16 @@ struct
              effect_origins=NONE,
              realized=ref NONE}
          val retained=SCEProjected {work=expected,graph=graph,caller=caller,
-           children=children,value=value,permutative=SOME permutative}
+           children=(case kind of SCERuleClause=>children
+             | SCEArgumentClause(SCEFutureArgument {child,...})=>
+                 (case !child of
+                    SOME argument=>argument::children | NONE=>raise ERR
+                      "execute_source_argument" "missing retained argument")),
+           value=value,permutative=SOME permutative}
          val _=sce_guard expected retained
        in retained end)))
+  fun execute_source_condition_rule expected (SCEClausePlan core)=
+    sce_execute_clause expected SCERuleClause core
 
   fun prepare_retained_source_cut_rule_block expected
       {frame,roots,additional_sources,closed_facts,conversions,receipts,
@@ -15040,781 +15267,29 @@ struct
         OriginalPrefixSlot _=>true | ActualSourceSlot _=>false})
 
 
-  datatype sce_future_argument=SCEFutureArgument of
-    {name:string,ty:Type.hol_type,child:G.closure_child option ref}
-  fun sce_future_guard graph scope NONE=()
-    | sce_future_guard graph scope
-        (SOME(SCEFutureArgument {name,ty,child}))=
-      case !child of NONE=>() | SOME held=>
-        let val node=G.closure_child_node graph scope held
-            val term=G.representative graph node
-            val(actual,domain)=if Term.is_var term then Term.dest_var term
-              else raise ERR "source_argument_guard"
-                "bound argument is not a genuine variable"
-        in if G.node_scope graph node=scope andalso actual=name andalso
-            Type.compare(domain,ty)=EQUAL then ()else
-          raise ERR "source_argument_guard"
-            "bound argument name, type or actual frame changed"end
-
+  (* A private box for the argument clause's core.  Holding the clause-core
+     record abbreviation directly inside the plan's record is what made the
+     datatype printer and the compile of this file expensive; the box is a
+     single constructor of its own type, so it cannot be confused with a
+     rule plan. *)
+  datatype sce_clause_box=SCEClauseCore of sce_clause_core
   datatype sce_argument_clause_plan=SCEArgumentClausePlan of
-    {work:W.portfolio,evidence:source_condition_evidence,
-     frame:Scope.receipt,graph:G.graph,caller:G.scope,scope:G.scope,
-     children:G.closure_child list,initial:sr_tree,
-     instructions:sce_clause_instruction list,terminal:source_rule_terminal,
-     result:sr_tree,conditions:sr_tree list,types:sr_type list,
-     origin:sce_origin_tree,
-     binders:(int*string*Type.hol_type) list,
-     check_type:Type.hol_type -> unit,permutative:bool,used:bool ref,
-     future:sce_future_argument option}
-  fun sce_argument_clause_guard expected (SCEArgumentClausePlan
-      {work,evidence,frame,graph,caller,scope,children,future,...})=
-    sr_fail expected (fn()=>
-      (if Portable.pointer_eq(expected,work) then () else
-         raise ERR "source_condition_rule" "foreign expected Work";
-       sce_guard expected evidence;
-       let val d=Scope.description_for expected frame
-       in if Portable.pointer_eq(#graph d,graph) andalso #scope d=scope
-           then () else raise ERR "source_condition_rule" "frame changed"
-       end;
-       G.validate_scope graph caller;
-       List.app(fn child=>ignore(G.closure_child_node graph caller child))
-         children;
-       sce_future_guard graph scope future))
+    {clause:sce_clause_box,future:sce_future_argument}
+  fun sce_argument_clause_guard expected
+      (SCEArgumentClausePlan {clause=SCEClauseCore clause,future})=
+    sce_core_guard expected (SCEArgumentClause future) clause
 
   fun prepare_source_condition_argument_clause expected
       {evidence,frame,caller,steps,terminal,check_type,future}=
-    sr_fail expected (fn()=>W.with_step expected (fn()=>
-    let
-      val d=sce_data expected evidence
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=if caller=scope then ()else raise ERR
-        "prepare_source_argument" "caller must be the actual frame"
-      val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
-      val budget=ref(0:IntInf.int)
-      val policies=ref([]:sr_type list)
-      val next=ref 0 val identifiers=ref([]:string list)
-      val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
-      fun types (captured as SRCaptured ty)=
-            (tick 1;captured::(if Type.is_vartype ty then
-              (tick(String.size(Type.dest_vartype ty));[])
-            else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                 in tick(String.size Thy+String.size Tyop);
-                   List.foldr(fn(arg,all)=>append(types(SRCaptured arg)) all)
-                     [] Args end))
-        | types (arrow as SRArrow(a,b))=
-            (tick 1;arrow::append(types a)(types b))
-      fun atom shape ty=SRTree {ty=ty,shape=shape,raw=1,inc=1,
-        annotations=types ty}
-      fun app ty a b=SRTree {ty=ty,shape=SRApp(a,b),
-        raw=1+sr_raw a+sr_raw b,inc=1+sr_inc a+sr_inc b,
-        annotations=append(types ty)(append(sr_types a)(sr_types b))}
-      fun lam ty id v b=SRTree {ty=ty,shape=SRLam(id,v,b),
-        raw=1+sr_raw b,inc=2+sr_inc b,
-        annotations=append(types ty)(append(sr_types v)(sr_types b))}
-      fun remember term=if Term.is_var term then
-        let val(name,_)=Term.dest_var term
-        in tick(String.size name+1);identifiers:=name:: !identifiers end
-        else ()
-      fun find v []=NONE
-        | find v ((old,id)::rest)=
-            (tick 1;if sr_same v old then SOME id else find v rest)
-      fun capture lexical origin term=
-        (tick 1;remember term;
-         let val ty=SRCaptured(Term.type_of term)
-         in if Term.is_comb term then
-              let val(a,b)=Term.dest_comb term
-                  val(left,right)=case origin of NONE=>(NONE,NONE)
-                    | SOME(SCOApp(x,y))=>(SOME x,SOME y)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic application origin geometry changed"
-              in app ty (capture lexical left a)(capture lexical right b)end
-            else if Term.is_abs term then
-              let val(v,b)=Term.dest_abs term
-                  val id= !next val _=next:=id+1 val _=remember v
-                  val vt=SRCaptured(Term.type_of v)
-                  val(original,body)=case origin of NONE=>(v,NONE)
-                    | SOME(SCOLam(old,next))=>(old,SOME next)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic binder origin geometry changed"
-              in lam ty id (atom(SRBound(id,original))vt)
-                (capture((v,id)::lexical)body b)end
-            else case find term lexical of
-              SOME id=>atom(SRBound(id,term))ty
-            | NONE=>atom(SRAtom term)ty end)
-      fun bounded cap origin term=
-        (case SmtReplayImport.bounded_raw_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local raw operand";
-         case SmtReplayImport.bounded_binder_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local binder operand";
-         capture [] origin term)
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
-        bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
-      val future_tree=case future of NONE=>NONE
-        | SOME(SCEFutureArgument {name,ty,...})=>
-            (tick(String.size name+1);
-             identifiers:=name:: !identifiers;
-             SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
-      fun fresh id ty=
-        let fun choose n=
-              let val name="__smt_sce_binder_"^Int.toString id^"_"^
-                    Int.toString n
-                  val _=tick(String.size name+1)
-              in if List.exists(fn old=>(tick 1;old=name))(!identifiers)
-                   then choose(n+1) else
-                 (identifiers:=name:: !identifiers;name) end
-        in binders:=(id,choose 0,ty):: !binders end
-      fun name_binders(SRTree {shape,...})=case shape of
-          SRApp(a,b)=>(name_binders a;name_binders b)
-        | SRLam(id,v,b)=>(fresh id (case sr_type v of SRCaptured t=>t
-              | _=>raise ERR "prepare_source_condition_rule" "binder type");
-            name_binders b)
-        | _=>()
-      val _=List.app name_binders(initial::args)
-      fun head thy name(SRTree {shape=SRAtom term,...})=
-            Term.is_const term andalso
-              let val c=Term.dest_thy_const term
-              in #Thy c=thy andalso #Name c=name end
-        | head _ _ _=false
-      fun binary thy name(SRTree {shape=SRApp
-          (SRTree {shape=SRApp(h,a),...},b),...})=
-            if head thy name h then SOME(a,b) else NONE
-        | binary _ _ _=NONE
-      fun forall(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "!" h then SOME(id,v,b) else NONE
-        | forall _=NONE
-      fun exists(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "?" h then SOME(id,v,b) else NONE
-        | exists _=NONE
-      fun subst id arg (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRBound(old,_)=>if old=id then arg else value
-        | SRApp(a,b)=>app ty (subst id arg a)(subst id arg b)
-        | SRLam(old,v,b)=>if old=id then value else
-            lam ty old v (subst id arg b)
-        | _=>value)
-      fun tcombine constant a b=
-        let val bool=SRCaptured Type.bool
-            val ty=SRCaptured(Term.type_of constant)
-            val arrow=SRCaptured(#2(Type.dom_rng(Term.type_of constant)))
-        in app bool (app arrow (atom(SRAtom constant)ty)a)b end
-      fun timp a b=tcombine boolSyntax.implication a b
-      fun tneg a=
-        app (SRCaptured Type.bool)
-          (atom(SRAtom boolSyntax.negation)
-            (SRCaptured(Term.type_of boolSyntax.negation)))a
-      fun typed_equality a b=
-        let val domain=sr_type a val bool=SRCaptured Type.bool
-            val arrow=SRArrow(domain,bool)
-            val h=atom(SRAtom boolSyntax.equality)(SRArrow(domain,arrow))
-        in app bool (app arrow h a)b end
-      fun abstract id variable (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRAtom term=>
-            if sr_same term variable then atom(SRBound(id,term))ty
-            else value
-          | SRApp(a,b)=>app ty (abstract id variable a)
-              (abstract id variable b)
-          | SRLam(old,v,b)=>lam ty old v (abstract id variable b)
-          | _=>value)
-      fun quantify issue argument condition=
-        let val variable=case #shape(sr_data argument)of
-              SRAtom term=>if Term.is_var term then term else
-                raise ERR "source_rule_quantify" "actual variable required"
-            | _=>raise ERR "source_rule_quantify" "actual variable required"
-            val domain=sr_type argument
-            val id= !next val _=next:=id+1
-            val _=if issue then fresh id (Term.type_of variable) else ()
-            val bool=SRCaptured Type.bool
-            val predicate=lam (SRArrow(domain,bool))id
-              (atom(SRBound(id,variable))domain)
-              (abstract id variable condition)
-            val constant=atom(SRAtom boolSyntax.universal)
-              (SRArrow(SRArrow(domain,bool),bool))
-        in app bool constant predicate end
-      (* Strip SPEC routes WITHOUT substituting the owned arguments.
-         Permutation is a property of this template, before matching. *)
-      fun original_template [] [] current=current
-        | original_template(step::rest)pending current=
-            let val(next,pending)=case step of EvidenceStep(SourceSpec _)=>
-                  (case forall current of
-                    SOME(_,_,body)=>(body,tl pending) | _=>
-                    raise ERR "source_rule_template" "forall route")
-                | EvidenceStep(SourceConjunct left)=>
-                    ((case binary "bool" "/\\" current of SOME(a,b)=>
-                      if left then a else b | _=>
-                        raise ERR "source_rule_template" "conjunct route"),
-                      pending)
-
-                | EvidenceStep SourceCondition=>
-                    ((case binary "min" "==>" current of SOME(_,body)=>body
-                      | _=>raise ERR "source_rule_template" "condition route"),
-                      pending)
-
-                | EvidenceAssertion=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                      if head "bool" "T" b then a else
-                        raise ERR "source_rule_template" "truth operand"
-                     | _=>raise ERR "source_rule_template" "truth equality"),
-                      pending)
-
-                | EvidenceAntecedentConj=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "/\\" ant of SOME(a,b)=>
-                         timp a (timp b body) | _=>
-                           raise ERR "source_rule_template" "conjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceAntecedentDisj left=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "\\/" ant of SOME(a,b)=>
-                         timp (if left then a else b)body | _=>
-                           raise ERR "source_rule_template" "disjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceImpFalse=>
-                    ((case binary "min" "==>" current of SOME(a,b)=>
-                       if head "bool" "F" b then tneg a else
-                         raise ERR "source_rule_template" "false consequence"
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-                | EvidenceSymmetry=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                        typed_equality b a
-                      | _=>raise ERR "source_rule_template" "equality"),
-                      pending)
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "variable"
-                    in(timp(quantify false argument ant)result,tl pending)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val(id,_,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "source_rule_template" "exists"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "witness"
-                    in(timp(subst id argument body)result,tl pending)end
-            in tick 1;original_template rest pending next end
-        | original_template _ _ _=
-            raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
-      fun vperm a b=(tick 1;
-        case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
-        | _=>case(#shape(sr_data a),#shape(sr_data b))of
-            (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
-          | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
-          | (SRAtom x,SRAtom y)=>Term.aconv x y
-          | _=>false)
-      fun fv tree=
-        let fun member key all=List.exists
-              (fn old=>(tick 1;key_equal(key,old)))all
-            fun walk bound current all=(tick 1;
-              case variable current of SOME(TemplateBound id)=>
-                  if List.exists(fn old=>old=id)bound then all else
-                    let val key=TemplateBound id
-                    in if member key all then all else key::all end
-              | SOME key=>if member key all then all else key::all
-              | NONE=>case #shape(sr_data current)of
-                  SRApp(a,b)=>walk bound b (walk bound a all)
-                | SRLam(id,_,b)=>walk(id::bound)b all | _=>all)
-        in walk [] tree [] end
-      fun same_fv a b=
-        List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
-        andalso List.all(fn y=>List.exists
-          (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
-      fun record cap hypotheses result=
-        let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
-              else raise ERR "prepare_source_condition_rule"
-                "prospective local result bound"
-            val all=result::hypotheses
-            val cost=List.foldl(fn(tree,n)=>(tick 1;
-              n+sr_raw tree+sr_inc tree+
-                IntInf.fromInt(length(sr_types tree)))) 0 all
-            val _=budget:= !budget+cost
-            val _=if !budget<=quota then () else
-              raise ERR "prepare_source_condition_rule" "original Work"
-        in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
-          (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
-      fun align conditions result=
-        (record output conditions (equality result result);
-         record output conditions result)
-      val _=align hyp initial
-      fun play [] [] current conditions instructions=
-            (current,conditions,List.rev instructions)
-        | play(step::rest) pending current conditions instructions=
-            let val _=tick 1
-                val(action,result,pending,conditions)=case step of
-                  EvidenceStep(SourceSpec _)=>
-                    let val(id,v,b)=case forall current of SOME d=>d
-                          | NONE=>raise ERR "prepare_source_condition_rule"
-                              "actual explicit forall required"
-                        val arg=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "argument"
-                        val _=case(sr_type v,sr_type arg)of
-                          (SRCaptured a,SRCaptured b)=>
-                            if Type.compare(a,b)=EQUAL then () else
-                              raise ERR "prepare_source_condition_rule"
-                                "SPEC argument type"
-                        | _=>raise ERR "prepare_source_condition_rule" "type"
-                        val _=record output [] arg
-                    in(SCEClauseNative(SRSpec arg),subst id arg b,tl pending,
-                      conditions)end
-                | EvidenceStep(SourceConjunct left)=>
-                    let val(a,b)=case binary "bool" "/\\" current of
-                          SOME d=>d | NONE=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual conjunction required"
-                    in(SCEClauseNative(SRConjunct left),
-                      if left then a else b,pending,
-                      conditions)end
-                | EvidenceStep SourceCondition=>
-                    let val(a,b)=case binary "min" "==>" current of
-                          SOME d=>d | NONE=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val _=record output [a] a
-                    in(SCEClauseNative SRCondition,b,pending,a::conditions)end
-                | EvidenceAssertion=>
-                    let val(a,b)=case binary "min" "=" current of
-                          SOME d=>d | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual truth equality required"
-                        val _=if head "bool" "T" b then () else
-                          raise ERR "prepare_source_condition_rule"
-                            "actual truth operand required"
-                        val _=record output (append conditions hyp) current
-                        val _=record output [] (boolean boolSyntax.T)
-                    in(SCEClauseTruth,a,pending,conditions)end
-                | EvidenceAntecedentConj=>
-                    let val(ant,body)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(a,b)=case binary "bool" "/\\" ant of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual conjunction antecedent required"
-                        val held=append conditions hyp
-                        val _=record output [a] a
-                        val _=record output [b] b
-                        val _=record output [a,b] ant
-                        val _=record output (a::b::held)body
-                        val right=implication b body
-                        val _=record output (a::held)right
-                        val result=implication a right
-                    in(SCEClauseAnteConj,result,pending,conditions)end
-                | EvidenceAntecedentDisj left=>
-                    let val(ant,body)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(a,b)=case binary "bool" "\\/" ant of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual disjunction antecedent required"
-                        val selected=if left then a else b
-                        val held=append conditions hyp
-                        val _=record output [selected]selected
-                        val _=record output [selected]ant
-                        val _=record output (selected::held)body
-                        val result=implication selected body
-                    in(SCEClauseAnteDisj left,result,pending,conditions)end
-                | EvidenceSymmetry=>
-                    let val(a,b)=case binary "min" "=" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual equality required"
-                    in(SCEClauseSymmetry,typed_equality b a,pending,
-                      conditions)end
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val argument=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "variable"
-                        val quantified=quantify true argument ant
-                        val held=append conditions hyp
-                        val _=record output [] argument
-                        val _=record output [quantified]quantified
-                        val _=record output [quantified]ant
-                        val _=record output (quantified::held)result
-                    in(SCEClauseConditionForall argument,
-                      implication quantified result,tl pending,conditions)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(id,v,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "prepare_source_condition_rule"
-                            "actual existential antecedent required"
-                        val argument=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "witness"
-                        val _=case #shape(sr_data argument)of SRAtom term=>
-                            if Term.is_var term then () else
-                              raise ERR "prepare_source_condition_rule"
-                                "witness must be an actual variable"
-                          | _=>raise ERR "prepare_source_condition_rule"
-                              "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
-                          else raise ERR "prepare_source_condition_rule"
-                            "existential witness type differs"
-                        val instance=subst id argument body
-                        val held=append conditions hyp
-                        val _=record output [] argument
-                        val _=record output [instance]instance
-                        val _=record output [instance]ant
-                        val _=record output (instance::held)result
-                    in(SCEClauseAnteExists argument,
-                      implication instance result,tl pending,conditions)end
-                | EvidenceImpFalse=>
-                    let val(ant,last)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val _=if head "bool" "F" last then () else
-                          raise ERR "prepare_source_condition_rule"
-                            "actual false consequent required"
-                    in(SCEClauseNotIntro,tneg ant,pending,conditions)end
-                val hypotheses=append conditions hyp
-                val _=record output hypotheses result
-                val _=align hypotheses result
-            in play rest pending result conditions
-              ((action,result,conditions)::instructions)end
-        | play _ _ _ _ _=raise ERR "prepare_source_condition_rule" "route"
-      val(body,conditions,instructions)=play steps args initial [] []
-      val(body,conditions,instructions)=case future_tree of NONE=>
-            (body,conditions,instructions)
-        | SOME argument=>
-            let val(ant,result)=case binary "min" "==>" body of
-                  SOME pair=>pair | _=>raise ERR "prepare_source_argument"
-                    "actual implication required"
-                val(id,v,part)=case exists ant of SOME triple=>triple
-                  | _=>raise ERR "prepare_source_argument"
-                    "actual existential antecedent required"
-                val _=if same_ty(sr_type v,sr_type argument)then ()else
-                  raise ERR "prepare_source_argument"
-                    "prospective argument type differs"
-                val instance=subst id argument part
-                val held=append conditions hyp
-                val _=record output [] argument
-                val _=record output [] instance
-                val _=record output [instance]instance
-                val _=record output [instance]ant
-                val _=record output (instance::held)result
-                val next=implication instance result
-                val _=record output held next
-                val _=align held next
-                val extended=instance::conditions
-                val _=record output [instance]instance
-                val _=record output (append extended hyp)result
-                val _=align (append extended hyp)result
-            in (result,extended,instructions@[
-              (SCEClauseAnteExists argument,next,conditions),
-              (SCEClauseNative SRCondition,result,extended)])end
-      val hypotheses=append conditions hyp
-      val result=case terminal of SourceEquality=>
-            (case binary "min" "=" body of SOME _=>body | _=>
-              raise ERR "prepare_source_condition_rule" "equality required")
-        | SourceTruth=>let val result=equality body(boolean boolSyntax.T)
-              val _=record output hypotheses(equality result body)
-            in result end
-        | SourceFalse=>
-            let val operand=case sr_data body of
-                  {shape=SRApp(h,p),...}=>if head "bool" "~" h then p else
-                    raise ERR "prepare_source_condition_rule" "negation"
-                | _=>raise ERR "prepare_source_condition_rule" "negation"
-                val result=equality operand(boolean boolSyntax.F)
-                val _=record output hypotheses(equality body result)
-            in result end
-      val _=record output hypotheses result
-      fun discharge [] current=current
-        | discharge(condition::rest)current=
-            let val next=implication condition current
-                val _=record output (append rest hyp)next
-            in discharge rest next end
-      val final=discharge conditions result
-      val _=record template hyp final
-      val _=align hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
-      val context=balanced rows
-      val _=record template [] context
-      val _=record template [] (implication context final)
-      val _=List.app(fn row=>record template [context]row)rows
-      val _=record template [context]final
-      val origin=sr_lexical_origin tick final
-      val _=pay expected (!budget)
-      val _=guard()
-    in SCEArgumentClausePlan {work=expected,evidence=evidence,
-      frame=frame,graph=graph,
-      caller=caller,scope=scope,children=children,initial=initial,
-      instructions=instructions,terminal=terminal,result=final,
-      conditions=conditions,types= !policies,binders= !binders,
-      origin=origin,
-      check_type=check_type,permutative=permutative,used=ref false,
-      future=future} end))
+    SCEArgumentClausePlan
+      {clause=SCEClauseCore(sce_prepare_clause expected
+         (SCEArgumentClause future)
+         {evidence=evidence,frame=frame,caller=caller,steps=steps,
+          terminal=terminal,check_type=check_type}),
+       future=future}
   fun execute_source_condition_argument_clause expected
-      (plan as SCEArgumentClausePlan
-        {evidence,frame,graph,caller,children,initial,
-        instructions,terminal,result,conditions,types,binders,check_type,
-        used,permutative,origin,future,...})=
-    sr_fail expected (fn()=>
-      (sce_argument_clause_guard expected plan;
-       if !used then raise ERR "execute_source_condition_rule" "consumed"
-         else ();
-       W.with_step expected (fn()=>
-       let
-         val _=sce_argument_clause_guard expected plan val _=used:=true
-         fun guarded operation=
-           (sce_argument_clause_guard expected plan;
-            let val value=operation()
-            in sce_argument_clause_guard expected plan;value end)
-         fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-           | materialize(SRArrow(a,b))=
-               let val left=materialize a val right=materialize b
-               in guarded(fn()=>Type.mk_thy_type
-                 {Thy="min",Tyop="fun",Args=[left,right]})end
-         (* The opaque ready phase completed every retained policy. *)
-         val variables=List.map(fn(id,name,ty)=>
-           (id,guarded(fn()=>Term.mk_var(name,ty))))binders
-         fun bound id=case List.find(fn(old,_)=>old=id)variables of
-             SOME(_,term)=>term | _=>raise ERR "execute_source_condition_rule"
-               "missing lexical binder"
-         fun emit(SRTree {shape,...})=case shape of SRAtom term=>term
-           | SRBound(id,_)=>bound id
-           | SRFresh(name,ty)=>guarded(fn()=>
-               case future of SOME(SCEFutureArgument
-                   {name=held,ty=actual,child,...})=>
-                 if name=held andalso Type.compare(ty,actual)=EQUAL then
-                   (case !child of SOME argument=>
-                      G.representative graph
-                        (G.closure_child_node graph
-                          (#scope(Scope.description_for expected frame))
-                          argument)
-                    | NONE=>raise ERR "execute_source_argument"
-                        "argument has not been bound")
-                 else raise ERR "execute_source_argument"
-                   "prospective argument identity changed"
-               | NONE=>raise ERR "execute_source_condition_rule"
-                   "unexpected external vocabulary")
-           | SRLam(id,_,body)=>
-               let val term=emit body
-               in guarded(fn()=>Term.mk_abs(bound id,term))end
-           | SRApp(SRTree {shape=SRAtom h,...},
-               (argument as SRTree {shape=SRLam(id,_,body),...}))=>
-               if Term.is_const h andalso
-                   Term.same_const h boolSyntax.universal then
-                 let val term=emit body
-                 in guarded(fn()=>boolSyntax.mk_forall(bound id,term))end
-               else let val term=emit argument
-                    in guarded(fn()=>Term.mk_comb(h,term))end
-           | SRApp(SRTree {shape=SRApp
-               (SRTree {shape=SRAtom h,...},a),...},b)=>
-               if Term.is_const h andalso
-                   Term.same_const h boolSyntax.equality then
-                 let val left=emit a val right=emit b
-                 in guarded(fn()=>boolSyntax.mk_eq(left,right))end
-               else let val argument=emit a
-                        val operator=guarded(fn()=>Term.mk_comb(h,argument))
-                        val operand=emit b
-                    in guarded(fn()=>Term.mk_comb(operator,operand))end
-           | SRApp(a,b)=>let val left=emit a val right=emit b
-               in guarded(fn()=>Term.mk_comb(left,right))end
-         fun align term theorem=
-           if Portable.pointer_eq(Thm.concl theorem,term) then theorem
-           else let val bridge=guarded(fn()=>
-                      SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
-             in guarded(fn()=>SmtReplayRuleObservation.EQ_MP bridge theorem)
-             end
-         val d=sce_data expected evidence
-         val initial=align(emit initial)(#proof d)
-         fun play [] theorem=theorem
-           | play((action,next,_)::rest)theorem=
-               let val theorem=case action of SCEClauseNative(SRSpec arg)=>
-                     let val term=emit arg
-                     in guarded(fn()=>
-                       SmtReplayRuleObservation.SPEC term theorem)end
-                   | SCEClauseNative(SRConjunct left)=>
-                     guarded(fn()=>if left then
-                       SmtReplayRuleObservation.CONJUNCT1 theorem else
-                       SmtReplayRuleObservation.CONJUNCT2 theorem)
-                   | SCEClauseNative SRCondition=>
-                       let val condition= #1
-                             (boolSyntax.dest_imp(Thm.concl theorem))
-                           val premise=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.MP theorem premise)end
-                   | SCEClauseTruth=>guarded(fn()=>Drule.EQT_ELIM theorem)
-                   | SCEClauseAnteConj=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_conj ant
-                           val pa=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME a)
-                           val pb=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME b)
-                           val both=guarded(fn()=>
-                             SmtReplayRuleObservation.CONJ pa pb)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem both)
-                           val right=guarded(fn()=>
-                             SmtReplayRuleObservation.DISCH b body)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH a right)end
-                   | SCEClauseAnteDisj left=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_disj ant
-                           val selected=if left then a else b
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME selected)
-                           val either=guarded(fn()=>if left then
-                             SmtReplayRuleObservation.DISJ1 assumption b
-                             else SmtReplayRuleObservation.DISJ2 a assumption)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem either)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH selected body)end
-                   | SCEClauseSymmetry=>guarded(fn()=>
-                       SmtReplayRuleObservation.SYM theorem)
-                   | SCEClauseConditionForall argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val variable=emit argument
-                           val quantified=guarded(fn()=>
-                             boolSyntax.mk_forall(variable,ant))
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME quantified)
-                           val condition=guarded(fn()=>
-                             SmtReplayRuleObservation.SPEC variable assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH quantified result)end
-                   | SCEClauseAnteExists argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(v,body)=boolSyntax.dest_exists ant
-                           val witness=emit argument
-                           val instance=guarded(fn()=>Term.subst
-                             [{redex=v,residue=witness}]body)
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME instance)
-                           val existential=guarded(fn()=>
-                             Thm.EXISTS(ant,witness)assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem existential)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH instance result)end
-                   | SCEClauseNotIntro=>guarded(fn()=>
-                       Thm.NOT_INTRO theorem)
-               in play rest (align(emit next)theorem)end
-         val body=play instructions initial
-         val body=case terminal of SourceEquality=>body
-           | SourceTruth=>guarded(fn()=>Drule.EQT_INTRO body)
-           | SourceFalse=>guarded(fn()=>Drule.EQF_INTRO body)
-         val proof=List.foldl(fn(condition,theorem)=>
-           let val value=emit condition
-           in guarded(fn()=>SmtReplayRuleObservation.DISCH value theorem)end)
-           body conditions
-         val proof=align(emit result)proof
-         val _=if clean proof then () else
-           raise ERR "execute_source_condition_rule" "proof provenance"
-         val value=SCEApplied {work=expected,frame=frame,parents=[evidence],
-           proof=proof,target=Thm.concl proof,names= #names d,rows= #rows d,
-           origin=origin,
-           constructor_origins=NONE,
-             effect_origins=NONE,
-             realized=ref NONE}
-         val retained=SCEProjected {work=expected,graph=graph,caller=caller,
-           children=(case future of
-             SOME(SCEFutureArgument {child,...})=>(case !child of
-               SOME argument=>argument::children | NONE=>raise ERR
-                 "execute_source_argument" "missing retained argument")
-           | NONE=>raise ERR "execute_source_argument"
-               "missing prospective argument"),
-           value=value,permutative=SOME permutative}
-         val _=sce_guard expected retained
-       in retained end)))
+      (SCEArgumentClausePlan {clause=SCEClauseCore clause,future})=
+    sce_execute_clause expected (SCEArgumentClause future) clause
 
   datatype source_argument_phase=ArgumentPrepared | ArgumentAdmitting
     | ArgumentAdmitted
@@ -15866,14 +15341,15 @@ struct
       val future=SCEFutureArgument {name=name,ty=ty,child=ref NONE}
       val plan=prepare_source_condition_argument_clause expected
         {evidence=evidence,frame=frame,caller=caller,steps=steps,
-         terminal=SourceTruth,check_type=check_type,future=SOME future}
+         terminal=SourceTruth,check_type=check_type,future=future}
       val result=SourceConditionArgumentPlan
         {work=expected,plan=plan,phase=ref ArgumentPrepared}
       val _=source_argument_guard expected result
     in result end)
   fun admit_source_condition_exists_argument expected
       (value as SourceConditionArgumentPlan
-        {plan=plan as SCEArgumentClausePlan {types,check_type,...},phase,...})=
+        {plan=SCEArgumentClausePlan
+           {clause=SCEClauseCore {types,check_type,...},...},phase,...})=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
        if !phase=ArgumentPrepared then ()else raise ERR
@@ -15881,35 +15357,26 @@ struct
        phase:=ArgumentAdmitting;
        W.with_step expected(fn()=>
        let
-         fun guarded operation=
-           (source_argument_guard expected value;
-            let val result=operation()
-            in source_argument_guard expected value;result end)
-         fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-           | materialize(SRArrow(a,b))=
-               let val left=materialize a val right=materialize b
-               in guarded(fn()=>Type.mk_thy_type
-                 {Thy="min",Tyop="fun",Args=[left,right]})end
-         val actual=List.map materialize types
-         val _=List.app(fn ty=>guarded(fn()=>check_type ty))actual
-         val _=source_argument_guard expected value
+         fun guard()=source_argument_guard expected value
+         val _=sce_check_policies guard check_type types
+         val _=guard()
          val _=phase:=ArgumentAdmitted
        in SourceConditionArgumentReady value end)))
   fun source_condition_argument_ready_for expected
       (SourceConditionArgumentReady(value as SourceConditionArgumentPlan
-        {plan=SCEArgumentClausePlan {frame,future,...},phase,...}))=
+        {plan=SCEArgumentClausePlan
+           {clause=SCEClauseCore {frame,...},future},phase,...}))=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
        if !phase=ArgumentAdmitted then ()else raise ERR
          "source_argument_ready" "ready is not available";
-       case future of SOME(SCEFutureArgument {name,ty,...})=>
-         {frame=frame,name=name,ty=ty}
-       | NONE=>raise ERR "source_argument_ready" "missing quoted argument"))
+       case future of SCEFutureArgument {name,ty,...}=>
+         {frame=frame,name=name,ty=ty}))
   fun execute_source_condition_exists_argument expected
       {ready=SourceConditionArgumentReady
          (value as SourceConditionArgumentPlan
            {plan=plan as SCEArgumentClausePlan
-              {frame,graph,future,...},phase,...}),
+              {clause=SCEClauseCore {frame,graph,...},future},phase,...}),
        argument}=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
@@ -15918,13 +15385,11 @@ struct
        W.with_step expected(fn()=>
          let val _=source_argument_guard expected value
              val scope= #scope(Scope.description_for expected frame)
-             val future=case future of SOME held=>held | NONE=>
-               raise ERR "execute_source_argument" "missing quoted argument"
              val SCEFutureArgument {child,...}=future
              val _=if Option.isSome(!child)then raise ERR
                "execute_source_argument" "argument already bound"else ()
              val _=child:=SOME argument
-             val _=sce_future_guard graph scope(SOME future)
+             val _=sce_future_guard graph scope future
              val _=source_argument_guard expected value
          in ()end);
        let val result=execute_source_condition_argument_clause expected
@@ -16242,114 +15707,26 @@ struct
      condition_origins:sce_origin_tree list}
   fun scr_clause_guard expected (SCRClausePlan
       {work,evidence,frame,graph,caller,scope,children,future,closing,...})=
-    sr_fail expected (fn()=>
-      (if Portable.pointer_eq(expected,work) then () else
-         raise ERR "source_condition_rule" "foreign expected Work";
-       sce_guard expected evidence;
-       let val d=Scope.description_for expected frame
-       in if Portable.pointer_eq(#graph d,graph) andalso #scope d=scope
-           then () else raise ERR "source_condition_rule" "frame changed"
-       end;
-       G.validate_scope graph caller;
-       List.app(fn child=>ignore(G.closure_child_node graph caller child))
-         children;
-       List.app(fn held=>sce_future_guard graph scope(SOME held))future;
-       case closing of NONE=>() | SOME data=>
-         scr_conj_guard expected frame data))
+    sce_shared_clause_guard expected work evidence frame graph caller scope
+      children future (fn()=>
+        case closing of NONE=>() | SOME data=>
+          scr_conj_guard expected frame data)
 
   fun prepare_source_canonical_clause_inside expected closing
       {evidence,steps,pending,finish,check_type,future,kind}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val d=sce_data expected evidence
-      val frame= #frame d val terminal=SourceTruth
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val caller=scope
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=if caller=scope then ()else raise ERR
-        "prepare_source_argument" "caller must be the actual frame"
-      val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
-      val budget=ref(0:IntInf.int)
-      val policies=ref([]:sr_type list)
-      val next=ref 0 val identifiers=ref([]:string list)
-      val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
-      fun types (captured as SRCaptured ty)=
-            (tick 1;captured::(if Type.is_vartype ty then
-              (tick(String.size(Type.dest_vartype ty));[])
-            else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                 in tick(String.size Thy+String.size Tyop);
-                   List.foldr(fn(arg,all)=>append(types(SRCaptured arg)) all)
-                     [] Args end))
-        | types (arrow as SRArrow(a,b))=
-            (tick 1;arrow::append(types a)(types b))
-      fun atom shape ty=SRTree {ty=ty,shape=shape,raw=1,inc=1,
-        annotations=types ty}
-      fun app ty a b=SRTree {ty=ty,shape=SRApp(a,b),
-        raw=1+sr_raw a+sr_raw b,inc=1+sr_inc a+sr_inc b,
-        annotations=append(types ty)(append(sr_types a)(sr_types b))}
-      fun lam ty id v b=SRTree {ty=ty,shape=SRLam(id,v,b),
-        raw=1+sr_raw b,inc=2+sr_inc b,
-        annotations=append(types ty)(append(sr_types v)(sr_types b))}
-      fun remember term=if Term.is_var term then
-        let val(name,_)=Term.dest_var term
-        in tick(String.size name+1);identifiers:=name:: !identifiers end
-        else ()
-      fun find v []=NONE
-        | find v ((old,id)::rest)=
-            (tick 1;if sr_same v old then SOME id else find v rest)
-      fun capture lexical origin term=
-        (tick 1;remember term;
-         let val ty=SRCaptured(Term.type_of term)
-         in if Term.is_comb term then
-              let val(a,b)=Term.dest_comb term
-                  val(left,right)=case origin of NONE=>(NONE,NONE)
-                    | SOME(SCOApp(x,y))=>(SOME x,SOME y)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic application origin geometry changed"
-              in app ty (capture lexical left a)(capture lexical right b)end
-            else if Term.is_abs term then
-              let val(v,b)=Term.dest_abs term
-                  val id= !next val _=next:=id+1 val _=remember v
-                  val vt=SRCaptured(Term.type_of v)
-                  val(original,body)=case origin of NONE=>(v,NONE)
-                    | SOME(SCOLam(old,next))=>(old,SOME next)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic binder origin geometry changed"
-              in lam ty id (atom(SRBound(id,original))vt)
-                (capture((v,id)::lexical)body b)end
-            else case find term lexical of
-              SOME id=>atom(SRBound(id,term))ty
-            | NONE=>atom(SRAtom term)ty end)
-      fun bounded cap origin term=
-        (case SmtReplayImport.bounded_raw_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local raw operand";
-         case SmtReplayImport.bounded_binder_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local binder operand";
-         capture [] origin term)
+      val ctx=sce_prepare_context expected evidence SCEEvidenceFrame steps
+      val {d,frame,graph,scope,caller,children,guard,tick,limits,output,
+        template,quota,...}=
+        ctx
+      val terminal=SourceTruth
+      fun append v w=sce_append tick v w
+      val {budget,policies,identifiers,binders,atom,app,capture,bounded,
+        name_binders,binary,forall,exists,subst,typed_equality,boolean,
+        combine,equality,implication,balanced,original_permutative,
+        recorder,play,...}=
+        #builder ctx
       fun no_abs cap term=
         let fun walk [] count=()
               | walk(current::rest)count=
@@ -16365,10 +15742,8 @@ struct
       fun mode_initial()=case closing of NONE=>() | SOME data=>
         (scr_conj_shape data;no_abs(#output_limit limits)(#target d))
       val _=mode_initial()
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=case closing of NONE=>
-            List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
+      val initial= #initial ctx ()
+      val hyp=case closing of NONE=>(#hyp ctx) ()
         | SOME _=>
             let val actual=Thm.hyp(#proof d)
                 val known=sce_admitted_hyp_rows_inside expected evidence
@@ -16383,16 +15758,8 @@ struct
                       (no_abs(#template_limit limits)term;
                        bounded(#template_limit limits)NONE term)
             in List.map forest known end
-      val rows=case closing of NONE=>List.map(fn(value,_)=>
-            bounded(#template_limit limits)NONE value)(#rows d)
-        | SOME _=>[]
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
+      val rows=case closing of NONE=>(#rows ctx) () | SOME _=>[]
+      val args= #args ctx ()
       val future_names=ref([]:string list)
       val future_trees=List.map
         (fn SCEFutureArgument {name,ty,...}=>
@@ -16404,31 +15771,7 @@ struct
            atom(SRFresh(name,ty))(SRCaptured ty)))future
       val saved=List.map(fn(term,origin)=>
         bounded(#output_limit limits)(SOME origin)term)pending
-      fun fresh id ty=
-        let fun choose n=
-              let val name="__smt_sce_binder_"^Int.toString id^"_"^
-                    Int.toString n
-                  val _=tick(String.size name+1)
-              in if List.exists(fn old=>(tick 1;old=name))(!identifiers)
-                   then choose(n+1) else
-                 (identifiers:=name:: !identifiers;name) end
-        in binders:=(id,choose 0,ty):: !binders end
-      fun name_binders(SRTree {shape,...})=case shape of
-          SRApp(a,b)=>(name_binders a;name_binders b)
-        | SRLam(id,v,b)=>(fresh id (case sr_type v of SRCaptured t=>t
-              | _=>raise ERR "prepare_source_condition_rule" "binder type");
-            name_binders b)
-        | _=>()
       val _=List.app name_binders(initial::args@saved)
-      fun head thy name(SRTree {shape=SRAtom term,...})=
-            Term.is_const term andalso
-              let val c=Term.dest_thy_const term
-              in #Thy c=thy andalso #Name c=name end
-        | head _ _ _=false
-      fun binary thy name(SRTree {shape=SRApp
-          (SRTree {shape=SRApp(h,a),...},b),...})=
-            if head thy name h then SOME(a,b) else NONE
-        | binary _ _ _=NONE
       fun type_same(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
         | type_same(SRArrow(a,b),SRArrow(c,d))=
             type_same(a,c)andalso type_same(b,d)
@@ -16532,356 +15875,28 @@ struct
           then raise ERR "predicate_conditional"
             "Original Source ant alias needs semantic receiver"
           else ())ordered_ants)
-      fun forall(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "!" h then SOME(id,v,b) else NONE
-        | forall _=NONE
-      fun exists(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "?" h then SOME(id,v,b) else NONE
-        | exists _=NONE
-      fun subst id arg (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRBound(old,_)=>if old=id then arg else value
-        | SRApp(a,b)=>app ty (subst id arg a)(subst id arg b)
-        | SRLam(old,v,b)=>if old=id then value else
-            lam ty old v (subst id arg b)
-        | _=>value)
-      fun tcombine constant a b=
-        let val bool=SRCaptured Type.bool
-            val ty=SRCaptured(Term.type_of constant)
-            val arrow=SRCaptured(#2(Type.dom_rng(Term.type_of constant)))
-        in app bool (app arrow (atom(SRAtom constant)ty)a)b end
-      fun timp a b=tcombine boolSyntax.implication a b
-      fun tneg a=
-        app (SRCaptured Type.bool)
-          (atom(SRAtom boolSyntax.negation)
-            (SRCaptured(Term.type_of boolSyntax.negation)))a
-      fun typed_equality a b=
-        let val domain=sr_type a val bool=SRCaptured Type.bool
-            val arrow=SRArrow(domain,bool)
-            val h=atom(SRAtom boolSyntax.equality)(SRArrow(domain,arrow))
-        in app bool (app arrow h a)b end
-      fun abstract id variable (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRAtom term=>
-            if sr_same term variable then atom(SRBound(id,term))ty
-            else value
-          | SRApp(a,b)=>app ty (abstract id variable a)
-              (abstract id variable b)
-          | SRLam(old,v,b)=>lam ty old v (abstract id variable b)
-          | _=>value)
-      fun quantify issue argument condition=
-        let val variable=case #shape(sr_data argument)of
-              SRAtom term=>if Term.is_var term then term else
-                raise ERR "source_rule_quantify" "actual variable required"
-            | _=>raise ERR "source_rule_quantify" "actual variable required"
-            val domain=sr_type argument
-            val id= !next val _=next:=id+1
-            val _=if issue then fresh id (Term.type_of variable) else ()
-            val bool=SRCaptured Type.bool
-            val predicate=lam (SRArrow(domain,bool))id
-              (atom(SRBound(id,variable))domain)
-              (abstract id variable condition)
-            val constant=atom(SRAtom boolSyntax.universal)
-              (SRArrow(SRArrow(domain,bool),bool))
-        in app bool constant predicate end
-      (* Strip SPEC routes WITHOUT substituting the owned arguments.
-         Permutation is a property of this template, before matching. *)
-      fun original_template [] [] current=current
-        | original_template(step::rest)pending current=
-            let val(next,pending)=case step of EvidenceStep(SourceSpec _)=>
-                  (case forall current of
-                    SOME(_,_,body)=>(body,tl pending) | _=>
-                    raise ERR "source_rule_template" "forall route")
-                | EvidenceStep(SourceConjunct left)=>
-                    ((case binary "bool" "/\\" current of SOME(a,b)=>
-                      if left then a else b | _=>
-                        raise ERR "source_rule_template" "conjunct route"),
-                      pending)
-
-                | EvidenceStep SourceCondition=>
-                    ((case binary "min" "==>" current of SOME(_,body)=>body
-                      | _=>raise ERR "source_rule_template" "condition route"),
-                      pending)
-
-                | EvidenceAssertion=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                      if head "bool" "T" b then a else
-                        raise ERR "source_rule_template" "truth operand"
-                     | _=>raise ERR "source_rule_template" "truth equality"),
-                      pending)
-
-                | EvidenceAntecedentConj=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "/\\" ant of SOME(a,b)=>
-                         timp a (timp b body) | _=>
-                           raise ERR "source_rule_template" "conjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceAntecedentDisj left=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "\\/" ant of SOME(a,b)=>
-                         timp (if left then a else b)body | _=>
-                           raise ERR "source_rule_template" "disjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceImpFalse=>
-                    ((case binary "min" "==>" current of SOME(a,b)=>
-                       if head "bool" "F" b then tneg a else
-                         raise ERR "source_rule_template" "false consequence"
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-                | EvidenceSymmetry=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                        typed_equality b a
-                      | _=>raise ERR "source_rule_template" "equality"),
-                      pending)
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "variable"
-                    in(timp(quantify false argument ant)result,tl pending)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val(id,_,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "source_rule_template" "exists"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "witness"
-                    in(timp(subst id argument body)result,tl pending)end
-            in tick 1;original_template rest pending next end
-        | original_template _ _ _=
-            raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
-      fun vperm a b=(tick 1;
-        case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
-        | _=>case(#shape(sr_data a),#shape(sr_data b))of
-            (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
-          | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
-          | (SRAtom x,SRAtom y)=>Term.aconv x y
-          | _=>false)
-      fun fv tree=
-        let fun member key all=List.exists
-              (fn old=>(tick 1;key_equal(key,old)))all
-            fun walk bound current all=(tick 1;
-              case variable current of SOME(TemplateBound id)=>
-                  if List.exists(fn old=>old=id)bound then all else
-                    let val key=TemplateBound id
-                    in if member key all then all else key::all end
-              | SOME key=>if member key all then all else key::all
-              | NONE=>case #shape(sr_data current)of
-                  SRApp(a,b)=>walk bound b (walk bound a all)
-                | SRLam(id,_,b)=>walk(id::bound)b all | _=>all)
-        in walk [] tree [] end
-      fun same_fv a b=
-        List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
-        andalso List.all(fn y=>List.exists
-          (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
-      fun record cap hypotheses result=
-        let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
-              else raise ERR "prepare_source_condition_rule"
-                "prospective local result bound"
-            val all=result::hypotheses
-            fun constructors(SRCaptured _)=0:IntInf.int
-              | constructors(SRArrow(a,b))=
-                  (tick 1;1+constructors a+constructors b)
-            val cost=List.foldl(fn(tree,n)=>(tick 1;
-              n+sr_raw tree+sr_inc tree+
-                IntInf.fromInt(length(sr_types tree))+
-                (case closing of NONE=>0 | SOME _=>
-                  List.foldl(fn(ty,total)=>total+constructors ty)
-                    0(sr_types tree)))) 0 all
-            val _=budget:= !budget+cost
-            val _=if !budget<=quota then () else
-              raise ERR "prepare_source_condition_rule" "original Work"
-        in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
-          (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
+      val permutative=
+        original_permutative steps args initial terminal
+      fun constructors(SRCaptured _)=0:IntInf.int
+        | constructors(SRArrow(a,b))=
+            (tick 1;1+constructors a+constructors b)
+      val record=recorder quota (fn tree=>case closing of NONE=>0
+        | SOME _=>List.foldl(fn(ty,total)=>total+constructors ty)
+            0(sr_types tree))
       fun align conditions result=case closing of NONE=>
         (record template conditions (equality result result);
          record output conditions result)
         | SOME _=>record output conditions result
       val _=align hyp initial
-      fun play [] [] current conditions instructions=
-            (current,conditions,List.rev instructions)
-        | play(step::rest) pending current conditions instructions=
-            let val _=tick 1
-                val(action,result,pending,conditions)=case step of
-                  EvidenceStep(SourceSpec _)=>
-                    let val(id,v,b)=case forall current of SOME d=>d
-                          | NONE=>raise ERR "prepare_source_condition_rule"
-                              "actual explicit forall required"
-                        val arg=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "argument"
-                        val _=case(sr_type v,sr_type arg)of
-                          (SRCaptured a,SRCaptured b)=>
-                            if Type.compare(a,b)=EQUAL then () else
-                              raise ERR "prepare_source_condition_rule"
-                                "SPEC argument type"
-                        | _=>raise ERR "prepare_source_condition_rule" "type"
-                        val _=record output [] arg
-                    in(SCEClauseNative(SRSpec arg),subst id arg b,tl pending,
-                      conditions)end
-                | EvidenceStep(SourceConjunct left)=>
-                    let val(a,b)=case binary "bool" "/\\" current of
-                          SOME d=>d | NONE=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual conjunction required"
-                    in(SCEClauseNative(SRConjunct left),
-                      if left then a else b,pending,
-                      conditions)end
-                | EvidenceStep SourceCondition=>
-                    let val(a,b)=case binary "min" "==>" current of
-                          SOME d=>d | NONE=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val _=record output [a] a
-                    in(SCEClauseNative SRCondition,b,pending,a::conditions)end
-                | EvidenceAssertion=>
-                    let val(a,b)=case binary "min" "=" current of
-                          SOME d=>d | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual truth equality required"
-                        val _=if head "bool" "T" b then () else
-                          raise ERR "prepare_source_condition_rule"
-                            "actual truth operand required"
-                        val _=record output (native_hyp conditions) current
-                        val _=record output [] (boolean boolSyntax.T)
-                    in(SCEClauseTruth,a,pending,conditions)end
-                | EvidenceAntecedentConj=>
-                    let val(ant,body)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(a,b)=case binary "bool" "/\\" ant of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual conjunction antecedent required"
-                        val held=native_hyp conditions
-                        val _=record output [a] a
-                        val _=record output [b] b
-                        val _=record output [a,b] ant
-                        val _=record output (a::b::held)body
-                        val right=implication b body
-                        val _=record output (a::held)right
-                        val result=implication a right
-                    in(SCEClauseAnteConj,result,pending,conditions)end
-                | EvidenceAntecedentDisj left=>
-                    let val(ant,body)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(a,b)=case binary "bool" "\\/" ant of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual disjunction antecedent required"
-                        val selected=if left then a else b
-                        val held=native_hyp conditions
-                        val _=record output [selected]selected
-                        val _=record output [selected]ant
-                        val _=record output (selected::held)body
-                        val result=implication selected body
-                    in(SCEClauseAnteDisj left,result,pending,conditions)end
-                | EvidenceSymmetry=>
-                    let val(a,b)=case binary "min" "=" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual equality required"
-                    in(SCEClauseSymmetry,typed_equality b a,pending,
-                      conditions)end
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val argument=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "variable"
-                        val quantified=quantify true argument ant
-                        val held=native_hyp conditions
-                        val _=record output [] argument
-                        val _=record output [quantified]quantified
-                        val _=record output [quantified]ant
-                        val _=record output (quantified::held)result
-                    in(SCEClauseConditionForall argument,
-                      implication quantified result,tl pending,conditions)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val(id,v,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "prepare_source_condition_rule"
-                            "actual existential antecedent required"
-                        val argument=case pending of a::_=>a | _=>
-                          raise ERR "prepare_source_condition_rule" "witness"
-                        val _=case #shape(sr_data argument)of SRAtom term=>
-                            if Term.is_var term then () else
-                              raise ERR "prepare_source_condition_rule"
-                                "witness must be an actual variable"
-                          | _=>raise ERR "prepare_source_condition_rule"
-                              "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
-                          else raise ERR "prepare_source_condition_rule"
-                            "existential witness type differs"
-                        val instance=subst id argument body
-                        val held=native_hyp conditions
-                        val _=record output [] argument
-                        val _=record output [instance]instance
-                        val _=record output [instance]ant
-                        val _=record output (instance::held)result
-                    in(SCEClauseAnteExists argument,
-                      implication instance result,tl pending,conditions)end
-                | EvidenceImpFalse=>
-                    let val(ant,last)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "prepare_source_condition_rule"
-                              "actual implication required"
-                        val _=if head "bool" "F" last then () else
-                          raise ERR "prepare_source_condition_rule"
-                            "actual false consequent required"
-                    in(SCEClauseNotIntro,tneg ant,pending,conditions)end
-                val hypotheses=native_hyp conditions
-                val _=record output hypotheses result
-                val _=align hypotheses result
-            in play rest pending result conditions
-              ((action,result,conditions)::instructions)end
-        | play _ _ _ _ _=raise ERR "prepare_source_condition_rule" "route"
-      val(body,conditions,instructions)=play steps args initial [] []
+      val(body,conditions,instructions)=
+        play {record=record,align=align,output=output,with_hyp=native_hyp}
+          steps args initial
       fun future_specs [] current instructions=(current,instructions)
         | future_specs(argument::rest)current instructions=
           let val(id,variable,body)=case forall current of SOME triple=>triple
                 | NONE=>raise ERR "canonical_future"
                     "actual universal block is shorter than quotation"
-              val _=if same_ty(sr_type variable,sr_type argument)then ()else
+              val _=if sce_same_ty(sr_type variable,sr_type argument)then ()else
                 raise ERR "canonical_future" "universal argument type"
               val result=subst id argument body
               val _=record output [] argument
@@ -16908,7 +15923,7 @@ struct
                 val(id,v,part)=case exists ant of SOME triple=>triple
                   | _=>raise ERR "canonical_future"
                     "actual existential antecedent required"
-                val _=if same_ty(sr_type v,sr_type argument)then ()else
+                val _=if sce_same_ty(sr_type v,sr_type argument)then ()else
                   raise ERR "canonical_future" "existential argument type"
                 val instance=subst id argument part
                 val held=native_hyp conditions
@@ -17008,17 +16023,6 @@ struct
         List.foldl(fn(ant,held)=>remove_hyp ant held)hyp ordered_ants
       val _=record template final_hyp final
       val _=align final_hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
       val _=case closing of SOME _=>() | NONE=>
         let val context=balanced rows
         in record template [] context;
@@ -17602,7 +16606,7 @@ struct
   fun execute_source_canonical_clause expected
       (plan as SCRClausePlan
         {evidence,frame,graph,caller,children,initial,
-        instructions,terminal,result,conditions,types,binders,check_type,
+        instructions,terminal,result,conditions,binders,
         used,permutative,origin,future,condition_origins,closing,...})=
     sr_fail expected (fn()=>
       (scr_clause_guard expected plan;
@@ -17615,11 +16619,6 @@ struct
            (scr_clause_guard expected plan;
             let val value=operation()
             in scr_clause_guard expected plan;value end)
-         fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-           | materialize(SRArrow(a,b))=
-               let val left=materialize a val right=materialize b
-               in guarded(fn()=>Type.mk_thy_type
-                 {Thy="min",Tyop="fun",Args=[left,right]})end
          (* The opaque ready phase completed every retained policy. *)
          val variables=List.map(fn(id,name,ty)=>
            (id,guarded(fn()=>Term.mk_var(name,ty))))binders
@@ -17751,12 +16750,7 @@ struct
                in nc_application_result capture constructor_log l r
                  (guarded(fn()=>Term.mk_comb(left,right)))end
          fun emit tree= #1(emit_result tree)
-         fun align term theorem=
-           if Portable.pointer_eq(Thm.concl theorem,term) then theorem
-           else let val bridge=guarded(fn()=>
-                      SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
-             in guarded(fn()=>SmtReplayRuleObservation.EQ_MP bridge theorem)
-             end
+         val align=sce_align(fn()=>scr_clause_guard expected plan)
          val d=sce_data expected evidence
          val _=ne_begin native_effects evidence d
          val initial=case closing of NONE=>align(emit initial)(#proof d)
@@ -17794,87 +16788,11 @@ struct
                                   {redex=third,residue=r}]law)
                          in guarded(fn()=>SmtReplayRuleObservation.MP
                            instance discharged)end end
-                   | SCRNative native=>(case native of
-                     SCEClauseNative(SRSpec arg)=>
-                     let val term=emit arg
-                     in guarded(fn()=>
-                       SmtReplayRuleObservation.SPEC term theorem)end
-                   | SCEClauseNative(SRConjunct left)=>
-                     guarded(fn()=>if left then
-                       SmtReplayRuleObservation.CONJUNCT1 theorem else
-                       SmtReplayRuleObservation.CONJUNCT2 theorem)
-                   | SCEClauseNative SRCondition=>
-                       let val condition= #1
-                             (boolSyntax.dest_imp(Thm.concl theorem))
-                           val _=ne_assumption native_effects theorem condition
-                           val premise=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.MP theorem premise)end
-                   | SCEClauseTruth=>guarded(fn()=>Drule.EQT_ELIM theorem)
-                   | SCEClauseAnteConj=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_conj ant
-                           val pa=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME a)
-                           val pb=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME b)
-                           val both=guarded(fn()=>
-                             SmtReplayRuleObservation.CONJ pa pb)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem both)
-                           val right=guarded(fn()=>
-                             SmtReplayRuleObservation.DISCH b body)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH a right)end
-                   | SCEClauseAnteDisj left=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(a,b)=boolSyntax.dest_disj ant
-                           val selected=if left then a else b
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME selected)
-                           val either=guarded(fn()=>if left then
-                             SmtReplayRuleObservation.DISJ1 assumption b
-                             else SmtReplayRuleObservation.DISJ2 a assumption)
-                           val body=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem either)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH selected body)end
-                   | SCEClauseSymmetry=>guarded(fn()=>
-                       SmtReplayRuleObservation.SYM theorem)
-                   | SCEClauseConditionForall argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val variable=emit argument
-                           val quantified=guarded(fn()=>
-                             boolSyntax.mk_forall(variable,ant))
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME quantified)
-                           val condition=guarded(fn()=>
-                             SmtReplayRuleObservation.SPEC variable assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem condition)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH quantified result)end
-                   | SCEClauseAnteExists argument=>
-                       let val(ant,_)=boolSyntax.dest_imp_only
-                             (Thm.concl theorem)
-                           val(v,body)=boolSyntax.dest_exists ant
-                           val witness=emit argument
-                           val instance=guarded(fn()=>Term.subst
-                             [{redex=v,residue=witness}]body)
-                           val assumption=guarded(fn()=>
-                             SmtReplayRuleObservation.ASSUME instance)
-                           val existential=guarded(fn()=>
-                             Thm.EXISTS(ant,witness)assumption)
-                           val result=guarded(fn()=>
-                             SmtReplayRuleObservation.MP theorem existential)
-                       in guarded(fn()=>
-                         SmtReplayRuleObservation.DISCH instance result)end
-                   | SCEClauseNotIntro=>guarded(fn()=>
-                       Thm.NOT_INTRO theorem))
+                   | SCRNative native=>sce_execute_action
+                       {guard=fn()=>scr_clause_guard expected plan,
+                        emit=emit,
+                        before_assume=ne_assumption native_effects}
+                       native theorem
                    val _=ne_after native_effects action before_proof theorem
                in play rest(case closing of NONE=>align(emit next)theorem
                     | SOME _=>theorem)end
@@ -18184,17 +17102,8 @@ struct
          "plan already admitted or consumed";
        phase:=SCAdmitting;
        W.with_step expected(fn()=>
-         let fun guarded operation=
-               (sc_plan_guard expected value;
-                let val answer=operation()
-                in sc_plan_guard expected value;answer end)
-             fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-               | materialize(SRArrow(a,b))=
-                   let val left=materialize a val right=materialize b
-                   in guarded(fn()=>Type.mk_thy_type
-                     {Thy="min",Tyop="fun",Args=[left,right]})end
-             val actual=List.map materialize types
-             val _=List.app(fn ty=>guarded(fn()=>check_type ty))actual
+         let val _=sce_check_policies
+               (fn()=>sc_plan_guard expected value)check_type types
              val _=sc_plan_guard expected value
              val _=phase:=SCAdmitted
          in SCReady value end)))
@@ -18225,8 +17134,7 @@ struct
                   "argument already bound"else ();
                 child:=SOME argument)
              val _=ListPair.app bind(future,arguments)
-             val _=List.app(fn held=>
-               sce_future_guard graph scope(SOME held))future
+             val _=List.app(sce_future_guard graph scope)future
              val _=sc_plan_guard expected value
          in ()end);
        let val(evidence,added)=execute_source_canonical_clause expected raw
@@ -19676,17 +18584,8 @@ struct
          "already admitted or consumed";
        phase:=SCAdmitting;
        W.with_step expected(fn()=>
-         let fun guarded action=
-               (source_assertion_guard expected value;
-                let val answer=action()
-                in source_assertion_guard expected value;answer end)
-             fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-               | materialize(SRArrow(a,b))=
-                   let val left=materialize a val right=materialize b
-                   in guarded(fn()=>Type.mk_thy_type
-                     {Thy="min",Tyop="fun",Args=[left,right]})end
-             val actual=List.map materialize types
-             val _=List.app(fn ty=>guarded(fn()=>check_type ty))actual
+         let val _=sce_check_policies
+               (fn()=>source_assertion_guard expected value)check_type types
          in source_assertion_guard expected value end);
        phase:=SCAdmitted;source_assertion_guard expected value;
        SourceAssertionReady value))

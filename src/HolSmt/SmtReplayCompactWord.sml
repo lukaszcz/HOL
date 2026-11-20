@@ -304,10 +304,7 @@ fun prove_schema bit field_law word_law source =
         val _=actual:=SOME theorem
        in theorem end
     val generic=Profile.profile_with_exn_name "program/atomic-conversion"
-      (fn ()=>field_law key make
-        handle Feedback.HOL_ERR detail=>
-          if SmtResource.is_resource_gate detail then
-            raise Feedback.HOL_ERR detail else make ()) ()
+      (fn ()=>SmtResource.or_else (fn ()=>field_law key make) make) ()
     val reverse=List.map (fn {redex,residue}=>residue |-> redex) sigma
    in SmtSkeletonProve.nodewise_exact_left input (Thm.INST reverse generic) end
   fun convert input=case Redblackmap.peek (!memo,id input) of

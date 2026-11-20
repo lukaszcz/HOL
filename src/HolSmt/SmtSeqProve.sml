@@ -1279,33 +1279,27 @@ struct
       let
         val _ = SmtResource.check_resource_goal "Sequence" "seq" t
         val _ = admit t
-        fun next attempt fallback =
-          attempt ()
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else
-              fallback ()
       in
         (* Recursive replacement has its own checked driver. Do not first
            spend the same Work on generic unit/append rungs that lack its
            defining laws, only to rediscover the same suffixes there. *)
-        next (fn () =>
+        SmtResource.or_else (fn () =>
           if mentions (named "HolSmt" ["smt_seq_replace_all"]) t then
             ground_replace_all_prove t
           else raise ERR "seq_prove" "not a replacement") (fn () =>
-        next (fn () => nth_unit_prove t) (fn () =>
-        next
+        SmtResource.or_else (fn () => nth_unit_prove t) (fn () =>
+        SmtResource.or_else
           (fn () => Profile.profile_with_exn_name
             "seq(0)(nth-boundary)" nth_boundary_prove t)
           (fn () =>
-        next (fn () => nth_decomposition_prove t) (fn () =>
-        next (fn () => concat_length_prove t) (fn () =>
-        next (fn () => unit_empty_prove t) (fn () =>
-        next (fn () => access_prove t) (fn () =>
-        next (fn () => prefix_suffix_contains_prove t) (fn () =>
-        next (fn () => indexof_replace_prove t) (fn () =>
-        next (fn () => update_reverse_prove t)
+        SmtResource.or_else (fn () => nth_decomposition_prove t) (fn () =>
+        SmtResource.or_else (fn () => concat_length_prove t) (fn () =>
+        SmtResource.or_else (fn () => unit_empty_prove t) (fn () =>
+        SmtResource.or_else (fn () => access_prove t) (fn () =>
+        SmtResource.or_else
+          (fn () => prefix_suffix_contains_prove t) (fn () =>
+        SmtResource.or_else (fn () => indexof_replace_prove t) (fn () =>
+        SmtResource.or_else (fn () => update_reverse_prove t)
           (fn () => unsupported t))))))))))
       end) ()
   in

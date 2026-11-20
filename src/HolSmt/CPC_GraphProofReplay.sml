@@ -395,7 +395,7 @@ struct
         | argument _ = raise ERR "bounded_rule"
             "non-term argument needs a specialized bounded rule adapter"
       fun binder_congruence (step : Q.graph_rule_step) premises =
-        #replay_handler (#rule step) = "cong" andalso
+        #replay_handler (#rule step) = CPC_Proof.HCong andalso
         (case #conclusion step of NONE => false | SOME conclusion =>
           SmtReplayRegLanRules.applicable graph (#node conclusion)
             (map node premises) andalso
@@ -420,13 +420,17 @@ struct
           val object_arguments =
             List.concat (List.map argument_terms (#args step))
           val structured = Q.graph_structured_rule_arguments (#rule step)
-          val arithmetic_rule = String.isPrefix "arith"
-              (#replay_handler (#rule step)) orelse
+          val rule_handler = #replay_handler (#rule step)
+          fun handled handlers = Lib.mem rule_handler handlers
+          val sequence_string_handlers =
+            [CPC_Proof.HSeqRewrite,CPC_Proof.HString,
+             CPC_Proof.HRareInventory,CPC_Proof.HAciNorm,
+             CPC_Proof.HRewrite,CPC_Proof.HTrust]
+          val arithmetic_rule =
+            CPC_SharedReplayPlan.arithmetic_handler rule_handler orelse
             String.isPrefix "arith-" (#name (#rule step)) orelse
-            String.isPrefix "int_tight_" (#replay_handler (#rule step)) orelse
-            (List.exists (fn handler =>
-               handler = #replay_handler (#rule step))
-               ["eq_resolve","modus_ponens","evaluate","trans"] andalso
+            (handled [CPC_Proof.HEqResolve,CPC_Proof.HModusPonens,
+                      CPC_Proof.HEvaluate,CPC_Proof.HTrans] andalso
              SmtReplayArithmetic.has_numeric_operand graph scope
                {inputs=List.map node premises @
                   List.map (#node : F.term -> G.node) object_arguments @
@@ -439,12 +443,13 @@ struct
              graph variables either. Non-Seq TRUST retains its deferred
              fallback; native Seq TRUST needs the whole-operand boundary. *)
           val structured_rule =
-            List.exists (fn handler => handler = #replay_handler (#rule step))
-              ["array","arrays_select_const","arrays_read_over_write",
-               "datatype","datatype_eq","dt_split"] orelse
+            handled [CPC_Proof.HArray,CPC_Proof.HArraysSelectConst,
+                     CPC_Proof.HArraysReadOverWrite,CPC_Proof.HDatatype,
+                     CPC_Proof.HDatatypeEq,CPC_Proof.HDtSplit] orelse
             String.isPrefix "array-" (#name (#rule step)) orelse
-            (List.exists (fn handler => handler = #replay_handler (#rule step))
-               ["eq_resolve","modus_ponens","evaluate","trans","eq_refl"]
+            (handled [CPC_Proof.HEqResolve,CPC_Proof.HModusPonens,
+                      CPC_Proof.HEvaluate,CPC_Proof.HTrans,
+                      CPC_Proof.HEqRefl]
              andalso SmtReplayStructured.has_operand graph scope
                {inputs=List.map node premises @
                   List.map (#node : F.term -> G.node) object_arguments @
@@ -456,18 +461,15 @@ struct
              unknown binder or an incidental Seq premise of a non-Seq
              (e.g. FP) obligation. Other handlers retain unknown dispatch. *)
           fun sequence_inputs () =
-            if #replay_handler (#rule step) = "trust" then
+            if rule_handler = CPC_Proof.HTrust then
               List.map (#node : F.term -> G.node) object_arguments
             else List.map node premises @
               List.map (#node : F.term -> G.node) object_arguments @
               (case #conclusion step of NONE => []
                | SOME value => [#node value])
           val sequence_rule =
-            List.exists (fn handler => handler = #replay_handler (#rule step))
-              ["seq_rewrite","seq_rev_rev","seq_at_elim",
-               "str_contains_refl","str_substr_full_eq","string",
-               "rare_inventory","aci_norm","rewrite","trust"] andalso
-            (if #replay_handler (#rule step) = "trust" then
+            handled sequence_string_handlers andalso
+            (if rule_handler = CPC_Proof.HTrust then
                SmtReplayStructured.has_known_sequence_operand
              else SmtReplayStructured.has_sequence_operand) graph scope
               {inputs=sequence_inputs (),
@@ -479,30 +481,27 @@ struct
              needs positive family evidence in its target, not an incidental
              premise or an unknown binder of another family. *)
           val string_rule =
-            List.exists (fn handler => handler = #replay_handler (#rule step))
-              ["seq_rewrite","str_contains_refl","str_substr_full_eq",
-               "string","rare_inventory","aci_norm","rewrite","trust"]
-            andalso
-            (if #replay_handler (#rule step) = "trust" then
+            handled sequence_string_handlers andalso
+            (if rule_handler = CPC_Proof.HTrust then
                SmtReplayStructured.has_known_string_operand
              else SmtReplayStructured.has_string_operand) graph scope
               {inputs=sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
           val string_rule = string_rule andalso
-            not (#replay_handler (#rule step) = "trust" andalso
+            not (rule_handler = CPC_Proof.HTrust andalso
               SmtReplayStructured.has_fp_trust_operand graph scope
                 {inputs=sequence_inputs (),
                  observe=fn () => Option.app
                    (fn work => W.spend_guard_policy work 1) owned_work})
-          val bag_rule = List.exists
-            (fn handler => handler = #replay_handler (#rule step))
-              ["trust","rewrite","rare_inventory","aci_norm"] andalso
+          val bag_rule = handled
+              [CPC_Proof.HTrust,CPC_Proof.HRewrite,
+               CPC_Proof.HRareInventory,CPC_Proof.HAciNorm] andalso
             SmtReplayStructured.has_known_bag_operand graph scope
               {inputs=List.map node premises @ sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
-            andalso not (#replay_handler (#rule step) = "trust" andalso
+            andalso not (rule_handler = CPC_Proof.HTrust andalso
               SmtReplayStructured.has_fp_trust_operand graph scope
                 {inputs=sequence_inputs (),
                  observe=fn () => Option.app
@@ -646,7 +645,7 @@ struct
                   (* A one-node scrutinee can generate an arbitrarily wide
                      declaration-dependent endpoint. Pay/admit it with this
                      invocation's cap BEFORE entering the ordinary worker. *)
-                  val _ = if #replay_handler (#rule step) = "dt_split" then
+                  val _ = if rule_handler = CPC_Proof.HDtSplit then
                     (case args of [value] => ignore
                        (SmtDatatypeProve.datatype_split_target admit
                          (#term value))
@@ -732,7 +731,7 @@ struct
                 in (theorem,graph_fact graph scope (#node imported)
                     (#provenance located)) end
           val retained = case #conclusion step of SOME value => SOME value
-            | NONE => if #replay_handler (#rule step) = "trust" then
+            | NONE => if rule_handler = CPC_Proof.HTrust then
                 (case #args step of [Q.GraphTerm value] => SOME value
                   | _ => NONE) else NONE
           val (theorem,current) = case retained of NONE => ordinary_import ()
@@ -766,7 +765,7 @@ struct
           fun deferred hypothesis =
             let
               val target = G.representative graph (#node current)
-              val _ = if #replay_handler (#rule step) = "trust" then () else
+              val _ = if rule_handler = CPC_Proof.HTrust then () else
                 raise ERR "bounded_rule"
                   "local reconstruction retained hypotheses"
               val argument = case #args step of [Q.GraphTerm term] => term
@@ -1152,7 +1151,7 @@ struct
             | NONE => case graph_terms (#args step) of
                 [target] => located_fact graph scope target
               | _ =>
-                  if #replay_handler (#rule step) = "factoring" then
+                  if #replay_handler (#rule step) = CPC_Proof.HFactoring then
                     let
                       fun unique [] _ = []
                         | unique (literal::rest) seen =
@@ -1258,6 +1257,8 @@ struct
       fun simple (step : Q.graph_rule_step) premises =
         let
           val handler = #replay_handler (#rule step)
+          (* Rule text for the shared programmes' diagnostics. *)
+          val handler_text = CPC_Proof.handler_name handler
           val arguments = term_arguments (#args step)
           val premise_nodes = List.map node premises
           fun current node provenance = graph_fact graph scope node provenance
@@ -1386,8 +1387,18 @@ struct
               | SOME equation => case R.equality graph equation of
                   SOME (left,right) => prepare equation left right
                 | NONE => NONE end)
-          val inferred = case CPC_SharedReplayPlan.simple_boolean
-              (op =) handler of
+          fun clausal rule = CPC_SharedReplayPlan.clausal_elim
+            {negated=negated graph,one=one,operands=operands graph,
+             child_provenance=child_provenance,
+             negation_provenance=negation_provenance,
+             one_provenance=one_provenance,pair=pair,
+             same_constant=same_constant graph,atom=atom,
+             current=current,negative=negative,positive=positive,
+             finish=fn(node,provenance)=>current node provenance,
+             disjoin=disjoin,error=ERR}
+            (CPC_SharedReplayPlan.clausal_descriptor rule) handler_text
+          val inferred = case CPC_SharedReplayPlan.simple_boolean_of
+              handler of
               SOME CPC_SharedReplayPlan.SimpleAndIntro =>
                 CPC_SharedReplayPlan.and_intro
                   {conjunction=conjunction graph scope,
@@ -1413,78 +1424,6 @@ struct
                    selected=selected,index=index,
                    negate=negate graph scope,current=current,error=ERR}
                   premises
-            | SOME CPC_SharedReplayPlan.SimpleNotImpliesElim1 =>
-                CPC_SharedReplayPlan.not_implies_elim1
-                  {negated=negated graph,one=one,operands=operands graph,
-                   child_provenance=child_provenance,
-                   negation_provenance=negation_provenance,
-                   one_provenance=one_provenance,current=current,error=ERR}
-                  handler
-            | SOME CPC_SharedReplayPlan.SimpleNotImpliesElim2 =>
-                CPC_SharedReplayPlan.not_implies_elim2
-                  {negated=negated graph,one=one,operands=operands graph,
-                   child_provenance=child_provenance,
-                   negation_provenance=negation_provenance,
-                   one_provenance=one_provenance,negative=negative,
-                   finish=fn(node,provenance)=>current node provenance,
-                   error=ERR} handler
-            | SOME CPC_SharedReplayPlan.SimpleImpliesElim =>
-                CPC_SharedReplayPlan.implies_elim
-                  {operands=operands graph,one=one,
-                   child_provenance=child_provenance,
-                   one_provenance=one_provenance,negative=negative,
-                   positive=positive,disjoin=disjoin}
-            | SOME CPC_SharedReplayPlan.SimpleEquivElim1 =>
-                CPC_SharedReplayPlan.equiv_elim1
-                  {one=one,pair=pair,one_provenance=one_provenance,
-                   negative=negative,positive=positive,disjoin=disjoin}
-            | SOME CPC_SharedReplayPlan.SimpleEquivElim2 =>
-                CPC_SharedReplayPlan.equiv_elim2
-                  {one=one,pair=pair,one_provenance=one_provenance,
-                   negative=negative,positive=positive,disjoin=disjoin}
-            | SOME CPC_SharedReplayPlan.SimpleNotEquivElim1 =>
-                CPC_SharedReplayPlan.not_equiv_elim1
-                  {one=one,pair=pair,one_provenance=one_provenance,
-                   negative=negative,positive=positive,disjoin=disjoin,
-                   negated=negated graph,
-                   negation_provenance=negation_provenance,error=ERR}
-                  handler
-            | SOME CPC_SharedReplayPlan.SimpleNotEquivElim2 =>
-                CPC_SharedReplayPlan.not_equiv_elim2
-                  {one=one,pair=pair,one_provenance=one_provenance,
-                   negative=negative,positive=positive,disjoin=disjoin,
-                   negated=negated graph,
-                   negation_provenance=negation_provenance,error=ERR}
-                  handler
-            | SOME CPC_SharedReplayPlan.SimpleIteElim1 =>
-                CPC_SharedReplayPlan.ite_elim1
-                  {same_constant=same_constant graph,one=one,atom=atom,
-                   operands=operands graph,child_provenance=child_provenance,
-                   one_provenance=one_provenance,negative=negative,
-                   positive=positive,disjoin=disjoin}
-            | SOME CPC_SharedReplayPlan.SimpleIteElim2 =>
-                CPC_SharedReplayPlan.ite_elim2
-                  {same_constant=same_constant graph,one=one,atom=atom,
-                   operands=operands graph,child_provenance=child_provenance,
-                   one_provenance=one_provenance,negative=negative,
-                   positive=positive,disjoin=disjoin}
-            | SOME CPC_SharedReplayPlan.SimpleNotIteElim1 =>
-                CPC_SharedReplayPlan.not_ite_elim1
-                  {same_constant=same_constant graph,one=one,atom=atom,
-                   negated=negated graph,operands=operands graph,
-                   child_provenance=child_provenance,
-                   one_provenance=one_provenance,
-                   negation_provenance=negation_provenance,
-                   negative=negative,disjoin=disjoin,error=ERR} handler
-            | SOME CPC_SharedReplayPlan.SimpleNotIteElim2 =>
-                CPC_SharedReplayPlan.not_ite_elim2
-                  {same_constant=same_constant graph,one=one,atom=atom,
-                   negated=negated graph,operands=operands graph,
-                   child_provenance=child_provenance,
-                   one_provenance=one_provenance,
-                   negation_provenance=negation_provenance,
-                   negative=negative,positive=positive,disjoin=disjoin,
-                   error=ERR} handler
             | SOME CPC_SharedReplayPlan.SimpleNotAnd =>
                 let
                   fun produced_entries work body =
@@ -1519,8 +1458,10 @@ struct
                    produced_entries=produced_entries,map=List.map,
                    negative=negative,disjoin=disjoin,error=ERR "not_and"}
                 end
-            | NONE => (case CPC_SharedReplayPlan.simple_equality
-                (op =) handler of
+            | SOME (CPC_SharedReplayPlan.SimpleClausal rule) =>
+                clausal rule
+            | NONE => (case CPC_SharedReplayPlan.simple_equality_of
+                handler of
               SOME CPC_SharedReplayPlan.SimpleRefl =>
                 CPC_SharedReplayPlan.reflexive
                 {require_one=require_one,relation=relation} arguments
@@ -1701,18 +1642,18 @@ struct
             | SOME CPC_SharedReplayPlan.SimpleContra =>
                 atom (G.constant graph scope boolSyntax.F)
             | NONE => (case handler of
-              "false_intro" => CPC_SharedReplayPlan.false_intro
+              CPC_Proof.HFalseIntro => CPC_SharedReplayPlan.false_intro
                 negated graph one Lib.I G.constant graph scope
                 negation_provenance one_provenance relation_with ERR
-            | "false_elim" => CPC_SharedReplayPlan.false_elim pair one
+            | CPC_Proof.HFalseElim => CPC_SharedReplayPlan.false_elim pair one
                 equality_provenance one_provenance same_constant graph
                 negative current ERR
-            | "true_intro" => CPC_SharedReplayPlan.true_intro one Lib.I
+            | CPC_Proof.HTrueIntro => CPC_SharedReplayPlan.true_intro one Lib.I
                 G.constant graph scope one_provenance relation_with
-            | "true_elim" => CPC_SharedReplayPlan.true_elim pair one
+            | CPC_Proof.HTrueElim => CPC_SharedReplayPlan.true_elim pair one
                 equality_provenance one_provenance same_constant graph
                 Lib.I current ERR
-            | "process_scope" =>
+            | CPC_Proof.HProcessScope =>
                 let
                   val produced = case (owned_work,#args step,premises) of
                       (SOME work,[Q.GraphTerm body],[incoming]) =>
@@ -1770,11 +1711,13 @@ struct
               | NONE =>
                 raise ERR "discover" "rule needs bounded output inference"))
           val inferred = exact_target (#conclusion step) inferred
-          val mode = case handler of "refl" => Equality "refl"
-            | "symm" => (case !owned_symmetry of NONE => Equality "symm"
+          val mode = case handler of CPC_Proof.HRefl => Equality "refl"
+            | CPC_Proof.HSymm => (case !owned_symmetry of
+                  NONE => Equality "symm"
                 | SOME conversion => OwnedNegatedSymmetry conversion)
-            | "trans" => Transitivity
-            | "cong" => Equality "cong" | "ho_cong" => Equality "cong"
+            | CPC_Proof.HTrans => Transitivity
+            | CPC_Proof.HCong => Equality "cong"
+            | CPC_Proof.HHoCong => Equality "cong"
             | _ => Boolean
         in (inferred,mode) end
       (* Fixed arithmetic spellings; total heads are never unfolded. *)
@@ -2013,7 +1956,8 @@ struct
           fun admit_argument_types () = List.app (fn value : F.term =>
             ignore (G.type_of graph (#node value)))
             (graph_terms (#args step))
-          val reserved = if pop orelse handler <> "trust" then NONE else
+          val reserved =
+            if pop orelse handler <> CPC_Proof.HTrust then NONE else
             case native_reservation of NONE => NONE
               | SOME reserve => reserve {serial = !counter,step = step}
           val (current,route) = case reserved of SOME origin =>
@@ -2024,7 +1968,7 @@ struct
                     {serial = !counter,target = #node target}
               in (located_fact graph scope target,NativeObligation origin) end
             | NONE => (admit_argument_types ();if pop then
-              if handler <> "scope" then raise ERR "scope"
+              if handler <> CPC_Proof.HScope then raise ERR "scope"
                 "step-pop does not use the registered scope rule"
               else case !pushes of
                   [] => raise ERR "scope" "scope pop has no matching push"
@@ -2040,36 +1984,34 @@ struct
                       val _ = pushes := rest
                       val _ = known := outer
                     in (current,Scope {hypothesis = hypothesis,body = body}) end
-            else case CPC_SharedReplayPlan.native_route
+            else case CPC_SharedReplayPlan.route_of
                 {pop = false,handler = handler} of
               CPC_SharedReplayPlan.Resolved =>
               if #name (#rule step) = "chain_m_resolution" then
                 recorded_chain_resolution step premises
               else resolution step premises
             | CPC_SharedReplayPlan.Converted =>
-              (cnf step premises handle Feedback.HOL_ERR error =>
-                if SmtResource.is_resource_gate error then
-                  raise Feedback.HOL_ERR error else bounded step premises)
+              SmtResource.or_else (fn () => cnf step premises)
+                (fn () => bounded step premises)
             | CPC_SharedReplayPlan.Aligned => align step premises
             | CPC_SharedReplayPlan.Simple =>
               let
                 fun ordinary () =
-                  (simple step premises handle Feedback.HOL_ERR error =>
-                    if SmtResource.is_resource_gate error then
-                      raise Feedback.HOL_ERR error else
-                      (case (owned_work,handler) of (SOME work,"eq_resolve") =>
-                         (case alias_eq_resolve work step premises of
-                            SOME selected => selected
-                          | NONE => bounded step premises)
-                       | (SOME work,"trans") =>
-                           (case alias_transitivity work step premises of
-                              SOME selected => selected
-                            | NONE => bounded step premises)
-                       | _ => bounded step premises))
+                  SmtResource.or_else (fn () => simple step premises)
+                    (fn () =>
+                      case (owned_work,handler) of
+                        (SOME work,CPC_Proof.HEqResolve) =>
+                          (case alias_eq_resolve work step premises of
+                             SOME selected => selected
+                           | NONE => bounded step premises)
+                      | (SOME work,CPC_Proof.HTrans) =>
+                          (case alias_transitivity work step premises of
+                             SOME selected => selected
+                           | NONE => bounded step premises)
+                      | _ => bounded step premises)
               in if binder_congruence step premises then
-                  (bounded step premises handle Feedback.HOL_ERR error =>
-                    if SmtResource.is_resource_gate error then
-                      raise Feedback.HOL_ERR error else ordinary ())
+                  SmtResource.or_else (fn () => bounded step premises)
+                    ordinary
                 else ordinary () end
             | _ => bounded step premises)
         in make (#id step) current premises route end

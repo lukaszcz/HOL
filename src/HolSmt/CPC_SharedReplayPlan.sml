@@ -41,74 +41,255 @@ struct
   fun triple_of _ [a,b,c] = (a,b,c)
     | triple_of rule _ = raise ERR rule "unexpected operand arity"
   structure Q=CPC_ProofParser
+  structure P=CPC_Proof
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
-  val boolean_handlers =
-        ["bool","cnf","eq_resolve","contra","false_intro","false_elim",
-         "true_intro","true_elim","and_intro","and_elim","not_or_elim",
-         "not_not_elim","not_implies_elim1","not_implies_elim2",
-         "implies_elim","not_and","equiv_elim1","equiv_elim2",
-         "not_equiv_elim1","not_equiv_elim2","xor_elim1","xor_elim2",
-         "not_xor_elim1","not_xor_elim2","ite_elim1","ite_elim2",
-         "not_ite_elim1","not_ite_elim2","process_scope"]
-  fun route {equal,visit,copies} {pop,handler} =
-    let fun any []=false
-          | any (allowed::rest)=
-              (visit();equal(allowed,handler) orelse any rest)
-    in if pop then Scoped
-      else if equal(handler,"resolution") then Resolved
-      else if equal(handler,"cnf") then Converted
-      else if equal(handler,"factoring") orelse equal(handler,"reordering")
-        then Aligned
-      else if (copies 5;
-          any (["refl","symm","trans","cong","ho_cong"] @
-            boolean_handlers)) then Simple
-      else Bounded
-    end
-  val native_route=route {equal=op =,visit=fn()=>(),copies=fn _=>()}
+  datatype clausal_rule = NotImpliesElim1 | NotImpliesElim2 | ImpliesElim
+    | EquivElim1 | EquivElim2 | NotEquivElim1 | NotEquivElim2
+    | IteElim1 | IteElim2 | NotIteElim1 | NotIteElim2
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim
-    | SimpleNotImpliesElim1
-    | SimpleNotImpliesElim2
-    | SimpleImpliesElim
-    | SimpleEquivElim1
-    | SimpleEquivElim2
-    | SimpleNotEquivElim1
-    | SimpleNotEquivElim2
-    | SimpleIteElim1
-    | SimpleIteElim2
-    | SimpleNotIteElim1
-    | SimpleNotIteElim2
+    | SimpleClausal of clausal_rule
     | SimpleNotAnd
-  fun simple_boolean equal handler =
-    if equal(handler,"and_intro") then SOME SimpleAndIntro
-    else if equal(handler,"and_elim") then SOME SimpleAndElim
-    else if equal(handler,"not_not_elim") then SOME SimpleNotNotElim
-    else if equal(handler,"not_or_elim")then SOME SimpleNotOrElim
-    else if equal(handler,"not_implies_elim1")then SOME SimpleNotImpliesElim1
-    else if equal(handler,"not_implies_elim2")then SOME SimpleNotImpliesElim2
-    else if equal(handler,"implies_elim")then SOME SimpleImpliesElim
-    else if equal(handler,"equiv_elim1")then SOME SimpleEquivElim1
-    else if equal(handler,"equiv_elim2")then SOME SimpleEquivElim2
-    else if equal(handler,"not_equiv_elim1")then SOME SimpleNotEquivElim1
-    else if equal(handler,"not_equiv_elim2")then SOME SimpleNotEquivElim2
-    else if equal(handler,"ite_elim1")then SOME SimpleIteElim1
-    else if equal(handler,"ite_elim2")then SOME SimpleIteElim2
-    else if equal(handler,"not_ite_elim1")then SOME SimpleNotIteElim1
-    else if equal(handler,"not_ite_elim2")then SOME SimpleNotIteElim2
-    else if equal(handler,"not_and")then SOME SimpleNotAnd
-    else NONE
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
-  fun simple_equality equal handler =
-    if equal(handler,"refl")then SOME SimpleRefl
-    else if equal(handler,"symm")then SOME SimpleSymm
-    else if equal(handler,"trans")then SOME SimpleTrans
-    else if equal(handler,"cong")then SOME SimpleCong
-    else if equal(handler,"ho_cong")then SOME SimpleHoCong
-    else if equal(handler,"eq_resolve")then SOME SimpleEqResolve
-    else if equal(handler,"contra")then SOME SimpleContra
-    else NONE
+  (* Every registered handler is classified exactly once below, so a
+     new constructor must pick its family. *)
+  datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim
+    | TrueIntro | TrueElim | ProcessScope
+  datatype simple_class = SimpleBoolean of simple_boolean
+    | SimpleEquality of simple_equality | SimpleTruth of truth_family
+    | NotSimple
+  fun clausal_handler rule =
+    case rule of
+      NotImpliesElim1 => P.HNotImpliesElim1
+    | NotImpliesElim2 => P.HNotImpliesElim2
+    | ImpliesElim => P.HImpliesElim
+    | EquivElim1 => P.HEquivElim1
+    | EquivElim2 => P.HEquivElim2
+    | NotEquivElim1 => P.HNotEquivElim1
+    | NotEquivElim2 => P.HNotEquivElim2
+    | IteElim1 => P.HIteElim1
+    | IteElim2 => P.HIteElim2
+    | NotIteElim1 => P.HNotIteElim1
+    | NotIteElim2 => P.HNotIteElim2
+  fun simple_class handler =
+    case handler of
+      P.HAndIntro => SimpleBoolean SimpleAndIntro
+    | P.HAndElim => SimpleBoolean SimpleAndElim
+    | P.HNotNotElim => SimpleBoolean SimpleNotNotElim
+    | P.HNotOrElim => SimpleBoolean SimpleNotOrElim
+    | P.HNotImpliesElim1 => SimpleBoolean (SimpleClausal NotImpliesElim1)
+    | P.HNotImpliesElim2 => SimpleBoolean (SimpleClausal NotImpliesElim2)
+    | P.HImpliesElim => SimpleBoolean (SimpleClausal ImpliesElim)
+    | P.HEquivElim1 => SimpleBoolean (SimpleClausal EquivElim1)
+    | P.HEquivElim2 => SimpleBoolean (SimpleClausal EquivElim2)
+    | P.HNotEquivElim1 => SimpleBoolean (SimpleClausal NotEquivElim1)
+    | P.HNotEquivElim2 => SimpleBoolean (SimpleClausal NotEquivElim2)
+    | P.HIteElim1 => SimpleBoolean (SimpleClausal IteElim1)
+    | P.HIteElim2 => SimpleBoolean (SimpleClausal IteElim2)
+    | P.HNotIteElim1 => SimpleBoolean (SimpleClausal NotIteElim1)
+    | P.HNotIteElim2 => SimpleBoolean (SimpleClausal NotIteElim2)
+    | P.HNotAnd => SimpleBoolean SimpleNotAnd
+    | P.HRefl => SimpleEquality SimpleRefl
+    | P.HSymm => SimpleEquality SimpleSymm
+    | P.HTrans => SimpleEquality SimpleTrans
+    | P.HCong => SimpleEquality SimpleCong
+    | P.HHoCong => SimpleEquality SimpleHoCong
+    | P.HEqResolve => SimpleEquality SimpleEqResolve
+    | P.HContra => SimpleEquality SimpleContra
+    | P.HBool => SimpleTruth DeclaredBoolean
+    | P.HFalseIntro => SimpleTruth FalseIntro
+    | P.HFalseElim => SimpleTruth FalseElim
+    | P.HTrueIntro => SimpleTruth TrueIntro
+    | P.HTrueElim => SimpleTruth TrueElim
+    | P.HProcessScope => SimpleTruth ProcessScope
+    | P.HResolution => NotSimple
+    | P.HCnf => NotSimple (* matched before this by [route_of] *)
+    | P.HFactoring => NotSimple
+    | P.HReordering => NotSimple
+    | P.HAciNorm => NotSimple
+    | P.HAlphaEquiv => NotSimple
+    | P.HArith => NotSimple
+    | P.HArithAbsEq => NotSimple
+    | P.HArithAbsIntGt => NotSimple
+    | P.HArithMaxGeq1 => NotSimple
+    | P.HArithMaxGeq2 => NotSimple
+    | P.HArithMinLt2 => NotSimple
+    | P.HArithMultAbsComparison => NotSimple
+    | P.HArithMultNeg => NotSimple
+    | P.HArithMultPos => NotSimple
+    | P.HArithMultSign => NotSimple
+    | P.HArithReduction => NotSimple
+    | P.HArithRel => NotSimple
+    | P.HArithRule => NotSimple
+    | P.HArithSumUb => NotSimple
+    | P.HArithTrichotomy => NotSimple
+    | P.HArray => NotSimple
+    | P.HArraysExt => NotSimple
+    | P.HArraysReadOverWrite => NotSimple
+    | P.HArraysSelectConst => NotSimple
+    | P.HBetaReduce => NotSimple
+    | P.HBvAshrByConst0 => NotSimple
+    | P.HBvBitwiseSlicing => NotSimple
+    | P.HBvLshrByConst0 => NotSimple
+    | P.HBvNotIdemp => NotSimple
+    | P.HBvPolyNorm => NotSimple
+    | P.HBvPolyNormEq => NotSimple
+    | P.HBvShlByConst0 => NotSimple
+    | P.HBvShlByConst2 => NotSimple
+    | P.HBvWordRewrite => NotSimple
+    | P.HBvXorDuplicate => NotSimple
+    | P.HBvZeroExtendEliminate0 => NotSimple
+    | P.HDatatype => NotSimple
+    | P.HDatatypeEq => NotSimple
+    | P.HDtSplit => NotSimple
+    | P.HEqRefl => NotSimple
+    | P.HEvaluate => NotSimple
+    | P.HExistsElim => NotSimple
+    | P.HInstantiate => NotSimple
+    | P.HIntTightLb => NotSimple
+    | P.HIntTightUb => NotSimple
+    | P.HIteEq => NotSimple
+    | P.HIteFalseCond => NotSimple
+    | P.HIteNegBranch => NotSimple
+    | P.HIteNotCond => NotSimple
+    | P.HIteThenFalse => NotSimple
+    | P.HIteThenTrue => NotSimple
+    | P.HIteTrueCond => NotSimple
+    | P.HLambdaElim => NotSimple
+    | P.HModusPonens => NotSimple
+    | P.HQuantDtSplit => NotSimple
+    | P.HQuantRewrite => NotSimple
+    | P.HQuantUnusedVars => NotSimple
+    | P.HRareInventory => NotSimple
+    | P.HRewrite => NotSimple
+    | P.HScope => NotSimple
+    | P.HSeqRewrite => NotSimple
+    | P.HSets => NotSimple
+    | P.HSetsExt => NotSimple
+    | P.HSetsRewrite => NotSimple
+    | P.HSkolemize => NotSimple
+    | P.HString => NotSimple
+    | P.HTrust => NotSimple
+  fun route_of {pop,handler} =
+    if pop then Scoped else
+    case handler of
+      P.HResolution => Resolved
+    | P.HCnf => Converted
+    | P.HFactoring => Aligned
+    | P.HReordering => Aligned
+    | _ => (case simple_class handler of NotSimple => Bounded
+              | _ => Simple)
+  fun simple_boolean_of handler =
+    case simple_class handler of SimpleBoolean family => SOME family
+      | _ => NONE
+  fun simple_equality_of handler =
+    case simple_class handler of SimpleEquality family => SOME family
+      | _ => NONE
+  fun truth_family_of handler =
+    case simple_class handler of SimpleTruth family => SOME family
+      | _ => NONE
+  (* The handlers whose name starts with "arith" or "int_tight_". *)
+  fun arithmetic_handler handler =
+    case handler of
+      P.HAciNorm => false
+    | P.HAlphaEquiv => false
+    | P.HAndElim => false
+    | P.HAndIntro => false
+    | P.HArith => true
+    | P.HArithAbsEq => true
+    | P.HArithAbsIntGt => true
+    | P.HArithMaxGeq1 => true
+    | P.HArithMaxGeq2 => true
+    | P.HArithMinLt2 => true
+    | P.HArithMultAbsComparison => true
+    | P.HArithMultNeg => true
+    | P.HArithMultPos => true
+    | P.HArithMultSign => true
+    | P.HArithReduction => true
+    | P.HArithRel => true
+    | P.HArithRule => true
+    | P.HArithSumUb => true
+    | P.HArithTrichotomy => true
+    | P.HArray => false
+    | P.HArraysExt => false
+    | P.HArraysReadOverWrite => false
+    | P.HArraysSelectConst => false
+    | P.HBetaReduce => false
+    | P.HBool => false
+    | P.HBvAshrByConst0 => false
+    | P.HBvBitwiseSlicing => false
+    | P.HBvLshrByConst0 => false
+    | P.HBvNotIdemp => false
+    | P.HBvPolyNorm => false
+    | P.HBvPolyNormEq => false
+    | P.HBvShlByConst0 => false
+    | P.HBvShlByConst2 => false
+    | P.HBvWordRewrite => false
+    | P.HBvXorDuplicate => false
+    | P.HBvZeroExtendEliminate0 => false
+    | P.HCnf => false
+    | P.HCong => false
+    | P.HContra => false
+    | P.HDatatype => false
+    | P.HDatatypeEq => false
+    | P.HDtSplit => false
+    | P.HEqRefl => false
+    | P.HEqResolve => false
+    | P.HEquivElim1 => false
+    | P.HEquivElim2 => false
+    | P.HEvaluate => false
+    | P.HExistsElim => false
+    | P.HFactoring => false
+    | P.HFalseElim => false
+    | P.HFalseIntro => false
+    | P.HHoCong => false
+    | P.HImpliesElim => false
+    | P.HInstantiate => false
+    | P.HIntTightLb => true
+    | P.HIntTightUb => true
+    | P.HIteElim1 => false
+    | P.HIteElim2 => false
+    | P.HIteEq => false
+    | P.HIteFalseCond => false
+    | P.HIteNegBranch => false
+    | P.HIteNotCond => false
+    | P.HIteThenFalse => false
+    | P.HIteThenTrue => false
+    | P.HIteTrueCond => false
+    | P.HLambdaElim => false
+    | P.HModusPonens => false
+    | P.HNotAnd => false
+    | P.HNotEquivElim1 => false
+    | P.HNotEquivElim2 => false
+    | P.HNotImpliesElim1 => false
+    | P.HNotImpliesElim2 => false
+    | P.HNotIteElim1 => false
+    | P.HNotIteElim2 => false
+    | P.HNotNotElim => false
+    | P.HNotOrElim => false
+    | P.HProcessScope => false
+    | P.HQuantDtSplit => false
+    | P.HQuantRewrite => false
+    | P.HQuantUnusedVars => false
+    | P.HRareInventory => false
+    | P.HRefl => false
+    | P.HReordering => false
+    | P.HResolution => false
+    | P.HRewrite => false
+    | P.HScope => false
+    | P.HSeqRewrite => false
+    | P.HSets => false
+    | P.HSetsExt => false
+    | P.HSetsRewrite => false
+    | P.HSkolemize => false
+    | P.HString => false
+    | P.HSymm => false
+    | P.HTrans => false
+    | P.HTrueElim => false
+    | P.HTrueIntro => false
+    | P.HTrust => false
   fun equality_provenance (CPC_Proof.EqualityProvenance pair) = pair
     | equality_provenance
         (CPC_Proof.ApplicationProvenance("=",[left,right])) = (left,right)
@@ -497,127 +678,159 @@ struct
           (index ())
     in current (negate selected)
       (ApplicationProvenance ("not",[provenance])) end
-  fun not_implies_elim1
+  datatype clausal_polarity = ClausalPositive | ClausalNegative
+  datatype binary_operand = ClausalLeft | ClausalRight
+  datatype ternary_operand = ClausalCondition | ClausalThen | ClausalElse
+  type 'operand clausal_literal = 'operand * clausal_polarity
+  datatype implication_result = ClausalCurrent of binary_operand
+    | ClausalFinished of binary_operand
+    | ClausalClause of binary_operand clausal_literal *
+        binary_operand clausal_literal
+  datatype clausal_descriptor =
+      ClausalImplication of {negated:bool,result:implication_result}
+    | ClausalEquivalence of {negated:bool,
+        literals:binary_operand clausal_literal *
+                 binary_operand clausal_literal}
+    | ClausalConditional of {negated:bool,
+        literals:ternary_operand clausal_literal *
+                 ternary_operand clausal_literal}
+  datatype 'item clausal_selection = SelectedCurrent of 'item
+    | SelectedFinished of 'item
+    | SelectedClause of 'item clausal_literal * 'item clausal_literal
+  local
+    val left_negative = (ClausalLeft,ClausalNegative)
+    val left_positive = (ClausalLeft,ClausalPositive)
+    val right_negative = (ClausalRight,ClausalNegative)
+    val right_positive = (ClausalRight,ClausalPositive)
+    val condition_negative = (ClausalCondition,ClausalNegative)
+    val condition_positive = (ClausalCondition,ClausalPositive)
+    val then_positive = (ClausalThen,ClausalPositive)
+    val then_negative = (ClausalThen,ClausalNegative)
+    val else_positive = (ClausalElse,ClausalPositive)
+    val else_negative = (ClausalElse,ClausalNegative)
+    fun implication negated result =
+      ClausalImplication {negated=negated,result=result}
+    fun equivalence negated literals =
+      ClausalEquivalence {negated=negated,literals=literals}
+    fun conditional negated literals =
+      ClausalConditional {negated=negated,literals=literals}
+  in
+    fun clausal_descriptor rule =
+      case rule of
+        NotImpliesElim1 => implication true (ClausalCurrent ClausalLeft)
+      | NotImpliesElim2 => implication true (ClausalFinished ClausalRight)
+      | ImpliesElim => implication false
+          (ClausalClause (left_negative,right_positive))
+      | EquivElim1 => equivalence false (left_negative,right_positive)
+      | EquivElim2 => equivalence false (left_positive,right_negative)
+      | NotEquivElim1 => equivalence true (left_positive,right_positive)
+      | NotEquivElim2 => equivalence true (left_negative,right_negative)
+      | IteElim1 => conditional false (condition_negative,then_positive)
+      | IteElim2 => conditional false (condition_positive,else_positive)
+      | NotIteElim1 => conditional true (condition_negative,then_negative)
+      | NotIteElim2 => conditional true (condition_positive,else_negative)
+  end
+  (* Whether a premise that has reduced to T is kept as it is (the
+     conditional rules) rather than read for operands. *)
+  fun clausal_keeps_reduced_true descriptor =
+    case descriptor of
+      ClausalImplication _ => false
+    | ClausalEquivalence _ => false
+    | ClausalConditional _ => true
+  (* The one selection of a descriptor's literals.  Each reader reads its
+     operands, below a negation when its argument says so; the descriptor
+     picks the literals out of what its own reader returned. *)
+  fun clausal_select descriptor {implication,equivalence,conditional} =
+    let
+      fun binary (left,_) ClausalLeft = left
+        | binary (_,right) ClausalRight = right
+      fun ternary (condition,_,_) ClausalCondition = condition
+        | ternary (_,then_item,_) ClausalThen = then_item
+        | ternary (_,_,else_item) ClausalElse = else_item
+      fun pick lookup (operand,polarity) = (lookup operand,polarity)
+    in
+      case descriptor of
+        ClausalImplication {negated,result} =>
+          let val lookup = binary (implication negated)
+          in case result of
+              ClausalCurrent operand => SelectedCurrent (lookup operand)
+            | ClausalFinished operand => SelectedFinished (lookup operand)
+            | ClausalClause (first,second) =>
+                SelectedClause (pick lookup first,pick lookup second)
+          end
+      | ClausalEquivalence {negated,literals=(first,second)} =>
+          let val lookup = binary (equivalence negated)
+          in SelectedClause (pick lookup first,pick lookup second) end
+      | ClausalConditional {negated,literals=(first,second)} =>
+          let val lookup = ternary (conditional negated)
+          in SelectedClause (pick lookup first,pick lookup second) end
+    end
+  fun clausal_literals descriptor {positive,negative} readers =
+    let
+      fun literal (item,ClausalPositive) = positive item
+        | literal (item,ClausalNegative) = negative item
+    in
+      case clausal_select descriptor readers of
+        SelectedCurrent item => [positive item]
+      | SelectedFinished item => [negative item]
+      | SelectedClause (first,second) =>
+          let val first_literal = literal first
+              val second_literal = literal second
+          in [first_literal,second_literal] end
+    end
+  fun clausal_elim
       {negated,one,operands,child_provenance,negation_provenance,
-       one_provenance,current,error} handler =
-    let val implication = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,_) = pair_of handler
-          (operands boolSyntax.implication 2 implication)
-        val (left_prov,_) = pair_of handler (child_provenance "=>" 2
-          (negation_provenance (one_provenance ())))
-    in current left left_prov end
-  fun not_implies_elim2
-      {negated,one,operands,child_provenance,negation_provenance,
-       one_provenance,negative,finish,error} handler =
-    let val implication = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (_,right) = pair_of handler
-          (operands boolSyntax.implication 2 implication)
-        val (_,right_prov) = pair_of handler (child_provenance "=>" 2
-          (negation_provenance (one_provenance ())))
-        val (node,provenance) = negative right right_prov
-    in finish (node,provenance) end
-  fun implies_elim
-      {operands,one,child_provenance,one_provenance,negative,positive,
-       disjoin} =
-    let val (left,right) = pair_of "implies_elim"
-          (operands boolSyntax.implication 2 (one ()))
-        val (left_prov,right_prov) = pair_of "implies_elim"
-          (child_provenance "=>" 2 (one_provenance ()))
-    in disjoin [negative left left_prov,
-                positive right right_prov] end
-  fun equiv_elim1
-      {one,pair,one_provenance,negative,positive,disjoin} =
-    let val (left,right) = pair (one ())
-        val (left_prov,right_prov) =
-          equality_provenance (one_provenance ())
-    in disjoin [negative left left_prov,
-                positive right right_prov] end
-  fun equiv_elim2
-      {one,pair,one_provenance,negative,positive,disjoin} =
-    let val (left,right) = pair (one ())
-        val (left_prov,right_prov) =
-          equality_provenance (one_provenance ())
-    in disjoin [positive left left_prov,
-                negative right right_prov] end
-  fun not_equiv_elim1
-      {negated,one,pair,one_provenance,negation_provenance,negative,positive,
-       disjoin,error} handler =
-    let val equation = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,right) = pair equation
-        val (left_prov,right_prov) = equality_provenance
-          (negation_provenance (one_provenance ()))
-    in disjoin [positive left left_prov,
-                positive right right_prov] end
-  fun not_equiv_elim2
-      {negated,one,pair,one_provenance,negation_provenance,negative,positive,
-       disjoin,error} handler =
-    let val equation = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,right) = pair equation
-        val (left_prov,right_prov) = equality_provenance
-          (negation_provenance (one_provenance ()))
-    in disjoin [negative left left_prov,
-                negative right right_prov] end
-  fun ite_elim1
-      {same_constant,one,atom,operands,child_provenance,one_provenance,
-       negative,positive,disjoin} =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val (condition,yes,_) = triple_of "ite_elim1"
-          (operands boolSyntax.conditional 3 (one ()))
-        val (condition_prov,yes_prov,_) = triple_of "ite_elim1"
-          (child_provenance "ite" 3 (one_provenance ()))
-    in disjoin [negative condition condition_prov,
-                positive yes yes_prov] end
-  fun ite_elim2
-      {same_constant,one,atom,operands,child_provenance,one_provenance,
-       negative,positive,disjoin} =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val (condition,_,no) = triple_of "ite_elim2"
-          (operands boolSyntax.conditional 3 (one ()))
-        val (condition_prov,_,no_prov) = triple_of "ite_elim2"
-          (child_provenance "ite" 3 (one_provenance ()))
-    in disjoin [positive condition condition_prov,
-                positive no no_prov] end
-  fun not_ite_elim1
-      {same_constant,one,atom,negated,operands,child_provenance,
-       one_provenance,negation_provenance,negative,disjoin,error} handler =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val conditional = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (condition,yes,_) = triple_of handler
-          (operands boolSyntax.conditional 3 conditional)
-        val (condition_prov,yes_prov,_) = triple_of handler
-          (child_provenance "ite" 3
-             (negation_provenance (one_provenance ())))
-    in disjoin [negative condition condition_prov,
-                negative yes yes_prov] end
-  fun not_ite_elim2
-      {same_constant,one,atom,negated,operands,child_provenance,
-       one_provenance,negation_provenance,negative,positive,disjoin,error}
-      handler =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val conditional = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (condition,_,no) = triple_of handler
-          (operands boolSyntax.conditional 3 conditional)
-        val (condition_prov,_,no_prov) = triple_of handler
-          (child_provenance "ite" 3
-             (negation_provenance (one_provenance ())))
-    in disjoin [positive condition condition_prov,
-                negative no no_prov] end
+       one_provenance,pair,same_constant,atom,current,negative,positive,
+       finish,disjoin,error}
+      descriptor handler =
+    let
+      val keeps_true = clausal_keeps_reduced_true descriptor
+      (* Premise node (below a negation when [strip]), then its
+         provenance, each read by the reader's own operand functions and
+         zipped into (node,provenance) pairs. *)
+      fun read nodes_of provenances_of zip strip =
+        let
+          val source = if strip then
+              (case negated (one ()) of
+                 SOME body => body
+               | NONE => raise error handler "expected negation")
+            else one ()
+          val nodes = nodes_of source
+          val premise_provenance = one_provenance ()
+          val provenance = if strip then
+              negation_provenance premise_provenance else premise_provenance
+        in zip nodes (provenances_of provenance) end
+      fun zip_pairs (a,b) (c,d) = ((a,c),(b,d))
+      fun zip_triples (a,b,c) (d,e,f) = ((a,d),(b,e),(c,f))
+      val readers =
+        {implication = read
+           (fn source => pair_of handler
+              (operands boolSyntax.implication 2 source))
+           (fn provenance => pair_of handler
+              (child_provenance "=>" 2 provenance)) zip_pairs,
+         equivalence = read pair equality_provenance zip_pairs,
+         conditional = read
+           (fn source => triple_of handler
+              (operands boolSyntax.conditional 3 source))
+           (fn provenance => triple_of handler
+              (child_provenance "ite" 3 provenance)) zip_triples}
+      fun literal ((node,provenance),ClausalPositive) =
+            positive node provenance
+        | literal ((node,provenance),ClausalNegative) =
+            negative node provenance
+    in
+      if keeps_true andalso same_constant (one ()) boolSyntax.T then
+        atom (one ())
+      else
+        case clausal_select descriptor readers of
+          SelectedCurrent (node,provenance) => current node provenance
+        | SelectedFinished (node,provenance) =>
+            finish (negative node provenance)
+        | SelectedClause (first,second) =>
+            let val first_literal = literal first
+                val second_literal = literal second
+            in disjoin [first_literal,second_literal] end
+    end
   fun and_elim {require_one,node,provenance,selected,current,error}
       premises arguments =
     let val premise=require_one "and_elim" premises

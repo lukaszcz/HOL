@@ -3825,21 +3825,22 @@ local
                              (Library.undo_look_ahead [token] get_token)
                          in structured_terms (tm :: acc) end)
                 end
+              val handler = #replay_handler rule
             in
               if rule_name = "resolution" then
                 attrs seen_premises true premises (resolution_args ())
               else if rule_name = "chain_resolution" then
                 attrs seen_premises true premises (chain_resolution_args ())
-              else if #replay_handler rule = "resolution" then
+              else if handler = CPC_Proof.HResolution then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)
                 attrs seen_premises true premises
                   (macro_resolution_args ())
-              else if #replay_handler rule = "and_elim" then
+              else if handler = CPC_Proof.HAndElim then
                 attrs seen_premises true premises (and_elim_index ())
-              else if #replay_handler rule = "not_or_elim" then
+              else if handler = CPC_Proof.HNotOrElim then
                 attrs seen_premises true premises (not_or_elim_index ())
-              else if #replay_handler rule = "exists_elim" then
+              else if handler = CPC_Proof.HExistsElim then
                 attrs seen_premises true premises (exists_elim_args ())
               else if rule_name = "cnf_and_pos" then
                 attrs seen_premises true premises (cnf_and_pos_args ())
@@ -3848,7 +3849,7 @@ local
               else if rule_name = "arith-mod-over-mod" orelse
                       rule_name = "arith-mod-over-mod-mult" then
                 attrs seen_premises true premises (structured_terms [])
-              else if #replay_handler rule = "rare_inventory" then
+              else if handler = CPC_Proof.HRareInventory then
                 (* Declarative RARE recipes distinguish one term from a
                    variadic list formal.  Preserve each CPC @list (and each
                    recorded alias for one) as exactly one HOL list wrapper;
@@ -4822,21 +4823,36 @@ in
         else add (name,opaque parse)
     in List.app install cpc_parameterized_skolem_registry end
 
-  fun install_graph_recipes (options : SmtLib_GraphFrontend.options)
-      (terms : SmtLib_GraphFrontend.session) =
+  local
+  (* The operations in which the int and the policy recipe installers
+     differ: the distinct quadratic guard (count reader included), the
+     raw-size and width checks of private indices, the ValueIndex
+     resolution, the arithmetic recipe parse function and the limits of
+     the indexed and constructor installers.  Each entry passes the
+     operations it has always used. *)
+  type 'a graph_recipe_ops =
+    {distinct_exceeds : Term.term list -> bool,
+     admits_raw : Term.term -> bool,
+     admits_width : Arbnum.num -> bool,
+     value_index : (Term.term -> Arbnum.num) -> 'a -> Arbnum.num,
+     recipe_parsefn : 'a B.backend ->
+       (string -> Term.term list -> Term.term list -> Term.term) ->
+       'a P.construction_parse_fn,
+     installer_limits : SmtReplayResourcePolicy.recipe_policy}
+
+  fun install_graph_recipes_with_ops (ops : 'a graph_recipe_ops)
+      (terms : 'a SmtLib_GraphFrontend.constructed_session) =
     let
       fun bounded_distinct token indices arguments =
-        let val count = List.length arguments
-            val limit = #template_limit (#recipe_limits options)
-            (* Regex distinct builds pairwise relations. Admit its quadratic
-               schematic work before invoking the authoritative builder. *)
-            val regex = case arguments of first :: _ =>
-                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
-              | [] => false
-            val _ = if regex andalso count > 0 andalso
-                count > limit div count div 16 then
-              raise ERR "graph_distinct" "distinct schema exceeds contract"
-            else ()
+        let
+          (* Regex distinct builds pairwise relations. Admit its quadratic
+             schematic work before invoking the authoritative builder. *)
+          val regex = case arguments of first :: _ =>
+              cpc_type_eq (Term.type_of first, cpc_reglan_ty)
+            | [] => false
+          val _ = if regex andalso #distinct_exceeds ops arguments then
+            raise ERR "graph_distinct" "distinct schema exceeds contract"
+          else ()
         in cpc_distinct_parsefn token indices arguments end
       val entries =
         [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
@@ -4850,33 +4866,22 @@ in
         ["div_total", "mod_total", "/_total", "@int_div_by_zero",
          "@mod_by_zero", "@div_by_zero", "**_total"]
       val backend = #backend (#reader terms)
-      val graph = #graph options
       val private_symbol = graph_private_allocator terms
       val _ = install_graph_qualifications backend
         (#add_recipe_parser terms) (#add_constructor_parser terms)
         private_symbol
-      val limits = #recipe_limits options
-      val policy_limits = SmtReplayResourcePolicy.recipe_from_ints limits
-      val _ = install_graph_indexed backend policy_limits terms
-      val width_limit = #index_limit limits
+      val _ = install_graph_indexed backend (#installer_limits ops) terms
       fun admitted term =
-        case SmtReplayImport.bounded_raw_size width_limit term of
-          SOME _ => term
-        | NONE => raise ERR "graph_index" "expanded private literal index"
+        if #admits_raw ops term then term
+        else raise ERR "graph_index" "expanded private literal index"
       fun natural term =
         let val value = numeral_of_term "graph private index" (admitted term)
-        in if Arbnum.<= (value, Arbnum.fromInt width_limit) then value else
+        in if #admits_width ops value then value else
           raise ERR "graph_index" "private numeric index exceeds contract" end
       fun index (P.SourceIndex (node,_)) = index (P.ValueIndex (node,"("))
         | index (P.LexicalIndex pair) = index (P.ValueIndex pair)
         | index (P.LiteralIndex term) = natural term
-        | index (P.ValueIndex (node, _)) =
-            (case G.unfolded_nodes graph
-                G.RawNodes width_limit node of
-               SOME size => if size <= width_limit then
-                   natural (G.representative graph node)
-                 else raise ERR "graph_index" "expanded private index operand"
-             | NONE => raise ERR "graph_index" "opaque private index operand")
+        | index (P.ValueIndex (node, _)) = #value_index ops natural node
         | index _ = raise ERR "graph_index" "nonliteral private index"
       fun marker frame token indices args =
         let
@@ -4938,7 +4943,7 @@ in
             {kind = token, hol_type = if token = "@div_by_zero"
                then realSyntax.real_ty else intSyntax.int_ty,
              source = NONE, stable = true})
-        else SmtLib_GraphTheories.recipe_parsefn backend limits
+        else #recipe_parsefn ops backend
           cpc_arith_total_parsefn frame token indices args
       val _ = List.app (#add_recipe_parser terms) entries
       val _ = List.app (fn (name, _) =>
@@ -4958,9 +4963,73 @@ in
          ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
          ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
          ("@bvsize", cpc_bv_parsefn)]
-      val _ = install_graph_cpc_constructors backend policy_limits terms
-        private_symbol
+      val _ = install_graph_cpc_constructors backend (#installer_limits ops)
+        terms private_symbol
     in () end
+
+  in
+
+  fun install_graph_recipes (options : SmtLib_GraphFrontend.options)
+      (terms : SmtLib_GraphFrontend.session) =
+    let
+      val graph = #graph options
+      val limits = #recipe_limits options
+      val width_limit = #index_limit limits
+      val template_limit = #template_limit limits
+    in
+      install_graph_recipes_with_ops
+        {distinct_exceeds = fn arguments =>
+           let val count = List.length arguments
+           in count > 0 andalso count > template_limit div count div 16 end,
+         admits_raw = fn term => Option.isSome
+           (SmtReplayImport.bounded_raw_size width_limit term),
+         admits_width = fn value =>
+           Arbnum.<= (value, Arbnum.fromInt width_limit),
+         value_index = fn natural => fn node =>
+           (case G.unfolded_nodes graph G.RawNodes width_limit node of
+              SOME size => if size <= width_limit then
+                  natural (G.representative graph node)
+                else raise ERR "graph_index" "expanded private index operand"
+            | NONE => raise ERR "graph_index" "opaque private index operand"),
+         recipe_parsefn = fn backend =>
+           SmtLib_GraphTheories.recipe_parsefn backend limits,
+         installer_limits = SmtReplayResourcePolicy.recipe_from_ints limits}
+        terms
+    end
+
+  fun policy_reader_length values =
+    let fun count [] (n:IntInf.int) = n
+          | count (_::rest) n = count rest (n+1)
+    in count values 0 end
+  fun policy_reader_width SmtReplayResourcePolicy.Uncapped _ = true
+    | policy_reader_width (SmtReplayResourcePolicy.AtMost cap) value =
+        cap >= 0 andalso Arbnum.<=
+          (value,Arbnum.fromString (IntInf.toString cap))
+  fun install_graph_recipes_with_policy_for_backend value_index
+      (options:'a F.constructed_policy_options)
+      (terms:'a F.constructed_session) =
+    let
+      val limits = #recipe_limits options
+      val width_limit = #index_limit limits
+      val template_limit = #template_limit limits
+    in
+      install_graph_recipes_with_ops
+        {distinct_exceeds = fn arguments =>
+           let val count = policy_reader_length arguments
+           in count > 0 andalso
+              not (SmtReplayResourcePolicy.allows template_limit
+                (count * count * 16)) end,
+         admits_raw = fn term => Option.isSome
+           (SmtReplayImport.raw_size_with_policy width_limit term),
+         admits_width = policy_reader_width width_limit,
+         value_index = value_index,
+         recipe_parsefn = fn backend =>
+           SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits,
+         installer_limits = limits}
+        terms
+    end
+
+  end
 
   (* Additive direct-ID frontend. This reads terms for graph proof records;
      script/rule reconstruction still uses the compatibility entry above
@@ -5377,14 +5446,15 @@ in
     in arguments 1 [] [] end
 
   fun graph_structured_rule_arguments (rule : proof_rule) =
-    #replay_handler rule = "rare_inventory" orelse
+    #replay_handler rule = CPC_Proof.HRareInventory orelse
     #name rule = "arith-mod-over-mod" orelse
     #name rule = "arith-mod-over-mod-mult"
 
   fun graph_ordinary_rule_arguments (rule : proof_rule) =
     not (List.exists (Lib.equal (#replay_handler rule))
-      ["and_elim", "not_or_elim", "resolution", "exists_elim",
-       "quant_rewrite", "rare_inventory"] orelse
+      [CPC_Proof.HAndElim, CPC_Proof.HNotOrElim, CPC_Proof.HResolution,
+       CPC_Proof.HExistsElim, CPC_Proof.HQuantRewrite,
+       CPC_Proof.HRareInventory] orelse
       List.exists (Lib.equal (#name rule))
         ["cnf_and_pos", "cnf_or_neg", "arith-mod-over-mod",
          "arith-mod-over-mod-mult"])
@@ -5654,8 +5724,9 @@ in
               error "negative CPC index"
           | NONE => error "non-numeral CPC index" end
       fun rule_arguments name rule_name (rule : proof_rule) raws =
-        if #replay_handler rule = "and_elim" orelse
-           #replay_handler rule = "not_or_elim" then
+        let val handler = #replay_handler rule in
+        if handler = CPC_Proof.HAndElim orelse
+           handler = CPC_Proof.HNotOrElim then
           (case raws of [raw] => [index raw]
            | _ => error "elimination rule expects one index")
         else if #name rule = "cnf_and_pos" orelse
@@ -5669,14 +5740,14 @@ in
                 List.map GraphHint hints
            | [] => []
            | _ => error "resolution requires polarity and pivot")
-        else if #replay_handler rule = "resolution" then
+        else if handler = CPC_Proof.HResolution then
           (case raws of [] => []
            | target :: rest => GraphTerm (parse target) ::
                List.map argument rest)
-        else if #replay_handler rule = "exists_elim" orelse
-                #replay_handler rule = "quant_rewrite" then
+        else if handler = CPC_Proof.HExistsElim orelse
+                handler = CPC_Proof.HQuantRewrite then
           List.map argument raws
-        else if #replay_handler rule = "rare_inventory" orelse
+        else if handler = CPC_Proof.HRareInventory orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map (graph_structured_argument (#backend (#reader terms))
@@ -5685,6 +5756,7 @@ in
           (#backend (#reader terms)) name rule_name
           (graph_step_arguments (#backend (#reader terms)) name rule_name
             parse sort (#lookup_list terms) raws)
+        end
       fun step kind =
         let
           val consumed = ref ([] : string list)
@@ -5875,148 +5947,6 @@ in
       : graph_proof =
     SmtLib_GraphProof.proof
       (parse_graph_packet_with_version options declaration_dicts version input)
-
-  fun policy_reader_length values =
-    let fun count [] (n:IntInf.int) = n
-          | count (_::rest) n = count rest (n+1)
-    in count values 0 end
-  fun policy_reader_width SmtReplayResourcePolicy.Uncapped _ = true
-    | policy_reader_width (SmtReplayResourcePolicy.AtMost cap) value =
-        cap >= 0 andalso Arbnum.<=
-          (value,Arbnum.fromString (IntInf.toString cap))
-  fun install_graph_recipes_with_policy_for_backend value_index
-      (options:'a F.constructed_policy_options)
-      (terms:'a F.constructed_session) =
-    let
-      fun bounded_distinct token indices arguments =
-        let val count = policy_reader_length arguments
-            val limit = #template_limit (#recipe_limits options)
-            (* Regex distinct builds pairwise relations. Admit its quadratic
-               schematic work before invoking the authoritative builder. *)
-            val regex = case arguments of first :: _ =>
-                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
-              | [] => false
-            val _ = if regex andalso count > 0 andalso
-                not (SmtReplayResourcePolicy.allows limit (count * count * 16)) then
-              raise ERR "graph_distinct" "distinct schema exceeds contract"
-            else ()
-        in cpc_distinct_parsefn token indices arguments end
-      val entries =
-        [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
-         ("str.++", cpc_concat_parsefn "smtstr_concat"),
-         ("re.++", cpc_concat_parsefn "reglan_concat"),
-         ("re.union", cpc_concat_parsefn "reglan_union"),
-         ("re.inter", cpc_concat_parsefn "reglan_inter"),
-         ("to_int", cpc_intreal_parsefn), ("to_real", cpc_intreal_parsefn),
-         ("int.pow2", cpc_intreal_parsefn)]
-      val totals = List.map (fn name => (name, cpc_arith_total_parsefn))
-        ["div_total", "mod_total", "/_total", "@int_div_by_zero",
-         "@mod_by_zero", "@div_by_zero", "**_total"]
-      val backend = #backend (#reader terms)
-      val private_symbol = graph_private_allocator terms
-      val _ = install_graph_qualifications backend
-        (#add_recipe_parser terms) (#add_constructor_parser terms)
-        private_symbol
-      val limits = #recipe_limits options
-      val _ = install_graph_indexed backend limits terms
-      val width_limit = #index_limit limits
-      fun admitted term =
-        case SmtReplayImport.raw_size_with_policy width_limit term of
-          SOME _ => term
-        | NONE => raise ERR "graph_index" "expanded private literal index"
-      fun natural term =
-        let val value = numeral_of_term "graph private index" (admitted term)
-        in if policy_reader_width width_limit value then value else
-          raise ERR "graph_index" "private numeric index exceeds contract" end
-      fun index (P.SourceIndex (node,_)) = index (P.ValueIndex (node,"("))
-        | index (P.LexicalIndex pair) = index (P.ValueIndex pair)
-        | index (P.LiteralIndex term) = natural term
-        | index (P.ValueIndex (node, _)) = value_index natural node
-        | index _ = raise ERR "graph_index" "nonliteral private index"
-      fun marker frame token indices args =
-        let
-          val ty = case (token, indices, args) of
-              ("Int", [], []) => intSyntax.int_ty
-            | ("BitVec", [bits], []) =>
-                wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
-            | ("FloatingPoint", [eb, sb], []) =>
-                SmtLib_Theories.smtfp_type (index eb, index sb)
-            | ("->", [], _ :: _ :: _) =>
-                let val (domains, range) = Lib.front_last args in
-                  boolSyntax.list_mk_fun
-                    (List.map (B.type_of backend) domains,
-                     B.type_of backend range) end
-            | _ => raise ERR "cpc_sort_marker_parsefn"
-                ("malformed CPC sort marker " ^ token)
-        in graph_private_atom backend frame (private_symbol frame
-          {kind = "@cpc." ^ token, hol_type = ty,
-           source = NONE, stable = true}) end
-      fun private_fp frame token indices args =
-        if not (null indices) then raise ERR "cpc_fp_private_parsefn"
-          "unexpected indices"
-        else case args of
-            [sort_marker] => graph_private_atom backend frame
-              (private_symbol frame
-                {kind = token, hol_type = B.type_of
-                   backend sort_marker, source = NONE, stable = false})
-          | [sort_marker, source] => graph_private_atom backend frame
-              (private_symbol frame
-                {kind = token, hol_type = B.type_of
-                   backend sort_marker, source = SOME source, stable = true})
-          | _ => raise ERR "cpc_fp_private_parsefn"
-              (token ^ " expects a sort marker and at most one " ^
-               "floating-point operand")
-      fun private_total frame token indices args =
-        if not (null indices) orelse null args then
-          raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
-        else
-          let val types = List.map (B.type_of backend) args
-              val ty = boolSyntax.list_mk_fun (types, hd types)
-              val head = private_symbol frame
-                {kind = token, hol_type = ty, source = NONE, stable = true}
-              val originals = case B.constructor_sources backend of
-                  SOME {arguments,...} => arguments
-                | NONE => List.map (B.source_syntax backend frame) args
-              val source = List.foldl (fn (arg,head) =>
-                C.application (head,arg))
-                (C.private_atom (graph_private_descriptor backend head))
-                originals
-              val _ = B.note_constructor_source backend source
-          in List.foldl (fn (arg, head) =>
-            B.application backend frame (head, arg))
-            (graph_private_reference backend frame head) args end
-      fun arithmetic frame token indices args =
-        if null indices andalso null args andalso
-            List.exists (Lib.equal token)
-              ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
-          graph_private_atom backend frame (private_symbol frame
-            {kind = token, hol_type = if token = "@div_by_zero"
-               then realSyntax.real_ty else intSyntax.int_ty,
-             source = NONE, stable = true})
-        else SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits
-          cpc_arith_total_parsefn frame token indices args
-      val _ = List.app (#add_recipe_parser terms) entries
-      val _ = List.app (fn (name, _) =>
-        (#add_constructor_parser terms) (name, arithmetic)) totals
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, marker))
-        ["Int", "BitVec", "FloatingPoint", "->"]
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, private_fp))
-        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
-         "@fp.NAN", "@fp.INF"]
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, private_total))
-        ["fp.max_total", "fp.min_total"]
-      val _ = List.app (#add_recipe_parser terms)
-        [("@fp.RMBITBLAST", cpc_fp_rounding_parsefn),
-         ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
-         ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
-         ("@bvsize", cpc_bv_parsefn)]
-      val _ = install_graph_cpc_constructors backend limits terms
-        private_symbol
-    in () end
-
 
   fun install_graph_recipes_with_policy
       (options:F.policy_options) (terms:F.session) =

@@ -1218,12 +1218,6 @@ local
      structural/targeted strategies still handle non-exact occurrences. *)
   fun find_first old root = replace_first_with_mode true old old root
 
-  fun contains_abs tm =
-    Term.is_abs tm orelse
-    (let val (rator, rand) = Term.dest_comb tm in
-       contains_abs rator orelse contains_abs rand
-     end handle _ => false)
-
   fun is_reflexive_equality theorem =
     case Lib.total dest_reglan_equiv (Thm.concl theorem) of
       SOME (left, right) => Term.aconv left right
@@ -1537,11 +1531,9 @@ local
                 "congruence strategy does not match certificate conclusion"
         end
       fun fallback_cong () =
-        matches_conclusion sequential_cong
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else matches_conclusion structural_cong
+        SmtResource.or_else
+          (fn () => matches_conclusion sequential_cong)
+          (fn () => matches_conclusion structural_cong)
     in
       matches_conclusion quantified_cong
       handle Feedback.HOL_ERR _ => matches_conclusion targeted_cong
@@ -3719,20 +3711,6 @@ local
         [{redex = variable, residue = sequence}] theorem
     | _ => raise ERR "instantiate_smtstr" "expected one String variable"
 
-  fun replay_seq_rev_rev admit args =
-    case args of
-      [sequence] =>
-        if is_smtstr_type (Term.type_of sequence) then
-          instantiate_smtstr smtstringTheory.smtstr_rev_rev sequence
-        else
-          let val target = boolSyntax.mk_eq
-                (listSyntax.mk_reverse (listSyntax.mk_reverse sequence),
-                 sequence)
-              val _ = List.app admit
-                [sequence,target,Thm.concl listTheory.REVERSE_REVERSE]
-          in Drule.ISPEC sequence listTheory.REVERSE_REVERSE end
-    | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
-
   fun replay_str_contains_refl admit args =
     case args of
       [sequence] =>
@@ -3752,75 +3730,6 @@ local
             Drule.EQT_INTRO proof
           end
     | _ => raise ERR "str-contains-refl" "expected one sequence argument"
-
-  fun replay_str_substr_full_eq admit args =
-    case args of
-      [sequence, length] =>
-        if is_smtstr_type (Term.type_of sequence) then
-          let
-            val theorem = instantiate_smtstr
-              smtstringTheory.smtstr_substr_full sequence
-            val expected_length = Term.list_mk_comb
-              (Term.mk_thy_const {Thy = "smtstring", Name = "smtstr_len",
-                 Ty = Type.--> (Term.type_of sequence, intSyntax.int_ty)},
-               [sequence])
-          in
-            if Term.aconv length expected_length then theorem
-            else raise ERR "str-substr-full-eq" "length argument does not match"
-          end
-        else
-          let
-            val sequence_ty = Term.type_of sequence
-            val extract = Term.mk_thy_const {Thy = "HolSmt",
-              Name = "smt_seq_extract", Ty = Type.--> (sequence_ty,
-                Type.--> (intSyntax.int_ty,
-                  Type.--> (intSyntax.int_ty, sequence_ty)))}
-            val expected_length = Term.mk_comb (intSyntax.int_injection,
-              listSyntax.mk_length sequence)
-            val target = boolSyntax.mk_eq
-              (Term.list_mk_comb (extract,
-                 [sequence, intSyntax.zero_tm, expected_length]), sequence)
-          in
-            if Term.aconv length expected_length then
-              SmtSeqProve.seq_prove_with_admission admit target
-            else raise ERR "str-substr-full-eq" "length argument does not match"
-          end
-    | _ => raise ERR "str-substr-full-eq"
-        "expected a sequence and its length"
-
-  fun replay_string_at_elim sequence index =
-    Drule.SPECL [sequence, index] smtstringTheory.smtstr_at_def
-
-  fun replay_seq_at_elim admit conclusion args =
-    case (conclusion, args) of
-      (SOME target, [sequence, index]) =>
-        if is_smtstr_type (Term.type_of sequence) then
-          let val thm = replay_string_at_elim sequence index in
-            if Term.aconv target (Thm.concl thm) then thm
-            else raise ERR "str-at-elim" "String conclusion does not match"
-          end
-        else SmtSeqProve.seq_prove_with_admission admit target
-    | (NONE, [sequence, index]) =>
-        if is_smtstr_type (Term.type_of sequence) then
-          replay_string_at_elim sequence index
-        else
-          let
-            val sequence_ty = Term.type_of sequence
-            val at = Term.mk_thy_const {Thy = "HolSmt", Name = "smt_seq_at",
-              Ty = Type.--> (sequence_ty,
-                Type.--> (intSyntax.int_ty, sequence_ty))}
-            val extract = Term.mk_thy_const {
-              Thy = "HolSmt", Name = "smt_seq_extract",
-              Ty = Type.--> (sequence_ty, Type.--> (intSyntax.int_ty,
-                Type.--> (intSyntax.int_ty, sequence_ty)))}
-            val target = boolSyntax.mk_eq
-              (Term.list_mk_comb (at, [sequence, index]),
-               Term.list_mk_comb (extract,
-                 [sequence, index, intSyntax.one_tm]))
-          in
-            SmtSeqProve.seq_prove_with_admission admit target
-          end
-    | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
   fun replay_ext name prems =
     case prems of
@@ -4933,28 +4842,26 @@ local
            retain_producer_conclusion template operands target theorem
        | NONE =>
       if reflexive () then Thm.REFL (Lib.fst (boolSyntax.dest_eq target))
-      else (boolean_aci ()
-        handle Feedback.HOL_ERR _ => word_ac ()
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(rung:word/aci_norm)" wordsLib.WORD_ARITH_PROVE target)
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else
-          (profile "CPC(rung:seq/aci_norm)"
-             (SmtSeqProve.seq_prove_with_admission admit) target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else
-               (profile "CPC(rung:string/aci_norm)"
-                  SmtStringProve.string_rewrite_prove target
-                handle Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else
-                    profile "CPC(rung:word/aci_norm_tautology)"
-                      (tautology "aci_norm") target)))
+      else SmtResource.or_else
+        (fn () =>
+          (boolean_aci ()
+          handle Feedback.HOL_ERR _ => word_ac ()
+          handle Feedback.HOL_ERR _ =>
+            profile "CPC(rung:word/aci_norm)"
+              wordsLib.WORD_ARITH_PROVE target))
+        (fn () =>
+          SmtResource.or_else
+            (fn () =>
+              profile "CPC(rung:seq/aci_norm)"
+                (SmtSeqProve.seq_prove_with_admission admit) target)
+            (fn () =>
+              SmtResource.or_else
+                (fn () =>
+                  profile "CPC(rung:string/aci_norm)"
+                    SmtStringProve.string_rewrite_prove target)
+                (fn () =>
+                  profile "CPC(rung:word/aci_norm_tautology)"
+                    (tautology "aci_norm") target))))
     end
 
   fun replay_aci_norm args = replay_aci_norm_admitted
@@ -6118,19 +6025,86 @@ local
   fun replay_bv_poly_norm_eq args =
     tautology "bv_poly_norm_eq" (expect_one_arg "bv_poly_norm_eq" args)
 
-  fun replay_not_implies_elim2 prems =
-    let
-      val premise = expect_one_premise "not_implies_elim2" prems
-      val implication = boolSyntax.dest_neg (Thm.concl premise)
-      val (_, conclusion) = boolSyntax.dest_imp implication
-    in tautological_consequence premise (boolSyntax.mk_neg conclusion) end
+  fun mk_disj_terms [tm] = tm
+    | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
+    | mk_disj_terms [] = boolSyntax.F
 
-  fun replay_not_implies_elim1 prems =
-    let
-      val premise = expect_one_premise "not_implies_elim1" prems
-      val implication = boolSyntax.dest_neg (Thm.concl premise)
-      val (antecedent, _) = boolSyntax.dest_imp implication
-    in tautological_consequence premise antecedent end
+  (* The clause a clausal-elimination rule derives, from the descriptor
+     CPC_SharedReplayPlan gives it: the descriptor's literals, as a
+     disjunction, over operands read from the premise (below a negation
+     when the descriptor says so). *)
+  local
+    structure Plan = CPC_SharedReplayPlan
+  in
+    fun clausal_clause rule premise_term =
+      let
+        val descriptor = Plan.clausal_descriptor rule
+        fun body negated = if negated then boolSyntax.dest_neg premise_term
+          else premise_term
+        (* Only a conditional row reports a premise of the wrong shape,
+           with the premise; the other rows let the term-syntax error
+           through. *)
+        fun conditional negated =
+          boolSyntax.dest_cond (body negated)
+          handle Feedback.HOL_ERR _ =>
+            raise ERR (CPC_Proof.handler_name (Plan.clausal_handler rule))
+              ("premise is not a " ^
+               (if negated then "negated " else "") ^
+               "conditional: " ^ Library.term_to_string premise_term)
+      in
+        mk_disj_terms (Plan.clausal_literals descriptor
+          {positive = fn tm => tm, negative = boolSyntax.mk_neg}
+          {implication = fn negated => boolSyntax.dest_imp (body negated),
+           equivalence = fn negated => boolSyntax.dest_eq (body negated),
+           conditional = conditional})
+      end
+
+    (* A premise canonical replay reduced to T is kept by the conditional
+       rules, whose descriptors say so. *)
+    fun replay_clausal_elimination rule prems =
+      let
+        val name = CPC_Proof.handler_name (Plan.clausal_handler rule)
+        val premise = expect_one_premise name prems
+        val premise_term = Thm.concl premise
+        val keeps_true =
+          Plan.clausal_keeps_reduced_true (Plan.clausal_descriptor rule)
+      in
+        if keeps_true andalso Term.aconv premise_term boolSyntax.T
+        then premise
+        else tautological_consequence premise
+          (clausal_clause rule premise_term)
+      end
+
+    fun replay_equiv_elim rule contradiction conclusion prems =
+      let
+        val name = CPC_Proof.handler_name (Plan.clausal_handler rule)
+        val premise = expect_one_premise name prems
+        fun derived () =
+          let
+            val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+            val target = clausal_clause rule (Thm.concl premise)
+            val denied = Thm.ASSUME (boolSyntax.mk_neg target)
+            fun contradict clause = Thm.MP (Thm.NOT_ELIM denied) clause
+          in
+            Thm.CCONTR target (contradiction premise left right contradict)
+          end
+      in
+        derived ()
+        handle Feedback.HOL_ERR _ =>
+          (case conclusion of
+            SOME target => tautological_consequence premise target
+          | NONE => if Term.aconv (Thm.concl premise) boolSyntax.T
+              then premise
+              else raise ERR name
+                "non-equality premise requires a declared conclusion")
+      end
+  end
+
+  fun replay_not_implies_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotImpliesElim1 prems
+
+  fun replay_not_implies_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotImpliesElim2 prems
 
   fun replay_implies_elim prems =
     let
@@ -6178,10 +6152,6 @@ local
               (derive (Thm.ASSUME right))
           end
     in derive premise end
-
-  fun mk_disj_terms [tm] = tm
-    | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
-    | mk_disj_terms [] = boolSyntax.F
 
   (* The laws are stated over p and q; replay instantiates both at once. *)
   val equivalence_clause_laws =
@@ -6656,16 +6626,12 @@ local
     in prove plan end
 
   fun replay_nary_cong source prems =
-    replay_flat_nary_cong source prems
-    handle Feedback.HOL_ERR error =>
-      if SmtResource.is_resource_gate error then
-        raise Feedback.HOL_ERR error
-      else
-        (replay_boolean_nary_cong source prems
-         handle Feedback.HOL_ERR error =>
-           if SmtResource.is_resource_gate error then
-             raise Feedback.HOL_ERR error
-           else replay_direct_nary_cong source prems)
+    SmtResource.or_else
+      (fn () => replay_flat_nary_cong source prems)
+      (fn () =>
+        SmtResource.or_else
+          (fn () => replay_boolean_nary_cong source prems)
+          (fn () => replay_direct_nary_cong source prems))
 
   and replay_direct_nary_cong source prems =
     let
@@ -6948,34 +6914,32 @@ local
                     val bridge_target = boolSyntax.mk_eq
                       (left_canonical, right_canonical)
                     fun after_word () =
-                      (profile "CPC(rung:trans/XOR_GRAPH)"
-                         xor_graph_tautology bridge_target
-                       handle Feedback.HOL_ERR holerr =>
-                         if SmtResource.is_resource_gate holerr then
-                           raise Feedback.HOL_ERR holerr
-                         else
-                           (profile "CPC(rung:trans/XOR_TAUT)"
-                              xor_tautology bridge_target
-                            handle Feedback.HOL_ERR holerr =>
+                      (SmtResource.or_else
+                         (fn () =>
+                           profile "CPC(rung:trans/XOR_GRAPH)"
+                             xor_graph_tautology bridge_target)
+                         (fn () =>
+                           SmtResource.or_else
+                             (fn () =>
+                               profile "CPC(rung:trans/XOR_TAUT)"
+                                 xor_tautology bridge_target)
+                             (fn () =>
+                               shared_phase "bridge_aci" (fn () =>
+                               replay_aci_norm [bridge_target]))))
+                    val bridge =
+                      (SmtResource.or_else
+                         (fn () =>
+                           (shared_phase "bridge_word" (fn () =>
+                              prove_word_graph_tautology
+                                "cpc-trans-word" bridge_target)
+                            handle Conv.UNCHANGED => after_word ()
+                             | Feedback.HOL_ERR holerr =>
                               if SmtResource.is_resource_gate holerr then
                                 raise Feedback.HOL_ERR holerr
-                              else shared_phase "bridge_aci" (fn () =>
-                                replay_aci_norm [bridge_target])))
-                    val bridge =
-                      ((shared_phase "bridge_word" (fn () =>
-                          prove_word_graph_tautology
-                            "cpc-trans-word" bridge_target)
-                        handle Conv.UNCHANGED => after_word ()
-                         | Feedback.HOL_ERR holerr =>
-                          if SmtResource.is_resource_gate holerr then
-                            raise Feedback.HOL_ERR holerr
-                          else after_word ())
-                       handle Feedback.HOL_ERR holerr =>
-                         if SmtResource.is_resource_gate holerr then
-                           raise Feedback.HOL_ERR holerr
-                         else
+                              else after_word ()))
+                         (fn () =>
                            profile "CPC(rung:trans/TAUT)"
-                             tautLib.TAUT_PROVE bridge_target)
+                             tautLib.TAUT_PROVE bridge_target))
                   in
                     (Thm.TRANS left_theorem bridge, right_theorem)
                   end
@@ -7391,64 +7355,44 @@ local
 
   fun replay_cnf name args = #1 (replay_cnf_with_literals name args)
 
-  fun replay_not_equiv_elim which prems =
-    let
-      val premise = expect_one_premise which prems
-      val (left, right) = boolSyntax.dest_eq
-        (boolSyntax.dest_neg (Thm.concl premise))
-      val conclusion =
-        if which = "not_equiv_elim1" then mk_disj_terms [left, right]
-        else mk_disj_terms [boolSyntax.mk_neg left, boolSyntax.mk_neg right]
-    in tautological_consequence premise conclusion end
+  fun replay_not_equiv_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotEquivElim1 prems
 
-  fun replay_equiv_elim which conclusion prems =
+  fun replay_not_equiv_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotEquivElim2 prems
+
+  (* The kernel derivations of the two equivalence rules, from the
+     premise [left = right] and the contradiction [contradict] of the
+     denied target clause. *)
+  fun equiv_elim1_contradiction premise left right contradict =
     let
-      val premise = expect_one_premise which prems
-      fun derived () =
-        let
-          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
-          val target = if which = "equiv_elim1" then
-              boolSyntax.mk_disj (boolSyntax.mk_neg left, right)
-            else boolSyntax.mk_disj (left, boolSyntax.mk_neg right)
-          val denied = Thm.ASSUME (boolSyntax.mk_neg target)
-          fun contradict clause = Thm.MP (Thm.NOT_ELIM denied) clause
-          val contradiction =
-            if which = "equiv_elim1" then
-              let
-                val left_proof = Thm.CCONTR left
-                  (contradict (Thm.DISJ1
-                    (Thm.ASSUME (boolSyntax.mk_neg left)) right))
-                val not_right = Thm.NOT_INTRO (Thm.DISCH right
-                  (contradict (Thm.DISJ2
-                    (boolSyntax.mk_neg left) (Thm.ASSUME right))))
-                val right_proof = Thm.EQ_MP premise left_proof
-              in Thm.MP (Thm.NOT_ELIM not_right) right_proof end
-            else
-              let
-                val not_left = Thm.NOT_INTRO (Thm.DISCH left
-                  (contradict (Thm.DISJ1 (Thm.ASSUME left)
-                    (boolSyntax.mk_neg right))))
-                val right_proof = Thm.CCONTR right
-                  (contradict (Thm.DISJ2 left
-                    (Thm.ASSUME (boolSyntax.mk_neg right))))
-                val left_proof = Thm.EQ_MP (Thm.SYM premise) right_proof
-              in Thm.MP (Thm.NOT_ELIM not_left) left_proof end
-        in Thm.CCONTR target contradiction end
-    in
-      derived ()
-      handle Feedback.HOL_ERR _ =>
-        (case conclusion of
-          SOME target => tautological_consequence premise target
-        | NONE => if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-            else raise ERR which
-              "non-equality premise requires a declared conclusion")
-    end
+      val left_proof = Thm.CCONTR left
+        (contradict (Thm.DISJ1
+          (Thm.ASSUME (boolSyntax.mk_neg left)) right))
+      val not_right = Thm.NOT_INTRO (Thm.DISCH right
+        (contradict (Thm.DISJ2
+          (boolSyntax.mk_neg left) (Thm.ASSUME right))))
+      val right_proof = Thm.EQ_MP premise left_proof
+    in Thm.MP (Thm.NOT_ELIM not_right) right_proof end
+
+  fun equiv_elim2_contradiction premise left right contradict =
+    let
+      val not_left = Thm.NOT_INTRO (Thm.DISCH left
+        (contradict (Thm.DISJ1 (Thm.ASSUME left)
+          (boolSyntax.mk_neg right))))
+      val right_proof = Thm.CCONTR right
+        (contradict (Thm.DISJ2 left
+          (Thm.ASSUME (boolSyntax.mk_neg right))))
+      val left_proof = Thm.EQ_MP (Thm.SYM premise) right_proof
+    in Thm.MP (Thm.NOT_ELIM not_left) left_proof end
 
   fun replay_equiv_elim2 conclusion prems =
-    replay_equiv_elim "equiv_elim2" conclusion prems
+    replay_equiv_elim CPC_SharedReplayPlan.EquivElim2
+      equiv_elim2_contradiction conclusion prems
 
   fun replay_equiv_elim1 conclusion prems =
-    replay_equiv_elim "equiv_elim1" conclusion prems
+    replay_equiv_elim CPC_SharedReplayPlan.EquivElim1
+      equiv_elim1_contradiction conclusion prems
 
   fun arith_prove target =
     profile "CPC(rung:arith/cases)" Library.arith_prove_with_cases target
@@ -8364,14 +8308,14 @@ local
           in if Term.aconv term (boolSyntax.rhs (Thm.concl theorem)) then
               raise Conv.UNCHANGED else theorem end
       fun convert term =
-        ((Conv.FIRST_CONV rewrites term
-          handle Conv.UNCHANGED => ground term
-               | Feedback.HOL_ERR error =>
-             if SmtResource.is_resource_gate error then
-               raise Feedback.HOL_ERR error else ground term)
-         handle Feedback.HOL_ERR error =>
-           if SmtResource.is_resource_gate error then
-             raise Feedback.HOL_ERR error else raise Conv.UNCHANGED)
+        (SmtResource.or_else
+           (fn () =>
+             (Conv.FIRST_CONV rewrites term
+              handle Conv.UNCHANGED => ground term
+                   | Feedback.HOL_ERR error =>
+                 if SmtResource.is_resource_gate error then
+                   raise Feedback.HOL_ERR error else ground term))
+           (fn () => raise Conv.UNCHANGED))
     in convert end
 
   fun normalize_fp_word_data sources node_conversion term =
@@ -8637,22 +8581,21 @@ local
         if SmtResource.dag_nodes_up_to 33 term > 32 orelse
            not (List.null (Term.free_vars term)) then NONE
         else
-          (let
-             val sizes = Conv.DEPTH_CONV
-               wordsLib.SIZES_CONV term
-               handle Conv.UNCHANGED => Thm.REFL term
-             val sized = boolSyntax.rhs (Thm.concl sizes)
-             val evaluated = SmtResource.with_bitblast_step_time
-               "cpc-trust-fp-ground-leaf" bossLib.EVAL sized
-               handle Conv.UNCHANGED => Thm.REFL sized
-             val theorem = Thm.TRANS sizes evaluated
-             val residue = boolSyntax.rhs (Thm.concl theorem)
-           in if Term.aconv term residue then NONE
-              else SOME theorem end)
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else NONE
+          SmtResource.or_else
+            (fn () =>
+              (let
+                 val sizes = Conv.DEPTH_CONV
+                   wordsLib.SIZES_CONV term
+                   handle Conv.UNCHANGED => Thm.REFL term
+                 val sized = boolSyntax.rhs (Thm.concl sizes)
+                 val evaluated = SmtResource.with_bitblast_step_time
+                   "cpc-trust-fp-ground-leaf" bossLib.EVAL sized
+                   handle Conv.UNCHANGED => Thm.REFL sized
+                 val theorem = Thm.TRANS sizes evaluated
+                 val residue = boolSyntax.rhs (Thm.concl theorem)
+               in if Term.aconv term residue then NONE
+                  else SOME theorem end))
+            (fn () => NONE)
       fun projection_index_conversion term =
         let
           val (_, index) = wordsSyntax.dest_index term
@@ -9813,6 +9756,20 @@ local
   val prove_boolean_circuit_tautology =
     prove_boolean_circuit_tautology_stopping []
 
+  (* Try PROVER; if it declines or fails, run CONTINUATION.  After a
+     resource gate in PROVER, a different checked bridge may admit the
+     same source without the failed circuit expansion.  It supplies its
+     own proof, not a reusable result from this gate.  Preserve the
+     FIRST gate if no alternative succeeds.  Interrupt and timeouts
+     propagate. *)
+  fun next_fp prover continuation =
+    prover () handle SmtFpGraph.Declined _ => continuation ()
+      | Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        (continuation ()
+         handle Feedback.HOL_ERR _ => raise Feedback.HOL_ERR holerr)
+      else continuation ()
+
   exception FpBindingCounterexample
   fun replay_trust_admitted_mode candidate_validation
       admit allow_defer force_fp state prems args =
@@ -9876,7 +9833,7 @@ local
             profile "CPC(rung:trust/rdiv_zero_irrelevant)"
               irrelevant_zero_rewrite ()
         end
-      fun replay_set () =
+      fun replay_set_direct () =
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
@@ -9935,12 +9892,11 @@ local
                 end
             end
           fun contextual () =
-            Tactical.TAC_PROOF ((context, target),
-              bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else card_lower_bound ()
+            SmtResource.or_else
+              (fn () =>
+                Tactical.TAC_PROOF ((context, target),
+                  bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))
+              card_lower_bound
           val thm = SmtResource.with_resource_step_time "Set" "contextual"
             (fn () =>
               (List.app (SmtResource.check_resource_goal "Set" "contextual")
@@ -9950,11 +9906,10 @@ local
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
-            SmtArrayProve.array_prove target
+      fun replay_set () =
+        SmtResource.or_else
+          replay_set_direct
+          (fn () => SmtArrayProve.array_prove target)
       fun unsupported_set () =
         raise ERR "trust"
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
@@ -9962,23 +9917,23 @@ local
       fun replay_bag () =
         SmtBagProve.bag_prove_with_admission admit arith_prove target
       fun prove_scoped_bag () =
-        let
-          val context =
-            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
-            List.map Thm.concl prems
-          val thm = SmtBagProve.bag_contextual_prove_with_admission
-            admit context target
-        in
-          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
-            thm prems
-        end
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
+        SmtResource.or_else
+          (fn () =>
+            let
+              val context =
+                HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+                List.map Thm.concl prems
+              val thm = SmtBagProve.bag_contextual_prove_with_admission
+                admit context target
+            in
+              List.foldl
+                (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+                thm prems
+            end)
+          (fn () =>
             raise ERR "trust"
               ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
-               "conclusion=" ^ Library.term_to_string target)
+               "conclusion=" ^ Library.term_to_string target))
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
@@ -10747,7 +10702,7 @@ local
                   val word_equality_laws = ref
                     ([] : (Type.hol_type * Term.term * Term.term *
                             Thm.thm) list)
-                  fun word_equality_schema current =
+                  fun word_equality_schema_direct current =
                     let
                       val (left, right) = boolSyntax.dest_eq current
                       val ty = equality_operand_type current
@@ -10800,10 +10755,10 @@ local
                         [{redex = left_var, residue = left},
                          {redex = right_var, residue = right}] law)
                     end
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                  fun word_equality_schema current =
+                    SmtResource.or_else
+                      (fn () => word_equality_schema_direct current)
+                      (fn () => NONE)
                   exception UncacheableBinder
                   fun native_cache_key current =
                     (SmtResource.dag_nodes_up_to_with_inspector
@@ -11147,36 +11102,17 @@ local
               boolSyntax.list_mk_forall (variables, target)
             in Drule.SPECL variables (Thm.ASSUME closed) end
         end
-      fun next prover continuation =
-        prover ()
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else continuation ()
-      fun next_fp prover continuation =
-        prover () handle SmtFpGraph.Declined _ => continuation ()
-          | Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            (* A different checked bridge may admit the same source without
-               the failed circuit expansion. It supplies its own proof, not
-               a reusable result from this gate. Preserve the FIRST gate if
-               no alternative succeeds. Interrupt/timeouts still propagate. *)
-            (continuation ()
-             handle Feedback.HOL_ERR _ => raise Feedback.HOL_ERR holerr)
-          else continuation ()
       fun replay_seq () =
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
           val thm =
-            SmtSeqProve.seq_prove_with_admission admit target
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else
+            SmtResource.or_else
+              (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+              (fn () =>
                 SmtSeqProve.seq_contextual_prove_with_admission
-                  admit context target
+                  admit context target)
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -11469,17 +11405,20 @@ local
       else if string_context () then
         profile "CPC(rung:trust/string)" replay_string ()
       else if bag_context () then
-        next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
           (fn () => profile "CPC(rung:trust/bag_context)"
             prove_scoped_bag ())
       else if set_context () then
-        next (fn () => profile "CPC(rung:trust/set)" replay_set ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/set)" replay_set ())
           unsupported_set
       else if fp_context () then
         profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
       else
-        next (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
-          prove_scoped_arithmetic ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
+            prove_scoped_arithmetic ())
           (fn () => profile "CPC(rung:trust/rdiv)" replay_rdiv ())
     end)
 
@@ -11502,62 +11441,19 @@ local
           bossLib.ASM_SIMP_TAC boolSimps.bool_ss []))
     end
 
-  fun replay_ite_elim1 prems =
-    let
-      val premise = expect_one_premise "ite_elim1" prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, then_tm, _) =
-            boolSyntax.dest_cond (Thm.concl premise)
-            handle Feedback.HOL_ERR _ => raise ERR "ite_elim1"
-              ("premise is not a conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms [boolSyntax.mk_neg condition, then_tm]) end
-    end
+  fun replay_ite_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.IteElim1 prems
 
-  fun replay_ite_elim2 prems =
-    let
-      val premise = expect_one_premise "ite_elim2" prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, _, else_tm) =
-            boolSyntax.dest_cond (Thm.concl premise)
-            handle Feedback.HOL_ERR _ => raise ERR "ite_elim2"
-              ("premise is not a conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms [condition, else_tm]) end
-    end
+  fun replay_ite_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.IteElim2 prems
 
   (* cvc5's NOT_ITE_ELIM1/2: from ~(ite C F1 F2), ~C \/ ~F1 and C \/ ~F2.
      A premise canonical replay reduced to T is kept, as for ite_elim. *)
-  fun replay_not_ite_elim name pick prems =
-    let
-      val premise = expect_one_premise name prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, then_tm, else_tm) =
-            boolSyntax.dest_cond (boolSyntax.dest_neg (Thm.concl premise))
-            handle Feedback.HOL_ERR _ => raise ERR name
-              ("premise is not a negated conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms (pick (condition, then_tm, else_tm))) end
-    end
+  fun replay_not_ite_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotIteElim1 prems
 
-  val replay_not_ite_elim1 = replay_not_ite_elim "not_ite_elim1"
-    (fn (condition, then_tm, _) =>
-       [boolSyntax.mk_neg condition, boolSyntax.mk_neg then_tm])
-
-  val replay_not_ite_elim2 = replay_not_ite_elim "not_ite_elim2"
-    (fn (condition, _, else_tm) => [condition, boolSyntax.mk_neg else_tm])
+  fun replay_not_ite_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.NotIteElim2 prems
 
   fun replay_scope state prems =
     let
@@ -11589,7 +11485,14 @@ local
       (state, thm)
     end
 
-  fun replay_process_scope strong_canon args prems =
+  (* One scope decomposition and theorem assembly for both entries.
+     `record` is the entries' provenance hook.  It runs once the scope has
+     been decomposed and its conjunction built, BEFORE any kernel
+     application or canonicalization, and receives the premise theorem,
+     the decomposed antecedents and the scope result.  Its value is
+     returned with the theorem.  A failing hook refuses the scope at that
+     point.  A single antecedent introduces no conjunction. *)
+  fun process_scope_with_record strong_canon args prems record =
     let
       val process_scope_timer =
         if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
@@ -11627,6 +11530,7 @@ local
         dest_scope (Thm.concl premise) []
       val _ = process_scope_mark "dest"
       val conjunction = mk_conj antecedents
+      val recorded = record premise antecedents scope_result
       val target = if Term.aconv scope_result boolSyntax.F then
         boolSyntax.mk_neg conjunction
       else boolSyntax.mk_imp (conjunction, scope_result)
@@ -11686,9 +11590,13 @@ local
         if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
         else discharged
     in
-      if Term.aconv (Thm.concl result) target then result
+      if Term.aconv (Thm.concl result) target then (result, recorded)
       else raise ERR "process_scope" "direct scope normalization shape mismatch"
     end
+
+  fun replay_process_scope strong_canon args prems =
+    #1 (process_scope_with_record strong_canon args prems
+      (fn _ => fn _ => fn _ => ()))
 
   (* Fixed owned producer. Record the topology while constructing THIS
      scope result; never recover n-ary grouping from its checked conclusion.
@@ -11699,137 +11607,46 @@ local
     let
       val args = List.map (#term : located_term -> Term.term) located_args
       val prems = List.map step_theorem premise_steps
-      val process_scope_timer =
-        if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
-          SOME (Timer.startRealTimer ()) else NONE
-      fun process_scope_mark phase = case process_scope_timer of NONE => ()
-        | SOME timer =>
-            if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
-              Feedback.HOL_MESG
-                ("CPCPROCESSSCOPE phase=" ^ phase ^ " time=" ^
-                 Time.toString (Timer.checkRealTimer timer))
-            else ()
-      val premise = expect_one_premise "process_scope" prems
-      (* The CPC printer records the original body conclusion as its sole
-         argument.  Stop uncurrying at that exact term: the body itself may
-         be an implication, which is not an additional scoped assumption. *)
-      val scope_result = case args of [tm] => tm
-        | _ => raise ERR "process_scope" "expected one CPC :args term"
-      fun dest_scope tm acc =
-        if shared_aconv tm scope_result then (List.rev acc, NONE)
-        else if boolSyntax.is_imp_only tm andalso
-                not (boolSyntax.is_imp_only scope_result) then
-          let val (antecedent, consequent) = boolSyntax.dest_imp tm
-          in dest_scope consequent (antecedent :: acc) end
-        else if shared_aconv
-          (canonical_term tm) (canonical_term scope_result)
-        then (List.rev acc, SOME tm)
-        else if boolSyntax.is_imp_only tm then
-          let val (antecedent, consequent) = boolSyntax.dest_imp tm
-          in dest_scope consequent (antecedent :: acc) end
-        else (List.rev acc, SOME tm)
-      fun mk_conj [tm] = tm
-        | mk_conj (tm :: rest) = boolSyntax.mk_conj (tm, mk_conj rest)
-        | mk_conj [] = raise ERR "process_scope" "empty scope implication"
-      val (antecedents, normalized_result) =
-        dest_scope (Thm.concl premise) []
-      val _ = process_scope_mark "dest"
-      val conjunction = mk_conj antecedents
-      val incoming = case premise_steps of [premise] =>
-          step_provenance premise
-        | _ => raise ERR "process_scope" "expected actual premise record"
-      fun child_provenance provenance = case provenance of
-          ApplicationProvenance ("=>",[left,right]) => (left,right)
-        | _ => if definitely_no_conjunction provenance then
-            (AtomicProvenance,AtomicProvenance)
-          else (UnavailableProvenance
-            "actual scope antecedent has no retained child boundary",
-            UnavailableProvenance
-            "actual scope consequent has no retained child boundary")
-      fun record [] _ _ = []
-        | record (antecedent::rest) term provenance =
-            let val (left,right) = boolSyntax.dest_imp term
-                val _ = if shared_aconv left antecedent then () else
-                  raise ERR "process_scope"
-                    "actual scope antecedent differs from constructor recipe"
-                val (left_provenance,right_provenance) =
-                  child_provenance provenance
-            in left_provenance :: record rest right right_provenance end
-      val children = record antecedents (Thm.concl premise) incoming
-      val conjunction_provenance = case children of [one] => one
-        | [] => raise ERR "process_scope" "empty scope topology"
-        | _ => ConjunctionProvenance (ProcessScopeConjunction,children)
-      val body_provenance = case located_args of [body] => #provenance body
-        | _ => raise ERR "process_scope" "expected actual body argument"
-      val produced_provenance =
-        if Term.aconv scope_result boolSyntax.F then
-          ApplicationProvenance ("not",[conjunction_provenance])
-        else ApplicationProvenance
-          ("=>",[conjunction_provenance,body_provenance])
-      val target = if Term.aconv scope_result boolSyntax.F then
-        boolSyntax.mk_neg conjunction
-      else boolSyntax.mk_imp (conjunction, scope_result)
-      val conjunction_thm = Thm.ASSUME conjunction
-      fun conjunct_theorems expected theorem =
-        case expected of
-          [] => raise ERR "process_scope" "empty conjunction proof"
-        | [_] => [theorem]
-        | _ :: rest =>
-            Thm.CONJUNCT1 theorem ::
-            conjunct_theorems rest (Thm.CONJUNCT2 theorem)
-      val antecedent_theorems =
-        conjunct_theorems antecedents conjunction_thm
-      val applied = List.foldl
-        (fn (antecedent, implication) => Thm.MP implication antecedent)
-        premise antecedent_theorems
-      val _ = process_scope_mark "apply"
-      val normalized = case normalized_result of
-          NONE => applied
-        | SOME tm =>
-            let
-              fun bridge canon =
-                let
-                  val tm_norm = canon tm
-                  val result_norm = canon scope_result
-                in Thm.TRANS tm_norm (Thm.SYM result_norm) end
-              fun arithmetic_bridge () =
-                let
-                  val tm_norm = SmtReplayCanon.cpc_canon_conv tm
-                  val result_norm =
-                    SmtReplayCanon.cpc_canon_conv scope_result
-                  val normalized_tm = boolSyntax.rhs (Thm.concl tm_norm)
-                  val normalized_result =
-                    boolSyntax.rhs (Thm.concl result_norm)
-                  val middle = arith_prove
-                    (boolSyntax.mk_eq (normalized_tm, normalized_result))
-                in
-                  Thm.TRANS tm_norm
-                    (Thm.TRANS middle (Thm.SYM result_norm))
-                end
-              val bridge =
-                bridge SmtReplayCanon.cpc_canon_conv
-                handle Feedback.HOL_ERR _ =>
-                  (arithmetic_bridge ()
-                   handle Feedback.HOL_ERR _ =>
-                     (bridge strong_canon
-                      handle Feedback.HOL_ERR holerr =>
-                        raise ERR "process_scope"
-                          ("scope result canonicalization failed; local=" ^
-                           Library.term_to_string tm ^ "; expected=" ^
-                           Library.term_to_string scope_result ^ "; " ^
-                           Feedback.message_of holerr)))
-            in Thm.EQ_MP bridge applied end
-      val _ = process_scope_mark "normalize"
-      val discharged = Thm.DISCH conjunction normalized
-      val result =
-        if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
-        else discharged
-    in
-      if Term.aconv (Thm.concl result) target then
-        {theorem = result,provenance = produced_provenance}
-      else raise ERR "process_scope" "direct scope normalization shape mismatch"
-    end
-
+      fun record premise antecedents scope_result =
+        let
+          val incoming = case premise_steps of [premise] =>
+              step_provenance premise
+            | _ => raise ERR "process_scope" "expected actual premise record"
+          fun child_provenance provenance = case provenance of
+              ApplicationProvenance ("=>",[left,right]) => (left,right)
+            | _ => if definitely_no_conjunction provenance then
+                (AtomicProvenance,AtomicProvenance)
+              else (UnavailableProvenance
+                "actual scope antecedent has no retained child boundary",
+                UnavailableProvenance
+                "actual scope consequent has no retained child boundary")
+          fun record_children [] _ _ = []
+            | record_children (antecedent::rest) term provenance =
+                let val (left,right) = boolSyntax.dest_imp term
+                    val _ = if shared_aconv left antecedent then () else
+                      raise ERR "process_scope"
+                        ("actual scope antecedent differs from " ^
+                         "constructor recipe")
+                    val (left_provenance,right_provenance) =
+                      child_provenance provenance
+                in left_provenance :: record_children rest right
+                  right_provenance end
+          val children = record_children antecedents (Thm.concl premise)
+            incoming
+          val conjunction_provenance = case children of [one] => one
+            | [] => raise ERR "process_scope" "empty scope topology"
+            | _ => ConjunctionProvenance (ProcessScopeConjunction,children)
+          val body_provenance = case located_args of [body] => #provenance body
+            | _ => raise ERR "process_scope" "expected actual body argument"
+        in
+          if Term.aconv scope_result boolSyntax.F then
+            ApplicationProvenance ("not",[conjunction_provenance])
+          else ApplicationProvenance
+            ("=>",[conjunction_provenance,body_provenance])
+        end
+      val (theorem, provenance) =
+        process_scope_with_record strong_canon args prems record
+    in {theorem = theorem,provenance = provenance} end
 
   fun replay_not_and prems =
     let
@@ -14487,23 +14304,22 @@ local
               val destinations =
                 target :: (literals @ pairs literals @ triples literals)
               fun prove_atom theorem =
-                (semantic_taut_reorder theorem
-                 handle Feedback.HOL_ERR holerr =>
-                   if SmtResource.is_resource_gate holerr then
-                     raise Feedback.HOL_ERR holerr
-                   else
-                let
-                  fun try [] = raise ERR "resolution"
-                        "no semantic target clause follows"
-                    | try (destination :: rest) =
-                        (reorder_to_target
-                          (semantic_circuit_atom destination theorem)
-                         handle HolSatLib.SAT_cex _ => try rest
-                              | Feedback.HOL_ERR holerr =>
-                                  if SmtResource.is_resource_gate holerr then
-                                    raise Feedback.HOL_ERR holerr
-                                  else try rest)
-                in try destinations end)
+                (SmtResource.or_else
+                   (fn () => semantic_taut_reorder theorem)
+                   (fn () =>
+                     let
+                       fun try [] = raise ERR "resolution"
+                             "no semantic target clause follows"
+                         | try (destination :: rest) =
+                             (reorder_to_target
+                               (semantic_circuit_atom destination theorem)
+                              handle HolSatLib.SAT_cex _ => try rest
+                                   | Feedback.HOL_ERR holerr =>
+                                     if SmtResource.is_resource_gate
+                                          holerr then
+                                       raise Feedback.HOL_ERR holerr
+                                     else try rest)
+                     in try destinations end))
               fun prove theorem =
                 case clause_pair (Thm.concl theorem) of
                   SOME (left, right) =>
@@ -14692,12 +14508,12 @@ local
                     val active_stops =
                       target_clause_stops @ !remaining_pivot_stops
                     fun strict candidate =
-                      SOME (candidate, strict_resolver active_stops candidate
-                        accumulated next)
-                      handle Feedback.HOL_ERR holerr =>
-                        if SmtResource.is_resource_gate holerr then
-                          raise Feedback.HOL_ERR holerr
-                        else NONE
+                      SmtResource.or_else
+                        (fn () =>
+                          SOME (candidate,
+                            strict_resolver active_stops candidate
+                              accumulated next))
+                        (fn () => NONE)
                     val strict_result =
                       case strict annotated of
                         SOME result => SOME result
@@ -15046,12 +14862,11 @@ local
                   val accumulated_assumption = Thm.ASSUME accumulated
                   val next_assumption = Thm.ASSUME next
                   fun strict candidate =
-                    SOME (resolve_pair_on_structural_strict_hashed []
-                      candidate accumulated_assumption next_assumption)
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                    SmtResource.or_else
+                      (fn () =>
+                        SOME (resolve_pair_on_structural_strict_hashed []
+                          candidate accumulated_assumption next_assumption))
+                      (fn () => NONE)
                   val resolved =
                     case strict pivot of
                       SOME theorem => theorem
@@ -15103,17 +14918,16 @@ local
                 if shared_aconv resolved consequent then
                   Thm.DISCH resolved (Thm.ASSUME resolved)
                 else
-                  (let
-                     val theorem = reorder (Thm.ASSUME resolved)
-                   in Thm.DISCH resolved theorem end
-                   handle Feedback.HOL_ERR holerr =>
-                     if SmtResource.is_resource_gate holerr then
-                       raise Feedback.HOL_ERR holerr
-                     else
+                  (SmtResource.or_else
+                     (fn () =>
+                       let
+                         val theorem = reorder (Thm.ASSUME resolved)
+                       in Thm.DISCH resolved theorem end)
+                     (fn () =>
                        SmtResource.with_bitblast_step_time
                          "cpc-resolution-schematic-alignment"
                          HolSatLib.SAT_PROVE
-                         (boolSyntax.mk_imp (resolved, consequent)))
+                         (boolSyntax.mk_imp (resolved, consequent))))
               val alignment_substitutions =
                 substitutions_for [resolved, consequent]
               val concrete_alignment = observed_inst
@@ -15357,12 +15171,11 @@ local
               fun resolve accumulated next pivot =
                 let
                   fun strict candidate =
-                    SOME (resolve_pair_on_structural_strict_hashed []
-                      candidate accumulated next)
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                    SmtResource.or_else
+                      (fn () =>
+                        SOME (resolve_pair_on_structural_strict_hashed []
+                          candidate accumulated next))
+                      (fn () => NONE)
                 in
                   case strict pivot of
                     SOME theorem => theorem
@@ -15400,13 +15213,12 @@ local
               instantiated prems end
           fun annotated_then_schematic () =
             let val _ = trace_chain "annotated" in
-              profile "CPC(chain:annotated)" annotated_chain ()
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else (trace_chain "schematic";
-                      profile "CPC(chain:schematic)"
-                        schematic_chain_consequence ())
+              SmtResource.or_else
+                (fn () => profile "CPC(chain:annotated)" annotated_chain ())
+                (fn () =>
+                  (trace_chain "schematic";
+                   profile "CPC(chain:schematic)"
+                     schematic_chain_consequence ()))
             end
           fun dynamic_then_annotated () =
             let val _ = trace_chain "dynamic" in
@@ -15424,12 +15236,11 @@ local
             end
           fun annotated_then_dynamic () =
             (trace_chain "annotated";
-             profile "CPC(chain:annotated)"
-               annotated_chain ()
-             handle Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else dynamic_then_annotated ())
+             SmtResource.or_else
+               (fn () =>
+                 profile "CPC(chain:annotated)"
+                   annotated_chain ())
+               dynamic_then_annotated)
           fun structural_then fallback () =
             (trace_chain "structural schema";
              profile "CPC(chain:structural-schema)"
@@ -15452,17 +15263,17 @@ local
             (* Large explicit pivot chains replay directly; medium chains
                use the pivot schema before the all-premise SAT abstraction.
                Every route constructs a checked theorem. *)
-            (if List.length prems = 2 then annotated_then_dynamic ()
-             else if List.length prems >= 256 then
-               structural_then annotated_then_dynamic ()
-             else if List.length prems >= 128 then
-               structural_then schematic_then_dynamic ()
-             else dynamic_then_annotated ())
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else (trace_chain "sat";
-                    profile "CPC(chain:sat)" sat_chain_consequence ())) ()
+            SmtResource.or_else
+              (fn () =>
+                (if List.length prems = 2 then annotated_then_dynamic ()
+                 else if List.length prems >= 256 then
+                   structural_then annotated_then_dynamic ()
+                 else if List.length prems >= 128 then
+                   structural_then schematic_then_dynamic ()
+                 else dynamic_then_annotated ()))
+              (fn () =>
+                (trace_chain "sat";
+                 profile "CPC(chain:sat)" sat_chain_consequence ()))) ()
           val _ = trace_chain "initial complete"
           val target_literals = strip_chain_clause target
           fun is_target_literal literal = List.exists
@@ -15635,7 +15446,7 @@ local
                 (List.length (!unused_prems))
               val _ = trace_chain ("deep remaining " ^
                 Int.toString (List.length deep_remaining))
-              fun fp_literal_conversion term =
+              fun fp_literal_conversion_direct term =
                 let
                   val negated = Lib.total boolSyntax.dest_neg term
                   val atom = case negated of SOME body => body | NONE => term
@@ -15649,10 +15460,10 @@ local
                     SOME _ => Conv.RAND_CONV SmtFpGraph.convert_atom term
                   | NONE => SmtFpGraph.convert_atom term
                 end
-                handle Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else raise Conv.UNCHANGED
+              fun fp_literal_conversion term =
+                SmtResource.or_else
+                  (fn () => fp_literal_conversion_direct term)
+                  (fn () => raise Conv.UNCHANGED)
               fun boolean_negation_conversion term =
                 let
                   val body = boolSyntax.dest_neg term
@@ -15673,11 +15484,9 @@ local
                 in Conv.REWR_CONV theorem term end
               fun checked_conversion source =
                 resolution_profile "deep/leaf-conversion" (fn () =>
-                  SOME (boolean_negation_conversion source
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else fp_literal_conversion source)
+                  SOME (SmtResource.or_else
+                    (fn () => boolean_negation_conversion source)
+                    (fn () => fp_literal_conversion source))
                   handle Conv.UNCHANGED => NONE) ()
               fun checked_equivalence source destination =
                 resolution_profile "deep/membership" (fn () =>
@@ -15912,28 +15721,28 @@ local
                           else circuit_alignment rest)
           fun original_alignment () =
             (trace_chain "original alignment";
-             (if List.length prems > 32 then
-                circuit_alignment
-                  [("cleaned", cleaned_result),
-                   ("supported", supported_result),
-                   ("premises", alignment_source)]
-              else semantic_taut_reorder supported_result)
-             handle Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else schematic_reorder cleaned_result
-             handle HolSatLib.SAT_cex _ =>
-                      reorder_to_target cleaned_result
-                  | Feedback.HOL_ERR _ =>
-                      (resolution_profile "circuit-reorder"
-                         semantic_circuit_reorder alignment_source
-                       handle HolSatLib.SAT_cex _ =>
-                              reorder_to_target cleaned_result
-                            | Feedback.HOL_ERR _ =>
-                              reorder_to_target cleaned_result)
-             handle Feedback.HOL_ERR _ => contextual_target cleaned_result
-             handle Feedback.HOL_ERR _ =>
-               tautological_consequences prems target)
+             SmtResource.or_else
+               (fn () =>
+                 (if List.length prems > 32 then
+                    circuit_alignment
+                      [("cleaned", cleaned_result),
+                       ("supported", supported_result),
+                       ("premises", alignment_source)]
+                  else semantic_taut_reorder supported_result))
+               (fn () =>
+                 schematic_reorder cleaned_result
+                 handle HolSatLib.SAT_cex _ =>
+                          reorder_to_target cleaned_result
+                      | Feedback.HOL_ERR _ =>
+                          (resolution_profile "circuit-reorder"
+                             semantic_circuit_reorder alignment_source
+                           handle HolSatLib.SAT_cex _ =>
+                                  reorder_to_target cleaned_result
+                                | Feedback.HOL_ERR _ =>
+                                  reorder_to_target cleaned_result)
+                 handle Feedback.HOL_ERR _ => contextual_target cleaned_result
+                 handle Feedback.HOL_ERR _ =>
+                   tautological_consequences prems target))
           fun boolean_dag_later_alignment () =
             let
               fun original_then_combined () =
@@ -16103,11 +15912,9 @@ local
         | _ => raise ERR "resolution" "expected two CPC resolution premises"
       fun tautological_checked target =
         (if List.length prems > 2 then
-           (sat_clause_consequences prems target
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else tautological_consequences prems target)
+           (SmtResource.or_else
+              (fn () => sat_clause_consequences prems target)
+              (fn () => tautological_consequences prems target))
          else tautological_consequences prems target)
         handle HolSatLib.SAT_cex _ =>
           raise ERR "resolution" "propositional consequence is invalid"
@@ -17282,13 +17089,11 @@ local
             List.map Thm.concl prems
           val thm = profile "CPC(rung:string/seq_contextual)"
             (fn target =>
-              SmtSeqProve.seq_prove_with_admission admit target
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else
+              SmtResource.or_else
+                (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+                (fn () =>
                   SmtSeqProve.seq_contextual_prove_with_admission
-                    admit context target) target
+                    admit context target)) target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -17589,18 +17394,15 @@ local
       val context = List.map Thm.concl prems
       val theorem =
         if SmtSeqProve.has_seq_type target then
-          (SmtSeqProve.seq_prove_with_admission admit target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else SmtSeqProve.seq_contextual_prove_with_admission
-               admit context target)
+          (SmtResource.or_else
+             (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+             (fn () =>
+               SmtSeqProve.seq_contextual_prove_with_admission
+                 admit context target))
         else
-          (SmtStringProve.string_rewrite_prove target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else SmtStringProve.string_contextual_prove context target)
+          (SmtResource.or_else
+             (fn () => SmtStringProve.string_rewrite_prove target)
+             (fn () => SmtStringProve.string_contextual_prove context target))
     in
       List.foldl
         (fn (premise, proved) => Drule.PROVE_HYP premise proved)
@@ -20457,12 +20259,11 @@ local
         end
       fun occurrence_resolution_or_fallback () =
         case profile "CPC(rung:resolution/occurrences)"
-            (fn () => occurrence_resolution_result ()
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else (profile_event "CPC(occurrence-decline:conversion)";
-                  NONE)) () of
+            (fn () => SmtResource.or_else
+               occurrence_resolution_result
+               (fn () =>
+                 (profile_event "CPC(occurrence-decline:conversion)";
+                 NONE))) () of
           SOME result => result
         | NONE =>
             let
@@ -20831,9 +20632,10 @@ local
          with the same conclusion can be reused.  On a cache miss dispatch
          consumes it; NONE is retained only so an ablation can demonstrate
          that dispatch itself also fails closed. *)
+      val handler = #replay_handler rule
       val rule_preflight =
-        ((case #replay_handler rule of
-            "skolemize" => SOME
+        ((case handler of
+            HSkolemize => SOME
               (skolemize_preflight conclusion located_args premise_steps)
           | _ => NONE)
          handle Feedback.HOL_ERR holerr =>
@@ -20852,7 +20654,7 @@ local
              profile_event "CPC(cache:omitted_conclusion)";
              NONE)
       val cached =
-        if #replay_handler rule = "scope" then
+        if handler = HScope then
           (case conclusion of
              NONE => omitted_conclusion ()
            | SOME _ =>
@@ -20862,7 +20664,7 @@ local
             handle Feedback.HOL_ERR _ => NONE)
         | NONE => omitted_conclusion ()
       val (state, result) =
-        if #replay_handler rule = "scope" then
+        if handler = HScope then
           let
             val (state, theorem) =
               profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
@@ -20883,8 +20685,8 @@ local
             | NONE =>
               (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
                  "/" ^ #name rule ^ ")") (fn () =>
-               (case #replay_handler rule of
-           "refl" =>
+               (case handler of
+           HRefl =>
                let
                  val theorem = replay_refl conclusion args
                  val provenance =
@@ -20894,7 +20696,7 @@ local
                    | _ => UnavailableProvenance
                        "refl lacks one exact operand occurrence"
                in exact_result provenance theorem end
-           | "eq_refl" =>
+           | HEqRefl =>
                let
                  val theorem = replay_eq_refl args
                  val provenance =
@@ -20906,8 +20708,8 @@ local
                    | _ => UnavailableProvenance
                        "eq_refl lacks one exact operand occurrence"
                in exact_result provenance theorem end
-           | "symm" => replay_symm_result premise_steps
-           | "trans" =>
+           | HSymm => replay_symm_result premise_steps
+           | HTrans =>
                (if List.exists (is_reglan_equiv o Thm.concl) prems then
                   unavailable_result
                     "RegLan transitivity uses semantic language equivalence"
@@ -20934,12 +20736,11 @@ local
                              tree_large) measures
                        in
                          if large then
-                           (SOME (trans_phase "shared" (fn () =>
-                              replay_shared_trans_result premise_steps))
-                            handle Feedback.HOL_ERR holerr =>
-                              if SmtResource.is_resource_gate holerr then
-                                raise Feedback.HOL_ERR holerr
-                              else NONE)
+                           (SmtResource.or_else
+                              (fn () =>
+                                SOME (trans_phase "shared" (fn () =>
+                                  replay_shared_trans_result premise_steps)))
+                              (fn () => NONE))
                          else NONE
                        end) of
                        SOME result => result
@@ -20990,7 +20791,7 @@ local
                     in trans_phase "result" (fn () =>
                       exact_result provenance theorem) end)
                     )
-           | "cong" =>
+           | HCong =>
                (if Option.getOpt
                      (Option.map is_reglan_equiv conclusion, false) orelse
                    List.exists (is_reglan_equiv o Thm.concl) prems then
@@ -21046,20 +20847,19 @@ local
                                   (definitely_no_conjunction_dag o
                                     step_provenance) premise_steps)
                             fun retained () =
-                              let
-                                val exact = replay_exact_cong_result NONE
-                                  source premise_steps
-                              in
-                                if shared_aconv (Thm.concl theorem)
-                                    (Thm.concl (#thm exact)) then
-                                  exact_result
-                                    (#provenance (#located exact)) theorem
-                                else raw
-                              end
-                              handle Feedback.HOL_ERR error =>
-                                if SmtResource.is_resource_gate error then
-                                  raise Feedback.HOL_ERR error
-                                else raw
+                              SmtResource.or_else
+                                (fn () =>
+                                  let
+                                    val exact = replay_exact_cong_result NONE
+                                      source premise_steps
+                                  in
+                                    if shared_aconv (Thm.concl theorem)
+                                        (Thm.concl (#thm exact)) then
+                                      exact_result
+                                        (#provenance (#located exact)) theorem
+                                    else raw
+                                  end)
+                                (fn () => raw)
                           in if keep then retained () else raw end)
                            handle OwnedApplicationDeclined => NONE
                                 | Feedback.HOL_ERR error =>
@@ -21083,23 +20883,24 @@ local
                            "congruence checked operandwise"
                            (replay_nary_cong (#term source) prems)
                        else
-                         (replay_exact_cong_result NONE source premise_steps
-                          handle Feedback.HOL_ERR holerr =>
-                            if SmtResource.is_resource_gate holerr then
-                              raise Feedback.HOL_ERR holerr
-                            else
-                            if #name rule = "nary_cong" then
-                              raw_unavailable_result
-                                "n-Cong n-ary congruence checked directly"
-                                (replay_direct_nary_cong (#term source) prems)
-                            else if #name rule = "cong" andalso
-                                    not (has_binder_shell
-                                      (#provenance source)) then
-                              raw_unavailable_result
-                                "congruence exact provenance unavailable"
-                                (replay_nary_cong (#term source) prems)
-                            else raise ERR "cong"
-                              "exact congruence reconstruction failed")
+                         (SmtResource.or_else
+                            (fn () =>
+                              replay_exact_cong_result NONE source
+                                premise_steps)
+                            (fn () =>
+                              if #name rule = "nary_cong" then
+                                raw_unavailable_result
+                                  "n-Cong n-ary congruence checked directly"
+                                  (replay_direct_nary_cong
+                                     (#term source) prems)
+                              else if #name rule = "cong" andalso
+                                      not (has_binder_shell
+                                        (#provenance source)) then
+                                raw_unavailable_result
+                                  "congruence exact provenance unavailable"
+                                  (replay_nary_cong (#term source) prems)
+                              else raise ERR "cong"
+                                "exact congruence reconstruction failed"))
                      end
                 | _ => unavailable_result
                      "declared congruence uses its exact conclusion"
@@ -21157,10 +20958,10 @@ local
                                  "; strong: " ^
                                  Feedback.message_of strong_error)
                                 (reducing_cong ())))))))
-           | "ho_cong" => opaque ( replay_ho_cong prems)
-           | "beta_reduce" => opaque ( replay_beta_reduce args)
-           | "lambda_elim" => opaque ( replay_lambda_elim args)
-           | "eq_resolve" =>
+           | HHoCong => opaque ( replay_ho_cong prems)
+           | HBetaReduce => opaque ( replay_beta_reduce args)
+           | HLambdaElim => opaque ( replay_lambda_elim args)
+           | HEqResolve =>
                (case conclusion of
                   SOME _ => opaque (canonical_eq_resolve ())
                 | NONE =>
@@ -21190,16 +20991,16 @@ local
                                            "eq_resolve used reconstruction without an exact equality-side occurrence")
                                        end)))))
                     in exact_result provenance theorem end)
-           | "contra" => opaque ( canonical_handler "contra" replay_contra)
-           | "false_intro" => opaque ( replay_false_intro prems)
-           | "false_elim" => opaque ( replay_false_elim prems)
-           | "true_elim" => replay_true_elim_result premise_steps
-           | "true_intro" => opaque ( replay_true_intro prems)
-           | "evaluate" =>
+           | HContra => opaque ( canonical_handler "contra" replay_contra)
+           | HFalseIntro => opaque ( replay_false_intro prems)
+           | HFalseElim => opaque ( replay_false_elim prems)
+           | HTrueElim => replay_true_elim_result premise_steps
+           | HTrueIntro => opaque ( replay_true_intro prems)
+           | HEvaluate =>
                conjunction_free_equality_result
                  "evaluation result contains an exact conjunction"
                  (replay_evaluate conclusion args)
-           | "and_elim" =>
+           | HAndElim =>
                (case premise_steps of
                   [premise_step] =>
                     let
@@ -21208,8 +21009,8 @@ local
                     in exact_result provenance theorem end
                 | _ => raise ERR "and_elim"
                     "expected exactly one CPC premise")
-           | "instantiate" => opaque ( replay_instantiate args prems)
-           | "not_implies_elim2" =>
+           | HInstantiate => opaque ( replay_instantiate args prems)
+           | HNotImpliesElim2 =>
                let
                  val theorem = replay_not_implies_elim2 prems
                  val provenance =
@@ -21227,7 +21028,7 @@ local
                    | _ => UnavailableProvenance
                        "not_implies_elim2 has wrong premise count"
                in exact_result provenance theorem end
-           | "not_implies_elim1" =>
+           | HNotImpliesElim1 =>
                let
                  val theorem = replay_not_implies_elim1 prems
                  val provenance =
@@ -21250,8 +21051,8 @@ local
                          (Thm.concl theorem)
                    | exact => exact
                in exact_result provenance theorem end
-           | "implies_elim" => opaque ( replay_implies_elim prems)
-           | "factoring" =>
+           | HImpliesElim => opaque ( replay_implies_elim prems)
+           | HFactoring =>
                let
                  fun pointer_unique [] = []
                    | pointer_unique (literal :: rest) = literal ::
@@ -21273,7 +21074,7 @@ local
                      "factoring has explicit occurrences" clause
                  | NONE => opaque (replay_factoring prems)
                end
-           | "reordering" =>
+           | HReordering =>
                let
                  val direct = case (premise_steps, located_args) of
                      ([premise], [target]) =>
@@ -21288,11 +21089,9 @@ local
                      "reordering has explicit occurrences" clause
                  | NONE =>
                      let
-                       val theorem = replay_reordering prems args
-                         handle Feedback.HOL_ERR holerr =>
-                           if SmtResource.is_resource_gate holerr then
-                             raise Feedback.HOL_ERR holerr
-                           else canonical_reordering ()
+                       val theorem = SmtResource.or_else
+                         (fn () => replay_reordering prems args)
+                         canonical_reordering
                      in case located_args of
                          [target] =>
                            if Term.aconv (Thm.concl theorem) (#term target) then
@@ -21305,45 +21104,47 @@ local
                        | _ => raw_unavailable_result
                            "reordering lacks one recorded target" theorem end
                end
-           | "exists_elim" => opaque ( replay_rare_rewrite "exists-elim" args)
-           | "cnf" =>
+           | HExistsElim => opaque ( replay_rare_rewrite "exists-elim" args)
+           | HCnf =>
                let val (theorem, literals) =
                  replay_cnf_with_literals (#name rule) args
                in clause_result "CPC CNF clause has explicit occurrences"
                  (SmtClause.from_literals literals theorem) end
-           | "not_equiv_elim1" => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
-           | "not_equiv_elim2" => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
-           | "equiv_elim2" => opaque ( replay_equiv_elim2 conclusion prems)
-           | "equiv_elim1" => opaque ( replay_equiv_elim1 conclusion prems)
-           | "arith_rule" =>
+           | HNotEquivElim1 =>
+               opaque (replay_not_equiv_elim1 prems)
+           | HNotEquivElim2 =>
+               opaque (replay_not_equiv_elim2 prems)
+           | HEquivElim2 => opaque ( replay_equiv_elim2 conclusion prems)
+           | HEquivElim1 => opaque ( replay_equiv_elim1 conclusion prems)
+           | HArithRule =>
                replay_arith_rule_result (#name rule) located_args
-           | "arith_rel" =>
+           | HArithRel =>
                let
                  val () = profile_event
                    (case conclusion of
                       SOME _ => "CPC(arith_rel:dispatch/declared)"
                     | NONE => "CPC(arith_rel:dispatch/omitted)")
                in opaque (replay_arith_rel prems args) end
-           | "arith_abs_eq" => opaque ( replay_arith_abs_eq args)
-           | "arith_abs_int_gt" => opaque ( replay_arith_abs_int_gt args)
-           | "arrays_select_const" => opaque ( replay_arrays_select_const args)
-           | "arrays_read_over_write" => opaque (
+           | HArithAbsEq => opaque ( replay_arith_abs_eq args)
+           | HArithAbsIntGt => opaque ( replay_arith_abs_int_gt args)
+           | HArraysSelectConst => opaque ( replay_arrays_select_const args)
+           | HArraysReadOverWrite => opaque (
                replay_arrays_read_over_write (#name rule) prems conclusion args)
-           | "ite_not_cond" => opaque ( replay_ite_not_cond args)
-           | "ite_true_cond" => opaque ( replay_ite_true_cond args)
-           | "ite_then_true" => opaque ( replay_ite_then_true args)
-           | "ite_then_false" => opaque ( replay_ite_then_false args)
-           | "ite_false_cond" => opaque ( replay_ite_false_cond args)
-           | "ite_neg_branch" => opaque ( replay_ite_neg_branch args prems)
-           | "trust" => opaque
+           | HIteNotCond => opaque ( replay_ite_not_cond args)
+           | HIteTrueCond => opaque ( replay_ite_true_cond args)
+           | HIteThenTrue => opaque ( replay_ite_then_true args)
+           | HIteThenFalse => opaque ( replay_ite_then_false args)
+           | HIteFalseCond => opaque ( replay_ite_false_cond args)
+           | HIteNegBranch => opaque ( replay_ite_neg_branch args prems)
+           | HTrust => opaque
                (replay_trust_admitted datatype_admit false state prems args)
-           | "ite_eq" => opaque ( replay_ite_eq args)
-           | "ite_elim1" => opaque ( replay_ite_elim1 prems)
-           | "ite_elim2" => opaque ( replay_ite_elim2 prems)
-           | "not_ite_elim1" => opaque ( replay_not_ite_elim1 prems)
-           | "not_ite_elim2" => opaque ( replay_not_ite_elim2 prems)
-           | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
-           | "quant_dt_split" =>
+           | HIteEq => opaque ( replay_ite_eq args)
+           | HIteElim1 => opaque ( replay_ite_elim1 prems)
+           | HIteElim2 => opaque ( replay_ite_elim2 prems)
+           | HNotIteElim1 => opaque ( replay_not_ite_elim1 prems)
+           | HNotIteElim2 => opaque ( replay_not_ite_elim2 prems)
+           | HQuantUnusedVars => opaque ( replay_quant_unused_vars args)
+           | HQuantDtSplit =>
                let
                  val theorem = replay_quant_dt_split args
                in
@@ -21354,7 +21155,7 @@ local
                      "quantified datatype split lacks one equality argument"
                      theorem
                end
-           | "quant_rewrite" =>
+           | HQuantRewrite =>
                let
                  val theorem = replay_quant_rewrite (#name rule) located_args
                in
@@ -21365,8 +21166,8 @@ local
                      "quantifier rewrite lacks one exact equality argument"
                      theorem
                end
-           | "alpha_equiv" => opaque ( replay_alpha_equiv args)
-           | "process_scope" =>
+           | HAlphaEquiv => opaque ( replay_alpha_equiv args)
+           | HProcessScope =>
                (case record_scope of NONE =>
                   opaque (replay_process_scope strong_canon args prems)
                 | SOME held =>
@@ -21379,9 +21180,9 @@ local
                          relaxed; actual clause/theorem identity is retained. *)
                       val _ = held := SOME result
                   in result end)
-           | "not_and" => opaque ( replay_not_and prems)
-           | "not_or_elim" => opaque ( replay_not_or_elim args prems)
-           | "not_not_elim" =>
+           | HNotAnd => opaque ( replay_not_and prems)
+           | HNotOrElim => opaque ( replay_not_or_elim args prems)
+           | HNotNotElim =>
                let
                  val theorem = replay_not_not_elim prems
                  val provenance =
@@ -21402,30 +21203,31 @@ local
                    | _ => UnavailableProvenance
                        "not_not_elim has wrong premise count"
                in exact_result provenance theorem end
-           | "and_intro" =>
+           | HAndIntro =>
                let
                  val (theorem, provenance) =
                    replay_and_intro premise_steps
                in exact_result provenance theorem end
-           | "skolemize" =>
+           | HSkolemize =>
                (case rule_preflight of
                   SOME result => result
                 | NONE =>
                     skolemize_preflight conclusion located_args premise_steps)
-           | "arith_mult_neg" => opaque ( replay_arith_mult_neg args)
-           | "arith_mult_pos" => opaque ( replay_arith_mult_pos args)
-           | "arith_mult_sign" => opaque ( replay_arith_mult_sign args)
-           | "arith_trichotomy" => opaque ( replay_arith_trichotomy conclusion prems)
-           | "arith_reduction" =>
+           | HArithMultNeg => opaque ( replay_arith_mult_neg args)
+           | HArithMultPos => opaque ( replay_arith_mult_pos args)
+           | HArithMultSign => opaque ( replay_arith_mult_sign args)
+           | HArithTrichotomy =>
+               opaque (replay_arith_trichotomy conclusion prems)
+           | HArithReduction =>
                let
                  val (theorem, provenance) = replay_arith_reduction args
                in exact_result provenance theorem end
-           | "arith_max_geq1" => opaque ( replay_arith_max_geq1 args)
-           | "arith_max_geq2" => opaque ( replay_arith_max_geq2 args)
-           | "arith_min_lt2" => opaque ( replay_arith_min_lt2 args)
-           | "int_tight_lb" => opaque ( replay_int_tight_lb prems)
-           | "int_tight_ub" => opaque ( replay_int_tight_ub prems)
-           | "modus_ponens" => opaque (
+           | HArithMaxGeq1 => opaque ( replay_arith_max_geq1 args)
+           | HArithMaxGeq2 => opaque ( replay_arith_max_geq2 args)
+           | HArithMinLt2 => opaque ( replay_arith_min_lt2 args)
+           | HIntTightLb => opaque ( replay_int_tight_lb prems)
+           | HIntTightUb => opaque ( replay_int_tight_ub prems)
+           | HModusPonens => opaque (
                (require_declared "modus_ponens" (replay_modus_ponens prems)
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
@@ -21433,10 +21235,10 @@ local
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
                      (replay_arithmetic_modus_ponens prems)))
-           | "arith_sum_ub" => opaque ( replay_arith_sum_ub prems)
-           | "arith_mult_abs_comparison" => opaque (
+           | HArithSumUb => opaque ( replay_arith_sum_ub prems)
+           | HArithMultAbsComparison => opaque (
                replay_arith_mult_abs_comparison prems conclusion)
-           | "aci_norm" =>
+           | HAciNorm =>
                (case located_args of
                   [target] =>
                     let
@@ -21468,60 +21270,54 @@ local
                 | _ => unavailable_result
                     "aci_norm lacks one exact target occurrence"
                     (replay_aci_norm_admitted datatype_admit args))
-           | "bv_word_rewrite" => opaque
+           | HBvWordRewrite => opaque
                (replay_bv_word_rewrite (#name rule) args)
-           | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
-           | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
-           | "bv_zero_extend_eliminate_0" =>
+           | HBvXorDuplicate => opaque ( replay_bv_xor_duplicate args)
+           | HBvNotIdemp => opaque ( replay_bv_not_idemp args)
+           | HBvZeroExtendEliminate0 =>
                opaque (replay_bv_zero_extend_eliminate_0 args)
-           | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
-           | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
-           | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)
-           | "bv_ashr_by_const_0" => opaque ( replay_bv_ashr_by_const_0 args)
-           | "bv_bitwise_slicing" =>
+           | HBvShlByConst0 => opaque ( replay_bv_shl_by_const_0 args)
+           | HBvShlByConst2 => opaque ( replay_bv_shl_by_const_2 args)
+           | HBvLshrByConst0 => opaque ( replay_bv_lshr_by_const_0 args)
+           | HBvAshrByConst0 => opaque ( replay_bv_ashr_by_const_0 args)
+           | HBvBitwiseSlicing =>
                let val theorem = replay_bv_bitwise_slicing args in
                  case located_args of
                    [target] => located_result
                      "bitwise slicing exact target" theorem target
                  | _ => opaque theorem
                end
-           | "bv_poly_norm" =>
+           | HBvPolyNorm =>
                let val theorem = replay_bv_poly_norm args in
                  case located_args of
                    [target] => located_result
                      "bv_poly_norm exact target" theorem target
                  | _ => opaque theorem
                end
-           | "bv_poly_norm_eq" =>
+           | HBvPolyNormEq =>
                let val theorem = replay_bv_poly_norm_eq args in
                  case located_args of
                    [target] => located_result
                      "bv_poly_norm_eq exact target" theorem target
                  | _ => opaque theorem
                end
-           | "seq_rewrite" => opaque (
+           | HSeqRewrite => opaque (
                replay_seq_rewrite datatype_admit (#name rule)
                  prems conclusion args)
-           | "seq_rev_rev" => opaque (replay_seq_rev_rev datatype_admit args)
-           | "str_contains_refl" => opaque
-               (replay_str_contains_refl datatype_admit args)
-           | "rare_inventory" => opaque (
+           | HRareInventory => opaque (
                replay_rare_inventory datatype_admit state (#name rule)
                  prems conclusion located_args)
-           | "str_substr_full_eq" => opaque
-               (replay_str_substr_full_eq datatype_admit args)
-           | "seq_at_elim" => opaque
-               (replay_seq_at_elim datatype_admit conclusion args)
-           | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
-           | "arrays_ext" =>
+           | HSets =>
+               opaque (replay_sets state (#name rule) prems conclusion args)
+           | HArraysExt =>
                if List.null args then
                  opaque (require_declared "arrays_ext"
                    (replay_ext "arrays_ext" prems))
                else raise ERR "arrays_ext" "expected no arguments"
-           | "sets_ext" => opaque ( replay_ext "sets_ext" prems)
-           | "sets_rewrite" => opaque (
+           | HSetsExt => opaque ( replay_ext "sets_ext" prems)
+           | HSetsRewrite => opaque (
                replay_sets state (#name rule) prems conclusion args)
-           | "rewrite" =>
+           | HRewrite =>
                let
                  val theorem = replay_rare_rewrite (#name rule) args
                in
@@ -21536,10 +21332,10 @@ local
                      "rewrite provenance exceeds the compact metadata budget"
                      theorem
                end
-           | "datatype" => opaque ( replay_datatype datatype_admit args)
-           | "dt_split" => opaque
+           | HDatatype => opaque ( replay_datatype datatype_admit args)
+           | HDtSplit => opaque
                (replay_dt_split_with_admission datatype_admit args)
-           | "datatype_eq" =>
+           | HDatatypeEq =>
                let
                  val theorem = replay_datatype_eq datatype_admit args
                  val provenance =
@@ -21548,16 +21344,19 @@ local
                    | _ => UnavailableProvenance
                        "datatype equality lacks its exact result argument"
                in exact_result provenance theorem end
-           | "resolution" => SmtReplayObserve.run
+           | HResolution => SmtReplayObserve.run
                resolution_observation_inputs
                (fn (result : replay_result) => #thm result)
                occurrence_resolution_or_fallback
-           | "bool" => opaque ( replay_bool prems conclusion)
-           | "arith" => opaque ( replay_arith prems conclusion)
-           | "string" => opaque (
+           | HBool => opaque ( replay_bool prems conclusion)
+           | HArith => opaque ( replay_arith prems conclusion)
+           | HString => opaque (
                replay_string datatype_admit state (#name rule)
                  prems conclusion args)
-           | _ => unsupported_step step)) ()
+           | HArray => unsupported_step step
+           (* Unreachable: scope is replayed above, before the cache
+              (the [handler = HScope] branch). *)
+           | HScope => unsupported_step step)) ()
            handle Conv.UNCHANGED =>
              raise ERR "replay_step"
                ("CPC step " ^ id ^ " (rule " ^ #name rule ^
@@ -21968,19 +21767,14 @@ local
       fun prove_canonical_hyp hyp =
         let
           val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
-          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_canon)
           fun match assumption =
-            let
-              val normalized_assumption =
-                SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)
-              val _ = Term.aconv (Thm.concl normalized_assumption)
-                normalized_hyp orelse
+            case SmtReplayCanon.transport_hypothesis hyp_canon
+                   (SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)) of
+              NONE =>
                 raise ERR "remove_extra_hyps"
                   "canonical assumption did not match extra hypothesis"
-              val theorem = Thm.EQ_MP (Thm.SYM hyp_canon)
-                normalized_assumption
-              val () = profile_event "CPC(canon:assumption-interface)"
-            in theorem end
+            | SOME theorem =>
+                (profile_event "CPC(canon:assumption-interface)"; theorem)
         in
           Lib.tryfind match context
         end
@@ -21994,7 +21788,6 @@ local
             raise ERR "remove_extra_hyps" "no array-set echo form"
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
-          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
           (* The translation's definition of a fresh set constant, mapped
              back to the set it names, is an identity once both sides are
              in array form. *)
@@ -22003,15 +21796,12 @@ local
               [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
                Rewrite.REWRITE_CONV []]) hyp)
           fun match assumption =
-            let
-              val normalized_assumption = Susp.force assumption
-              val _ = Term.aconv (Thm.concl normalized_assumption)
-                normalized_hyp orelse
+            case SmtReplayCanon.transport_hypothesis hyp_eq
+                   (Susp.force assumption) of
+              NONE =>
                 raise ERR "remove_extra_hyps"
                   "array-set assumption did not match extra hypothesis"
-            in
-              Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
-            end
+            | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
             Lib.tryfind match array_set_context
@@ -22024,17 +21814,19 @@ local
                (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
                 intLib.ARITH_TAC)))
       fun prove_hyp hyp =
-        profile "CPC(remove_extra_hyps:canonical_assumption)"
-          prove_canonical_hyp hyp
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:array_set)"
-            prove_array_set_hyp hyp
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:fp_special_values)"
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:canonical_assumption)"
+              prove_canonical_hyp hyp)
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:array_set)"
+              prove_array_set_hyp hyp)
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:fp_special_values)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -22047,11 +21839,11 @@ local
                 (* cvc5 expands positive infinity to its FP bit triple. *)
                 smtfloatTheory.smtfp_pinf_bits,
                 (* cvc5 expands negative infinity to its FP bit triple. *)
-                smtfloatTheory.smtfp_ninf_bits])
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
+                smtfloatTheory.smtfp_ninf_bits]))
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -22060,21 +21852,20 @@ local
                 intrealTheory.INT_FLOOR_NEG,
                 (* cvc5 pushes real negation through encoded ceiling and
                    exposes the equivalent negated floor. *)
-                intrealTheory.INT_CEILING_NEG])
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:datatype)"
+                intrealTheory.INT_CEILING_NEG]))
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:datatype)"
             SmtDatatypeProve.datatype_consequence_prove
-            (boolSyntax.mk_neg g :: asl, hyp)
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else if Library.contains_conditional hyp then
-            profile "CPC(remove_extra_hyps:conditional_arith)"
-              prove_from_context hyp
-          else raise ERR "remove_extra_hyps"
-            "extra hypothesis is not a conditional arithmetic consequence"
+            (boolSyntax.mk_neg g :: asl, hyp))
+          (fn () =>
+            if Library.contains_conditional hyp then
+              profile "CPC(remove_extra_hyps:conditional_arith)"
+                prove_from_context hyp
+            else raise ERR "remove_extra_hyps"
+              ("extra hypothesis is not a conditional " ^
+               "arithmetic consequence"))))))
       fun remove_hyp (hyp, result) =
         Timeout.apply SmtResource.max_hypothesis_entailment_time
           (fn () => Drule.PROVE_HYP (prove_hyp hyp) result) ()
@@ -22130,6 +21921,7 @@ in
   val with_operation_statistics = with_operation_statistics_internal
 
   val remove_hyps_for_test = remove_extra_hyps
+  val next_fp_for_test = next_fp
 
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology
@@ -22195,6 +21987,10 @@ in
 
   fun replay_process_scope_for_test args prems =
     replay_process_scope (strong_cpc_canon_conv []) args prems
+
+  fun replay_process_scope_with_boundary_for_test located_args steps =
+    replay_process_scope_with_boundary (strong_cpc_canon_conv [])
+      located_args steps
 
   fun replay_eq_resolve_routes_for_test prems =
     let
@@ -23506,11 +23302,9 @@ in
                 end
               fun attempt [] = raise ERR "discharge_later_checked_steps"
                     "no independent cached deferred proof"
-                | attempt (cached :: rest) = close (#thm cached)
-                    handle Feedback.HOL_ERR error =>
-                      if SmtResource.is_resource_gate error then
-                        raise Feedback.HOL_ERR error
-                      else attempt rest
+                | attempt (cached :: rest) = SmtResource.or_else
+                  (fn () => close (#thm cached))
+                  (fn () => attempt rest)
               val proof = attempt candidates
               val _ = dependency_memo := (target, proof) :: !dependency_memo
             in proof end
@@ -23542,16 +23336,12 @@ in
             in if large then
               replay_checked ()
             else
-              (cached_thm state hypothesis
-               handle Feedback.HOL_ERR holerr =>
-                 if SmtResource.is_resource_gate holerr then
-                   raise Feedback.HOL_ERR holerr
-                 else
-                   (dependency_proof [] hypothesis
-                    handle Feedback.HOL_ERR dependency_error =>
-                      if SmtResource.is_resource_gate dependency_error then
-                        raise Feedback.HOL_ERR dependency_error
-                      else replay_checked ()))
+              (SmtResource.or_else
+                 (fn () => cached_thm state hypothesis)
+                 (fn () =>
+                   SmtResource.or_else
+                     (fn () => dependency_proof [] hypothesis)
+                     replay_checked))
             end
           fun checked_generalization () =
             let
@@ -23565,18 +23355,14 @@ in
               body_proof variables
             end
           fun checked_then_generalized () =
-            checked_proof ()
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else checked_generalization ()
+            SmtResource.or_else
+              checked_proof
+              checked_generalization
           val proof =
             if boolSyntax.is_forall hypothesis then
-              (checked_generalization ()
-               handle Feedback.HOL_ERR holerr =>
-                 if SmtResource.is_resource_gate holerr then
-                   raise Feedback.HOL_ERR holerr
-                 else checked_then_generalized ())
+              (SmtResource.or_else
+                 checked_generalization
+                 checked_then_generalized)
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
           val _ = trace_checked ("done=" ^ ordinal)
@@ -23809,7 +23595,7 @@ in
   fun graph_bounded_force_worker definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
     let
-      val _ = if #replay_handler (#rule step) = "trust" then () else
+      val _ = if #replay_handler (#rule step) = HTrust then () else
         raise ERR "graph_bounded_force_worker" "expected registered TRUST"
       val state = initial_state definitions (List.map #term premises)
       val theorem = replay_trust true state
@@ -24071,7 +23857,7 @@ in
                            val(visible,tail)=if pop then
                                case stack of []=>fail "unmatched scope pop"
                                | saved::tail=>
-                                   if #replay_handler(#rule step)="scope"
+                                   if #replay_handler (#rule step)=HScope
                                      then(saved,tail)else
                                      fail "scope pop handler differs"
                              else(known,stack)
@@ -24081,7 +23867,7 @@ in
             val _=if List.exists(fn old=>(tick();old=command))(!issued)
               then fail "command occurrence already prepared"else ()
             val(step,known)=seek 0[][](#commands(Packet.proof packet))
-            val _=if #replay_handler(#rule step)="instantiate"then ()else
+            val _=if #replay_handler (#rule step)=HInstantiate then ()else
               fail "fixed specialization handler required"
             val premise=case(#premises step,premises)of
                 ([wanted],[(id,node,edge)])=>

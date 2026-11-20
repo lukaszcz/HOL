@@ -203,75 +203,94 @@ struct
            guards = [registered],validated = ref (~1 : IntInf.int)}
         val _ = active result
     in result end)
-  fun start_goal work {view} = W.with_step work (fn () =>
-    let val sources = W.original_sources work
+  (* The shared start worker for the two original Source roots. A caller
+     supplies [enter] (run before the owner Source is read), [limits] (the
+     limits read once Source, graph and root are known), [validate] (the
+     owner's own Work validation under them), the one-unit [spend] and the
+     focus constructor [make]; [select] picks the original Source and its
+     re-check (see [goal_original] and [assumption_original]). No owner
+     state exists until [make] returns, so a failure anywhere before it
+     leaves nothing live. *)
+  fun start_worker {enter,limits,validate,spend,make,active} work view select
+      (unopened,opened_provenance) =
+    W.with_step work (fn () =>
+    let val pre = enter ()
+        val sources = W.original_sources work
         val graph = S.owning_graph sources val root = S.owning_scope sources
-        val limits = W.semantic_limits work
-        val _ = W.validate work graph root sources limits
-        val original = S.goal_source sources
+        val env = limits pre
+        fun revalidate () = validate env graph root sources
+        val _ = revalidate ()
+        val (original,recheck) = select revalidate sources
         fun registered () =
-          let val saved = S.goal_source sources
-              val _ = W.validate work graph root sources limits
-              val _ = if #node saved = #node original andalso
-                  Portable.pointer_eq (#original saved,#original original)
-                  andalso Portable.pointer_eq (#bridge saved,#bridge original)
-                then () else raise ERR "start_goal" "positive Source changed"
-          in case view of NONE => () | SOME opened =>
-            G.validate_opened_view graph root (#node original) opened end
+          (recheck ();
+           case view of NONE => () | SOME opened =>
+             G.validate_opened_view graph root (#node original) opened)
         val _ = registered ()
         val opened = case view of NONE => original | SOME saved => saved
         val current = #node opened
         val root_child = G.closure_root graph root current
-        val _ = W.spend work 1
-        val result = Focus
-          {owner = {graph = graph,root = root,sources = sources,work = work,
-                    limits = limits,epoch = Type.type_epoch ()},
-           traversal = root,caller = root,child = root_child,node = current,
-           original = original,opened = opened,root_ordinal = ~1,
-           provenance = (case view of NONE => UnopenedPositiveGoal
-             | SOME _ => OriginalPositiveGoal),
+        val _ = spend ()
+        val result = make env
+          {graph = graph,root = root,sources = sources,original = original,
+           opened = opened,current = current,child = root_child,
+           provenance = (case view of NONE => unopened
+             | SOME _ => opened_provenance),
            goal_unopened = (case view of NONE => true | SOME _ => false),
-           guards = [registered],validated = ref (~1 : IntInf.int)}
+           registered = registered}
         val _ = active result
     in result end)
+  (* The positive Goal Source; its re-check revalidates the owner, then
+     requires the very same retained Source. *)
+  fun goal_original revalidate sources =
+    let val original = S.goal_source sources
+        fun recheck () =
+          let val saved = S.goal_source sources
+              val _ = revalidate ()
+          in if #node saved = #node original andalso
+              Portable.pointer_eq (#original saved,#original original)
+              andalso Portable.pointer_eq (#bridge saved,#bridge original)
+            then () else raise ERR "start_goal" "positive Source changed"
+          end
+    in (original,recheck) end
+  (* Select the retained original assumption [occurrence] (>= 1), paying
+     one unit through [spend] per inspected slot. Opaque S retains this
+     immutable occurrence portfolio. SAME W/S identity is rechecked; guards
+     do not rerun selection. *)
+  fun assumption_original spend (occurrence : IntInf.int) revalidate sources =
+    let val _ = if occurrence >= 1 then () else
+          raise ERR "start_assumption" "not an original assumption index"
+        fun select [] _ = raise ERR "start_assumption"
+              "absent original assumption"
+          | select (source::rest) (i : IntInf.int) =
+              (spend ();if i = 0 then source else select rest (i-1))
+    in (select (S.reconciliation_sources sources) occurrence,revalidate) end
+  (* The same Source-root start for the ordinary (int) limits. *)
+  fun start_source work view select ordinal provenances =
+    start_worker
+      {enter = fn () => (),limits = fn () => W.semantic_limits work,
+       validate = fn limits => fn graph => fn root => fn sources =>
+         W.validate work graph root sources limits,
+       spend = fn () => W.spend work 1,
+       make = fn limits => fn {graph,root,sources,original,opened,current,
+                               child,provenance,goal_unopened,registered} =>
+         Focus
+          {owner = {graph = graph,root = root,sources = sources,work = work,
+                    limits = limits,epoch = Type.type_epoch ()},
+           traversal = root,caller = root,child = child,node = current,
+           original = original,opened = opened,root_ordinal = ordinal,
+           provenance = provenance,goal_unopened = goal_unopened,
+           guards = [registered],validated = ref (~1 : IntInf.int)},
+       active = active} work view select provenances
+  fun start_goal work {view} =
+    start_source work view goal_original ~1
+      (UnopenedPositiveGoal,OriginalPositiveGoal)
   (* The supplied ordinal must name a retained assumption (>=1).
      The option selects genuine opened syntax or explicitly unopened DATA,
      never a caller category/cap override. SAME Work owns the action. *)
   fun start_assumption work {occurrence,view} =
-    W.with_step work (fn () =>
-    let val sources = W.original_sources work
-        val graph = S.owning_graph sources val root = S.owning_scope sources
-        val limits = W.semantic_limits work
-        val _ = W.validate work graph root sources limits
-        val _ = if occurrence >= 1 then () else
-          raise ERR "start_assumption" "not an original assumption index"
-        fun select [] _ = raise ERR "start_assumption"
-              "absent original assumption"
-          | select (source::rest) i =
-              (W.spend work 1;if i = 0 then source else select rest (i-1))
-        val original = select (S.reconciliation_sources sources) occurrence
-        fun registered () =
-          (* Opaque S retains this immutable occurrence portfolio. SAME
-             W/S identity is rechecked; guards do not rerun selection. *)
-          let val _ = W.validate work graph root sources limits
-          in case view of NONE => () | SOME opened =>
-            G.validate_opened_view graph root (#node original) opened end
-        val _ = registered ()
-        val opened = case view of NONE => original | SOME saved => saved
-        val current = #node opened
-        val root_child = G.closure_root graph root current
-        val _ = W.spend work 1
-        val result = Focus
-          {owner = {graph = graph,root = root,sources = sources,work = work,
-                    limits = limits,epoch = Type.type_epoch ()},
-           traversal = root,caller = root,child = root_child,node = current,
-           original = original,opened = opened,root_ordinal = occurrence,
-           provenance = (case view of NONE => UnopenedOriginalOccurrence
-             | SOME _ => OriginalOccurrence),
-           goal_unopened = (case view of NONE => true | SOME _ => false),
-           guards = [registered],validated = ref (~1 : IntInf.int)}
-        val _ = active result
-    in result end)
+    start_source work view (assumption_original (fn () => W.spend work 1)
+      (IntInf.fromInt occurrence)) occurrence
+      (UnopenedOriginalOccurrence,OriginalOccurrence)
 
   (* A checked selected stock-law receipt is not an ordinary Source slot.
      Its whole import/opened and P evidence were admitted by the SAME W. *)
@@ -435,120 +454,159 @@ struct
         val target = at_node focus (scope focus) (#target data) [backing]
     in checked (focus,target,theorem,backing) end)
 
-  (* Full repeated syntax/type footprints; memo shares discovery, never
-     occurrence sums. Private closure/map/name costs remain unclosed. *)
-  fun inventory (focus as Focus {traversal,...}) roots =
-    let val _ = active focus
-        val work = work_of focus
-        (* This complete inventory has no user callbacks. Fence it once,
-           not around every paid type/node/memo operation. The returned
-           guard still checks every retained path at policy boundaries. *)
-        fun invoke _ action = action ()
-        fun spend _ amount = W.spend work amount
-        fun scope _ = traversal
-        val graph = #graph (owner_of focus)
-        val limits = #limits (owner_of focus)
-        val maximum = Int.max (#input_limit limits,
-          Int.max (#output_limit limits,#template_limit limits))
-        val ceiling = IntInf.fromInt (W.work_limit (work_of focus))
+  (* The largest of the three semantic scalar limits. *)
+  fun max_limit ({input_limit,output_limit,template_limit} : W.limits) =
+    Int.max (input_limit,Int.max (output_limit,template_limit))
+  (* The footprint walk shared by both inventories. A caller supplies the
+     owner-specific operations: [fence] (SOME (work,check) runs every
+     callback under the owner check [check], closing [work] on failure;
+     NONE leaves the walk unfenced), [graph], the paid [spend], the traversal
+     [scope], [begin_root] (the per-root cache check or capture), the Work
+     [ceiling] of the footprint arithmetic, the opaque-profile lookup and data
+     ([profile_for], [profile_data], read for a requester ['r]) and how the
+     requester descends under a binder ([body_requester]); [requester0] is
+     the requester a root starts with, from its traversal scope. It returns
+     the footprints, the quoted types and [revalidate], which re-walks the
+     retained closure children and then opaque profiles; the caller builds
+     its guard from it. *)
+  fun inventory_worker {fence,graph,ceiling,spend,scope,begin_root,
+                        profile_for,profile_data,body_requester,
+                        requester0} roots =
+    let fun invoke action = case fence of NONE => action ()
+          | SOME (work,check) => protected work (fn () =>
+              (check ();let val value = action () val _ = check ()
+                        in value end))
         fun plus a b = IntInf.min (ceiling+1,a+b)
         val types = ref ([] : Type.hol_type list)
         val held = ref ([] : (G.scope * G.closure_child) list)
-        val opaque = ref ([] : G.opaque_profile list)
+        val opaque = ref []
         val memo = ref ([] : (G.node * footprint) list)
         fun weight ty =
           let fun walk [] n = n
                 | walk (pending::more) n =
-                  (spend focus 1;case pending of [] => walk more n
+                  (spend 1;case pending of [] => walk more n
                    | current::rest =>
                      let val next = plus n 1
                          val _ = if next <= ceiling then () else
                            raise ERR "inventory" "type footprint exceeds Work"
-                     in if invoke focus (fn () => Type.is_vartype current)
+                     in if invoke (fn () => Type.is_vartype current)
                         then walk (rest::more) next
-                        else walk ((invoke focus
+                        else walk ((invoke
                           (fn () => #2 (Type.dest_type current)))::rest::more)
                           next end)
           in walk [[ty]] 0 end
         fun annotation current =
-          let val ty = invoke focus (fn () => G.type_of graph current)
-              val count = weight ty val _ = spend focus 1
+          let val ty = invoke (fn () => G.type_of graph current)
+              val count = weight ty val _ = spend 1
               val _ = types := ty :: !types
           in count end
         fun lookup current [] = NONE
           | lookup current ((old,value)::rest) =
-              (spend focus 1;if current = old then SOME value
+              (spend 1;if current = old then SOME value
                else lookup current rest)
-        fun visit caller child =
-          let val _ = spend focus 1
-              val current = invoke focus
+        fun visit caller requester child =
+          let val _ = spend 1
+              val current = invoke
                 (fn () => G.closure_child_node graph caller child)
               val _ = held := (caller,child) :: !held
           in case lookup current (!memo) of SOME value => value
            | NONE =>
-            let val kind = invoke focus (fn () => G.view graph current)
+            let val kind = invoke (fn () => G.view graph current)
                 val profile = case kind of G.OpaqueRetained =>
-                    invoke focus (fn () => G.opaque_profile_for graph
-                      (scope focus) current)
+                    profile_for requester current
                   | _ => NONE
                 val ty = case profile of SOME held =>
-                    #ty (invoke focus (fn () => G.opaque_profile_data graph
-                      (scope focus) held))
+                    #ty (invoke (fn () => profile_data requester held))
                   | NONE => annotation current
                 val value : footprint = case kind of
                     G.Application _ =>
-                      let val (f,x) = invoke focus (fn () =>
+                      let val (f,x) = invoke (fn () =>
                             G.closure_application_children graph caller child)
-                          val a = visit caller f val b = visit caller x
+                          val a = visit caller requester f
+                          val b = visit caller requester x
                       in {raw = plus 1 (plus (#raw a) (#raw b)),
                           inc = plus 1 (plus (#inc a) (#inc b)),
                           ann = plus ty (plus (#ann a) (#ann b)),ty = ty}
                       end
                   | G.AdmittedBinder _ =>
-                      let val binder = invoke focus (fn () =>
+                      let val binder = invoke (fn () =>
                             G.closure_child_binder graph caller child)
-                          val d = invoke focus (fn () =>
+                          val d = invoke (fn () =>
                             G.binder_closure_data graph caller binder)
                           val bt = annotation (#binder d)
-                          val b = visit caller (invoke focus (fn () =>
-                            G.binder_closure_body graph caller binder))
+                          val b = visit caller
+                            (body_requester requester (#body_frame d))
+                            (invoke (fn () =>
+                              G.binder_closure_body graph caller binder))
                       in {raw = plus 1 (#raw b),inc = plus 2 (#inc b),
                           ann = plus ty (plus bt (#ann b)),ty = ty} end
                   | G.OpaqueRetained => (case profile of NONE =>
                       raise ERR "inventory"
                         "unrecorded opaque annotation portfolio"
                     | SOME held =>
-                      let val data = invoke focus
-                            (fn () => G.opaque_profile_data graph
-                              (scope focus) held)
-                          val _ = spend focus 1
-                          val _ = opaque := held :: !opaque
+                      let val data = invoke
+                            (fn () => profile_data requester held)
+                          val _ = spend 1
+                          val _ = opaque := (requester,held) :: !opaque
                           val _ = List.app (fn ty =>
-                            (spend focus 1;types := ty :: !types)) (#types data)
-                      in {raw = IntInf.fromInt (#raw data),
-                          inc = IntInf.fromInt (#inc data),
+                            (spend 1;types := ty :: !types)) (#types data)
+                      in {raw = #raw data,inc = #inc data,
                           ann = #ann data,ty = #ty data} end)
                   | _ => {raw = 1,inc = 1,ann = ty,ty = ty}
-                val _ = spend focus 1
+                val _ = spend 1
                 val _ = memo := (current,value) :: !memo
             in value end end
         fun root current =
-          let val _ = List.app (fn metric =>
-                (spend focus 1;case invoke focus (fn () =>
-                    G.unfolded_nodes graph metric maximum current) of
-                    SOME count => if count <= maximum then () else
-                      raise ERR "inventory" "cached syntax exceeds caps"
-                  | NONE => raise ERR "inventory" "unknown cached syntax"))
-                [G.RawNodes,G.BinderInclusiveNodes]
-          in visit (scope focus) (invoke focus
-            (fn () => G.closure_root graph (scope focus) current)) end
+          let val _ = begin_root current
+              val caller = scope ()
+              val requester = requester0 (scope ())
+          in visit caller requester (invoke
+            (fn () => G.closure_root graph (scope ()) current)) end
         val values = List.map root roots
-        fun guard () =
-          (active focus;List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) (!held);
-           List.app (fn profile => ignore (G.opaque_profile_data graph
-             traversal profile)) (!opaque))
-    in (values,!types,guard) end
+        (* Re-walk every retained closure child, then every retained opaque
+           profile, with the same direct (unfenced) calls as the walk. *)
+        fun revalidate () =
+          (List.app (fn (caller,child) =>
+             ignore (G.closure_child_node graph caller child)) (!held);
+           List.app (fn (requester,profile) =>
+             ignore (profile_data requester profile)) (!opaque))
+    in (values,!types,revalidate) end
+
+  (* Full repeated syntax/type footprints; memo shares discovery, never
+     occurrence sums. Private closure/map/name costs remain unclosed. *)
+  fun inventory (focus as Focus {traversal,...}) roots =
+    let val _ = active focus
+        val work = work_of focus
+        val graph = #graph (owner_of focus)
+        val maximum = max_limit (#limits (owner_of focus))
+        val ceiling = IntInf.fromInt (W.work_limit (work_of focus))
+        fun begin_root current =
+          List.app (fn metric =>
+            (W.spend work 1;case G.unfolded_nodes graph metric maximum
+                current of
+                SOME count => if count <= maximum then () else
+                  raise ERR "inventory" "cached syntax exceeds caps"
+              | NONE => raise ERR "inventory" "unknown cached syntax"))
+            [G.RawNodes,G.BinderInclusiveNodes]
+        fun profile_data () held =
+          let val data = G.opaque_profile_data graph traversal held
+          in {raw = IntInf.fromInt (#raw data),
+              inc = IntInf.fromInt (#inc data),
+              ann = #ann data,ty = #ty data,types = #types data} end
+        val (values,types,revalidate) = inventory_worker
+          {(* This complete inventory has no user callbacks. Fence it once,
+              not around every paid type/node/memo operation. The returned
+              guard still checks every retained path at policy boundaries. *)
+           fence = NONE,graph = graph,ceiling = ceiling,
+           spend = fn amount => W.spend work amount,
+           scope = fn () => traversal,begin_root = begin_root,
+           profile_for = fn () => fn current =>
+             G.opaque_profile_for graph traversal current,
+           profile_data = profile_data,
+           body_requester = fn requester => fn _ => requester,
+           requester0 = fn _ => ()} roots
+        fun guard () = (active focus;revalidate ())
+    in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
      retain the original Work debit; semantic result and checked evidence
@@ -616,7 +674,13 @@ struct
         val _ = List.app (List.app call) generated
     in call end
 
-  fun compose {first,second,ordinal,check_type} =
+  (* The shared composition worker. Each caller passes the focus and
+     conversion operations of its own owner type; the order of every
+     validation, reservation and callback is fixed here. *)
+  fun compose_worker {peek_initial,work_of,require_owner,validate,
+                    target_focus,node,scope,inventory,reserve,equation,
+                    policies,graph_of,theorem_of,invoke,checked}
+      {first,second,ordinal,check_type} =
     let val initial = peek_initial first
         val work = work_of initial
     in protected work (fn () =>
@@ -637,13 +701,22 @@ struct
             | _ => raise ERR "compose" "internal size portfolio"
           val _ = reserve initial ordinal b [equation a b]
           fun all () = (guard ();held ())
-          val graph = #graph (owner_of initial)
+          val graph = graph_of initial
           val _ = policies initial all types
             [G.type_of graph (node initial)] ordinal 0 check_type
           val theorem = invoke initial (fn () => Thm.TRANS
-            (#theorem (endpoints first)) (#theorem (endpoints second)))
+            (theorem_of first) (theorem_of second))
           val _ = all ()
       in checked (initial,target,theorem,all) end) end) end
+  val compose = compose_worker
+    {peek_initial = peek_initial,work_of = work_of,
+     require_owner = require_owner,validate = validate,
+     target_focus = target_focus,node = node,scope = scope,
+     inventory = inventory,reserve = reserve,equation = equation,
+     policies = policies,
+     graph_of = fn focus => #graph (owner_of focus),
+     theorem_of = fn conversion => #theorem (endpoints conversion),
+     invoke = invoke,checked = checked}
 
   fun prepare_application {parent,left,right,ordinal,check_type} =
     W.with_step (work_of parent) (fn () =>
@@ -1353,21 +1426,6 @@ struct
   fun scope (f as Focus {traversal,...}) = (active f;traversal)
   fun child (f as Focus {child,...}) = (active f;child)
   fun provenance (f as Focus {provenance,...}) = (active f;provenance)
-  fun original_occurrence (f as Focus {root_ordinal,...}) =
-    protected (work_of f) (fn () =>
-      (active f;if root_ordinal >= 0 then root_ordinal else
-        raise ERR "original_occurrence" "positive Goal is not a Source slot"))
-  fun root_sources (f as Focus
-      {original,opened,goal_unopened,provenance,...}) =
-    protected (work_of f) (fn () =>
-      (active f;if goal_unopened then raise ERR "root_sources"
-          (case provenance of
-              UnopenedOriginalOccurrence =>
-                "unopened assumption Source has no opened view"
-            | UnopenedOriginalDescendant =>
-                "unopened assumption Source has no opened view"
-            | _ => "unopened positive Source has no opened view")
-       else {original = original,opened = opened}))
 
   (* Every derived focus keeps the incoming path guard, then normalizes its
      own handle to the actual traversal frame. It does not infer body frames
@@ -1408,87 +1466,40 @@ struct
     | ClosedAuxiliaryDescendant => ClosedAuxiliaryDescendant
     | _ => GeneratedDescendant
 
-  fun start_goal work {view,native_contract,profiles} = W.with_step work (fn ()
-    =>
-    let val native=NC.for_work work native_contract
-        val sources = W.original_sources work
-        val graph = S.owning_graph sources val root = S.owning_scope sources
-        val limits = #semantic_limits native
-        val policy_limits = W.semantic_policy work
-        val _ = W.validate_policy work graph root sources policy_limits
-        val original = S.goal_source sources
-        fun registered () =
-          let val saved = S.goal_source sources
-              val _ = W.validate_policy work graph root sources policy_limits
-              val _ = if #node saved = #node original andalso
-                  Portable.pointer_eq (#original saved,#original original)
-                  andalso Portable.pointer_eq (#bridge saved,#bridge original)
-                then () else raise ERR "start_goal" "positive Source changed"
-          in case view of NONE => () | SOME opened =>
-            G.validate_opened_view graph root (#node original) opened end
-        val _ = registered ()
-        val opened = case view of NONE => original | SOME saved => saved
-        val current = #node opened
-        val root_child = G.closure_root graph root current
-        val _ = W.spend_policy work 1
-        val result = Focus
+  (* The same Source-root start for the native policy limits. *)
+  fun start_source work view native_contract profiles select ordinal
+      provenances =
+    start_worker
+      {enter = fn () => NC.for_work work native_contract,
+       limits = fn native =>
+         (#semantic_limits native,W.semantic_policy work,native),
+       validate = fn (_,policy_limits,_) => fn graph => fn root =>
+         fn sources => W.validate_policy work graph root sources policy_limits,
+       spend = fn () => W.spend_policy work 1,
+       make = fn (limits,policy_limits,native) =>
+         fn {graph,root,sources,original,opened,current,child,
+             provenance,goal_unopened,registered} =>
+         Focus
           {owner = {graph = graph,root = root,sources = sources,work = work,
                     limits=limits,policy_limits=policy_limits,
                     native_contract=native_contract,native_data=native,
                     profiles=profiles,
                     epoch=Type.type_epoch ()},
-           traversal = root,caller = root,child = root_child,node = current,
-           original = original,opened = opened,root_ordinal = ~1,
-           provenance = (case view of NONE => UnopenedPositiveGoal
-             | SOME _ => OriginalPositiveGoal),
-           goal_unopened = (case view of NONE => true | SOME _ => false),
-           guards = [registered],validated = ref (~1 : IntInf.int)}
-        val _ = active result
-    in result end)
+           traversal = root,caller = root,child = child,node = current,
+           original = original,opened = opened,root_ordinal = ordinal,
+           provenance = provenance,goal_unopened = goal_unopened,
+           guards = [registered],validated = ref (~1 : IntInf.int)},
+       active = active} work view select provenances
+  fun start_goal work {view,native_contract,profiles} =
+    start_source work view native_contract profiles goal_original ~1
+      (UnopenedPositiveGoal,OriginalPositiveGoal)
   (* The supplied ordinal must name a retained assumption (>=1).
      The option selects genuine opened syntax or explicitly unopened DATA,
      never a caller category/cap override. SAME Work owns the action. *)
   fun start_assumption work {occurrence,view,native_contract,profiles} =
-    W.with_step work (fn () =>
-    let val native=NC.for_work work native_contract
-        val sources = W.original_sources work
-        val graph = S.owning_graph sources val root = S.owning_scope sources
-        val limits = #semantic_limits native
-        val policy_limits = W.semantic_policy work
-        val _ = W.validate_policy work graph root sources policy_limits
-        val _ = if occurrence >= 1 then () else
-          raise ERR "start_assumption" "not an original assumption index"
-        fun select [] (_:IntInf.int) = raise ERR "start_assumption"
-              "absent original assumption"
-          | select (source::rest) i =
-              (W.spend_policy work 1;if i = 0 then source else select rest
-                (i-1))
-        val original = select (S.reconciliation_sources sources) occurrence
-        fun registered () =
-          (* Opaque S retains this immutable occurrence portfolio. SAME
-             W/S identity is rechecked; guards do not rerun selection. *)
-          let val _ = W.validate_policy work graph root sources policy_limits
-          in case view of NONE => () | SOME opened =>
-            G.validate_opened_view graph root (#node original) opened end
-        val _ = registered ()
-        val opened = case view of NONE => original | SOME saved => saved
-        val current = #node opened
-        val root_child = G.closure_root graph root current
-        val _ = W.spend_policy work 1
-        val result = Focus
-          {owner = {graph = graph,root = root,sources = sources,work = work,
-                    limits=limits,policy_limits=policy_limits,
-                    native_contract=native_contract,native_data=native,
-                    profiles=profiles,
-                    epoch=Type.type_epoch ()},
-           traversal = root,caller = root,child = root_child,node = current,
-           original = original,opened = opened,root_ordinal = occurrence,
-           provenance = (case view of NONE => UnopenedOriginalOccurrence
-             | SOME _ => OriginalOccurrence),
-           goal_unopened = (case view of NONE => true | SOME _ => false),
-           guards = [registered],validated = ref (~1 : IntInf.int)}
-        val _ = active result
-    in result end)
+    start_source work view native_contract profiles
+      (assumption_original (fn () => W.spend_policy work 1) occurrence)
+      occurrence (UnopenedOriginalOccurrence,OriginalOccurrence)
 
   fun application_children (parent as Focus {caller,child,...}) =
     let val graph = #graph (owner_of parent)
@@ -1588,97 +1599,11 @@ struct
 
   fun inventory focus roots =
     let val graph = #graph (owner_of focus)
-        val limits = #limits (owner_of focus)
-        val maximum = Int.max (#input_limit limits,
-          Int.max (#output_limit limits,#template_limit limits))
+        val maximum = max_limit (#limits (owner_of focus))
         val ceiling = IntInf.fromInt (#type_work_limit (#native_data (owner_of
           focus)))
-        fun plus a b = IntInf.min (ceiling+1,a+b)
-        val types = ref ([] : Type.hol_type list)
-        val held = ref ([] : (G.scope * G.closure_child) list)
-        val opaque = ref ([] : (G.scope * G.policy_opaque_profile) list)
-        val memo = ref ([] : (G.node * footprint) list)
-        fun weight ty =
-          let fun walk [] n = n
-                | walk (pending::more) n =
-                  (spend focus 1;case pending of [] => walk more n
-                   | current::rest =>
-                     let val next = plus n 1
-                         val _ = if next <= ceiling then () else
-                           raise ERR "inventory" "type footprint exceeds Work"
-                     in if invoke focus (fn () => Type.is_vartype current)
-                        then walk (rest::more) next
-                        else walk ((invoke focus
-                          (fn () => #2 (Type.dest_type current)))::rest::more)
-                          next end)
-          in walk [[ty]] 0 end
-        fun annotation current =
-          let val ty = invoke focus (fn () => G.type_of graph current)
-              val count = weight ty val _ = spend focus 1
-              val _ = types := ty :: !types
-          in count end
-        fun lookup current [] = NONE
-          | lookup current ((old,value)::rest) =
-              (spend focus 1;if current = old then SOME value
-               else lookup current rest)
-        fun visit caller requester child =
-          let val _ = spend focus 1
-              val current = invoke focus
-                (fn () => G.closure_child_node graph caller child)
-              val _ = held := (caller,child) :: !held
-          in case lookup current (!memo) of SOME value => value
-           | NONE =>
-            let val kind = invoke focus (fn () => G.view graph current)
-                val profile = case kind of G.OpaqueRetained =>
-                    profile_for focus requester current
-                  | _ => NONE
-                val ty = case profile of SOME held =>
-                    #ty (invoke focus (fn () =>
-                      G.opaque_profile_data_with_policy graph
-                      requester held))
-                  | NONE => annotation current
-                val value : footprint = case kind of
-                    G.Application _ =>
-                      let val (f,x) = invoke focus (fn () =>
-                            G.closure_application_children graph caller child)
-                          val a = visit caller requester f
-                          val b = visit caller requester x
-                      in {raw = plus 1 (plus (#raw a) (#raw b)),
-                          inc = plus 1 (plus (#inc a) (#inc b)),
-                          ann = plus ty (plus (#ann a) (#ann b)),ty = ty}
-                      end
-                  | G.AdmittedBinder _ =>
-                      let val binder = invoke focus (fn () =>
-                            G.closure_child_binder graph caller child)
-                          val d = invoke focus (fn () =>
-                            G.binder_closure_data graph caller binder)
-                          val bt = annotation (#binder d)
-                          val b = visit caller (#body_frame d) (invoke focus
-                            (fn () =>
-                            G.binder_closure_body graph caller binder))
-                      in {raw = plus 1 (#raw b),inc = plus 2 (#inc b),
-                          ann = plus ty (plus bt (#ann b)),ty = ty} end
-                  | G.OpaqueRetained => (case profile of NONE =>
-                      raise ERR "inventory"
-                        "unrecorded opaque annotation portfolio"
-                    | SOME held =>
-                      let val data = invoke focus
-                            (fn () => G.opaque_profile_data_with_policy graph
-                              requester held)
-                          val _ = spend focus 1
-                          val _ = opaque := (requester,held) :: !opaque
-                          val _ = List.app (fn ty =>
-                            (spend focus 1;types := ty :: !types)) (#types
-                              data)
-                      in {raw = #raw data,
-                          inc = #inc data,
-                          ann = #ann data,ty = #ty data} end)
-                  | _ => {raw = 1,inc = 1,ann = ty,ty = ty}
-                val _ = spend focus 1
-                val _ = memo := (current,value) :: !memo
-            in value end end
         val captures = ref ([]:G.profiled_metric list)
-        fun root current =
+        fun begin_root current =
           let
             val capture=invoke focus (fn()=>G.prepare_profiled_metric graph
               (scope focus)
@@ -1689,20 +1614,26 @@ struct
             val _=if #raw data<=IntInf.fromInt maximum andalso
                 #inc data<=IntInf.fromInt maximum then () else
               raise ERR "inventory" "cached syntax exceeds caps"
-            val _=captures:=capture:: !captures
-          in visit (scope focus) (scope focus) (invoke focus
-            (fn () => G.closure_root graph (scope focus) current)) end
-        val values = List.map root roots
+          in captures:=capture:: !captures end
+        fun profile_data requester held =
+          let val data = G.opaque_profile_data_with_policy graph requester held
+          in {raw = #raw data,inc = #inc data,ann = #ann data,ty = #ty data,
+              types = #types data} end
+        val (values,types,revalidate) = inventory_worker
+          {fence = SOME (work_of focus,fn () => active focus),
+           graph = graph,ceiling = ceiling,spend = spend focus,
+           scope = fn () => scope focus,begin_root = begin_root,
+           profile_for = fn requester => fn current =>
+             profile_for focus requester current,
+           profile_data = profile_data,
+           body_requester = fn _ => fn frame => frame,
+           requester0 = fn frame => frame} roots
         fun guard () =
           (active focus;
            List.app (fn capture=>ignore (G.profiled_metric_data graph
              (scope focus) capture)) (!captures);
-           List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) (!held);
-           List.app (fn (requester,profile) => ignore
-             (G.opaque_profile_data_with_policy graph requester profile))
-             (!opaque))
-    in (values,!types,guard) end
+           revalidate ())
+    in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
      retain the original Work debit; semantic result and checked evidence
@@ -1821,34 +1752,15 @@ struct
         val _=guard ()
     in (total,guard) end
 
-  fun compose {first,second,ordinal,check_type} =
-    let val initial = peek_initial first
-        val work = work_of initial
-    in protected work (fn () =>
-      let val next = peek_initial second
-          val _ = require_owner initial next
-          val _ = validate first
-          val _ = validate second
-          val middle = target_focus first val target = target_focus second
-          fun guard () = (validate first;validate second)
-      in W.with_step work (fn () =>
-      let val _ = guard ()
-          val _ = if node middle = node next andalso
-              scope initial = scope next then () else
-            raise ERR "compose" "different exact middle node/frame"
-          val (sizes,types,held) = inventory initial
-            [node initial,node target]
-          val (a,b) = case sizes of [a,b] => (a,b)
-            | _ => raise ERR "compose" "internal size portfolio"
-          val _ = reserve initial ordinal b [equation a b]
-          fun all () = (guard ();held ())
-          val graph = #graph (owner_of initial)
-          val _ = policies initial all types
-            [G.type_of graph (node initial)] ordinal 0 check_type
-          val theorem = invoke initial (fn () => Thm.TRANS
-            (#theorem (endpoints first)) (#theorem (endpoints second)))
-          val _ = all ()
-      in checked (initial,target,theorem,all) end) end) end
+  val compose = compose_worker
+    {peek_initial = peek_initial,work_of = work_of,
+     require_owner = require_owner,validate = validate,
+     target_focus = target_focus,node = node,scope = scope,
+     inventory = inventory,reserve = reserve,equation = equation,
+     policies = policies,
+     graph_of = fn focus => #graph (owner_of focus),
+     theorem_of = fn conversion => #theorem (endpoints conversion),
+     invoke = invoke,checked = checked}
 
   fun prepare_application {parent,left,right,ordinal,check_type} =
     W.with_step (work_of parent) (fn () =>
@@ -1985,199 +1897,6 @@ struct
     protected (#work expected) (fn () =>
       (ignore (description_for expected (peek_initial converted));
        closed_fact converted request))
-
-  (* Lambda consumes a genuine registered whole import/opened pair. A
-     generic closed equality does not establish that association. Quote the
-     actual equality and both import/opening bridges before either producer;
-     metadata policy never replaces the finite caller's native admission. *)
-  fun closed_fact_from_import converted {ordinal,check_type} =
-    let val initial=peek_initial converted val work=work_of initial
-    in protected work (fn()=>W.with_step work (fn()=>
-      let val _=validate converted
-          val target=target_focus converted val owner=owner_of initial
-          val graph= #graph owner val frame=scope initial
-          val (sizes,types,held)=inventory initial
-            [node initial,node target]
-          val (a,b)=case sizes of [a,b]=>(a,b)
-            | _=>raise ERR "closed_fact_from_import" "internal portfolio"
-          val equality=equation a b
-          val bridge=equation equality equality
-          val _=reserve_role (ClosedEquation b) initial ordinal equality
-            [equality,bridge,bridge]
-          val theorem= #theorem (endpoints converted)
-          val original=Thm.concl theorem
-          fun original_guard ()=(validate converted;held ())
-          val _=original_guard ()
-          val plan=invoke initial (fn()=>G.plan_import_with_policy graph frame
-            (RP.from_int (#import_limit (#native_data owner))) original)
-          val import_types=invoke initial (fn()=>
-            G.import_types_with_policy plan)
-          val remaining=ref (#type_work_limit (#native_data owner))
-          fun admit_types []=()
-            | admit_types (pending::more)=
-                (spend initial 1;case pending of []=>admit_types more
-                 | ty::rest=>
-                   let val _=if !remaining>0 then remaining:= !remaining-1
-                         else raise ERR "closed_fact_from_import"
-                           "import Type portfolio exceeds native contract"
-                   in if invoke initial (fn()=>Type.is_vartype ty) then
-                        admit_types (rest::more)
-                      else let val args=invoke initial
-                            (fn()=> #2 (Type.dest_type ty))
-                           in admit_types (args::rest::more) end end)
-          val _=admit_types [import_types]
-          val _=original_guard ()
-          val imported=invoke initial (fn()=>
-            G.execute_import_with_policy plan)
-          val opened=invoke initial (fn()=>G.record_opened_view_with_policy
-            graph frame (RP.from_int (#template_limit (#limits owner)))
-            (#node imported))
-          fun association ()=
-            let val (first,second)=G.imported_opened_source graph frame
-                  original (#node opened)
-            in if #node first= #node imported andalso
-                #node second= #node opened andalso
-                Portable.pointer_eq (#bridge first,#bridge imported)
-                andalso Portable.pointer_eq (#bridge second,#bridge opened)
-              then () else raise ERR "closed_fact_from_import"
-                "registered whole import/opened pair changed" end
-          fun guard ()=(original_guard ();association ())
-          val _=guard ()
-          val (actual,opened_types,opened_guard)=inventory initial
-            [#node opened]
-          val actual=case actual of [value]=>value
-            | _=>raise ERR "closed_fact_from_import" "opened portfolio"
-          val _=reserve_role (ClosedEquation b) initial ordinal actual
-            [equation actual actual]
-          val (future,extra_guard)=future_type_forest initial guard
-            [#node opened] 0
-          fun all ()=(guard ();opened_guard ();extra_guard ())
-          val policy=policies initial all (types @ opened_types)
-            [G.type_of graph (node initial)] ordinal future check_type
-          val result=invoke initial (fn()=>
-            P.record_closed_from_import_with_policy_profiles graph frame
-              {node= #node opened,theorem=theorem,
-               template_limit= #template_limit (#policy_limits owner),
-               check_type=policy,profiles= #profiles owner})
-          val _=all ()
-      in result end)) end
-
-  fun lift_lambda_admitted
-      {parent,admission,body,record_ordinal,lift_ordinal,check_type} =
-    protected (work_of parent) (fn () =>
-    let val _ = active parent
-        val owner = owner_of parent
-        val graph = #graph owner
-        val expected : Q.expected =
-          {graph = graph,scope = scope parent,sources = #sources owner,
-           work = #work owner}
-        val d = Q.describe_with_policy_for expected admission
-        val expected_category = case provenance parent of
-            OriginalOccurrence => Q.Original
-          | OriginalDescendant => Q.Original
-          | OriginalPositiveGoal => Q.Original
-          | PositiveGoalDescendant => Q.Original
-          | UnopenedPositiveGoal => Q.Original
-          | UnopenedGoalDescendant => Q.Original
-          | UnopenedOriginalOccurrence => Q.Original
-          | UnopenedOriginalDescendant => Q.Original
-          | ClosedAuxiliaryRoot => Q.Auxiliary
-          | ClosedAuxiliaryDescendant => Q.Auxiliary
-          | _ => Q.Generated
-        (* Private lineage ordinal, not the public Source-index getter.
-           -1 agrees with lower Goal DATA and confers no P.Source slot. *)
-        val Focus {root_ordinal = held_ordinal,...} = parent
-        val _ = if #node d = node parent andalso
-            #category d = expected_category andalso
-            #occurrence d = held_ordinal then () else
-          raise ERR "lambda_admitted" "different parent admission provenance"
-        val initial = peek_initial body
-        val _ = require_owner parent initial
-        val _ = validate body
-        val graph = #graph (owner_of parent)
-        val Focus {caller,child,...} = parent
-        val closure = invoke parent
-          (fn () => G.closure_child_binder graph caller child)
-        val captured = invoke parent
-          (fn () => G.binder_closure_data graph caller closure)
-        val _ = if node initial = #body captured andalso
-            scope initial = #body_frame captured then () else
-          raise ERR "lambda" "different owned body node/frame"
-        val admitted_closure = invoke parent (fn () =>
-          G.closure_child_binder graph (scope parent) (#child d))
-        val admitted_data = invoke parent (fn () =>
-          G.binder_closure_data graph (scope parent) admitted_closure)
-        val _ = if #node admitted_data = #node captured andalso
-            #binder admitted_data = #binder captured andalso
-            #body admitted_data = #body captured andalso
-            #body_frame admitted_data = #body_frame captured andalso
-            #binder_frame admitted_data = #binder_frame captured andalso
-            #declaring_scope admitted_data = #declaring_scope captured andalso
-            #node_frame admitted_data = #node_frame captured then () else
-          raise ERR "lambda_admitted" "different genuine binder path"
-        fun guard () =
-          (active parent;Q.validate_with_policy_for expected admission;validate
-            body)
-        fun policy ty = (guard ();check_type ty;guard ())
-        val evidence = closed_fact_from_import body
-          {ordinal = record_ordinal,check_type = policy}
-        val _ = guard ()
-        val owner = owner_of parent
-        val result = L.execute_with_policy (L.prepare_admitted_with_policy
-          {graph = graph,scope = scope parent,
-           sources = #sources owner,work = #work owner,ordinal = lift_ordinal,
-           admission=admission,body_fact=evidence,
-           native_contract= #native_contract owner,
-           profiles= #profiles owner,check_type=policy})
-        fun backing () =
-          (guard ();L.validate_with_policy_for
-            {graph = graph,caller = scope parent,scope = scope parent,
-             sources = #sources owner,work = #work owner} result)
-        val _ = backing ()
-        val {source,target,theorem}=L.endpoints_with_policy_for
-          {graph=graph,caller=scope parent,scope=scope parent,
-           sources= #sources owner,work= #work owner} result
-        val _ = if source = node parent then () else
-          raise ERR "lambda" "different lambda source"
-        val focus = at_node parent (scope parent) target [backing]
-    in checked (parent,focus,theorem,backing) end)
-
-  (* Authentic lower focus determines the source role; its semantic
-     evidence is not previous Work credit. The comparison itself debits
-     SAME Work before Term.aconv and retains all lifetime guards. *)
-  fun alpha_changed_admitted {conversion,admission} =
-    let val initial = initial_focus conversion
-        val target = target_focus conversion
-        val work = work_of initial val owner = owner_of initial
-        val Focus {root_ordinal,...} = initial
-    in W.with_step work (fn () =>
-      let val _ = validate conversion
-          val data = Q.describe_with_policy_for
-            {graph = #graph owner,scope = scope initial,
-             sources = #sources owner,work = work} admission
-          val _ = if #node data = node initial andalso
-              #occurrence data = root_ordinal then () else
-            raise ERR "alpha_changed_admitted" "different initial receipt"
-          val kind = provenance initial
-          val matching = case (kind,#category data) of
-              (OriginalOccurrence,Q.Original) => true
-            | (OriginalDescendant,Q.Original) => true
-            | (OriginalPositiveGoal,Q.Original) => true
-            | (PositiveGoalDescendant,Q.Original) => true
-            | (ClosedAuxiliaryRoot,Q.Auxiliary) => true
-            | (ClosedAuxiliaryDescendant,Q.Auxiliary) => true
-            | (GeneratedResult,Q.Generated) => true
-            | (GeneratedDescendant,Q.Generated) => true
-            | _ => false
-          val _ = if matching then () else raise ERR "alpha_changed_admitted"
-            "different original/generated source role"
-          val answer = A.same_admitted_inside_with_policy work
-            {caller = scope initial,traversal = scope initial,
-             left=child initial,right=child target,admission=admission,
-             native_contract= #native_contract owner,
-             profiles= #profiles owner}
-          val _ = validate conversion
-      in not answer end) end
 
   fun source_conversion converted {ordinal,check_type} =
     let val initial = peek_initial converted val work = work_of initial

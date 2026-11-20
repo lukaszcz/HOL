@@ -28,54 +28,9 @@ struct
     in (Exn.release outcome,counts) end
   (* Repeated public syntax and annotation incidences, including every Hyp.
      No unfolded output residue, scalar estimate or topology coefficient. *)
-  fun pointer_bucket depth modulus root =
-    let
-      val _ = if modulus > 0 then () else
-        raise Feedback.mk_HOL_ERR "SmtReplayInstanceObservation" "pointer_bucket"
-          "nonpositive bucket count"
-      fun name_hash name = CharVector.foldl
-        (fn (character, hash) => Word.+ (Word.* (hash, 0w33),
-          Word.fromInt (Char.ord character))) 0w17 name
-      fun head term =
-        if Term.is_var term then name_hash (#1 (Term.dest_var term))
-        else if Term.is_const term then
-          Word.fromInt (KernelSig.epoch_of
-            (#Name (Term.dest_thy_constid term)))
-        else if Term.is_abs term then 0w19 else 0w17
-      fun first_child operator operand =
-        if Term.is_comb operator then #2 (Term.dest_comb operator) else operand
-      fun sample 0 _ term = head term
-        | sample remaining first term =
-            if not (Term.is_comb term) then head term else
-            let
-              val (operator,operand) = Term.dest_comb term
-              val child = if first then first_child operator operand
-                          else operand
-            in Word.+ (Word.* (head operator,0w37),
-              Word.+ (Word.* (0w17,sample (remaining-1) first child),0w29))
-            end
-      fun samples 0 term = let val code = head term in (code,code) end
-        | samples remaining term =
-            if not (Term.is_comb term) then
-              let val code = head term in (code,code) end
-            else
-              let
-                val (operator,operand) = Term.dest_comb term
-                val first = first_child operator operand
-                val (left,right) = if Portable.pointer_eq (first,operand) then
-                    samples (remaining-1) operand
-                  else (sample (remaining-1) true first,
-                        sample (remaining-1) false operand)
-                val prefix = Word.+ (Word.* (head operator,0w37),0w29)
-                fun mix code = Word.+ (prefix,Word.* (0w17,code))
-              in (mix left,mix right) end
-      val (left,right) = samples (Int.max (0,depth)) root
-    in Word.toInt (Word.mod (Word.+ (Word.* (0w37,left),right),
-      Word.fromInt modulus)) end
-
   fun input (fields:meter) theorem =
     let val buckets = 4093
-        val hint = pointer_bucket 2 buckets
+        val hint = SmtReplayImport.pointer_bucket 2 buckets
         val memo = Array.array (buckets,
           [] : (Term.term * (IntInf.int * IntInf.int * IntInf.int)) list)
         val types = ref ([] : (Type.hol_type * IntInf.int) list)

@@ -801,6 +801,16 @@ struct
 
   fun cpc_canon_rule theorem = Conv.CONV_RULE cpc_canon_conv theorem
 
+  (* Transport a proved normalized assumption [A |- a'] across the
+     conversion [|- hyp = hyp'] of an extra hypothesis: when [a'] and [hyp']
+     are alpha-equivalent the result is [A |- hyp].  A miss is left to the
+     caller's search. *)
+  fun transport_hypothesis hyp_conv assumption_thm =
+    if Term.aconv (Thm.concl assumption_thm)
+         (boolSyntax.rhs (Thm.concl hyp_conv))
+    then SOME (Thm.EQ_MP (Thm.SYM hyp_conv) assumption_thm)
+    else NONE
+
   fun normalize_polynomial conv tm =
     compose
       [cpc_term_canon_conv,

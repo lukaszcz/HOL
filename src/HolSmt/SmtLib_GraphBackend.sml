@@ -532,11 +532,19 @@ struct
      abort_abstraction_scope = fn _ => (),
      let_binding = fn (variable, _) => variable, finish_let = mk_let}
 
-  fun graphs {graph, scope, import_limit, literal_limit, binder_limit} =
+  (* The graph backend, over the limit type 'limit of its three public
+     contracts.  [ops] holds the only operations that depend on it:
+     positivity, graph import, literal admission, binder recording and the
+     policy limit handed to alias capture.  The int and policy entries pass
+     the operations they use.  This worker never calls
+     graphs_with_policy, so there is no limit-dispatch cycle. *)
+  fun graph_backend {positive, import_node, literal_size, abstraction,
+                     capture_limit}
+      {graph, scope, import_limit, literal_limit, binder_limit} =
     let
       val _ = G.validate_scope graph scope
-      val _ = if import_limit > 0 andalso literal_limit > 0 andalso
-          binder_limit > 0 then ()
+      val _ = if positive import_limit andalso positive literal_limit andalso
+          positive binder_limit then ()
         else raise ERR "graphs" "nonpositive public import contract"
       fun scopes (SOME scopes) = scopes
         | scopes NONE = raise ERR "graphs" "missing graph environment"
@@ -584,15 +592,14 @@ struct
             | _ => ()
         in node end
       fun import environment term =
-        #node (G.import graph (construction environment) import_limit term)
+        #node (import_node graph (construction environment) import_limit term)
       fun source _ term =
-        let val node = #node (G.import graph scope import_limit term)
+        let val node = #node (import_node graph scope import_limit term)
         in if Term.is_var term then retain_variable term node else node end
       fun literal environment term =
         let
-          val _ = case SmtReplayImport.bounded_raw_size literal_limit term of
-              SOME _ => ()
-            | NONE => raise ERR "literal" "literal exceeds bounded contract"
+          val _ = if Option.isSome (literal_size literal_limit term) then ()
+            else raise ERR "literal" "literal exceeds bounded contract"
           val _ = if List.null (Term.free_vars term) then () else
             raise ERR "literal" "literal contains an unowned free variable"
         in if Term.is_const term then
@@ -621,8 +628,7 @@ struct
          G.resolve_reference graph (lexical environment) term value,
        capture_alias = fn environment => graph_capture_alias graph
          (graph_lexical_alias graph private_variables lexical_descriptors)
-         (SmtReplayResourcePolicy.AtMost (IntInf.fromInt binder_limit))
-         (SmtReplayResourcePolicy.AtMost (IntInf.fromInt literal_limit))
+         (capture_limit binder_limit) (capture_limit literal_limit)
          (lexical environment) (construction environment),
        private_variable = fn node =>
          (case G.view graph node of G.Variable (G.SolverFlexible,_) =>
@@ -649,7 +655,7 @@ struct
          (fn node => Redblackmap.peek (!lexical_descriptors,G.node_id node)),
        abstraction = fn environment => fn body_environment =>
          fn (binder,body) =>
-           G.recorded_abstraction graph (construction environment) binder_limit
+           abstraction graph (construction environment) binder_limit
              {binder = binder,body = body,
               body_frame = construction body_environment},
        index_callbacks = new_index_callbacks (),
@@ -667,6 +673,18 @@ struct
        let_binding = #2, finish_let = #2}
     end
 
+  val int_graph_operations =
+    {positive = fn limit => limit > 0, import_node = G.import,
+     literal_size = SmtReplayImport.bounded_raw_size,
+     abstraction = G.recorded_abstraction,
+     capture_limit = SmtReplayResourcePolicy.from_int}
+  val policy_graph_operations =
+    {positive = SmtReplayResourcePolicy.positive,
+     import_node = G.import_with_policy,
+     literal_size = SmtReplayImport.raw_size_with_policy,
+     abstraction = G.recorded_abstraction_with_policy,
+     capture_limit = fn limit => limit}
+  fun graphs request = graph_backend int_graph_operations request
   fun unique_key (key, seen) =
     if HOLset.member (seen, key) then
       raise ERR "let_expression" "duplicate simultaneous binding key"
@@ -839,7 +857,9 @@ struct
     R.same_scope_meter (expected,meter)
   fun binding_guard_work (BindingGuard {work,...}) = work
   fun binding_guard_data (BindingGuard {data,...}) = data
-  fun prepare_binding_guard graph caller
+  (* Shared by the int and policy guards, which differ only in the
+     scope-path preparation operations they pass. *)
+  fun prepare_guard {shared_path, binding_path} graph caller
       (BindingOrigin {backend=Backend {owner,graph=original,...},
         parent,child,graph=held,parent_scope,scope,variables,descriptors,
         binders,epoch,symbols}) meter =
@@ -864,7 +884,7 @@ struct
           val _ = if construction = expected then () else
             raise ERR "binding_guard" "actual lexical frame differs"
           fun path scope =
-            let val (program,_) = G.prepare_shared_scope_path graph scope meter
+            let val (program,_) = shared_path graph scope meter
                 val _ = R.scope_meter_charge meter 2
             in (scope,program) end
           val lexical_path = path lexical
@@ -873,14 +893,13 @@ struct
         in (active,[lexical_path,construction_path]) end
       val (parent_active,parent_paths) = frame parent parent_scope
       val (child_active,child_paths) = frame child scope
-      val visible = G.prepare_binding_scope_path graph scope parent_scope meter
+      val visible = binding_path graph scope parent_scope meter
       fun node_paths [] = (R.scope_meter_charge meter 1;[])
         | node_paths (node::rest) =
           let
             val _ = R.scope_meter_charge meter 2
             val required = G.binding_node_scope graph node meter
-            val program = G.prepare_binding_scope_path graph scope required
-              meter
+            val program = binding_path graph scope required meter
             val tail = node_paths rest
             val _ = R.scope_meter_charge meter 2
           in (required,program)::tail end
@@ -905,6 +924,10 @@ struct
       variables=paths,epoch=epoch,symbols=symbols,work=work,
       data={scope=scope,variables=variables,descriptors=descriptors,
         binders=binders}} end
+  fun prepare_binding_guard graph caller origin meter =
+    prepare_guard {shared_path = G.prepare_shared_scope_path,
+                   binding_path = G.prepare_binding_scope_path}
+      graph caller origin meter
   fun validate_binding_guard graph caller
       (BindingGuard {graph=held,parent_scope,scope,parent_active,child_active,
         parent_paths,child_paths,visible,variables,epoch,symbols,...}) =
@@ -1013,11 +1036,11 @@ struct
   fun recipe_type (Recipe {result, ...}) = result
   fun recipe_size (Recipe {size, ...}) = size
 
-  fun compile_recipe {template, holes, template_limit} =
+  (* The size-independent part of recipe compilation, shared by the int
+     and exact policy recipes, which differ only in how the template size
+     is measured.  Raises before any construction on invalid holes. *)
+  fun compile_template {template, holes} =
     let
-      val size = case SmtReplayImport.bounded_raw_size template_limit
-          template of SOME size => size
-        | NONE => raise ERR "compile_recipe" "expanded operator template"
       val _ = List.app (fn hole => if Term.is_var hole then () else
         raise ERR "compile_recipe" "operand hole is not a typed variable")
         holes
@@ -1047,12 +1070,30 @@ struct
           let val (binder, body) = Term.dest_abs term in
             Abstraction (binder, compile (binder :: binders) body)
           end
-    in Recipe {syntax = compile [] template,
-      holes = Vector.fromList (List.map Term.type_of holes),
-      result = Term.type_of template, size = size} end
+    in {syntax = compile [] template,
+      hole_types = Vector.fromList (List.map Term.type_of holes),
+      result = Term.type_of template} end
 
-  fun construct_with_branches backend frame
-      (Recipe {syntax, holes, result, ...}) arguments =
+  (* The template size under [measure], or the expanded-template error.
+     Shared by the int and exact policy recipes, which differ only in the
+     limit type and measure. *)
+  fun measured_template measure limit template =
+    case measure limit template of
+        SOME size => size
+      | NONE => raise ERR "compile_recipe" "expanded operator template"
+
+  fun compile_recipe {template, holes, template_limit} =
+    let
+      val size = measured_template SmtReplayImport.bounded_raw_size
+        template_limit template
+      val {syntax, hole_types, result} =
+        compile_template {template = template, holes = holes}
+    in Recipe {syntax = syntax, holes = hole_types, result = result,
+      size = size} end
+
+  (* Construct a compiled recipe over its operands, shared by the int and
+     exact policy recipes. *)
+  fun construct_syntax backend frame {syntax, holes, result} arguments =
     let
       val _ = ignore (checked_frame backend frame)
       val values = Vector.fromList arguments
@@ -1084,77 +1125,17 @@ struct
       val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
         else raise ERR "construct" "operator recipe result type mismatch"
     in {value = value, branches = List.rev (!branches)} end
+  fun construct_with_branches backend frame
+      (Recipe {syntax, holes, result, ...}) arguments =
+    construct_syntax backend frame
+      {syntax = syntax, holes = holes, result = result} arguments
 
   fun construct backend frame recipe arguments =
     #value (construct_with_branches backend frame recipe arguments)
-  fun prepare_binding_guard_policy graph caller
-      (BindingOrigin {backend=Backend {owner,graph=original,...},
-        parent,child,graph=held,parent_scope,scope,variables,descriptors,
-        binders,epoch,symbols}) meter =
-    let
-      val _ = R.scope_meter_charge meter 8
-      val _ = if Portable.pointer_eq (graph,held) andalso
-          caller = parent_scope then () else
-        raise ERR "binding_guard" "different graph or genuine parent"
-      val _ = case original of SOME actual =>
-          if Portable.pointer_eq (actual,graph) then () else
-            raise ERR "binding_guard" "different private backend graph"
-        | NONE => raise ERR "binding_guard" "ordinary backend has no origin"
-      fun frame (Frame {owner=actual,active,environment,...}) expected =
-        let
-          val _ = R.scope_meter_charge meter 7
-          val _ = if actual = owner then () else
-            raise ERR "binding_guard" "different private lexical owner"
-          val (lexical,construction) = case environment of
-              SOME {lexical,construction} => (lexical,construction)
-            | NONE => raise ERR "binding_guard" "no graph environment"
-          val _ = R.scope_meter_charge meter 3
-          val _ = if construction = expected then () else
-            raise ERR "binding_guard" "actual lexical frame differs"
-          fun path scope =
-            let val (program,_) =
-                  G.prepare_shared_scope_path_policy graph scope meter
-                val _ = R.scope_meter_charge meter 2
-            in (scope,program) end
-          val lexical_path = path lexical
-          val construction_path = path construction
-          val _ = R.scope_meter_charge meter 3
-        in (active,[lexical_path,construction_path]) end
-      val (parent_active,parent_paths) = frame parent parent_scope
-      val (child_active,child_paths) = frame child scope
-      val visible = G.prepare_binding_scope_path_policy graph scope
-        parent_scope meter
-      fun node_paths [] = (R.scope_meter_charge meter 1;[])
-        | node_paths (node::rest) =
-          let
-            val _ = R.scope_meter_charge meter 2
-            val required = G.binding_node_scope graph node meter
-            val program = G.prepare_binding_scope_path_policy graph scope required
-              meter
-            val tail = node_paths rest
-            val _ = R.scope_meter_charge meter 2
-          in (required,program)::tail end
-      val paths = node_paths variables
-      fun sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
-        | sum ((_,path)::rest) =
-            (R.scope_meter_charge meter 3;
-             G.scope_path_validation_work path+sum rest+2)
-      fun variable_sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
-        | variable_sum ((_,path)::rest) =
-            (R.scope_meter_charge meter 3;
-             G.binding_scope_path_work path+variable_sum rest+2)
-      val frame_work = sum parent_paths + sum child_paths + 4
-      (* Both original guard calls retain epoch checks and frame checks;
-         between them every actual variable visibility path is validated. *)
-      val work = 2*(frame_work+6) +
-        G.binding_scope_path_work visible + variable_sum paths + 8
-      val _ = R.scope_meter_charge meter 16
-    in BindingGuard {meter=meter,graph=graph,parent_scope=parent_scope,
-      scope=scope,parent_active=parent_active,child_active=child_active,
-      parent_paths=parent_paths,child_paths=child_paths,visible=visible,
-      variables=paths,epoch=epoch,symbols=symbols,work=work,
-      data={scope=scope,variables=variables,descriptors=descriptors,
-        binders=binders}} end
+  fun prepare_binding_guard_policy graph caller origin meter =
+    prepare_guard {shared_path = G.prepare_shared_scope_path_policy,
+                   binding_path = G.prepare_binding_scope_path_policy}
+      graph caller origin meter
 
   (* Additive exact recipe; original recipe representation stays literal. *)
   datatype policy_recipe = FinitePolicyRecipe of recipe
@@ -1170,41 +1151,12 @@ struct
     | recipe_size_with_policy (ExactPolicyRecipe {size,...}) = size
   fun compile_exact_policy_recipe {template, holes, template_limit} =
     let
-      val size = case SmtReplayImport.raw_size_with_policy template_limit
-          template of SOME size => size
-        | NONE => raise ERR "compile_recipe" "expanded operator template"
-      val _ = List.app (fn hole => if Term.is_var hole then () else
-        raise ERR "compile_recipe" "operand hole is not a typed variable")
-        holes
-      val _ = List.foldl (fn (hole, previous) =>
-        if List.exists (Term.aconv hole) previous then
-          raise ERR "compile_recipe" "duplicate typed operand hole"
-        else hole :: previous) [] holes
-      fun index variable terms =
-        let fun seek [] _ = NONE
-              | seek (term :: rest) i =
-                  if Term.aconv variable term then SOME i else seek rest (i+1)
-        in seek terms 0 end
-      fun compile binders term =
-        if Term.is_var term then
-          (case index term binders of
-             SOME i => BoundVariable i
-           | NONE => case index term holes of
-               SOME i => if List.null binders then Hole i else
-                 raise ERR "compile_recipe" "operand insertion below binder"
-             | NONE => raise ERR "compile_recipe" "unowned schema variable")
-        else if Term.is_const term then Constant term
-        else if Term.is_comb term then
-          let val (operator, operand) = Term.dest_comb term in
-            Application (compile binders operator, compile binders operand)
-          end
-        else
-          let val (binder, body) = Term.dest_abs term in
-            Abstraction (binder, compile (binder :: binders) body)
-          end
-    in ExactPolicyRecipe {syntax = compile [] template,
-      holes = Vector.fromList (List.map Term.type_of holes),
-      result = Term.type_of template, size = size} end
+      val size = measured_template SmtReplayImport.raw_size_with_policy
+        template_limit template
+      val {syntax, hole_types, result} =
+        compile_template {template = template, holes = holes}
+    in ExactPolicyRecipe {syntax = syntax, holes = hole_types,
+      result = result, size = size} end
 
   fun compile_recipe_with_policy
       (request as {template,holes,template_limit}) =
@@ -1217,177 +1169,14 @@ struct
         construct_with_branches backend frame recipe arguments
     | construct_with_branches_with_policy backend frame
         (ExactPolicyRecipe {syntax, holes, result, ...}) arguments =
-    let
-      val _ = ignore (checked_frame backend frame)
-      val values = Vector.fromList arguments
-      val _ = if Vector.length holes = Vector.length values then () else
-        raise ERR "construct" "operator recipe arity mismatch"
-      val _ = Vector.appi (fn (index, expected) =>
-        if Type.compare (expected, type_of backend
-            (Vector.sub (values, index))) = EQUAL then ()
-        else raise ERR "construct" "operator recipe operand type mismatch")
-        holes
-      val branches = ref []
-      fun build frame bound (Hole index) = Vector.sub (values, index)
-        | build frame bound (Constant term) = literal backend frame term
-        | build frame bound (BoundVariable index) = List.nth (bound, index)
-        | build frame bound (Application (operator, operand)) =
-            application backend frame
-              (build frame bound operator, build frame bound operand)
-        | build frame bound (Abstraction (binder, body)) =
-            let
-              val (name, ty) = Term.dest_var binder
-              val branch = abstraction backend frame
-                (name, name, ty) (fn child =>
-                  let val value = valOf (lookup backend child name) in
-                    build child (value :: bound) body
-                  end)
-              val _ = branches := branch :: !branches
-            in branch end
-      val value = build frame [] syntax
-      val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
-        else raise ERR "construct" "operator recipe result type mismatch"
-    in {value = value, branches = List.rev (!branches)} end
+        construct_syntax backend frame
+          {syntax = syntax, holes = holes, result = result} arguments
 
   fun construct_with_policy backend frame recipe arguments =
     #value (construct_with_branches_with_policy backend frame recipe arguments)
 
-  fun exact_graphs_with_policy {graph, scope, import_limit, literal_limit, binder_limit} =
-    let
-      val _ = G.validate_scope graph scope
-      val _ = if SmtReplayResourcePolicy.positive import_limit andalso
-          SmtReplayResourcePolicy.positive literal_limit andalso
-          SmtReplayResourcePolicy.positive binder_limit then ()
-        else raise ERR "graphs" "nonpositive public import contract"
-      fun scopes (SOME scopes) = scopes
-        | scopes NONE = raise ERR "graphs" "missing graph environment"
-      fun lexical environment = #lexical (scopes environment)
-      fun construction environment = #construction (scopes environment)
-      val lexical_descriptors = ref
-        (Redblackmap.mkDict Int.compare : (int, Term.term) Redblackmap.dict)
-      fun retain_variable term node =
-        (lexical_descriptors := Redblackmap.insert
-           (!lexical_descriptors, G.node_id node, term); node)
-      fun compare_private ((left_scope, left_term),
-                           (right_scope, right_term)) =
-        case Int.compare (left_scope, right_scope) of
-          EQUAL => Term.compare (left_term, right_term) | order => order
-      val private_variables = ref (Redblackmap.mkDict compare_private)
-      val solver_variables = ref ([] : G.node solver_variable list)
-      val recorded_variables = ref (HOLset.empty Int.compare)
-      fun record_flexible term node =
-        (if HOLset.member (!recorded_variables, G.node_id node) then () else
-           (recorded_variables := HOLset.add
-              (!recorded_variables, G.node_id node);
-            solver_variables :=
-              {node = node, lexical = term,
-               scope = SOME (G.node_scope graph node)} :: !solver_variables);
-         node)
-      fun fresh_flexible environment term =
-        record_flexible term (retain_variable term
-          (G.fresh_flexible_variable graph (construction environment) term))
-      fun flexible environment term =
-        let
-          val scope = construction environment
-          val key = (G.scope_id scope, term)
-          val default = case Redblackmap.peek (!private_variables, key) of
-              SOME node => node
-            | NONE =>
-                let val node = retain_variable term
-                      (G.fresh_flexible_variable graph scope term)
-                in private_variables := Redblackmap.insert
-                     (!private_variables, key, node); node end
-          val node = G.resolve_reference graph
-            (lexical environment) term default
-          val _ = case G.view graph node of
-              G.Variable (G.SolverFlexible, _) =>
-                ignore (record_flexible term node)
-            | _ => ()
-        in node end
-      fun import environment term =
-        #node (G.import_with_policy graph (construction environment) import_limit term)
-      fun source _ term =
-        let val node = #node (G.import_with_policy graph scope import_limit term)
-        in if Term.is_var term then retain_variable term node else node end
-      fun literal environment term =
-        let
-          val _ = case SmtReplayImport.raw_size_with_policy literal_limit term of
-              SOME _ => ()
-            | NONE => raise ERR "literal" "literal exceeds bounded contract"
-          val _ = if List.null (Term.free_vars term) then () else
-            raise ERR "literal" "literal contains an unowned free variable"
-        in if Term.is_const term then
-          G.constant graph (construction environment) term
-        else import environment term end
-    in Backend
-      {owner = ref (), graph = SOME graph,
-       initial = SOME {lexical = scope, construction = scope},
-       validate_environment = fn environment =>
-         (G.validate_scope graph (lexical environment);
-          G.validate_scope graph (construction environment)),
-       type_of = G.type_of graph, view = fn _ => graph_view graph,
-       same_value = op=,
-       variable_descriptor = fn node =>
-         (ignore (G.type_of graph node);
-          Redblackmap.peek (!lexical_descriptors, G.node_id node)),
-       solver_variables = fn () => List.rev (!solver_variables),
-       mk_bound_var = Term.mk_var, source = source, literal = literal,
-       fresh_solver_variable = fresh_flexible,
-       variable = fn environment => fn kind => fn term =>
-         case kind of G.RigidSource =>
-           G.resolve_variable graph (lexical environment) term
-         | G.SolverFlexible => flexible environment term
-         | _ => G.variable graph (construction environment) kind term,
-       reference = fn environment => fn (term, value) =>
-         G.resolve_reference graph (lexical environment) term value,
-       capture_alias = fn environment => graph_capture_alias graph
-         (graph_lexical_alias graph private_variables lexical_descriptors)
-         binder_limit literal_limit
-         (lexical environment) (construction environment),
-       private_variable = fn node =>
-         (case G.view graph node of G.Variable (G.SolverFlexible,_) =>
-            not (Option.isSome (graph_lexical_alias graph
-              private_variables lexical_descriptors node))
-          | _ => false),
-       bound_variable = fn environment => fn term => retain_variable term
-         (G.fresh_bound_variable graph (construction environment) term),
-       application = fn environment =>
-         G.application graph (construction environment),
-       new_scope = fn environment => fn bindings =>
-         let val scope = G.new_scope graph (lexical environment) bindings
-         in SOME {lexical = scope, construction = scope} end,
-       (* Let aliases affect name resolution, while constructed values
-          retain the enclosing proof block's construction scope. *)
-       new_let_scope = fn environment => fn bindings =>
-         SOME {lexical = G.new_scope graph (lexical environment) bindings,
-               construction = construction environment},
-       close_scope = fn environment => G.close_scope graph
-         (lexical environment),
-       constructor_state = new_constructor_state (),
-       syntax_spend = fn _ => (),
-       source_syntax = fn _ => graph_source_syntax graph
-         (fn node => Redblackmap.peek (!lexical_descriptors,G.node_id node)),
-       abstraction = fn environment => fn body_environment =>
-         fn (binder,body) =>
-           G.recorded_abstraction_with_policy graph (construction environment)
-             binder_limit
-             {binder = binder,body = body,
-              body_frame = construction body_environment},
-       index_callbacks = new_index_callbacks (),
-       failure_requires_propagation = fn () => false,
-       new_abstraction_scope = fn environment =>
-         let val retained = G.new_construction_scope graph
-               {lexical = lexical environment,
-                construction = construction environment}
-             val lexical = G.new_scope graph retained []
-               handle primary =>
-                 ((G.close_scope graph retained handle _ => ());raise primary)
-         in SOME {lexical = lexical,construction = retained} end,
-       abort_abstraction_scope = fn environment =>
-         G.close_scope graph (construction environment),
-       let_binding = #2, finish_let = #2}
-    end
-
+  fun exact_graphs_with_policy request =
+    graph_backend policy_graph_operations request
   fun graphs_with_policy
       (request as {graph,scope,import_limit,literal_limit,binder_limit}) =
     case (recipe_policy_int_limit import_limit,

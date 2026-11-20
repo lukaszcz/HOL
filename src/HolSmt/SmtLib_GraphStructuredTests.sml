@@ -33,24 +33,28 @@ struct
      parse_cpc_const=false}
   fun required NONE = raise Fail "unhandled test ascription"
     | required (SOME value) = value
-  fun options backend frame : 'a P.construction_cfg =
+  fun options_at index_limit backend frame : 'a P.construction_cfg =
     {backend=backend,frame=frame,symbol_key=P.proof_symbol_text,
-     type_symbol_key=Lib.I,index_limit=256,parse_choice=false,
+     type_symbol_key=Lib.I,index_limit=index_limit,parse_choice=false,
      parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn frame => fn description =>
        required (R.ascribed backend frame limits description),
      coerce_arguments=R.coerce_arguments backend}
-  fun policy_options backend frame : 'a P.policy_construction_cfg =
+  fun options backend frame = options_at 256 backend frame
+  fun policy_options_at index_limit backend frame
+      : 'a P.policy_construction_cfg =
     {backend=backend,frame=frame,symbol_key=P.proof_symbol_text,
-     type_symbol_key=Lib.I,index_limit=RP.AtMost 256,parse_choice=false,
+     type_symbol_key=Lib.I,index_limit=index_limit,parse_choice=false,
      parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn frame => fn description =>
        required (R.ascribed_with_policy backend frame policy description),
      coerce_arguments=R.coerce_arguments backend}
+  fun policy_options backend frame =
+    policy_options_at (RP.AtMost 256) backend frame
   fun string_literal token = case P.proof_string_token token of
       SOME text => SmtLib_String_Literal.mk_string_term text
     | NONE => SmtLib_Theories.decline token "not a string literal"
@@ -66,16 +70,20 @@ struct
           SmtLib_Logics.parsedicts_of_solver_logic solver (logic solver)
     in P.parse_term_with_cfg cfg (tokens text)
       (sorts,Library.extend_dict (("_",native_literal),dictionary)) end
+  fun policy_dictionaries backend solver =
+    literals backend (#dictionaries
+      (R.select_with_policy_no_override backend policy
+        {logic=logic solver,solver=SOME solver}))
+  fun int_dictionaries backend solver =
+    literals backend (#dictionaries (R.select backend limits
+      {logic=logic solver,solver=SOME solver}))
   fun parsed backend exact solver text =
     if exact then P.parse_term_with_policy
       (policy_options backend (B.root backend)) (tokens text)
-      (literals backend (#dictionaries
-        (R.select_with_policy_no_override backend policy
-          {logic=logic solver,solver=SOME solver})))
+      (policy_dictionaries backend solver)
     else P.parse_term_with_backend
       (options backend (B.root backend)) (tokens text)
-      (literals backend (#dictionaries (R.select backend limits
-        {logic=logic solver,solver=SOME solver})))
+      (int_dictionaries backend solver)
 
   fun with_graph exact action =
     let val graph=G.new () val scope=G.root_scope graph
@@ -87,10 +95,10 @@ struct
         val result=Exn.capture (fn () => action graph backend) ()
         val _=G.close_scope graph scope
     in Exn.release result end
-  fun with_values action =
+  fun with_values_spending spend action =
     let val graph=G.new () val scope=G.root_scope graph
         val context=PV.create {graph=graph,scope=scope,
-          validate=fn () => (),spend=fn _ => (),retire=fn () => ()}
+          validate=fn () => (),spend=spend,retire=fn () => ()}
         val held=B.values_with_policy {context=context,graph=graph,
           scope=scope,import_limit=policy_maximum,
           literal_limit=policy_maximum,binder_limit=policy_maximum}
@@ -98,6 +106,7 @@ struct
           action graph context (#backend held)) ()
         val _=(#close held) () val _=G.close_scope graph scope
     in Exn.release result end
+  fun with_values action = with_values_spending (fn _ => ()) action
 
   (* Test-only interpretation, AFTER an unfolded binder-inclusive bound.
      Never use this helper on the shared-DAG resource controls. *)
@@ -187,13 +196,16 @@ struct
      import_limit=maximum,literal_limit=maximum,binder_limit=maximum,
      recipe_limits=limits,special=fn _ => fn _ => NONE,
      ascribed=fn _ => fn _ => fn _ => NONE}
-  fun frontend_policy_options graph solver : 'a F.constructed_policy_options =
+  fun frontend_policy_options_at recipe_limits graph solver
+      : 'a F.constructed_policy_options =
     {graph=graph,scope=G.root_scope graph,logic=logic solver,sources=[],
      sorts=Redblackmap.mkDict String.compare,binder_lists=[],
      import_limit=policy_maximum,literal_limit=policy_maximum,
-     binder_limit=policy_maximum,recipe_limits=policy,
+     binder_limit=policy_maximum,recipe_limits=recipe_limits,
      special=fn _ => fn _ => NONE,
      ascribed=fn _ => fn _ => fn _ => NONE}
+  fun frontend_policy_options graph solver =
+    frontend_policy_options_at policy graph solver
   fun graph_session graph exact solver =
     let val session=if exact then F.create_session_with_policy
           (frontend_policy_options graph solver)
@@ -204,12 +216,12 @@ struct
     in session end
   fun frontend_graph graph exact solver text =
     #node ((#parse_from (graph_session graph exact solver)) (tokens text))
-  fun value_session graph context backend solver =
+  fun value_session_at recipe_limits graph context backend solver =
     let
       (* Public backend-parametric session API, with the genuine factory's
          backend/context. No forged Mapping factory or declaration table. *)
       val session=F.create_policy_session_for_backend
-        (frontend_policy_options graph solver) backend
+        (frontend_policy_options_at recipe_limits graph solver) backend
         {identity=PV.key context,same_identity=op =,
          guard_private=PV.usable context,
          guard_observation=fn check => PV.protect context check,
@@ -223,6 +235,8 @@ struct
         (description solver) (tokens "")
       val _ = (#add_literal_parser session) string_literal
     in session end
+  fun value_session graph context backend solver =
+    value_session_at policy graph context backend solver
   fun frontend_value graph context backend solver text =
     #node ((#parse_from (value_session graph context backend solver))
       (tokens text))
@@ -1658,6 +1672,222 @@ struct
       NONE => positive solver text | SOME _ => negative solver text) cases)
       source_shape_cases
 
+  (* Both sourced-parser entries (int and RP.limit index limits) must give
+     the same occurrence tree, source syntax, token consumption, outcome and
+     diagnostic; the ordinary-graph fixture pairs each entry with its
+     matching backend, the typed Value fixture uses one backend for both. *)
+  datatype entry = IntEntry of int | PolicyEntry of RP.limit
+  fun role_text role = case role of
+      P.ConstructionAtom => "atom"
+    | P.ConstructionApplication => "application"
+    | P.ConstructionIndexed names => "indexed "^String.concatWith "," names
+    | P.ConstructionAscribed {constructor,sort} =>
+        "ascribed "^Option.getOpt (constructor,"-")^" "^
+        Hol_pp.type_to_string sort
+    | P.ConstructionLet bindings => "let "^String.concatWith ","
+        (List.map (fn (a,b) => a^"="^b) bindings)
+    | P.ConstructionBinder {kind,variables} => "binder "^kind^" "^
+        String.concatWith "," (List.map (fn (a,b,_) => a^"/"^b) variables)
+    | P.ConstructionAnnotation => "annotation"
+    | P.ConstructionReference stamp => "reference "^Int.toString stamp
+  fun occurrence_text interpret
+      (P.ConstructionOccurrence {value,role,token,children}) =
+    "("^role_text role^" "^token^" "^
+    Hol_pp.term_to_string (interpret value)^
+    String.concat (List.map (fn child => " "^occurrence_text interpret child)
+      children)^")"
+  fun source_text syntax = case C.view ignore syntax of
+      C.Variable term => "v:"^Hol_pp.term_to_string term
+    | C.Atom term => "a:"^Hol_pp.term_to_string term
+    | C.Apply (f,x) => "("^source_text f^" "^source_text x^")"
+    | C.Abstract (term,body) =>
+        "(\\"^Hol_pp.term_to_string term^". "^source_text body^")"
+  fun receipt trace interpret entry backend solver text =
+    let
+      val consumed=ref 0
+      val next=tokens text
+      fun counted () = (consumed := !consumed+1; next ())
+      val frame=B.root backend
+      val outcome=
+        let val (occurrence,source)=case entry of
+            IntEntry n => P.parse_term_sourced_with_backend
+              (options_at n backend frame) counted
+              (int_dictionaries backend solver)
+          | PolicyEntry limit => P.parse_term_sourced_with_policy
+              (policy_options_at limit backend frame) counted
+              (policy_dictionaries backend solver)
+        in "ACCEPT "^occurrence_text interpret occurrence^" SOURCE "^
+           source_text source end
+        handle Feedback.HOL_ERR e => "REFUSE "^Feedback.top_structure_of e^
+          "."^Feedback.top_function_of e^": "^Feedback.message_of e
+        | exn => "EXN "^General.exnName exn^": "^General.exnMessage exn
+    in outcome^" TOKENS "^Int.toString (!consumed)^trace () end
+  fun accepted receipt = String.isPrefix "ACCEPT" receipt
+  fun graph_receipt entry solver text =
+    with_graph (case entry of IntEntry _ => false | PolicyEntry _ => true)
+      (fn graph => fn backend =>
+        receipt (fn () => "") (small_graph graph) entry backend solver text)
+  (* The Value context records every syntax charge, in order. *)
+  fun value_receipt entry solver text =
+    let val spent=ref []
+    in with_values_spending (fn amount => spent := amount :: !spent)
+         (fn _ => fn context => fn backend =>
+           receipt (fn () => " SPENDS "^String.concatWith ","
+               (List.map IntInf.toString (List.rev (!spent))))
+             (small_value context) entry backend solver text) end
+  (* Least int index limit that admits every index literal of text. *)
+  fun index_budget solver text =
+    let fun search low high = if high-low <= 1 then high else
+          let val middle=(low+high) div 2 in
+            if accepted (graph_receipt (IntEntry middle) solver text)
+            then search low middle else search middle high end
+    in ensure ("index budget bounds: "^text)
+         (not (accepted (graph_receipt (IntEntry 0) solver text)) andalso
+          accepted (graph_receipt (IntEntry 512) solver text));
+       search 0 512 end
+  fun refused_by_index_limit receipt =
+    String.isSubstring "index literal exceeds its bounded import contract"
+      receipt
+  datatype session_outcome =
+      Session_value of Term.term | Session_refused of string
+  fun index_limit_parity solver text =
+    let
+      val original=ordinary solver text
+      val budget=index_budget solver text
+      fun both limit =
+        let val int_entry=IntEntry limit
+            val policy_entry=PolicyEntry (RP.AtMost (IntInf.fromInt limit))
+            val graph_int=graph_receipt int_entry solver text
+            val graph_policy=graph_receipt policy_entry solver text
+            val value_int=value_receipt int_entry solver text
+            val value_policy=value_receipt policy_entry solver text
+        in ensure ("ordinary graph entries differ: "^text^"\n"^graph_int^
+                   "\n"^graph_policy) (graph_int=graph_policy);
+           ensure ("typed Value entries differ: "^text^"\n"^value_int^
+                   "\n"^value_policy) (value_int=value_policy);
+           (graph_int,value_int) end
+      fun session limit =
+        let
+          val recipe={template_limit=(#template_limit policy),
+            index_limit=RP.AtMost (IntInf.fromInt limit),
+            operand_limit=(#operand_limit policy),
+            token_limit=(#token_limit policy)}
+        in with_values (fn graph => fn context => fn backend =>
+          (Session_value (small_value context (#node ((#parse_from
+             (value_session_at recipe graph context backend solver))
+             (tokens text)))) handle Feedback.HOL_ERR e =>
+               Session_refused (Feedback.message_of e))) end
+      val (admitted_graph,admitted_value)=both budget
+      val (refused_graph,refused_value)=both (budget-1)
+      val _=ensure ("budget admission: "^text)
+        (accepted admitted_graph andalso accepted admitted_value)
+      val _=ensure ("under-budget refusal: "^text)
+        (refused_by_index_limit refused_graph andalso
+         refused_by_index_limit refused_value andalso
+         not (accepted refused_graph) andalso not (accepted refused_value))
+      val _=case session budget of
+          Session_value term => bridge original term
+        | Session_refused message => raise Fail
+            ("value session refused exact budget: "^text^": "^message)
+      val _=case session (budget-1) of
+          Session_value _ => raise Fail
+            ("value session accepted an over-budget index: "^text)
+        | Session_refused message => ensure
+            ("value session refusal is not the index limit: "^message)
+            (refused_by_index_limit message)
+    in budget end
+  (* Policy entry only: an Uncapped limit and a finite cap wider than int
+     both admit the literal, with the receipt of an ample int limit. *)
+  fun policy_only_limits solver text =
+    let
+      val reference=graph_receipt (IntEntry 256) solver text
+      val wide=IntInf.fromInt (valOf Int.maxInt)+1
+      val value_reference=value_receipt (IntEntry 256) solver text
+      val _=ensure ("policy-only reference admits: "^text)
+        (accepted reference andalso accepted value_reference)
+      fun check limit =
+        (ensure ("policy graph limit differs: "^text)
+           (graph_receipt (PolicyEntry limit) solver text = reference);
+         ensure ("policy Value limit differs: "^text)
+           (value_receipt (PolicyEntry limit) solver text = value_reference))
+    in List.app check [RP.Uncapped,RP.AtMost wide,RP.AtMost (wide*wide)] end
+  fun sourced_index_limits () =
+    let val texts=["((_ divisible 300) 6)","((_ extract 7 0) #x0F)",
+          "((_ divisible 1267650600228229401496703205376) 6)"]
+        val budgets=List.map (index_limit_parity "cvc5") texts
+    in ensure "index budgets are distinct per literal"
+         (List.nth (budgets,0) < List.nth (budgets,2));
+       List.app (policy_only_limits "cvc5") texts end
+
+  (* The ordinary and the exact-policy graph sessions run one script:
+     a declaration, a private symbol, and a constructor use that is just
+     inside and just outside the operand budget.  Both observe the same
+     declarations, private labels and refusal diagnostic. *)
+  fun session_script exact =
+    with_graph exact (fn graph => fn _ =>
+      let
+        val session=graph_session graph exact "Z3"
+        val reader = #reader session
+        val root = B.root (#backend reader)
+        val _=(#declare session) ("session_script_d",Type.bool)
+        val private_request={kind="session_script_k",
+          hol_type=Type.bool,source=NONE,stable=true}
+        val marker=(#private_symbol session) root private_request
+        val again=(#private_symbol session) root private_request
+        val _=(#add_constructor_parser session)
+          ("session_script_f",fn _ => fn _ => fn _ => fn arguments =>
+            hd arguments)
+        fun call count = #node ((#parse_from session) (tokens
+          ("(session_script_f"^String.concat
+            (List.tabulate (count,fn _ => " true"))^")")))
+        val limit = #operand_limit limits
+        fun variable_name node =
+          case List.find (fn {node=other,...} => other=node)
+              ((#solver_variables reader) ()) of
+            SOME {lexical,...} => #1 (Term.dest_var lexical)
+          | NONE => raise Fail "session script: not a solver variable"
+      in
+        {declarations=List.map (fn {lexical,...} =>
+           Term.dest_var lexical) ((#solver_variables reader) ()),
+         namespace=HOLset.listItems (#proof_terms ((#namespace session) ())),
+         labels=List.map (fn {scope,marker,kind,...} =>
+           (G.scope_id scope,kind,variable_name marker))
+           ((#private_bindings reader) ()),
+         marker_name=variable_name marker,
+         stable=(again=marker),
+         exact_budget=failure (fn () => call limit),
+         over_budget=failure (fn () => call (limit+1))}
+      end)
+  fun session_script_agrees () =
+    let val ordinary=session_script false val exact=session_script true
+    in
+      ensure "session script: declarations in order"
+        (#declarations ordinary = #declarations exact andalso
+         List.map #1 (#declarations ordinary) =
+           ["session_script_d",#marker_name ordinary] andalso
+         #marker_name ordinary = #marker_name exact);
+      ensure "session script: declared name is in the namespace"
+        (List.exists (fn name => String.isSuffix "session_script_d" name)
+           (#namespace ordinary));
+      ensure "session script: namespaces agree"
+        (#namespace ordinary= #namespace exact);
+      ensure "session script: private labels agree"
+        (#labels ordinary= #labels exact andalso
+         List.map #3 (#labels ordinary) = [#marker_name ordinary]);
+      ensure "session script: private symbol is stable"
+        (#stable ordinary andalso #stable exact);
+      ensure "session script: exact budget accepted"
+        (not (Option.isSome (#exact_budget ordinary)) andalso
+         not (Option.isSome (#exact_budget exact)));
+      ensure "session script: over-budget refusal agrees"
+        (#over_budget ordinary= #over_budget exact);
+      ensure "session script: refusal is the operand contract"
+        (case #over_budget ordinary of
+           SOME (_,_,message) =>
+             String.isSubstring "exceeds contract" message
+         | NONE => false)
+    end
+
   (* Proof-parser construction, not source AST typechecking or prover
      migration. Large controls never use bounded native comparisons;
      declared datatypes have a separate focused fixture. *)
@@ -1717,6 +1947,9 @@ struct
       val _=List.app (fn (solver,texts) =>
         List.app (session_positive solver) texts) session_cases
       val _=OK ()
+      val _=tprint "Structured int and policy graph sessions share a script"
+      val _=session_script_agrees ()
+      val _=OK ()
       val _=print ("TASK33_STRUCTURED_COUNTS positives="^
         Int.toString (List.foldl (fn (xs,n) => List.length xs+n) 0
           [arrays,sequences,string_sequences,z3_sequences,strings,regexps,
@@ -1725,6 +1958,9 @@ struct
           0 malformed)^" source_cases="^
         Int.toString (List.foldl (fn ((_,xs),n) => List.length xs+n)
           0 source_shape_cases)^" primary=432 routes=4\n")
+      val _=tprint "Structured sourced parser entries agree on index limits"
+      val _=sourced_index_limits ()
+      val _=OK ()
       val _=tprint "Structured malformed classifications remain exact"
       val _=List.app (fn (solver,texts) =>
         List.app (negative solver) texts) malformed

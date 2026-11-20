@@ -1456,8 +1456,6 @@ struct
               in value end
           end
     in visit root end
-  fun partial_metric g metric root =
-    partial_metric_program (fn () => ()) g metric root
 
   fun unfolded_nodes_program observe g metric limit node =
     let
@@ -3689,25 +3687,75 @@ struct
      or allowance: the future owned P caller must pay the genuine plan cost
      to SAME W before this path. Arithmetic/meter and primitive internals are
      explicit exclusions, as in the selected fixed-table prerequisite. *)
-  datatype placeholder_meter = CountGuard of
-      {ceiling : IntInf.int,used : IntInf.int ref} | PaidGuard
-    | PolicyCountGuard of
-      {ceiling:SmtReplayResourcePolicy.limit,used:IntInf.int ref}
-    | SameMeterGuard of R.scope_meter
+  datatype placeholder_account = CountAccount of
+      {ceiling : IntInf.int,used : IntInf.int ref}
+    | PolicyAccount of
+      {ceiling : SmtReplayResourcePolicy.limit,used : IntInf.int ref}
+    | MeterAccount of R.scope_meter
+  datatype placeholder_meter = PaidGuard | Charged of placeholder_account
   datatype placeholder_requirement = EitherState | PreparedState
-  fun placeholder_event PaidGuard = ()
-    | placeholder_event (SameMeterGuard meter) =
-        (R.scope_meter_charge meter 1 handle R.Limit =>
-          raise ERR "plan_placeholders" "original remaining Work exhausted")
-    | placeholder_event (CountGuard {ceiling,used}) =
-        if !used >= ceiling then
+  fun placeholder_charged (CountAccount {used,...}) = !used
+    | placeholder_charged (PolicyAccount {used,...}) = !used
+    | placeholder_charged (MeterAccount meter) =
+        R.scope_meter_charged_policy meter
+  (* One indivisible debit. A refusal keeps every earlier debit. *)
+  fun placeholder_spend account amount =
+    case account of
+      CountAccount {ceiling,used} =>
+        if amount < 0 orelse amount > ceiling - !used then
           raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+1
-
-    | placeholder_event (PolicyCountGuard {ceiling,used}) =
-        if SmtReplayResourcePolicy.allows ceiling (!used+1) then
-          used := !used+1
-        else raise ERR "plan_placeholders" "original remaining Work exhausted"
+        else used := !used+amount
+    | PolicyAccount {ceiling,used} =>
+        if not (SmtReplayResourcePolicy.allows ceiling (!used+amount)) orelse
+            amount < 0 then
+          raise ERR "plan_placeholders" "original remaining Work exhausted"
+        else used := !used+amount
+    | MeterAccount meter =>
+        R.scope_meter_charge meter amount handle R.Limit =>
+          raise ERR "plan_placeholders" "original remaining Work exhausted"
+  (* An R plan is priced and paid in one step. Local accounts quote it
+     against their remaining allowance and then pay its cost; a scope meter
+     pays inside its own planner. *)
+  fun placeholder_plan account {count,policy,meter,cost} =
+    case account of
+      CountAccount {ceiling,used} =>
+        let val plan = count (ceiling - !used)
+            val _ = placeholder_spend account (#work (cost plan))
+        in plan end
+    | PolicyAccount {ceiling,used} =>
+        let val plan = policy (SmtReplayResourcePolicy.remaining ceiling
+              (!used))
+            val _ = placeholder_spend account (#work (cost plan))
+        in plan end
+    | MeterAccount m => meter m
+  fun placeholder_lookup_int account (table,key) = placeholder_plan account
+    {count = fn limit => R.lookup_int (table,key,limit),
+     policy = fn limit => R.lookup_int_with_policy (table,key,limit),
+     meter = fn m => R.scope_plan_lookup_int m (table,key),
+     cost = R.int_lookup_cost}
+  fun placeholder_insert_int account (table,key) = placeholder_plan account
+    {count = fn limit => R.insert_int (table,key,limit),
+     policy = fn limit => R.insert_int_with_policy (table,key,limit),
+     meter = fn m => R.scope_plan_insert_int m (table,key),
+     cost = R.int_insertion_cost}
+  fun placeholder_lookup_string account (set,name) = placeholder_plan account
+    {count = fn limit => R.lookup_string (set,name,limit),
+     policy = fn limit => R.lookup_string_with_policy (set,name,limit),
+     meter = fn m => R.scope_plan_lookup_string m (set,name),
+     cost = R.string_lookup_cost}
+  fun placeholder_insert_string account (set,name) = placeholder_plan account
+    {count = fn limit => R.insert_string (set,name,limit),
+     policy = fn limit => R.insert_string_with_policy (set,name,limit),
+     meter = fn m => R.scope_plan_insert_string m (set,name),
+     cost = R.string_insertion_cost}
+  fun placeholder_insert_int_batch account (table,keys) =
+    placeholder_plan account
+      {count = fn limit => R.insert_int_batch (table,keys,limit),
+       policy = fn limit => R.insert_int_batch_with_policy (table,keys,limit),
+       meter = fn m => R.scope_plan_insert_int_batch m (table,keys),
+       cost = R.int_batch_cost}
+  fun placeholder_event PaidGuard = ()
+    | placeholder_event (Charged account) = placeholder_spend account 1
 
   (* This ONE private program is run during planning and again before every
      validation/mint. The successful prepared/minted paths have the same
@@ -3809,18 +3857,13 @@ struct
   fun placeholder_plan_names (PlaceholderPlan {names,...}) = names
   fun placeholder_plan_bindings (PlaceholderPlan {bindings,...}) = bindings
 
-  fun plan_placeholders (g : graph) caller {nodes,remaining_work} =
+  (* The ONE placeholder planning walk. The entries below differ only in
+     the account that pays for it: a local int or policy ceiling, or the
+     caller's own scope meter. Initial is the account's charge before the
+     two initial conversion/ref events its entry admitted. *)
+  fun plan_placeholders_walk (g : graph) caller account initial nodes =
     let
-      (* Exactly the initial conversion/ref source events are admitted before
-         either exists. This is not a new semantic input/output cutoff. *)
-      val _ = if remaining_work >= 2 then () else
-        raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      val ceiling = IntInf.fromInt remaining_work
-      val used = ref (2 : IntInf.int)
-      fun spend amount =
-        if amount < 0 orelse amount > ceiling - !used then
-          raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+amount
+      val spend = placeholder_spend account
       fun tick () = spend 1
       val _ = tick ()
       val original_nodes = !(#nodes g)
@@ -3846,8 +3889,7 @@ struct
       val scope_values = ref ([] : (scope * frame) list)
       fun int_value table key =
         let val _ = tick ()
-            val plan = R.lookup_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_lookup_cost plan))
+            val plan = placeholder_lookup_int account (table,key)
             val _ = tick ()
         in R.int_lookup_value (table,plan) end
       fun previous scope pending =
@@ -3896,8 +3938,7 @@ struct
         let val _ = spend 3
             val table = !visited
             val key = node_id node
-            val query = R.lookup_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_lookup_cost query))
+            val query = placeholder_lookup_int account (table,key)
             val _ = tick ()
             val values = case R.int_lookup_value (table,query) of
                 NONE => [] | SOME values => values
@@ -3908,8 +3949,7 @@ struct
       fun remember entry node =
         let val _ = spend 3
             val (table,key,values) = entry
-            val insertion = R.insert_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_insertion_cost insertion))
+            val insertion = placeholder_insert_int account (table,key)
             (* Actual bucket cons and publication of the finished map;
                R's quote already retains its one-shot finish programme. *)
             val _ = spend 2
@@ -3939,8 +3979,7 @@ struct
             val _ = tick () val _ = tick () val _ = next_name := id+1
             val _ = tick () val staged = !staged_reserved
             val _ = tick ()
-            val plan = R.lookup_string (staged,name,ceiling - !used)
-            val _ = spend (#work (R.string_lookup_cost plan))
+            val plan = placeholder_lookup_string account (staged,name)
             val _ = tick ()
         in if R.string_lookup_value (staged,plan) then choose ()
            else name end
@@ -3971,9 +4010,8 @@ struct
                 val name = choose ()
                 val _ = tick () val staged = !staged_reserved
                 val _ = tick ()
-                val insertion = R.insert_string
-                  (staged,name,ceiling - !used)
-                val _ = spend (#work (R.string_insertion_cost insertion))
+                val insertion = placeholder_insert_string account
+                  (staged,name)
                 val _ = tick ()
                 val next = R.finish_string (staged,insertion)
                 val _ = tick () val _ = staged_reserved := next
@@ -4011,9 +4049,8 @@ struct
       fun reserve_reverse [] = tick ()
         | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
       val _ = reserve_reverse (!rows)
-      val batch = R.insert_int_batch
-        (original_placeholders,!keys,ceiling - !used)
-      val _ = spend (#work (R.int_batch_cost batch))
+      val batch = placeholder_insert_int_batch account
+        (original_placeholders,!keys)
       (* The two immutable snapshot constructors and the phase reference
          are charged BEFORE construction. Both positive guard invocations
          share placeholder_guard; failure retirement is separately reserved. *)
@@ -4028,10 +4065,10 @@ struct
          next_name = !next_name}
       val phase = ref NamesPrepared
       val _ = tick () val _ = tick ()
-      val meter = CountGuard {ceiling = ceiling,used = used}
-      val before_guard = !used
-      val _ = placeholder_guard EitherState meter g caller snapshot phase
-      val positive_guard = !used-before_guard
+      val before_guard = placeholder_charged account
+      val _ = placeholder_guard EitherState (Charged account) g caller
+        snapshot phase
+      val positive_guard = placeholder_charged account-before_guard
       (* Mint's same prepared guard plus a possible refusal-retirement write.
          Future independent validation pays guard_work from SAME W. *)
       val guard_work = positive_guard+1
@@ -4045,8 +4082,18 @@ struct
     in PlaceholderPlan
       {snapshot = snapshot,rows = !rows,names = !names,
        bindings = !bindings,batch = batch,
-       work = !used,guard_work = guard_work,phase = phase,
+       work = placeholder_charged account-initial,
+       guard_work = guard_work,phase = phase,
        revision = #validation_changes g} end
+
+  fun plan_placeholders (g : graph) caller {nodes,remaining_work} =
+    (* Exactly the initial conversion/ref source events are admitted before
+       either exists. This is not a new semantic input/output cutoff. *)
+    if remaining_work >= 2 then
+      plan_placeholders_walk g caller (CountAccount
+        {ceiling = IntInf.fromInt remaining_work,used = ref (2 : IntInf.int)})
+        0 nodes
+    else raise ERR "plan_placeholders" "remaining Work cannot create meter"
 
   fun validate_placeholder_plan g caller
       (PlaceholderPlan {snapshot,phase,revision,...}) =
@@ -4997,9 +5044,16 @@ struct
            in record end)
     in #source (visit original) end
 
-  fun discover_partial_with_policy (g : graph) scope
+  (* One policy discovery body. An unselected scan (NONE) recognises no
+     declaration head: a constant answers false without a selection scan
+     and the unchanged root keeps no retained opaque profile. A selected
+     scan validates its heads at every frame, memoises recognition by
+     frame and raw term, and retains the unchanged opaque root. *)
+  fun discover_partial_with_policy_selection (g : graph) scope selection
       {original,maximum,scan_limit,step} =
     let
+      val _ = case selection of NONE => ()
+        | SOME heads => validate_discovery_heads g scope heads
       val _ = check_scope g scope val _ = usable g scope original
       val _ = if SmtReplayResourcePolicy.positive maximum andalso
           SmtReplayResourcePolicy.positive scan_limit then () else
@@ -5023,6 +5077,8 @@ struct
          if !running andalso Type.type_epoch () = epoch andalso
              Term.term_epoch () = symbols then () else
            raise ERR "discover_partial" "scope/epoch/action retired";
+         (case selection of NONE => () | SOME heads =>
+           validate_discovery_heads g frame heads);
          List.app (fn guard => guard ()) (!guards))
       fun debit frame =
         (valid frame;
@@ -5031,6 +5087,22 @@ struct
       fun invoke frame action =
         (debit frame;
          let val value = action () val _ = valid frame in value end)
+      (* Declaration-only potential recognition: no variable spelling,
+         schematic matching or semantic equality influences absence. *)
+      fun selected_id frame id = case selection of NONE => false
+        | SOME (DiscoveryHeads {rows,...}) =>
+            let fun walk [] = false
+                  | walk ((_,held,_)::rest) =
+                      invoke frame (fn () =>
+                        KernelSig.id_compare (id,held) = EQUAL) orelse
+                      walk rest
+            in walk rows end
+      fun selected_term frame term = case selection of NONE => false
+        | SOME _ =>
+            if invoke frame (fn () => Term.is_const term) then
+              selected_id frame (invoke frame
+                (fn () => #Name (Term.dest_thy_constid term)))
+            else false
       fun domain_needed frame ty =
         if invoke frame (fn () => Type.compare (ty,numSyntax.num) = EQUAL)
           then true
@@ -5053,7 +5125,25 @@ struct
       (* Count-body substitutes only an ATOMIC marker. Recognition uses
          constructors, fixed declaration IDs and types, never variable names,
          equality of free variables, matching or semantic proof search. *)
-      fun term_needed frame term =
+      val recognized_terms = ref ([] : (scope * Term.term * bool) list)
+      fun term_needed frame term = case selection of NONE =>
+          term_needed_fresh frame term
+        | SOME _ =>
+          let fun find [] = NONE
+                | find ((held_scope,held,answer)::rest) =
+                    if invoke frame (fn () => held_scope=frame andalso
+                        Portable.pointer_eq (term,held)) then SOME answer
+                    else find rest
+          in case find (!recognized_terms) of SOME answer =>
+               (valid frame;answer)
+            | NONE =>
+              let val answer=term_needed_fresh frame term
+                  val _ = debit frame
+                  val _ = recognized_terms :=
+                    (frame,term,answer):: !recognized_terms
+              in valid frame;answer end
+          end
+      and term_needed_fresh frame term =
         if invoke frame (fn () => Term.is_comb term) then
           let val (operator,operand) = invoke frame
                 (fn () => Term.dest_comb term)
@@ -5066,7 +5156,7 @@ struct
         else if invoke frame (fn () => Term.is_abs term) then
           term_needed frame (invoke frame
             (fn () => SmtReplayImport.count_body term))
-        else false
+        else selected_term frame term
       val seen = ref
         (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
       val captured = ref
@@ -5129,6 +5219,7 @@ struct
                           (binder_closure_data g frame closure)
                         val _ = guard ()
                     in graph_needed (#body_frame data) (#body data) end
+                | Constant id => selected_id frame id
                 | _ => false
                 val _ = valid frame
                 val _ = seen := Redblackmap.insert (!seen,key,answer)
@@ -5326,6 +5417,9 @@ struct
       fun build () =
         let val _ = capture_paths scope original
             val changed = graph_needed scope original
+            val _ = if changed then () else case selection of NONE => ()
+              | SOME _ => (case view g original of
+                  OpaqueRetained => retain_opaque original | _ => ())
             val recipe = if changed then SOME (visit false original) else NONE
             val result = PartialDiscovery
               {owner = #owner g,scope = scope,original = original,
@@ -5356,6 +5450,8 @@ struct
       maximum=maximum,scan_limit=scan_limit,scans= !scans,
       profiles=List.rev (!profiles)} end
 
+  fun discover_partial_with_policy g scope args =
+    discover_partial_with_policy_selection g scope NONE args
   fun validate_partial_with_policy (g:graph) scope
       (result as PolicyPartialDiscovery {owner,scope=held,...}) =
     if owner= #owner g andalso scope=held then
@@ -5416,251 +5512,10 @@ struct
       | NONE => exact_unfolded_nodes_with_policy g metric maximum node
 
   fun plan_placeholders_with_policy (g : graph) caller {nodes,remaining_work} =
-    let
-      (* Exactly the initial conversion/ref source events are admitted before
-         either exists. This is not a new semantic input/output cutoff. *)
-      val _ = if SmtReplayResourcePolicy.allows remaining_work 2 then () else
-        raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      val ceiling = remaining_work
-      val used = ref (2 : IntInf.int)
-      fun spend amount =
-        if not (SmtReplayResourcePolicy.allows ceiling (!used+amount)) orelse
-            amount < 0 then
-          raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+amount
-      fun tick () = spend 1
-      val _ = tick ()
-      val original_nodes = !(#nodes g)
-      val _ = tick ()
-      val original_scopes = !(#scopes g)
-      val _ = tick ()
-      val original_reserved = !(#reserved g)
-      val _ = tick ()
-      val original_placeholders = !(#placeholders g)
-      val _ = tick ()
-      val first_name = !(#next_name g)
-      val _ = tick ()
-      val first_node = !(#next g)
-      val _ = tick ()
-      val first_scope = !(#next_scope g)
-      val _ = tick ()
-      val epoch = Type.type_epoch ()
-      val _ = tick ()
-      val symbols = Term.term_epoch ()
-      val _ = tick ()
-      val frames = ref ([] : (scope * bool ref) list)
-      val _ = tick ()
-      val scope_values = ref ([] : (scope * frame) list)
-      fun int_value table key =
-        let val _ = tick ()
-            val plan = R.lookup_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_lookup_cost plan))
-            val _ = tick ()
-        in R.int_lookup_value (table,plan) end
-      fun previous scope pending =
-        (tick ();case pending of [] => NONE
-         | (old,value)::rest =>
-             (tick ();if scope = old then (tick ();SOME value)
-              else previous scope rest))
-      fun scope_value (scope as Scope {owner,id}) =
-        (tick ();
-         if owner <> #owner g then
-           raise ERR "plan_placeholders" "foreign caller/frame"
-         else (tick ();case previous scope (!scope_values) of
-           SOME value => value
-         | NONE =>
-             let val value = case int_value original_scopes id of
-                     SOME value => value
-                   | NONE => raise ERR "plan_placeholders" "unknown frame"
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = scope_values := (scope,value) :: !scope_values
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = frames := (scope,#active value) :: !frames
-             in value end))
-      fun alive scope =
-        let val frame = scope_value scope val _ = tick ()
-            val _ = if !(#active frame) then () else
-              raise ERR "plan_placeholders" "retired frame"
-        in tick ();case #parent frame of NONE => () | SOME p => alive p end
-      fun visible scope required =
-        (tick ();if scope = required then true else
-         case #parent (scope_value scope) of NONE => false
-         | SOME parent => visible parent required)
-      val _ = alive caller
-      val _ = tick () val staged_reserved = ref original_reserved
-      val _ = tick () val next_name = ref first_name
-      val _ = tick () val rows = ref ([] : placeholder_row list)
-      val _ = tick () val names = ref ([] : (node * string) list)
-      val _ = tick ()
-      val bindings = ref ([] : (node * string * Type.hol_type) list)
-      val _ = tick () val keys = ref ([] : int list)
-      (* Local to this genuine policy plan and its original meter. Numeric
-         IDs select buckets; only complete graph-owned nodes establish
-         membership. There is no cross-plan cache or Work permission. *)
-      val _ = spend 2
-      val visited = ref (R.empty_int () : node list R.int_map)
-      fun visited_entry node =
-        let val _ = spend 3
-            val table = !visited
-            val key = node_id node
-            val query = R.lookup_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_lookup_cost query))
-            val _ = tick ()
-            val values = case R.int_lookup_value (table,query) of
-                NONE => [] | SOME values => values
-        in (table,key,values) end
-      fun visited_member node pending =
-        (tick ();case pending of [] => false | old::rest =>
-          (tick ();node = old orelse visited_member node rest))
-      fun remember entry node =
-        let val _ = spend 3
-            val (table,key,values) = entry
-            val insertion = R.insert_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_insertion_cost insertion))
-            (* Actual bucket cons and publication of the finished map;
-               R's quote already retains its one-shot finish programme. *)
-            val _ = spend 2
-            val next = R.finish_int (table,insertion,node::values)
-        in visited := next end
-      (* Decimal formatting has a fixed machine-int input. Borrowed source
-         events reserve each digit/cons plus concatenation bytes BEFORE the
-         primitive formatter/concatenator; internal primitive costs remain
-         outside this event model. No arbitrary name-length cutoff exists. *)
-      fun candidate id =
-        let
-          fun digits n = (tick ();if n < 10 then 1 else 1+digits (n div 10))
-          val _ = if id < 0 then
-            raise ERR "plan_placeholders" "negative name counter" else ()
-          val _ = case Int.maxInt of NONE => () | SOME maximum =>
-            if id < maximum then () else
-              raise ERR "plan_placeholders" "name counter cannot advance"
-          val n = digits id
-          val _ = spend (IntInf.fromInt n)
-          val decimal = Int.toString id
-          val _ = spend (IntInf.fromInt (String.size "__smt_replay_"))
-          val _ = spend (IntInf.fromInt n)
-        in "__smt_replay_" ^ decimal end
-      fun choose () =
-        let val _ = tick () val id = !next_name
-            val name = candidate id
-            val _ = tick () val _ = tick () val _ = next_name := id+1
-            val _ = tick () val staged = !staged_reserved
-            val _ = tick ()
-            val plan = R.lookup_string_with_policy
-              (staged,name,
-                   SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.string_lookup_cost plan))
-            val _ = tick ()
-        in if R.string_lookup_value (staged,plan) then choose ()
-           else name end
-      fun one (node as Node {owner,id}) =
-        let
-          val _ = tick ()
-          val _ = if owner = #owner g then () else
-            raise ERR "plan_placeholders" "foreign node"
-          val fields = case int_value original_nodes id of SOME v => v
-            | NONE => raise ERR "plan_placeholders" "unknown node"
-          val _ = alive (#scope fields)
-          val _ = if visible caller (#scope fields) then () else
-            raise ERR "plan_placeholders" "node outside original caller"
-        in case int_value original_placeholders id of
-            SOME term =>
-              let val _ = tick () val name = #1 (Term.dest_var term)
-                  val _ = tick () val _ = tick ()
-                  val _ = tick () val _ = tick ()
-                  val _ = rows := CachedName (node,term) :: !rows
-                  val _ = tick () val _ = tick () val _ = tick ()
-                  val _ = names := (node,name) :: !names
-                  (* Type read, tuple, cons, write before allocation. *)
-                  val _ = spend 4
-                  val _ = bindings := (node,name,#ty fields) :: !bindings
-              in () end
-          | NONE =>
-              let
-                val name = choose ()
-                val _ = tick () val staged = !staged_reserved
-                val _ = tick ()
-                val insertion = R.insert_string_with_policy
-                  (staged,name,
-                   SmtReplayResourcePolicy.remaining ceiling (!used))
-                val _ = spend (#work (R.string_insertion_cost insertion))
-                val _ = tick ()
-                val next = R.finish_string (staged,insertion)
-                val _ = tick () val _ = staged_reserved := next
-                val _ = tick () val _ = tick ()
-                val _ = tick () val _ = tick ()
-                val _ = rows := NewName (node,name,#ty fields) :: !rows
-                val _ = tick () val _ = tick () val _ = tick ()
-                val _ = names := (node,name) :: !names
-                val _ = spend 4
-                val _ = bindings := (node,name,#ty fields) :: !bindings
-                val _ = tick () val _ = tick () val _ = keys := id :: !keys
-              in () end
-        end
-      fun walk pending =
-        (tick ();case pending of [] => () | node::rest =>
-          let val entry = visited_entry node
-              val _ = spend 3
-              val (_,_,values) = entry
-          in if visited_member node values then
-               raise ERR "plan_placeholders" "duplicate naming node"
-             else (one node;remember entry node;tick ();walk rest)
-          end)
-      val _ = walk nodes
-      (* Actual private row grammar, including cached skip and empty tail.
-         One event precedes each planning inspection; separate events retain
-         the future branch, variable constructor and output-list cons. *)
-      fun reserve_payloads pending =
-        (tick ();tick ();case pending of [] => spend 4
-         | CachedName _::rest =>
-             (spend 5;reserve_payloads rest)
-         | NewName _::rest =>
-             (spend 8;reserve_payloads rest))
-      val _ = reserve_payloads (!rows)
-      (* Exact output reversal: tail visit, cons and branch for each row. *)
-      fun reserve_reverse [] = tick ()
-        | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
-      val _ = reserve_reverse (!rows)
-      val batch = R.insert_int_batch_with_policy
-        (original_placeholders,!keys,
-         SmtReplayResourcePolicy.remaining ceiling (!used))
-      val _ = spend (#work (R.int_batch_cost batch))
-      (* The two immutable snapshot constructors and the phase reference
-         are charged BEFORE construction. Both positive guard invocations
-         share placeholder_guard; failure retirement is separately reserved. *)
-      val _ = tick () val _ = tick () val _ = tick ()
-      val snapshot = PlaceholderSnapshot
-        {owner = #owner g,caller = caller,nodes = original_nodes,
-         scopes = original_scopes,reserved = original_reserved,
-         placeholders = original_placeholders,first_name = first_name,
-         first_node = first_node,first_scope = first_scope,
-         epoch = epoch,symbols = symbols,frames = !frames,
-         next_reserved = !staged_reserved,
-         next_name = !next_name}
-      val phase = ref NamesPrepared
-      val _ = tick () val _ = tick ()
-      val meter = PolicyCountGuard {ceiling = ceiling,used = used}
-      val before_guard = !used
-      val _ = placeholder_guard EitherState meter g caller snapshot phase
-      val positive_guard = !used-before_guard
-      (* Mint's same prepared guard plus a possible refusal-retirement write.
-         Future independent validation pays guard_work from SAME W. *)
-      val guard_work = positive_guard+1
-      val _ = spend guard_work
-      (* Future phase retirement, three graph writes, minted wrapper/write;
-         final immutable plan record and wrapper. No future source search. *)
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      (* Additional retained field and its read. *)
-      val _ = spend 2
-    in PlaceholderPlan
-      {snapshot = snapshot,rows = !rows,names = !names,
-       bindings = !bindings,batch = batch,
-       work = !used,guard_work = guard_work,phase = phase,
-       revision = #validation_changes g} end
+    if SmtReplayResourcePolicy.allows remaining_work 2 then
+      plan_placeholders_walk g caller (PolicyAccount
+        {ceiling = remaining_work,used = ref (2 : IntInf.int)}) 0 nodes
+    else raise ERR "plan_placeholders" "remaining Work cannot create meter"
 
   (* SAME-meter counterpart of the genuine placeholder programme. The
      ordinary planners above retain their exact standalone accounting and
@@ -5672,208 +5527,7 @@ struct
       val initial = R.scope_meter_charged_policy meter
       val _ = R.scope_meter_charge meter 2 handle R.Limit =>
         raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      fun spend amount = R.scope_meter_charge meter amount handle R.Limit =>
-        raise ERR "plan_placeholders" "original remaining Work exhausted"
-      fun tick () = spend 1
-      val _ = tick ()
-      val original_nodes = !(#nodes g)
-      val _ = tick ()
-      val original_scopes = !(#scopes g)
-      val _ = tick ()
-      val original_reserved = !(#reserved g)
-      val _ = tick ()
-      val original_placeholders = !(#placeholders g)
-      val _ = tick ()
-      val first_name = !(#next_name g)
-      val _ = tick ()
-      val first_node = !(#next g)
-      val _ = tick ()
-      val first_scope = !(#next_scope g)
-      val _ = tick ()
-      val epoch = Type.type_epoch ()
-      val _ = tick ()
-      val symbols = Term.term_epoch ()
-      val _ = tick ()
-      val frames = ref ([] : (scope * bool ref) list)
-      val _ = tick ()
-      val scope_values = ref ([] : (scope * frame) list)
-      fun int_value table key =
-        let val _ = tick ()
-            val plan = R.scope_plan_lookup_int meter (table,key)
-            val _ = tick ()
-        in R.int_lookup_value (table,plan) end
-      fun previous scope pending =
-        (tick ();case pending of [] => NONE
-         | (old,value)::rest =>
-             (tick ();if scope = old then (tick ();SOME value)
-              else previous scope rest))
-      fun scope_value (scope as Scope {owner,id}) =
-        (tick ();
-         if owner <> #owner g then
-           raise ERR "plan_placeholders" "foreign caller/frame"
-         else (tick ();case previous scope (!scope_values) of
-           SOME value => value
-         | NONE =>
-             let val value = case int_value original_scopes id of
-                     SOME value => value
-                   | NONE => raise ERR "plan_placeholders" "unknown frame"
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = scope_values := (scope,value) :: !scope_values
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = frames := (scope,#active value) :: !frames
-             in value end))
-      fun alive scope =
-        let val frame = scope_value scope val _ = tick ()
-            val _ = if !(#active frame) then () else
-              raise ERR "plan_placeholders" "retired frame"
-        in tick ();case #parent frame of NONE => () | SOME p => alive p end
-      fun visible scope required =
-        (tick ();if scope = required then true else
-         case #parent (scope_value scope) of NONE => false
-         | SOME parent => visible parent required)
-      val _ = alive caller
-      val _ = tick () val staged_reserved = ref original_reserved
-      val _ = tick () val next_name = ref first_name
-      val _ = tick () val rows = ref ([] : placeholder_row list)
-      val _ = tick () val names = ref ([] : (node * string) list)
-      val _ = tick ()
-      val bindings = ref ([] : (node * string * Type.hol_type) list)
-      val _ = tick () val keys = ref ([] : int list)
-      val _ = spend 2
-      val visited = ref (R.empty_int () : node list R.int_map)
-      fun visited_entry node =
-        let val _ = spend 3
-            val table = !visited
-            val key = node_id node
-            val query = R.scope_plan_lookup_int meter (table,key)
-            val _ = tick ()
-            val values = case R.int_lookup_value (table,query) of
-                NONE => [] | SOME values => values
-        in (table,key,values) end
-      fun visited_member node pending =
-        (tick ();case pending of [] => false | old::rest =>
-          (tick ();node = old orelse visited_member node rest))
-      fun remember entry node =
-        let val _ = spend 3
-            val (table,key,values) = entry
-            val insertion = R.scope_plan_insert_int meter (table,key)
-            val _ = spend 2
-            val next = R.finish_int (table,insertion,node::values)
-        in visited := next end
-      fun candidate id =
-        let
-          fun digits n = (tick ();if n < 10 then 1 else 1+digits (n div 10))
-          val _ = if id < 0 then
-            raise ERR "plan_placeholders" "negative name counter" else ()
-          val _ = case Int.maxInt of NONE => () | SOME maximum =>
-            if id < maximum then () else
-              raise ERR "plan_placeholders" "name counter cannot advance"
-          val n = digits id
-          val _ = spend (IntInf.fromInt n)
-          val decimal = Int.toString id
-          val _ = spend (IntInf.fromInt (String.size "__smt_replay_"))
-          val _ = spend (IntInf.fromInt n)
-        in "__smt_replay_" ^ decimal end
-      fun choose () =
-        let val _ = tick () val id = !next_name
-            val name = candidate id
-            val _ = tick () val _ = tick () val _ = next_name := id+1
-            val _ = tick () val staged = !staged_reserved
-            val _ = tick ()
-            val plan = R.scope_plan_lookup_string meter (staged,name)
-            val _ = tick ()
-        in if R.string_lookup_value (staged,plan) then choose ()
-           else name end
-      fun one (node as Node {owner,id}) =
-        let
-          val _ = tick ()
-          val _ = if owner = #owner g then () else
-            raise ERR "plan_placeholders" "foreign node"
-          val fields = case int_value original_nodes id of SOME v => v
-            | NONE => raise ERR "plan_placeholders" "unknown node"
-          val _ = alive (#scope fields)
-          val _ = if visible caller (#scope fields) then () else
-            raise ERR "plan_placeholders" "node outside original caller"
-        in case int_value original_placeholders id of
-            SOME term =>
-              let val _ = tick () val name = #1 (Term.dest_var term)
-                  val _ = tick () val _ = tick ()
-                  val _ = tick () val _ = tick ()
-                  val _ = rows := CachedName (node,term) :: !rows
-                  val _ = tick () val _ = tick () val _ = tick ()
-                  val _ = names := (node,name) :: !names
-                  val _ = spend 4
-                  val _ = bindings := (node,name,#ty fields) :: !bindings
-              in () end
-          | NONE =>
-              let
-                val name = choose ()
-                val _ = tick () val staged = !staged_reserved
-                val _ = tick ()
-                val insertion = R.scope_plan_insert_string meter
-                  (staged,name)
-                val _ = tick ()
-                val next = R.finish_string (staged,insertion)
-                val _ = tick () val _ = staged_reserved := next
-                val _ = tick () val _ = tick ()
-                val _ = tick () val _ = tick ()
-                val _ = rows := NewName (node,name,#ty fields) :: !rows
-                val _ = tick () val _ = tick () val _ = tick ()
-                val _ = names := (node,name) :: !names
-                val _ = spend 4
-                val _ = bindings := (node,name,#ty fields) :: !bindings
-                val _ = tick () val _ = tick () val _ = keys := id :: !keys
-              in () end
-        end
-      fun walk pending =
-        (tick ();case pending of [] => () | node::rest =>
-          let val entry = visited_entry node
-              val _ = spend 3
-              val (_,_,values) = entry
-          in if visited_member node values then
-               raise ERR "plan_placeholders" "duplicate naming node"
-             else (one node;remember entry node;tick ();walk rest)
-          end)
-      val _ = walk nodes
-      fun reserve_payloads pending =
-        (tick ();tick ();case pending of [] => spend 4
-         | CachedName _::rest =>
-             (spend 5;reserve_payloads rest)
-         | NewName _::rest =>
-             (spend 8;reserve_payloads rest))
-      val _ = reserve_payloads (!rows)
-      fun reserve_reverse [] = tick ()
-        | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
-      val _ = reserve_reverse (!rows)
-      val batch = R.scope_plan_insert_int_batch meter
-        (original_placeholders,!keys)
-      val _ = tick () val _ = tick () val _ = tick ()
-      val snapshot = PlaceholderSnapshot
-        {owner = #owner g,caller = caller,nodes = original_nodes,
-         scopes = original_scopes,reserved = original_reserved,
-         placeholders = original_placeholders,first_name = first_name,
-         first_node = first_node,first_scope = first_scope,
-         epoch = epoch,symbols = symbols,frames = !frames,
-         next_reserved = !staged_reserved,
-         next_name = !next_name}
-      val phase = ref NamesPrepared
-      val _ = tick () val _ = tick ()
-      val guard_meter = SameMeterGuard meter
-      val before_guard = R.scope_meter_charged_policy meter
-      val _ = placeholder_guard EitherState guard_meter g caller
-        snapshot phase
-      val positive_guard = R.scope_meter_charged_policy meter-before_guard
-      val guard_work = positive_guard+1
-      val _ = spend guard_work
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = spend 2
-    in PlaceholderPlan
-      {snapshot = snapshot,rows = !rows,names = !names,
-       bindings = !bindings,batch = batch,
-       work = R.scope_meter_charged_policy meter-initial,
-       guard_work = guard_work,phase = phase,
-       revision = #validation_changes g} end
+    in plan_placeholders_walk g caller (MeterAccount meter) initial nodes end
 
   (* Only authentic policy discovery profiles can fill an opaque leaf.
      The private selection closure never accepts a caller scalar/guard. *)
@@ -6438,407 +6092,12 @@ struct
      admit the actual native programme before a positive call. *)
   datatype policy_selected_partial_discovery = PolicySelectedPartialDiscovery
     of {heads:discovery_heads,plan:policy_partial_discovery}
-  fun discover_selected_partial_with_policy (g : graph) scope
+  fun discover_selected_partial_with_policy g scope
       {original,heads,maximum,scan_limit,step} =
-    let
-      val selection=SOME heads
-      val _ = validate_discovery_heads g scope heads
-      val _ = check_scope g scope val _ = usable g scope original
-      val _ = if SmtReplayResourcePolicy.positive maximum andalso
-          SmtReplayResourcePolicy.positive scan_limit then () else
-        raise ERR "discover_partial" "nonpositive discovery bound"
-      val _ = case !(#partial_running g) of NONE => ()
-        | SOME active =>
-            (active := false;
-             raise ERR "discover_partial" "partial discovery reentry")
-      val running = ref true
-      val _ = #partial_running g := SOME running
-      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
-      val scans=ref(0:IntInf.int)
-      val profiles=ref([]:policy_opaque_profile list)
-      fun consume_scan message=
-        if SmtReplayResourcePolicy.allows scan_limit (!scans+1)then
-          scans:= !scans+1 else raise ERR "discover_partial" message
-      val guards = ref ([] : (unit -> unit) list)
-      val closures = ref ([] : binder_closure list)
-      fun valid frame =
-        (check_scope g scope;check_scope g frame;
-         if !running andalso Type.type_epoch () = epoch andalso
-             Term.term_epoch () = symbols then () else
-           raise ERR "discover_partial" "scope/epoch/action retired";
-         (case selection of NONE => () | SOME heads =>
-           validate_discovery_heads g frame heads);
-         List.app (fn guard => guard ()) (!guards))
-      fun debit frame =
-        (valid frame;
-         consume_scan "discovery scan budget exhausted";
-         step ();valid frame)
-      fun invoke frame action =
-        (debit frame;
-         let val value = action () val _ = valid frame in value end)
-      (* Declaration-only potential recognition: no variable spelling,
-         schematic matching or semantic equality influences absence. *)
-      fun selected_id frame id = case selection of NONE => false
-        | SOME (DiscoveryHeads {rows,...}) =>
-            let fun walk [] = false
-                  | walk ((_,held,_)::rest) =
-                      invoke frame (fn () =>
-                        KernelSig.id_compare (id,held) = EQUAL) orelse
-                      walk rest
-            in walk rows end
-      fun selected_term frame term = case selection of NONE => false
-        | SOME _ =>
-            if invoke frame (fn () => Term.is_const term) then
-              selected_id frame (invoke frame
-                (fn () => #Name (Term.dest_thy_constid term)))
-            else false
-      fun domain_needed frame ty =
-        if invoke frame (fn () => Type.compare (ty,numSyntax.num) = EQUAL)
-          then true
-        else case invoke frame (fn () => Lib.total Type.dom_rng ty) of
-            NONE => false
-          | SOME (_,range) => invoke frame
-              (fn () => Type.compare (range,numSyntax.num) = EQUAL)
-      fun quantified frame operator abstraction get_type =
-        if abstraction andalso
-            invoke frame (fn () => Term.is_const operator) andalso
-            invoke frame (fn () =>
-              Term.same_const operator boolSyntax.universal orelse
-              Term.same_const operator boolSyntax.existential) then
-          let val ty = invoke frame get_type
-          in case invoke frame (fn () => Lib.total Type.dom_rng ty) of
-                SOME (domain,_) => domain_needed frame domain
-              | NONE => false
-          end
-        else false
-      (* Count-body substitutes only an ATOMIC marker. Recognition uses
-         constructors, fixed declaration IDs and types, never variable names,
-         equality of free variables, matching or semantic proof search. *)
-      val recognized_terms = ref ([] : (scope * Term.term * bool) list)
-      fun term_needed frame term = case selection of NONE =>
-          term_needed_fresh frame term
-        | SOME _ =>
-          let fun find [] = NONE
-                | find ((held_scope,held,answer)::rest) =
-                    if invoke frame (fn () => held_scope=frame andalso
-                        Portable.pointer_eq (term,held)) then SOME answer
-                    else find rest
-          in case find (!recognized_terms) of SOME answer =>
-               (valid frame;answer)
-            | NONE =>
-              let val answer=term_needed_fresh frame term
-                  val _ = debit frame
-                  val _ = recognized_terms :=
-                    (frame,term,answer):: !recognized_terms
-              in valid frame;answer end
-          end
-      and term_needed_fresh frame term =
-        if invoke frame (fn () => Term.is_comb term) then
-          let val (operator,operand) = invoke frame
-                (fn () => Term.dest_comb term)
-          in if invoke frame (fn () => Term.is_abs operator) orelse
-              quantified frame operator
-                (invoke frame (fn () => Term.is_abs operand))
-                (fn () => Term.type_of operand) then true
-            else term_needed frame operator orelse term_needed frame operand
-          end
-        else if invoke frame (fn () => Term.is_abs term) then
-          term_needed frame (invoke frame
-            (fn () => SmtReplayImport.count_body term))
-        else selected_term frame term
-      val seen = ref
-        (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
-      val captured = ref
-        (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
-      (* Private callback-free setup holds all genuinely recorded frames
-         BEFORE a step can retire one. No node_scope(body) inference.
-         Setup map/frame work remains a separate unquoted prerequisite. *)
-      fun capture_paths frame node =
-        let val _ = valid frame val _ = usable g frame node
-            val key = (scope_id frame,node_id node)
-        in case Redblackmap.peek (!captured,key) of SOME _ => ()
-          | NONE =>
-            let val _ = consume_scan "frame scan budget exhausted"
-                val _ = captured := Redblackmap.insert (!captured,key,())
-            in case view g node of
-                Application (left,right) =>
-                  (capture_paths frame left;capture_paths frame right)
-              | AdmittedBinder _ =>
-                  let val closure = binder_closure g frame node
-                      val data = binder_closure_data g frame closure
-                      fun guard () = ignore
-                        (binder_closure_data g frame closure)
-                      val _ = guards := guard :: !guards
-                      val _ = closures := closure :: !closures
-                  in capture_paths (#body_frame data) (#body data) end
-              | _ => ()
-            end
-        end
-      fun graph_needed frame node =
-        let val _ = valid frame val _ = usable g frame node
-            val _ = debit frame val key = (scope_id frame,node_id node)
-        in case Redblackmap.peek (!seen,key) of SOME value => value
-          | NONE =>
-            let val answer = case invoke frame (fn () => view g node) of
-                  Application (operator,operand) =>
-                    let val operator_view = invoke frame
-                          (fn () => view g operator)
-                        val beta = case operator_view of
-                            AdmittedBinder _ => true | OpaqueRetained => true
-                          | _ => false
-                        val operand_view = invoke frame
-                          (fn () => view g operand)
-                        val abstraction = case operand_view of
-                            AdmittedBinder _ => true | OpaqueRetained => true
-                          | _ => false
-                        val carrier = quantified frame
-                          (invoke frame (fn () => representative g operator))
-                          abstraction (fn () => type_of g operand)
-                    in beta orelse carrier orelse
-                      graph_needed frame operator orelse
-                      graph_needed frame operand end
-                | OpaqueRetained => term_needed frame
-                    (invoke frame (fn () => representative g node))
-                | AdmittedBinder _ =>
-                    let val closure = invoke frame
-                          (fn () => binder_closure g frame node)
-                        val data = invoke frame
-                          (fn () => binder_closure_data g frame closure)
-                        fun guard () = ignore
-                          (binder_closure_data g frame closure)
-                        val _ = guard ()
-                    in graph_needed (#body_frame data) (#body data) end
-                | Constant id => selected_id frame id
-                | _ => false
-                val _ = valid frame
-                val _ = seen := Redblackmap.insert (!seen,key,answer)
-            in answer end
-        end
-      fun retained_guard () =
-        (check_scope g scope;usable g scope original;
-         if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
-           then () else raise ERR "partial_view" "discovery epoch changed";
-         List.app (fn guard => guard ()) (!guards))
-      (* Only a child whose complete rule scan was false reaches this
-         collector. It quotes full repeated annotations for mixed proof
-         assembly; a whole unchanged NONE root needs no new type envelope. *)
-      fun retained_ready () =
-        partial_scope_live g scope andalso
-        Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
-        andalso List.all (fn BinderClosure {record,...} =>
-          partial_record_live g record) (!closures)
-      fun retain_opaque node =
-        let val _ = if graph_needed scope node then
-              raise ERR "retain_opaque" "relevant binder is not a no-op"
-            else ()
-            val memo = Array.array (4093,[])
-            val types = ref ([] : Type.hol_type list)
-            val heads = ref ([] : Term.term list)
-            fun add (a : IntInf.int) (b : IntInf.int) = a+b
-            fun text_bytes text : IntInf.int =
-              let val size = String.size text
-                  fun walk index = if index = size then () else
-                    (debit scope;ignore (String.sub (text,index));
-                     walk (index+1))
-                  val _ = walk 0
-              in IntInf.fromInt size end
-            fun weight ty : IntInf.int * IntInf.int =
-              let val _ = debit scope
-              in if invoke scope (fn () => Type.is_vartype ty) then
-                  (1,text_bytes (invoke scope
-                    (fn () => Type.dest_vartype ty)))
-                else
-                  let val {Thy,Tyop,Args} = invoke scope
-                        (fn () => Type.dest_thy_typeid ty)
-                      val name = invoke scope (fn () => KernelSig.name_of Tyop)
-                      val own = add (text_bytes Thy) (text_bytes name)
-                  in List.foldl (fn (child,(nodes,bytes)) =>
-                       let val (n,b) = weight child
-                       in (add nodes n,add bytes b) end) (1,own) Args end
-              end
-            fun annotation ty =
-              let val counts = weight ty val _ = debit scope
-                  val _ = types := ty :: !types
-              in counts end
-            fun lookup term [] = NONE
-              | lookup term ((held,value)::rest) =
-                  (debit scope;if Portable.pointer_eq (term,held) then
-                    SOME value else lookup term rest)
-            fun visit term =
-              let val bucket = invoke scope (fn () => physical_hint term)
-                  val _ = debit scope
-              in case lookup term (Array.sub (memo,bucket)) of
-                  SOME value => value
-                | NONE =>
-                  let val ty = invoke scope (fn () => Term.type_of term)
-                      val (own,own_bytes) = annotation ty
-                      val value = if invoke scope (fn () => Term.is_comb term)
-                        then
-                          let val (f,x) = invoke scope
-                                (fn () => Term.dest_comb term)
-                              val a = visit f val b = visit x
-                          in {raw = policy_discovery_plus 1
-                                (policy_discovery_plus (#raw a) (#raw b)),
-                              inc = policy_discovery_plus 1
-                                (policy_discovery_plus (#inc a) (#inc b)),
-                              ann = add own (add (#ann a) (#ann b)),
-                              type_bytes = add own_bytes
-                                (add (#type_bytes a) (#type_bytes b)),
-                              ty = own,projection = Option.map
-                                (fn path => ProjectionApplication (term,path))
-                                (#projection a)} end
-                        else if invoke scope
-                            (fn () => Term.is_abs term) then
-                          let val domain = invoke scope
-                                (fn () => #1 (Type.dom_rng ty))
-                              val (binder,binder_bytes) = annotation domain
-                              val body = visit (invoke scope
-                                (fn () => SmtReplayImport.count_body term))
-                          in {raw = policy_discovery_plus 1 (#raw body),
-                              inc = policy_discovery_plus 2 (#inc body),
-                              ann = add own (add binder (#ann body)),
-                              type_bytes = add own_bytes
-                                (add binder_bytes (#type_bytes body)),ty = own,
-                              projection = Option.map
-                                (fn path =>
-                                  ProjectionBinder (term,domain,path))
-                                (#projection body)}
-                          end
-                        else
-                          let val _ = if invoke scope
-                                  (fn () => Term.is_const term) then
-                                heads := term :: !heads else ()
-                          in {raw = 1,inc = 1,ann = own,
-                              type_bytes = own_bytes,ty = own,
-                              projection = if false then
-                                SOME (ProjectionAtom {term = term,
-                                  variable = invoke scope
-                                    (fn () => Term.is_var term)}) else NONE}
-                          end
-                      val _ = debit scope
-                      val _ = Array.update (memo,bucket,
-                        (term,value) :: Array.sub (memo,bucket))
-                  in value end
-              end
-            (* Same entry read as representative; capture its raw pointer
-               here, not through a later semantic-index lookup. *)
-            val fields = invoke scope (fn () => entry g node)
-            val original = #term fields
-            val value = visit original
-            val profile = PolicyOpaqueProfile
-              {owner = #owner g,scope = scope,node = node,
-               original = original,raw = #raw value,inc = #inc value,
-               ann = #ann value,ty = #ty value,
-               type_bytes = #type_bytes value,types = !types,
-               heads = !heads,raw_cell = #exact_raw fields,
-               ready = retained_ready,guard = retained_guard}
-            val _ = valid scope
-            val _ = validation_change g
-            val _ = profiles := profile :: !profiles
-        in () end
-      fun atom node retained =
-        let val _ = if retained then (case view g node of
-                  OpaqueRetained => retain_opaque node | _ => ()) else ()
-            val term = invoke scope (fn () => representative g node)
-            val proof = invoke scope (fn () => Thm.REFL term)
-            val source = source_for g term node proof
-        in if retained then PartialRetained (node,source)
-           else PartialAtom (node,source) end
-      fun opened node =
-        let val source = invoke scope
-              (fn () => record_opened_view_with_policy g scope maximum node)
-            val _ = capture_paths scope (#node source)
-        in PartialFull (node,source) end
-      val recipe_memo = ref ([] : (node * bool * partial_recipe) list)
-      fun cached_recipe force node [] = NONE
-        | cached_recipe force node ((saved,mode,recipe)::rest) =
-            (debit scope;
-             if saved = node andalso mode = force then SOME recipe
-             else cached_recipe force node rest)
-      (* Whole original and opened backing paths were captured before this
-         point. All incoming owners/epochs/scopes are rechecked before a
-         hit, including after the caller's charged discovery hook. The key
-         is actual original node AND force mode in this one fixed scope. *)
-      fun visit force node =
-        (valid scope;usable g scope node;
-         case cached_recipe force node (!recipe_memo) of SOME recipe =>
-           (valid scope;usable g scope node;recipe)
-         | NONE =>
-           let val recipe = visit_fresh force node
-               val _ = debit scope
-               val _ = recipe_memo := (node,force,recipe) :: !recipe_memo
-               val _ = valid scope
-           in recipe end)
-      and visit_fresh force node =
-        (valid scope;usable g scope node;
-         case invoke scope (fn () => view g node) of
-           OpaqueRetained =>
-             if force orelse graph_needed scope node then
-               opened node
-             else atom node true
-         | AdmittedBinder _ =>
-             if force orelse graph_needed scope node then
-               opened node
-             else atom node true
-         | Application (operator,operand) =>
-             let val ov = invoke scope (fn () => view g operator)
-                 val beta = case ov of AdmittedBinder _ => true
-                   | OpaqueRetained => true | _ => false
-                 val operand_view = invoke scope (fn () => view g operand)
-                 val abstraction = case operand_view of
-                     AdmittedBinder _ => true | OpaqueRetained => true
-                   | _ => false
-                 val carrier = quantified scope
-                   (invoke scope (fn () => representative g operator))
-                   abstraction (fn () => type_of g operand)
-                 val left = visit beta operator
-                 val right = visit carrier operand
-                 val l = partial_source left val r = partial_source right
-                 val term = invoke scope (fn () => representative g node)
-                 val target = invoke scope
-                   (fn () => application g scope (#node l,#node r))
-                 val bridge = invoke scope (fn () =>
-                   align_application term (#bridge l) (#bridge r)
-                     (representative g target))
-                 val source = source_for g term target bridge
-             in PartialApplication (node,source,left,right) end
-         | _ => atom node false)
-      fun build () =
-        let val _ = capture_paths scope original
-            val changed = graph_needed scope original
-            val _ = if changed then () else case selection of NONE => ()
-              | SOME _ => (case view g original of
-                  OpaqueRetained => retain_opaque original | _ => ())
-            val recipe = if changed then SOME (visit false original) else NONE
-            val result = PartialDiscovery
-              {owner = #owner g,scope = scope,original = original,
-               recipe = recipe,guard = retained_guard}
-            val _ = valid scope
-            val _ = case recipe of NONE => () | SOME value =>
-              let val source = partial_source value
-                  val row = {source = source,roots =
-                    [closure_root g scope original],guard = fn () =>
-                      (retained_guard ();
-                       validate_partial_recipe g scope value)}
-                  val key = (scope_id scope,node_id original)
-                  val rows = Option.getOpt
-                    (Redblackmap.peek (!(#identity_views g),key),[])
-                  val old = Option.getOpt
-                    (Redblackmap.peek (!(#partial_sources g),key),[])
-                  val _ = validation_change g
-                  val _ = #partial_sources g := Redblackmap.insert
-                    (!(#partial_sources g),key,result :: old)
-              in validation_change g;
-                 #identity_views g := Redblackmap.insert
-                (!(#identity_views g),key,row :: rows) end
-        in result end
-      val result = build () handle primary =>
-        (running := false;#partial_running g := NONE;raise primary)
-      val _ = running := false val _ = #partial_running g := NONE
-    in PolicySelectedPartialDiscovery {heads=heads,
-      plan=PolicyPartialDiscovery {owner= #owner g,scope=scope,plan=result,
-        maximum=maximum,scan_limit=scan_limit,scans= !scans,
-        profiles=List.rev(!profiles)}}end
+    PolicySelectedPartialDiscovery {heads=heads,
+      plan=discover_partial_with_policy_selection g scope (SOME heads)
+        {original=original,maximum=maximum,scan_limit=scan_limit,
+         step=step}}
 
   fun selected_partial_data_with_policy (g:graph) scope
       (expected as DiscoveryHeads {owner,identity,...})
@@ -7941,8 +7200,12 @@ struct
   (* A typed child is not an admitted Boolean original occurrence. These
      receipts remain private until a genuine owning App programme uses
      them. In particular this port never pops remaining or increments
-     completed, and cannot publish a hypothesis/Ready payload. *)
-  fun prepare_original_function_child storage caller context =
+     completed, and cannot publish a hypothesis/Ready payload.
+     The ONE body is shared by both entries. Select runs after the common
+     closed check and before the already/memo/issued reuse below: it
+     authenticates its caller's current original and returns the function
+     term to prepare. *)
+  fun prepare_function_child storage caller context select =
     let
       val saved = original_import_context_for storage caller context
       val FixedStorage held = storage
@@ -7953,8 +7216,7 @@ struct
       val _ = if !(#stopped saved) orelse !(#denial_complete saved) then
         raise ERR "ordered_function_child" "original programme is closed"
         else ()
-      val original = case !(#remaining saved) of item::_ => item
-        | [] => raise ERR "ordered_function_child" "no current original"
+      val original = select saved meter
       fun issued (candidate:source) rows =
         (R.scope_meter_charge meter 32;
          case rows of [] => false
@@ -8228,6 +7490,11 @@ struct
                 in () end)
       end
     end
+
+  fun prepare_original_function_child storage caller context =
+    prepare_function_child storage caller context (fn saved => fn _ =>
+      case !(#remaining saved) of item::_ => item
+      | [] => raise ERR "ordered_function_child" "no current original")
 
   fun reserve_ordered_boolean_denial meter
       (limits:first_boolean_variable_limits) (used:original_import_usage) =
@@ -8826,301 +8093,19 @@ struct
     in context end
 
   fun prepare_owned_application_function storage caller context birth =
-    let
-      val saved = original_import_context_for storage caller context
-      val FixedStorage held = storage
-      val graph = #graph held
-      val paid = #paid saved
-      val meter = #meter held
-      val _ = R.scope_meter_charge meter 192
-      val _ = if !(#stopped saved) orelse !(#denial_complete saved) then
-        raise ERR "ordered_function_child" "original programme is closed"
-        else ()
-      val retained = owned_application_birth_for storage caller birth
-      val _ = R.scope_meter_charge meter 128
-      val _ = case !(#context retained) of SOME expected =>
-          if Portable.pointer_eq(expected,context) then () else
-            raise ERR "owned_application" "different captured context"
-        | NONE => raise ERR "owned_application" "context is not claimed"
-      val _ = case !(#remaining saved) of item::_ =>
-          if Portable.pointer_eq(item,#original retained) then () else
-            raise ERR "owned_application" "different retained original"
-        | [] => raise ERR "owned_application" "no current original"
-      val original = #function retained
-      fun issued (candidate:source) rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => false
-         | OrderedFunctionChild {source,...}::rest =>
-             (#node source= #node candidate andalso
-              Portable.pointer_eq(#original source,#original candidate)
-              andalso Portable.pointer_eq(#bridge source,#bridge candidate))
-             orelse issued candidate rest)
-      fun already rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => false
-         | OrderedFunctionChild {source,...}::rest =>
-             Portable.pointer_eq(#original source,original)
-             orelse already rest)
-      fun memo rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => NONE
-         | (term,frame,source,_)::rest =>
-             if frame=scope_id caller andalso
-                 Portable.pointer_eq(term,original) then SOME source
-             else memo rest)
-      fun admit amount =
-        let val usage = reserve_ordered_extra_native meter
-              (#limits saved) (!(#usage saved)) amount
-            val _ = R.scope_meter_charge meter 16
-            val _ = #usage saved := usage
-        in R.scope_meter_charge meter amount end
-    in if already (!(#function_children saved)) then () else
+    prepare_function_child storage caller context (fn saved => fn meter =>
       let
-        (* The same authentic fifteen counters are monotone. A failed
-           classifier/type observation retains its actual paid prefix. *)
-        val usage = reserve_ordered_boolean meter (#limits saved)
-          (!(#usage saved))
-        val _ = R.scope_meter_charge meter 16
-        val _ = #usage saved := usage
-        val _ = R.scope_meter_charge meter 74
-        val is_variable = Term.is_var original
-        val is_constant = if is_variable then false
-          else Term.is_const original
-        val _ = if is_variable orelse is_constant then () else
-          raise ERR "ordered_function_child" "current original is not an atom"
-        val actual_type = Term.type_of original
-        val observed = observe_ordered_native_type storage caller context
-          actual_type
-        (* Fixed metadata512 is admitted independently of both the Type
-           forest's actual per-cell128 and the later proof programme.
-           The trusted builtin supplies the complete function UID; its
-           two actual leaves are verified semantically, never by pointer. *)
-        val _ = admit 512
-        val {Ty=negation_type,...} =
-          Term.dest_thy_constid boolSyntax.negation
-        val bool_name = #Tyop(Type.dest_thy_typeid Type.bool)
-        val {Tyop=fun_name,Args,...} =
-          Type.dest_thy_typeid negation_type
-        fun boolean_leaf ty =
-          if Type.is_vartype ty then false else
-            let val {Tyop,Args,...} = Type.dest_thy_typeid ty
-                val {Thy,Name} = KernelSig.name_of_id Tyop
-            in case Args of [] =>
-                String.size Thy=3 andalso String.size Name=4 andalso
-                Tyop=bool_name
-              | _ => false end
-        val _ = case Args of [domain,range] =>
-            if boolean_leaf domain andalso boolean_leaf range then () else
-              raise ERR "ordered_function_child" "different builtin function"
-          | _ => raise ERR "ordered_function_child"
-            "different builtin function"
-        val _ = R.scope_meter_charge meter 96
-        val typed_snapshot = !(#expected saved)
-        val bool_id = case R.scope_lookup_graph_key meter
-            (#types typed_snapshot,R.GraphTypeOperator(bool_name,[])) of
-            SOME id => id
-          | NONE => raise ERR "ordered_function_child" "missing observed Bool"
-        val type_id = case R.scope_lookup_graph_key meter
-            (#types typed_snapshot,
-             R.GraphTypeOperator(fun_name,[bool_id,bool_id])) of
-            SOME id => if id=observed then id else
-              raise ERR "ordered_function_child" "different observed function"
-          | NONE => raise ERR "ordered_function_child"
-            "different observed function"
-        (* Actual raw descriptor and name hashing are distinct from the
-           separately priced native equality/REFL/ALPHA calls below. *)
-        val _ = R.scope_meter_charge meter
-          (if is_variable then 64 else 128)
-        val (ty,key,view,name,bucket) = if is_variable then
-            let
-              val (text,ty) = Term.dest_var original
-              val _ = R.scope_meter_charge meter 32
-              val length = String.size text
-              fun hash i value =
-                (R.scope_meter_charge meter 8;
-                 if i=length then value else
-                   (R.scope_meter_charge meter 16;
-                    hash (i+1) (Word.+(Word.*(value,0w33),
-                      Word.fromInt(Char.ord(String.sub(text,i)))))))
-              val value = hash 0 0w17
-              val _ = R.scope_meter_charge meter 32
-              val bucket = Word.toInt(Word.mod
-                (Word.+(Word.*(0w37,value),value),Word.fromInt 4093))
-            in (ty,R.GraphVariable
-                (scope_id caller,kind_id RigidSource,text,type_id),
-                Variable(RigidSource,original),SOME text,bucket) end
-          else
-            let val {Name,Ty=ty,...} = Term.dest_thy_constid original
-                val value = Word.fromInt(KernelSig.epoch_of Name)
-                val bucket = Word.toInt(Word.mod
-                  (Word.+(Word.*(0w37,value),value),Word.fromInt 4093))
-            in (ty,R.GraphConstant(Name,type_id),Constant Name,NONE,bucket) end
+        val retained = owned_application_birth_for storage caller birth
         val _ = R.scope_meter_charge meter 128
-        val _ = if Portable.pointer_eq(ty,actual_type) then () else
-          raise ERR "ordered_function_child" "different observed native Type"
-        val first = !(#expected saved)
-        val old_bucket = Array.sub(#imports graph,bucket)
-      in case memo old_bucket of SOME source =>
-          if issued source (!(#function_children saved)) then () else
-            raise ERR "ordered_function_child" "foreign cached child Source"
-        | NONE =>
-          (case R.scope_lookup_graph_key meter (#keys first,key) of
-              NONE =>
-                let
-                  (* Fresh typed atom REFL1668: the equality template
-                     still has five input nodes; instantiated polymorphic
-                     scan now has nine nodes and seventeen list cases. *)
-                  val branch = reserve_ordered_extra_native meter
-                    (#limits saved) (!(#usage saved)) 1668
-                  val _ = R.scope_meter_charge meter 16
-                  val _ = #usage saved := branch
-                  val _ = R.scope_meter_charge meter 640
-                  val id = #next first
-                  val node = Node {owner= #owner graph,id=id}
-                  val anchor : source option ref = ref NONE
-                  val fields : entry =
-                    {scope=caller,ty=ty,type_id=type_id,term=original,
-                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
-                     exact_raw=ref UnknownRaw}
-                  val keys = R.scope_put_graph_key meter (#keys first,key,node)
-                  val nodes = R.scope_put_int meter (#nodes first,id,fields)
-                  val reserved = case name of NONE => #reserved first
-                    | SOME text => R.scope_add_string meter (#reserved
-                      first,text)
-                  val revision = #revision first+1
-                  val next : paid_index_snapshot =
-                    {types= #types first,keys=keys,recent= #recent first,
-                     nodes=nodes,scopes= #scopes first,reserved=reserved,
-                     next=id+1,next_scope= #next_scope first,
-                     retirements= #retirements first,revision=revision}
-                  val _ = R.scope_meter_charge meter 256
-                  val _ = paid_index_close graph paid first
-                  val _ = if Portable.pointer_eq
-                      (old_bucket,Array.sub(#imports graph,bucket)) then ()
-                        else
-                    raise ERR "ordered_function_child" "import bucket changed"
-                  val _ = R.scope_meter_charge meter 1668
-                  val theorem = Thm.REFL original
-                  val source : source =
-                    {node=node,original=original,bridge=theorem}
-                  val receipt = OrderedFunctionChild
-                    {source=source,canonical=original,anchor=source,
-                     type_id=type_id}
-                  (* All root/list/receipt stores were funded before REFL.
-                     No native/debit/callback occurs inside own publication. *)
-                  val _ = anchor := SOME source
-                  val _ = #keys paid := keys
-                  val _ = #nodes graph := nodes
-                  val _ = #next graph := id+1
-                  val _ = #reserved graph := reserved
-                  val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source,
-                     #exact_raw fields)::old_bucket)
-                  val _ = #validation_changes graph := revision
-                  val _ = #expected saved := next
-                  val _ = #function_children saved :=
-                    receipt :: !(#function_children saved)
-                in () end
-            | SOME node =>
-                let
-                  val _ = R.scope_meter_charge meter 256
-                  val Node {owner,id} = node
-                  val _ = if owner= #owner graph then () else
-                    raise ERR "ordered_function_child" "different node owner"
-                  val fields = case R.scope_lookup_int meter (#nodes first,id)
-                    of
-                      SOME fields => fields
-                    | NONE => raise ERR "ordered_function_child" "missing node"
-                  val canonical = #term fields
-                  val _ = if #scope fields=caller andalso
-                      #type_id fields=type_id then () else
-                    raise ERR "ordered_function_child" "different typed node"
-                  val anchor = case !(#source fields) of SOME source => source
-                    | NONE => raise ERR "ordered_function_child"
-                      "missing anchor"
-                  val _ = if #node anchor=node andalso
-                      Portable.pointer_eq(#original anchor,canonical) andalso
-                      issued anchor (!(#function_children saved)) then () else
-                    raise ERR "ordered_function_child" "foreign typed anchor"
-                  val _ = admit 256
-                  fun bytes text = IntInf.fromInt(String.size text)
-                  val (mass,canonical_key,stored_key) =
-                    case (view,#view fields,name) of
-                      (Variable(RigidSource,_),
-                       Variable(RigidSource,retained),SOME raw) =>
-                        if Term.is_var canonical andalso
-                            Portable.pointer_eq(retained,canonical) andalso
-                            Portable.pointer_eq
-                              (Term.type_of canonical,#ty fields) then
-                          let val (text,_) = Term.dest_var canonical
-                              val k = R.GraphVariable
-                                (scope_id caller,kind_id
-                                  RigidSource,text,type_id)
-                          in (bytes raw+bytes text,k,k) end
-                        else raise ERR "ordered_function_child"
-                          "different variable"
-                    | (Constant raw_id,Constant stored_id,NONE) =>
-                        if Term.is_const canonical andalso
-                            Portable.pointer_eq
-                              (Term.type_of canonical,#ty fields) then
-                          let val {Name=canonical_id,...} =
-                                Term.dest_thy_constid canonical
-                              val {Thy=a,Name=b} = KernelSig.name_of_id raw_id
-                              val {Thy=c,Name=d} =
-                                KernelSig.name_of_id canonical_id
-                          in (bytes a+bytes b+bytes c+bytes d,
-                              R.GraphConstant(canonical_id,type_id),
-                              R.GraphConstant(stored_id,type_id)) end
-                        else raise ERR "ordered_function_child"
-                          "different constant"
-                    | _ => raise ERR "ordered_function_child"
-                      "different atom kind"
-                  val _ = if R.scope_compare_graph_key meter
-                        (key,canonical_key)=EQUAL andalso
-                      R.scope_compare_graph_key meter (key,stored_key)=EQUAL
-                    then () else
-                      raise ERR "ordered_function_child"
-                        "different semantic key"
-                  val alpha : IntInf.int = 3801+32*(mass+1)
-                  val _ = admit (alpha+256)
-                  val _ = R.scope_meter_charge meter 640
-                  val revision = #revision first+1
-                  val next : paid_index_snapshot =
-                    {types= #types first,keys= #keys first,recent= #recent
-                      first,
-                     nodes= #nodes first,scopes= #scopes first,
-                     reserved= #reserved first,next= #next first,
-                     next_scope= #next_scope first,
-                     retirements= #retirements first,revision=revision}
-                  val _ = paid_index_close graph paid first
-                  val _ = if Portable.pointer_eq
-                      (old_bucket,Array.sub(#imports graph,bucket)) then ()
-                        else
-                    raise ERR "ordered_function_child" "import bucket changed"
-                  val theorem = Thm.ALPHA original canonical
-                  val (left,right) = Term.dest_eq(Thm.concl theorem)
-                  val _ = if Portable.pointer_eq(left,original) andalso
-                      Portable.pointer_eq(right,canonical) andalso
-                      HOLset.numItems(Thm.hypset theorem)=0 andalso
-                      Tag.isEmpty(Thm.tag theorem) then () else
-                    raise ERR "ordered_function_child"
-                      "different bridge endpoints"
-                  val source : source =
-                    {node=node,original=original,bridge=theorem}
-                  val receipt = OrderedFunctionChild
-                    {source=source,canonical=canonical,anchor=anchor,
-                     type_id=type_id}
-                  val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source,
-                     #exact_raw fields)::old_bucket)
-                  val _ = #validation_changes graph := revision
-                  val _ = #expected saved := next
-                  val _ = #function_children saved :=
-                    receipt :: !(#function_children saved)
-                in () end)
-      end
-    end
-
+        val _ = case !(#context retained) of SOME expected =>
+            if Portable.pointer_eq(expected,context) then () else
+              raise ERR "owned_application" "different captured context"
+          | NONE => raise ERR "owned_application" "context is not claimed"
+        val _ = case !(#remaining saved) of item::_ =>
+            if Portable.pointer_eq(item,#original retained) then () else
+              raise ERR "owned_application" "different retained original"
+          | [] => raise ERR "owned_application" "no current original"
+      in #function retained end)
 
   (* Consume only the two genuine constructor-captured raw children.
      Functional child proof is private; argument preparation below is a

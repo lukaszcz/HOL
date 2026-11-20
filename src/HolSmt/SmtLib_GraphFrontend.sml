@@ -305,618 +305,6 @@ struct
         C.normalize_lets (B.syntax_spend backend) source
       else source end
 
-  fun create_session_aux (options : options) source_declarations
-      {solver, version, policy, reserved_names} get_token : session =
-    let
-      val graph = #graph options
-      val scope = #scope options
-      val backend = B.graphs
-        {graph = graph, scope = scope, import_limit = #import_limit options,
-         literal_limit = #literal_limit options,
-         binder_limit = #binder_limit options}
-      val root = B.root backend
-      val private_count = ref 0
-      val private_bindings = ref ([] : private_binding list)
-      val symbolic_indices = ref (Redblackmap.mkDict String.compare)
-      fun solver_variables () : solver_variable list = List.map
-        (fn {node, lexical, scope} =>
-          {node = node, lexical = lexical, scope = valOf scope})
-        (B.solver_variables backend)
-      fun compare_private ((ls, lk, lt, li), (rs, rk, rt, ri)) =
-        case Int.compare (ls, rs) of EQUAL =>
-          (case String.compare (lk, rk) of EQUAL =>
-             (case Type.compare (lt, rt) of EQUAL => IntInf.compare (li, ri)
-              | order => order)
-           | order => order)
-        | order => order
-      val private_symbols = ref (Redblackmap.mkDict compare_private)
-      val sourced_symbols = ref []
-      fun private_symbol frame {kind, hol_type, source, stable} =
-        let
-          val active = valOf (B.frame_scope backend frame)
-          val _ = Option.app (fn node =>
-            (ignore (G.type_of graph node);
-             if G.scope_visible graph active (G.node_scope graph node) then
-               () else raise ERR "private_symbol"
-                 "private source escapes construction scope")) source
-          (* Private FP identity is native SOURCE alpha identity, not graph
-             equality (a graph LET may already have been substituted). *)
-          val syntax = Option.map (fn node =>
-            case B.constructor_sources backend of
-                SOME {arguments=[_,original],...} => original
-              | _ => B.source_syntax backend frame node) source
-          val source_id = case syntax of NONE => ~1
-            | SOME syntax => C.identity syntax
-          fun retained_source () =
-            case (source,syntax) of (SOME node,SOME syntax) =>
-                if G.scope_visible graph scope (G.node_scope graph node)
-                then source else SOME (detached_private_source backend
-                  (List.map #marker (!private_bindings)) syntax)
-            | _ => source
-          val owner = root
-          val scope = valOf (B.frame_scope backend owner)
-          fun same (saved_scope,saved_kind,saved_type,saved_source,_) =
-            (B.syntax_spend backend 1;
-             kind=saved_kind andalso Type.compare (hol_type,saved_type)=EQUAL
-             andalso G.scope_visible graph active saved_scope andalso
-             case syntax of SOME current => C.aconv
-               (B.syntax_spend backend) (current,saved_source)
-             | NONE => false)
-          val key = (G.scope_id scope, kind, hol_type, source_id)
-          fun allocate () =
-            let
-              val serial = !private_count
-              val _ = private_count := serial + 1
-              val node = B.fresh_solver_variable backend owner
-                (kind ^ "#" ^ Int.toString serial, hol_type)
-              val _ = private_bindings :=
-                {scope = scope, marker = node, kind = kind,
-                 source = retained_source ()} :: !private_bindings
-              val _ = if stable then private_symbols :=
-                Redblackmap.insert (!private_symbols, key, node) else ()
-              val _ = if stable then Option.app (fn syntax =>
-                sourced_symbols := (scope,kind,hol_type,syntax,node) ::
-                  !sourced_symbols) syntax else ()
-            in node end
-        in if stable then case Redblackmap.peek (!private_symbols, key) of
-            SOME node => node
-          | NONE => (case source of NONE => allocate () | SOME _ =>
-              case List.find same (!sourced_symbols) of
-                SOME (_,_,_,_,node) =>
-                  (private_symbols := Redblackmap.insert
-                     (!private_symbols,key,node);node)
-              | NONE => allocate ())
-          else allocate () end
-      val selected = R.select_with backend (#recipe_limits options)
-        ((#special options) backend)
-        {logic = #logic options, solver = SOME solver}
-      val (sorts, dictionary) = #dictionaries selected
-      (* CPC prints a function declaration's sort as (-> domains range).
-         This is the legacy CPC type parser, not a Boolean term alias. *)
-      val sorts = case policy of Z3 => sorts | CPC =>
-        let
-          fun function_sort token indices args =
-            if token = "->" andalso List.null indices andalso
-                List.length args >= 2 then
-              let val (domains,range) = Lib.front_last args
-              in boolSyntax.list_mk_fun (domains,range) end
-            else raise ERR "cpc_function_sort"
-              "expected a function sort with a domain and range"
-        in Library.extend_dict (("->",function_sort),sorts) end
-      val reserved = Redblackmap.foldl
-        (fn (name, _, set) => HOLset.add (set, name))
-        (Redblackmap.foldl (fn (name, _, set) => HOLset.add (set, name))
-          (HOLset.addList (HOLset.empty String.compare, reserved_names)) sorts)
-        dictionary
-      fun symbol_key token = case policy of
-          Z3 => P.proof_symbol_text token
-        | CPC => case P.proof_quoted_symbol_token token of
-            SOME name => if HOLset.member (reserved, name) then token else name
-          | NONE => token
-      fun unique kind dictionary key =
-        if Redblackmap.inDomain (dictionary, key) then
-          raise ERR "create" ("duplicate " ^ kind ^ " declaration " ^ key)
-        else ()
-      fun declaration_key kind token =
-        if Option.isSome (P.proof_string_token token) then
-          raise ERR "create" ("string literal used as " ^ kind ^ " name")
-        else symbol_key token
-      val variable_descriptors = ref
-        (Redblackmap.mkDict Int.compare :
-          (int, string * string * Type.hol_type) Redblackmap.dict)
-      fun retain_descriptor node descriptor =
-        variable_descriptors := Redblackmap.insert
-          (!variable_descriptors, G.node_id node, descriptor)
-      fun declared ((token, original, arity), (dictionary, variables)) =
-        let
-          val key = declaration_key "term" token
-          val _ = unique "term" dictionary key
-          val node = B.source backend root original
-          val descriptor = if Term.is_var original then
-            SOME (Term.dest_var original) else NONE
-          fun parse frame name indices arguments =
-            let
-              (* Retain the source bridge above, but a binder-list alias can
-                 resolve the same lexical variable to a fresh Bound node. *)
-              val value = case descriptor of
-                  SOME variable => B.reference backend frame
-                    (Term.mk_var variable, node)
-                | NONE => node
-              val count = List.length arguments
-              val accepted = case arity of NONE => true
-                | SOME (Exact expected) => count = expected
-                | SOME (AtMost maximum) => count <= maximum
-              val _ = if accepted orelse value <> node then () else
-                SmtLib_Theories.decline ("<" ^ name ^ ">")
-                  "wrong number of arguments"
-            in P.construction_value_parsefn backend value
-              frame name indices arguments end
-          val variables = case descriptor of
-              SOME (name, ty) =>
-                (retain_descriptor node (key, name, ty);
-                 Redblackmap.insert (variables, key, (key, name, ty)))
-            | NONE => variables
-        in (Library.extend_dict ((key, parse), dictionary), variables) end
-      val source_types = ref (List.foldl
-        (fn ((token, original, arity), types) =>
-          let val count = case arity of NONE => 0
-                | SOME (Exact count) => count
-                | SOME (AtMost count) => count
-              val _ = if count >= 0 then () else
-                raise ERR "source" "negative source arity"
-          in Redblackmap.insert (types, declaration_key "term" token,
-              [Term.type_of original]) end)
-        (Redblackmap.mkDict String.compare) source_declarations)
-      val (dictionary, variables) = List.foldl declared
-        (dictionary, Redblackmap.mkDict String.compare) source_declarations
-      val sorts = Redblackmap.foldl (fn (token, callbacks, sorts) =>
-        let val key = declaration_key "sort" token
-            val _ = unique "sort" sorts key
-        in Redblackmap.insert (sorts, key, callbacks) end)
-        sorts (#sorts options)
-      val binder_lists = List.foldl (fn ((token, entries), lists) =>
-        let val key = declaration_key "binder list" token
-            val _ = unique "binder list" lists key
-            fun variable (token, name, ty) =
-              case Redblackmap.peek (variables, symbol_key token) of
-                SOME (key, actual_name, actual_ty) =>
-                  if actual_name = name andalso
-                     Type.compare (actual_ty, ty) = EQUAL then
-                    (key, name, ty)
-                  else raise ERR "binder_list" "variable descriptor mismatch"
-              | NONE => raise ERR "binder_list"
-                  "binder-list entry is not a retained source variable"
-        in Redblackmap.insert (lists, key, List.map variable entries) end)
-        (Redblackmap.mkDict String.compare) (#binder_lists options)
-      fun keys dictionary = Redblackmap.foldl
-        (fn (key, _, set) => HOLset.add (set, key))
-        (HOLset.empty String.compare) dictionary
-      val source_terms = ref (HOLset.difference (keys dictionary, reserved))
-      val source_sorts = HOLset.difference (keys sorts, reserved)
-      val captured_blocks = capture_table backend
-      fun context root scope dictionary_ref variables_ref sorts_ref
-          binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref
-          : session =
-      let
-      fun check () = ignore (B.frame_scope backend root)
-      fun check_reserved kind token =
-        if HOLset.member (reserved, P.proof_symbol_text token) then
-          raise ERR "declaration" (kind ^ " may not shadow builtin symbol")
-        else ()
-      fun fresh_term token =
-        let val _ = check ()
-            val key = declaration_key "term" token
-            val _ = check_reserved "term" token
-        in if HOLset.member (!proof_terms, key) then
-             raise (case policy of CPC => Feedback.mk_HOL_ERR
-                 "CPC_ProofParser" "parse_define"
-                 ("duplicate CPC declaration or definition of symbol " ^
-                  P.proof_symbol_text token)
-               | Z3 => ERR "create"
-                   ("duplicate term declaration " ^ key))
-           else ();
-           unique "term" (!dictionary_ref) key;
-           if Redblackmap.inDomain (!lists_ref, key) then
-             raise ERR "define" "duplicate list declaration" else ();
-           key end
-      fun add_literal_parser literal =
-        let
-          val _ = check ()
-          fun parse frame token indices arguments =
-            if String.size token > #token_limit (#recipe_limits options) then
-              raise ERR "literal" "literal token exceeds admitted bound"
-            else if null indices andalso null arguments then
-              B.literal backend frame (literal token)
-            else SmtLib_Theories.decline "graph_literal"
-              "not a nullary literal"
-        in dictionary_ref := Library.extend_dict
-          (("_", parse), !dictionary_ref) end
-      fun add_recipe_parser (name, parse) =
-        let val _ = check ()
-            val parse = R.recipe_parsefn backend (#recipe_limits options) parse
-        in dictionary_ref := Library.extend_dict
-          ((name, parse), !dictionary_ref) end
-      fun add_symbolic_index (head, token) =
-        let
-          val _ = check ()
-          val limit = #token_limit (#recipe_limits options)
-          val _ = if String.size head <= limit andalso
-              String.size token <= limit then () else
-            raise ERR "index" "symbolic index exceeds bounded contract"
-          val key = symbol_key head
-          val names = case Redblackmap.peek (!symbolic_indices, key) of
-              NONE => HOLset.empty String.compare | SOME names => names
-        in symbolic_indices := Redblackmap.insert
-          (!symbolic_indices, key, HOLset.add (names, symbol_key token)) end
-      fun symbolic_index head token =
-        case Redblackmap.peek (!symbolic_indices, symbol_key head) of
-          NONE => NONE
-        | SOME names => if HOLset.member (names, symbol_key token) then
-            SOME (P.proof_symbol_text token) else NONE
-      fun add_constructor_parser (name, parse) =
-        let
-          val _ = check ()
-          fun admitted frame token indices arguments =
-            if String.size token > #token_limit (#recipe_limits options)
-                orelse List.length arguments >
-                  #operand_limit (#recipe_limits options) orelse
-                List.length indices > #operand_limit (#recipe_limits options)
-            then raise ERR "constructor" "private constructor exceeds contract"
-            else parse frame token indices arguments
-        in dictionary_ref := Library.extend_dict
-          ((name, admitted), !dictionary_ref) end
-      fun add_source_parser (name, ty, parse) =
-        let
-          val _ = check_reserved "term" name
-          val key = declaration_key "term" name
-          val types = case Redblackmap.peek (!source_types, key) of
-              NONE => [] | SOME types => types
-          val _ = add_constructor_parser (key, parse)
-          val _ = source_types := Redblackmap.insert
-            (!source_types, key, ty :: types)
-        in source_terms := HOLset.add (!source_terms, key) end
-      fun parse_sort tokens =
-        (check (); P.parse_type_with_key
-          (case policy of CPC => symbol_key | Z3 => Lib.I)
-          tokens (!sorts_ref))
-      fun install key value descriptor =
-        let
-          fun parse frame name indices arguments =
-            let val value = case descriptor of
-                SOME lexical => B.reference backend frame (lexical, value)
-              | NONE => value
-            in P.construction_value_parsefn backend value
-              frame name indices arguments end
-          val _ = dictionary_ref := Library.extend_dict
-            ((key, parse), !dictionary_ref)
-          val _ = proof_terms := HOLset.add (!proof_terms, key)
-        in case descriptor of
-            SOME lexical =>
-              let val (name, ty) = Term.dest_var lexical in
-                variables_ref := Redblackmap.insert
-                  (!variables_ref, key, (key, name, ty)) end
-          | NONE => () end
-      fun atomic node : term =
-        {node = node, scope = scope, source_syntax = NONE, binder_blocks = [],
-         occurrence = P.ConstructionOccurrence
-           {value = node, role = P.ConstructionAtom,
-            token = "@declaration", children = []}}
-      fun define_opaque token =
-        let val key = fresh_term token
-        in proof_terms := HOLset.add (!proof_terms, key) end
-      fun define (token, value : term) =
-        let val key = fresh_term token
-            val _ = B.type_of backend (#node value)
-            (* Binder references name the original variable, not its value
-               after capture by a later lexical LET. Retain metadata only. *)
-            val _ = case B.variable_descriptor backend (#node value) of
-                SOME variable =>
-                  let val (name, ty) = Term.dest_var variable
-                  in variables_ref := Redblackmap.insert
-                    (!variables_ref, key, (key, name, ty)) end
-              | NONE => ()
-            fun parse frame name indices arguments =
-              let val original = (#node value,#binder_blocks value)
-                  val (node,blocks) = if policy=CPC then
-                    B.capture_alias backend frame original else original
-                  val _ = if policy<>CPC orelse null blocks then () else
-                    captured_blocks :=
-                    Redblackmap.insert (!captured_blocks,
-                      (key,G.node_id node),blocks)
-                  val result = P.construction_value_parsefn backend
-                    node frame name indices arguments
-                  val _ = case B.constructor_sources backend of
-                      NONE => ()
-                    | SOME {arguments,...} =>
-                      let
-                        val source = case #source_syntax value of
-                            SOME source => source
-                          | NONE => B.source_syntax backend frame (#node value)
-                        fun apply (argument,function) =
-                          (B.syntax_spend backend 1;
-                           C.application (function,argument))
-                      in B.note_constructor_source backend
-                        (List.foldl apply source arguments) end
-              in result end
-        in dictionary_ref := Library.extend_dict
-             ((key, parse), !dictionary_ref);
-           proof_terms := HOLset.add (!proof_terms, key);
-           aliases_ref := Redblackmap.insert (!aliases_ref, key, value) end
-      fun private_variable (name, ty) =
-        let val node = B.variable backend root G.SolverFlexible (name, ty)
-        in retain_descriptor node (name, name, ty); atomic node end
-      fun define_variable (token, name, ty) =
-        let val key = fresh_term token
-            val lexical = Term.mk_var (name, ty)
-            val node = B.variable backend root G.SolverFlexible (name, ty)
-        in install key node (SOME lexical);
-           retain_descriptor node (key, name, ty); atomic node end
-      fun declare (token, ty) =
-        let val _ = check ()
-            val key = declaration_key "term" token
-            val _ = check_reserved "term" token
-        in if policy = CPC andalso HOLset.member (!proof_terms, key) then
-             raise (Feedback.mk_HOL_ERR "CPC_ProofParser" "parse_declaration"
-               ("duplicate CPC declaration of symbol " ^
-                P.proof_symbol_text token))
-           else ();
-           case Redblackmap.peek (!source_types, key) of
-            SOME actual =>
-              if List.exists (fn expected =>
-                  Type.compare (expected, ty) = EQUAL) actual then () else
-                raise ERR "declare" "incompatible source declaration"
-          | NONE =>
-              (case Redblackmap.peek (dictionary, key) of
-                 SOME _ =>
-                   let val value = P.apply_construction_symbol
-                         (configuration root) dictionary root key [] []
-                   in if Type.compare (B.type_of backend value, ty) = EQUAL
-                     then () else raise ERR "declare"
-                       "incompatible source declaration" end
-               | NONE => ignore (define_variable
-                   (token, P.proof_symbol_text token, ty)))
-        end
-      and configuration frame : G.node P.construction_cfg =
-        {backend = backend, frame = frame, symbol_key = symbol_key,
-         type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
-         index_limit = #index_limit (#recipe_limits options),
-         parse_choice = false, parse_lambda = true,
-         parse_cpc_const = policy = CPC,
-         lookup_binder_list = fn token => binder_list_lookup backend
-           (Redblackmap.peek (!binder_lists_ref, symbol_key token))
-           (Option.map (List.map #node)
-             (Redblackmap.peek (!lists_ref, symbol_key token))),
-         binder_reference = fn frame => fn token =>
-           let val key = symbol_key token in
-             case B.lookup backend frame key of
-               (* A lexical LET binds a variable even when its eliminated
-                  graph value is compound. Bind its declared name/type, not
-                  the descriptor (if any) of the substituted operand. *)
-               SOME node => ((key, P.proof_symbol_text token,
-                 B.type_of backend node),NONE)
-             | NONE => case Redblackmap.peek (!aliases_ref,key) of
-                 SOME alias => B.binder_reference backend key (#node alias)
-               | NONE => case Redblackmap.peek (!variables_ref, key) of
-                   SOME variable => (variable,NONE)
-                 | NONE => B.binder_reference backend key
-                     (P.apply_construction_symbol
-                       (configuration frame) (!dictionary_ref) frame token [] [])
-           end,
-         record_binder_block = fn _ => (), ascribed_symbol = ascribed,
-         coerce_arguments = R.coerce_arguments backend}
-      and ascribed frame
-          (description as {name, constructor, sort, arguments}) =
-        let val builtin = ref false
-            val value = case (#ascribed options) backend frame description of
-          SOME node => node
-        | NONE =>
-          (case R.ascribed backend frame (#recipe_limits options)
-              description of SOME value => (builtin := true;value)
-           | NONE => if null arguments then
-              let
-                val value = case B.lookup backend frame (symbol_key name) of
-                    SOME value => value
-                  | NONE => P.apply_construction_symbol
-                      (configuration frame) (!dictionary_ref) frame name [] []
-              in if Type.compare (B.type_of backend value, sort) = EQUAL
-                then value else raise ERR "ascribed" "qualified sort mismatch"
-              end
-            else raise ERR "ascribed"
-              "qualified constructor requires a scoped graph adapter")
-        in if !builtin orelse
-              Type.compare (B.type_of backend value, sort) = EQUAL then value
-          else raise ERR "ascribed" "graph adapter qualified sort mismatch"
-        end
-      fun define_list (token, values) =
-        let val key = fresh_term token
-            fun descriptor (value : term) =
-              let val _ = B.type_of backend (#node value)
-              in case Redblackmap.peek
-                  (!variable_descriptors, G.node_id (#node value)) of
-                  SOME descriptor => SOME descriptor
-                | NONE => Option.map (fn variable =>
-                    let val (name, ty) = Term.dest_var variable
-                    in (name, name, ty) end)
-                    (B.variable_descriptor backend (#node value)) end
-            val descriptors = List.mapPartial descriptor values
-            val _ = lists_ref := Redblackmap.insert
-              (!lists_ref, key, values)
-            val _ = proof_terms := HOLset.add (!proof_terms, key)
-        in if List.length descriptors = List.length values then
-            binder_lists_ref := Redblackmap.insert
-              (!binder_lists_ref, key, descriptors)
-          else () end
-      fun declare_sort (token, arity) =
-        let val _ = check ()
-            val key = declaration_key "sort" token
-            val _ = check_reserved "sort" token
-            val _ = if HOLset.member (!proof_sorts, key) then
-              raise ERR "declare_sort" "duplicate proof sort" else ()
-            fun compatible parse =
-              (ignore (parse (P.proof_symbol_text token) []
-                (List.tabulate (arity, fn index => Type.mk_vartype
-                  ("'cpc_sort_arg" ^ Int.toString index)))); true)
-              handle Feedback.HOL_ERR _ => false
-            val _ = if arity < 0 then
-              raise ERR "declare_sort" "negative sort arity" else ()
-        in case Redblackmap.peek (#sorts options, key) of
-            SOME callbacks =>
-              if List.exists compatible callbacks then () else
-                raise ERR "declare_sort" "incompatible source sort"
-          | NONE =>
-              let val _ = unique "sort" (!sorts_ref) key
-                  val _ = if arity = 0 then () else
-                    raise ERR "declare_sort" "non-nullary proof sort"
-                  val ty = Type.mk_vartype
-                    ("'cpc_" ^ P.proof_symbol_text token)
-                  fun parse _ indices arguments =
-                    if null indices andalso null arguments then ty else
-                      raise ERR "declare_sort" "wrong sort arity"
-              in sorts_ref := Library.extend_dict
-                ((key, parse), !sorts_ref);
-                proof_sorts := HOLset.add (!proof_sorts, key) end
-        end
-      fun blocks (P.ConstructionOccurrence
-          {value, role, token, children, ...}) =
-        let val nested = List.concat (List.map blocks children) in
-          case role of P.ConstructionBinder {kind, variables} =>
-            (kind, List.length variables, value) :: nested
-          | P.ConstructionAtom =>
-              (case (if policy=CPC then Redblackmap.peek
-                  (!captured_blocks,(symbol_key token,G.node_id value))
-                else NONE) of SOME captured => captured @ nested
-               | NONE => case Redblackmap.peek
-                   (!aliases_ref,symbol_key token) of
-                 SOME (alias : term) =>
-                   if G.node_id (#node alias) = G.node_id value then
-                     #binder_blocks alias @ nested else nested
-               | NONE => nested)
-          | _ => nested
-        end
-      fun parse_from tokens =
-        let val _ = check ()
-            val (occurrence, source) =
-              P.parse_term_sourced_with_backend_and_indices
-                (configuration root) symbolic_index tokens
-                (!sorts_ref, !dictionary_ref)
-            val source = cpc_normalized_source backend policy
-              occurrence source
-            val blocks = blocks occurrence
-            val blocks = if policy=CPC then
-              unique_blocks backend G.node_id blocks else blocks
-        in {node = P.construction_value occurrence, scope = scope,
-            source_syntax = SOME source,
-            occurrence = occurrence, binder_blocks = blocks} end
-      val reader : reader =
-        {graph = graph, scope = scope, backend = backend, solver = solver,
-         version = version, coverage = #entries selected,
-         parse_next = fn () => parse_from get_token,
-         solver_variables = solver_variables,
-         private_bindings = fn () => List.rev (!private_bindings)}
-      fun child_context frame scope = context frame scope
-        (ref (!dictionary_ref)) (ref (!variables_ref))
-        (ref (!sorts_ref)) (ref (!binder_lists_ref))
-        (ref (!lists_ref)) (ref (!proof_terms)) (ref (!proof_sorts))
-        (ref (!aliases_ref))
-      fun open_mixed_bindings values blocked_keys =
-        let
-          val entries = List.map (fn (name, value : term) =>
-            (symbol_key name, P.proof_symbol_text name, #node value)) values
-          val descriptors = List.map (fn (key, name, node) =>
-            (key, name, B.type_of backend node)) entries
-          val opened = B.open_mixed_bindings backend root entries
-            (List.map symbol_key blocked_keys)
-          val inner_scope = valOf (#scope opened)
-          val child = child_context (#frame opened) inner_scope
-            handle error => ((#close opened) (); raise error)
-          val origin = ScopedOrigin
-            {graph = graph,parent_scope = scope,scope = inner_scope,
-             session = child,variables = [],descriptors = descriptors,
-             close = #close opened,parent_guard = check,
-             child_guard = fn () =>
-               if B.frame_scope backend (#frame opened) = SOME inner_scope
-                 then () else raise ERR "scoped_origin" "child frame changed",
-             epoch = Type.type_epoch (),symbols = Term.term_epoch (),
-             binders = false,binding = valOf (#origin opened)}
-        in ScopedSession
-          {session = child, variables = [], descriptors = descriptors,
-           parent_scope = scope, scope = inner_scope,
-           close = #close opened,origin = SOME origin} end
-      fun open_bindings values = open_mixed_bindings values []
-      fun open_binders descriptors =
-        let
-          val opened = B.open_binders backend root descriptors
-          val inner_scope = valOf (#scope opened)
-          val child = child_context (#frame opened) inner_scope
-            handle error => ((#close opened) (); raise error)
-          val origin = ScopedOrigin
-            {graph = graph,parent_scope = scope,scope = inner_scope,
-             session = child,variables = #variables opened,
-             descriptors = descriptors,close = #close opened,
-             parent_guard = check,
-             child_guard = fn () =>
-               if B.frame_scope backend (#frame opened) = SOME inner_scope
-                 then () else raise ERR "scoped_origin" "child frame changed",
-             epoch = Type.type_epoch (),symbols = Term.term_epoch (),
-             binders = true,binding = valOf (#origin opened)}
-        in ScopedSession
-          {session = child, variables = #variables opened,
-           descriptors = descriptors, parent_scope = scope,
-           scope = inner_scope, close = #close opened,origin = SOME origin} end
-    in {reader = reader, open_mixed_bindings = open_mixed_bindings,
-        define_opaque = define_opaque,
-        symbol_key = symbol_key,
-        namespace = fn () =>
-          {reserved = reserved, source_terms = !source_terms,
-           source_sorts = source_sorts, proof_terms = !proof_terms,
-           proof_sorts = !proof_sorts},
-        sort_dictionary = fn () => (check (); !sorts_ref),
-        parse_from = parse_from,
-        add_literal_parser = add_literal_parser,
-        add_recipe_parser = add_recipe_parser,
-        add_constructor_parser = add_constructor_parser,
-        add_source_parser = add_source_parser,
-        replace_source_parser = fn entry as (name,_,_) =>
-          (check ();check_reserved "term" name;
-           dictionary_ref := Redblackmap.insert
-             (!dictionary_ref,declaration_key "term" name,[]);
-           add_source_parser entry),
-        add_symbolic_index = add_symbolic_index,
-        private_symbol = private_symbol,
-        parse_sort = parse_sort, declare = declare, define = define,
-        private_variable = private_variable,
-        define_variable = define_variable, define_list = define_list,
-        lookup_list = fn token =>
-          (check (); Redblackmap.peek (!lists_ref, symbol_key token)),
-        declare_sort = declare_sort, open_binders = open_binders,
-        open_bindings = open_bindings} end
-      val dictionary_ref = ref dictionary
-      val variables_ref = ref variables
-      val sorts_ref = ref sorts
-      val binder_lists_ref = ref binder_lists
-      val lists_ref = ref
-        (Redblackmap.mkDict String.compare :
-          (string, term list) Redblackmap.dict)
-      val proof_terms = ref (HOLset.empty String.compare)
-      val proof_sorts = ref (HOLset.empty String.compare)
-      val aliases_ref = ref
-        (Redblackmap.mkDict String.compare : (string, term) Redblackmap.dict)
-    in context root scope dictionary_ref variables_ref sorts_ref
-      binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref end
-
-  fun create_session (options : options) description tokens =
-    create_session_aux options
-      (List.map (fn (token, original) => (token, original, NONE))
-        (#sources options)) description tokens
-
-  fun create_configured_session
-      ({base, source_declarations} : configured_options) description tokens =
-    create_session_aux base
-      (List.map (fn {token, original, arity} =>
-        (token, original, SOME arity)) source_declarations) description tokens
-
-  fun create options description tokens =
-    #reader (create_session options description tokens)
   type 'a constructed_policy_options =
     {graph : G.graph, scope : G.scope, logic : string,
      sources : (string * Term.term) list,
@@ -962,19 +350,71 @@ struct
         node descriptor arity guard frame name arguments)
       frame name indices arguments
 
-  (* One policy grammar for genuine graph nodes and typed parser values.
-     Native admission remains in its original initializer below; the value
-     initializer consumes every durable Mapping declaration. *)
-  fun create_policy_session_for_backend
-      (options : 'a constructed_policy_options) backend
-      {identity,same_identity,guard_private,guard_observation,private_scope,
-       source_scope,private_label}
+  local
+  (* The limit and recipe operations in which the int and the exact-policy
+     session builders differ: recipe selection, the recipe parser,
+     ascription, the sourced parser's index-literal limit, the token and
+     operand admission checks and the sourced parser itself. Each entry
+     passes the operations it uses. *)
+  type ('a,'limits,'index_limit) session_ops =
+    {select : 'a B.backend -> 'limits ->
+       (R.entry -> 'a P.construction_parse_fn option) ->
+       {logic : string, solver : string option} ->
+       {dictionaries : 'a R.dictionaries, entries : R.entry list,
+        metadata : SmtLib_Theories.symbol_metadata list},
+     recipe_parsefn : 'a B.backend -> 'limits ->
+       (string -> Term.term list -> Term.term list -> Term.term) ->
+       'a P.construction_parse_fn,
+     recipe_ascribed : 'a B.backend -> 'a B.frame -> 'limits ->
+       'a constructed_ascription -> 'a option,
+     index_limit : 'limits -> 'index_limit,
+     token_admits : 'limits -> string -> bool,
+     operands_admit : 'limits -> 'a list -> 'a P.construction_index list ->
+       bool,
+     parse_sourced : ('a,'index_limit) P.generic_construction_cfg ->
+       (string -> string -> string option) -> (unit -> string) ->
+       Type.hol_type P.dict * 'a P.construction_dict ->
+       'a P.construction_occurrence * C.syntax}
+  type ('a,'limits) session_core =
+    {graph : G.graph, scope : G.scope, logic : string,
+     sorts : Type.hol_type P.dict,
+     binder_lists : (string * (string * string * Type.hol_type) list) list,
+     recipe_limits : 'limits,
+     special : 'a B.backend -> R.entry -> 'a P.construction_parse_fn option,
+     ascribed : 'a B.backend -> 'a B.frame -> 'a constructed_ascription ->
+       'a option}
+  (* The callbacks the entries supply. The int and the policy builders
+     differed in three places that are preserved on purpose, since each
+     is observable: the identity that decides a binder alias (the int path
+     compared node ids, the policy path compared with same_identity), the
+     guard that replace_source_parser runs (the int path validated the
+     root frame, the policy path ran guard_observation) and the scope
+     recorded for a private symbol (the int path reused the scope it had
+     already computed; the policy path asked private_label, which
+     re-reads the owner's scope and so is metered again). *)
+  type 'a session_callbacks =
+    {identity : 'a -> int, same_identity : 'a * 'a -> bool,
+     same_alias : 'a * 'a -> bool,
+     guard_private : G.scope -> 'a -> unit,
+     guard_observation : (unit -> unit) -> unit,
+     guard_replace : (unit -> unit) -> unit,
+     private_scope : 'a B.frame -> G.scope, source_scope : 'a -> G.scope,
+     private_label : 'a B.frame -> 'a B.frame -> G.scope -> G.scope}
+
+  (* One grammar for the int sessions, the policy graph sessions and the
+     typed parser values. *)
+  fun create_session_for_backend
+      (ops : ('a,'limits,'index_limit) session_ops)
+      (options : ('a,'limits) session_core) backend
+      {identity,same_identity,same_alias,guard_private,guard_observation,
+       guard_replace,private_scope,source_scope,private_label}
       source_declarations
       initialise_extra {solver,version,policy,reserved_names} get_token
       : 'a constructed_session =
     let
       val graph = #graph options
       val scope = #scope options
+      val limits = #recipe_limits options
       val root = B.root backend
       val private_count = ref 0
       val private_bindings = ref ([] : 'a constructed_private_binding list)
@@ -1027,7 +467,7 @@ struct
               val node = B.fresh_solver_variable backend owner
                 (kind ^ "#" ^ Int.toString serial, hol_type)
               val _ = private_bindings :=
-                {scope = private_label frame owner,
+                {scope = private_label frame owner scope,
                  marker = node, kind = kind,
                  source = retained_source ()} :: !private_bindings
               val _ = if stable then private_symbols :=
@@ -1045,7 +485,7 @@ struct
                      (!private_symbols,key,node);node)
               | NONE => allocate ())
           else allocate () end
-      val selected = R.select_with_policy backend (#recipe_limits options)
+      val selected = #select ops backend limits
         ((#special options) backend)
         {logic = #logic options, solver = SOME solver}
       val (sorts, dictionary) = #dictionaries selected
@@ -1170,9 +610,7 @@ struct
         let
           val _ = check ()
           fun parse frame token indices arguments =
-            if not (SmtReplayResourcePolicy.allows
-              (#token_limit (#recipe_limits options))
-              (IntInf.fromInt (String.size token))) then
+            if not (#token_admits ops limits token) then
               raise ERR "literal" "literal token exceeds admitted bound"
             else if null indices andalso null arguments then
               B.literal backend frame (literal token)
@@ -1182,18 +620,14 @@ struct
           (("_", parse), !dictionary_ref) end
       fun add_recipe_parser (name, parse) =
         let val _ = check ()
-            val parse = R.recipe_parsefn_with_policy backend
-              (#recipe_limits options) parse
+            val parse = #recipe_parsefn ops backend limits parse
         in dictionary_ref := Library.extend_dict
           ((name, parse), !dictionary_ref) end
       fun add_symbolic_index (head, token) =
         let
           val _ = check ()
-          val limit = #token_limit (#recipe_limits options)
-          val _ = if SmtReplayResourcePolicy.allows limit
-              (IntInf.fromInt (String.size head)) andalso
-              SmtReplayResourcePolicy.allows limit
-                (IntInf.fromInt (String.size token)) then () else
+          val _ = if #token_admits ops limits head andalso
+              #token_admits ops limits token then () else
             raise ERR "index" "symbolic index exceeds bounded contract"
           val key = symbol_key head
           val names = case Redblackmap.peek (!symbolic_indices, key) of
@@ -1209,15 +643,8 @@ struct
         let
           val _ = check ()
           fun admitted frame token indices arguments =
-            if not (SmtReplayResourcePolicy.allows
-              (#token_limit (#recipe_limits options))
-              (IntInf.fromInt (String.size token)))
-                orelse not (SmtReplayResourcePolicy.allows
-                  (#operand_limit (#recipe_limits options))
-                  (policy_frontend_length arguments)) orelse
-                not (SmtReplayResourcePolicy.allows
-                  (#operand_limit (#recipe_limits options))
-                  (policy_frontend_length indices))
+            if not (#token_admits ops limits token) orelse
+                not (#operands_admit ops limits arguments indices)
             then raise ERR "constructor" "private constructor exceeds contract"
             else parse frame token indices arguments
         in dictionary_ref := Library.extend_dict
@@ -1325,7 +752,7 @@ struct
           | NONE =>
               (case Redblackmap.peek (dictionary, key) of
                  SOME _ =>
-                   let val value = P.apply_construction_symbol_with_policy
+                   let val value = P.apply_construction_symbol
                          (configuration root) dictionary root key [] []
                    in if Type.compare (B.type_of backend value, ty) = EQUAL
                      then () else raise ERR "declare"
@@ -1333,10 +760,10 @@ struct
                | NONE => ignore (define_variable
                    (token, P.proof_symbol_text token, ty)))
         end
-      and configuration frame : 'a P.policy_construction_cfg =
+      and configuration frame : ('a,'index_limit) P.generic_construction_cfg =
         {backend = backend, frame = frame, symbol_key = symbol_key,
          type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
-         index_limit = #index_limit (#recipe_limits options),
+         index_limit = #index_limit ops limits,
          parse_choice = false, parse_lambda = true,
          parse_cpc_const = policy = CPC,
          lookup_binder_list = fn token => binder_list_lookup backend
@@ -1356,7 +783,7 @@ struct
                | NONE => case Redblackmap.peek (!variables_ref, key) of
                    SOME variable => (variable,NONE)
                  | NONE => B.binder_reference backend key
-                     (P.apply_construction_symbol_with_policy
+                     (P.apply_construction_symbol
                        (configuration frame) (!dictionary_ref) frame token [] [])
            end,
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
@@ -1367,13 +794,13 @@ struct
             val value = case (#ascribed options) backend frame description of
           SOME node => node
         | NONE =>
-          (case R.ascribed_with_policy backend frame (#recipe_limits options)
+          (case #recipe_ascribed ops backend frame limits
               description of SOME value => (builtin := true;value)
            | NONE => if null arguments then
               let
                 val value = case B.lookup backend frame (symbol_key name) of
                     SOME value => value
-                  | NONE => P.apply_construction_symbol_with_policy
+                  | NONE => P.apply_construction_symbol
                       (configuration frame) (!dictionary_ref) frame name [] []
               in if Type.compare (B.type_of backend value, sort) = EQUAL
                 then value else raise ERR "ascribed" "qualified sort mismatch"
@@ -1445,7 +872,7 @@ struct
                | NONE => case Redblackmap.peek
                    (!aliases_ref,symbol_key token) of
                  SOME (alias : 'a constructed_term) =>
-                   if same_identity (#node alias,value) then
+                   if same_alias (#node alias,value) then
                      #binder_blocks alias @ nested else nested
                | NONE => nested)
           | _ => nested
@@ -1453,7 +880,7 @@ struct
       fun parse_from tokens =
         let val _ = check ()
             val (occurrence, source) =
-              P.parse_term_sourced_with_policy_and_indices
+              #parse_sourced ops
                 (configuration root) symbolic_index tokens
                 (!sorts_ref, !dictionary_ref)
             val source = cpc_normalized_source backend policy
@@ -1536,7 +963,7 @@ struct
         add_constructor_parser = add_constructor_parser,
         add_source_parser = add_source_parser,
         replace_source_parser = fn entry as (name,_,_) =>
-          (guard_observation check;check_reserved "term" name;
+          (guard_replace check;check_reserved "term" name;
            dictionary_ref := Redblackmap.insert
              (!dictionary_ref,declaration_key "term" name,[]);
            add_source_parser entry),
@@ -1563,6 +990,115 @@ struct
           (string, 'a constructed_term) Redblackmap.dict)
     in context root scope dictionary_ref variables_ref sorts_ref
       binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref end
+
+  val int_session_ops =
+    {select = R.select_with,
+     recipe_parsefn = R.recipe_parsefn,
+     recipe_ascribed = R.ascribed,
+     index_limit = fn (limits : R.limits) => #index_limit limits,
+     token_admits = fn (limits : R.limits) => fn token =>
+       String.size token <= #token_limit limits,
+     operands_admit = fn (limits : R.limits) => fn arguments => fn indices =>
+       List.length arguments <= #operand_limit limits andalso
+       List.length indices <= #operand_limit limits,
+     parse_sourced = P.parse_term_sourced_with_backend_and_indices}
+  val policy_session_ops =
+    {select = R.select_with_policy,
+     recipe_parsefn = R.recipe_parsefn_with_policy,
+     recipe_ascribed = R.ascribed_with_policy,
+     index_limit = fn (limits : R.policy_limits) => #index_limit limits,
+     token_admits = fn (limits : R.policy_limits) => fn token =>
+       SmtReplayResourcePolicy.allows (#token_limit limits)
+         (IntInf.fromInt (String.size token)),
+     operands_admit = fn (limits : R.policy_limits) => fn arguments =>
+       fn indices =>
+         SmtReplayResourcePolicy.allows (#operand_limit limits)
+           (policy_frontend_length arguments) andalso
+         SmtReplayResourcePolicy.allows (#operand_limit limits)
+           (policy_frontend_length indices),
+     parse_sourced = P.parse_term_sourced_with_policy_and_indices}
+
+  (* The graph sessions' scope guard, identity, scope and label callbacks. *)
+  fun graph_session_callbacks graph backend =
+    {identity = G.node_id, same_identity = op =,
+     guard_private = fn scope => fn node =>
+       (ignore (G.type_of graph node);
+        if G.scope_visible graph scope (G.node_scope graph node) then ()
+        else raise ERR "private_symbol"
+          "private source escapes construction scope"),
+     guard_observation = fn _ => (),
+     private_scope = fn frame => valOf (B.frame_scope backend frame),
+     source_scope = G.node_scope graph,
+     private_label = fn _ => fn owner => valOf (B.frame_scope backend owner)}
+
+  in
+  fun create_session_aux (options : options) source_declarations
+      description get_token : session =
+    let
+      val graph = #graph options
+      val backend = B.graphs
+        {graph = graph, scope = #scope options,
+         import_limit = #import_limit options,
+         literal_limit = #literal_limit options,
+         binder_limit = #binder_limit options}
+      val graph_callbacks = graph_session_callbacks graph backend
+    in create_session_for_backend int_session_ops
+      {graph = graph, scope = #scope options, logic = #logic options,
+       sorts = #sorts options, binder_lists = #binder_lists options,
+       recipe_limits = #recipe_limits options, special = #special options,
+       ascribed = #ascribed options}
+      backend
+      {identity = #identity graph_callbacks,
+       same_identity = #same_identity graph_callbacks,
+       same_alias = fn (left,right) => G.node_id left = G.node_id right,
+       guard_private = #guard_private graph_callbacks,
+       guard_observation = #guard_observation graph_callbacks,
+       guard_replace = fn check => check (),
+       private_scope = #private_scope graph_callbacks,
+       source_scope = #source_scope graph_callbacks,
+       private_label = fn _ => fn _ => fn scope => scope}
+      source_declarations
+      (fn {dictionary,variables,...} => (dictionary,variables))
+      description get_token end
+
+  fun create_session (options : options) description tokens =
+    create_session_aux options
+      (List.map (fn (token, original) => (token, original, NONE))
+        (#sources options)) description tokens
+
+  fun create_configured_session
+      ({base, source_declarations} : configured_options) description tokens =
+    create_session_aux base
+      (List.map (fn {token, original, arity} =>
+        (token, original, SOME arity)) source_declarations) description tokens
+
+  fun create options description tokens =
+    #reader (create_session options description tokens)
+
+  (* One policy grammar for genuine graph nodes and typed parser values.
+     Native admission remains in its original initializer below; the value
+     initializer consumes every durable Mapping declaration. *)
+  fun create_policy_session_for_backend
+      (options : 'a constructed_policy_options) backend
+      {identity,same_identity,guard_private,guard_observation,private_scope,
+       source_scope,private_label}
+      source_declarations initialise_extra description get_token
+      : 'a constructed_session =
+    create_session_for_backend policy_session_ops
+      {graph = #graph options, scope = #scope options,
+       logic = #logic options, sorts = #sorts options,
+       binder_lists = #binder_lists options,
+       recipe_limits = #recipe_limits options, special = #special options,
+       ascribed = #ascribed options}
+      backend
+      {identity = identity, same_identity = same_identity,
+       same_alias = same_identity, guard_private = guard_private,
+       guard_observation = fn check => ignore (guard_observation check),
+       guard_replace = fn check => ignore (guard_observation check),
+       private_scope = private_scope, source_scope = source_scope,
+       private_label = fn frame => fn owner => fn _ =>
+         private_label frame owner}
+      source_declarations initialise_extra description get_token
 
   fun create_policy_session_aux_with_graph_declarations
       (options:policy_options) source_declarations graph_declarations
@@ -1630,18 +1166,11 @@ struct
       val (dictionary,variables) = List.foldl declared_graph
         (dictionary,variables) graph_declarations
         in (dictionary,variables) end
-      fun guard_private scope node =
-        (ignore (G.type_of graph node);
-         if G.scope_visible graph scope (G.node_scope graph node) then ()
-         else raise ERR "private_symbol"
-           "private source escapes construction scope")
     in create_policy_session_for_backend options backend
-      {identity=G.node_id,same_identity=op =,guard_private=guard_private,
-       guard_observation=fn _ => (),
-       private_scope=fn frame => valOf (B.frame_scope backend frame),
-       source_scope=G.node_scope graph,
-       private_label=fn _ => fn owner => valOf (B.frame_scope backend owner)}
+      (graph_session_callbacks graph backend)
       source_declarations initialise_extra description get_token end
+
+  end (* hidden session builder *)
 
   (* Preserve the existing raw declaration route and evaluation order. *)
   fun create_policy_session_aux options declarations =

@@ -520,18 +520,157 @@ struct
                    a=expected andalso b=expected andalso paid=7+cost
                | (Exn.Exn a,Exn.Exn b) => cap<cost andalso same_error (a,b)
                | _ => false)
-          in require "direct G planning published names"
-            (G.validation_revision g s=revision andalso
-             answer (G.plan_placeholders_with_policy g s
-               {nodes=nodes,remaining_work=P.Uncapped})=expected)
-          end
-        val _ = List.app (fn kind => List.app (one kind)
-          [0,1,2,cost div 2,cost-1,cost,cost+1]) meter_kinds
+            val _ = require "direct G planning published names"
+              (G.validation_revision g s=revision andalso
+               answer (G.plan_placeholders_with_policy g s
+                 {nodes=nodes,remaining_work=P.Uncapped})=expected)
+          in (fresh,paid) end
+        (* Both meters, hence all four entries, agree on outcome and on the
+           paid prefix, also for a refusal. *)
+        fun both cap =
+          let val (a,pa) = one IntegerMeter cap
+              val (b,pb) = one PolicyMeter cap
+          in require "int and policy meters disagree"
+            (pa=pb andalso
+             (case (a,b) of
+                (Exn.Res x,Exn.Res y) => x=y
+              | (Exn.Exn x,Exn.Exn y) => same_error (x,y)
+              | _ => false)) end
+        val _ = List.app both [0,1,2,cost div 2,cost-1,cost,cost+1]
+        (* A finite cap wider than int and Uncapped project to no int. *)
+        val wide = IntInf.fromInt (valOf Int.maxInt)+5
+        fun wide_meter limit =
+          let val m = R.new_scope_meter_with_policy
+                {limit=limit,charged=ref 7}
+          in (answer (G.plan_placeholders_with_meter g s m {nodes=nodes}),
+              meter_charge m) end
+        val _ = require "wide or Uncapped limit changed planning"
+          (answer (G.plan_placeholders g s
+             {nodes=nodes,remaining_work=valOf Int.maxInt})=expected andalso
+           answer (G.plan_placeholders_with_policy g s
+             {nodes=nodes,remaining_work=P.AtMost wide})=expected andalso
+           wide_meter (P.AtMost (wide+7))=(expected,7+cost) andalso
+           wide_meter P.Uncapped=(expected,7+cost))
         val terms = G.mint_placeholder_terms g s original
       in require "direct G refusal changed original naming snapshot"
         (List.map #1 terms=nodes andalso
          List.map (fn (_,t) => #1 (Term.dest_var t)) terms=
            List.map #2 (List.rev names)) end)
+
+  (* The owned function child is reached through the graph's
+     prepare_owned_application_children. Two refusals are made inside the
+     shared function-child body and must precede the already/memo reuse: a
+     closed programme, and a context the birth never claimed. Each is
+     compared within this run against the child already being memoised.
+     Foreign birth, context and storage are refused by the wrapper before
+     the body runs; they only show that memoising changes nothing. *)
+  type owned = {graph:G.graph,root:G.scope,storage:G.fixed_storage,
+                birth:G.owned_application_birth,
+                context:G.original_import_context,
+                meter:R.scope_meter}
+  fun born () =
+    let
+      val n = 100000
+      val cap = P.AtMost (IntInf.fromInt n)
+      val big = P.semantic_from_ints {input_limit=n,output_limit=n,
+                                      template_limit=n}
+      val m = R.new_scope_meter_with_policy {limit=P.Uncapped,charged=ref 0}
+      val limits : G.first_boolean_variable_limits =
+        {construction_limits=P.graph_from_ints
+           {import_limit=n,literal_limit=n,binder_limit=n,
+            recipe_limits={template_limit=n,index_limit=n,
+                           operand_limit=n,token_limit=n}},
+         semantic_limits=big,
+         native_limits={semantic_limits=big,import_limit=cap,
+                        type_work_limit=cap}}
+      val {graph,root,storage,birth,...} =
+        G.new_owned_boolean_application_with_bootstrap_meter m
+          {function=boolSyntax.negation,argument=boolSyntax.F,limits=limits}
+    in {graph=graph,root=root,storage=storage,birth=birth,limits=limits,
+        meter=m} end
+  fun owned_application () : owned =
+    let val {graph,root,storage,birth,meter,...} = born ()
+        val context = G.begin_owned_application_import_context
+          storage root birth
+    in {graph=graph,root=root,storage=storage,birth=birth,
+        context=context,meter=meter} end
+
+  fun owned_function_child () =
+    let
+      fun refusal (Exn.Exn (Feedback.HOL_ERR e),paid) =
+            SOME (hol_diagnostic e,paid)
+        | refusal _ = NONE
+      fun prepare ({storage,root,birth,context,meter=m,...} : owned)
+          (storage',birth',context') =
+        let val start = meter_charge m
+            val outcome = Exn.capture (fn () =>
+              G.prepare_owned_application_children
+                (Option.getOpt (storage',storage)) root
+                (Option.getOpt (context',context))
+                (Option.getOpt (birth',birth))) ()
+        in (outcome,meter_charge m-start) end
+      fun finish (a : owned) =
+        G.close_scope (#graph a) (#root a)
+      val fresh = owned_application ()
+      val prepared = owned_application ()
+      val other = owned_application ()
+      fun ok (Exn.Res (),paid) = paid
+        | ok (Exn.Exn primary,_) = raise primary
+      val first = ok (prepare prepared (NONE,NONE,NONE))
+      val again = ok (prepare prepared (NONE,NONE,NONE))
+      val _ = require "memoised child preparation did not charge its checks"
+        (again>0 andalso again<first)
+      (* A foreign birth and a foreign context, on each application. *)
+      fun mismatches a =
+        [prepare a (NONE,SOME (#birth other),NONE),
+         prepare a (NONE,NONE,SOME (#context other)),
+         prepare a (SOME (#storage other),NONE,NONE)]
+      val unprepared = List.map refusal (mismatches fresh)
+      val memoised = List.map refusal (mismatches prepared)
+      val _ = require "foreign birth/context/storage was not refused"
+        (List.all Option.isSome unprepared)
+      val _ = require "refusal differs once the function child is memoised"
+        (unprepared=memoised)
+      (* A closed programme refuses although the child is already
+         memoised, after its fixed payment and before any memo walk. *)
+      val {storage,root,birth,context,...} = prepared
+      fun source_then_denial () =
+        (G.complete_owned_application_source storage root context birth;
+         G.complete_owned_application_denial storage root context birth)
+      val _ = require "owned application did not complete"
+        (case Exn.capture source_then_denial () of
+           Exn.Res () => true | Exn.Exn primary => raise primary)
+      val closed_paid = ref 0
+      val _ = require "closed programme reused its memoised child"
+        (case refusal (prepare prepared (NONE,NONE,NONE)) of
+           SOME (("SmtReplayGraph","ordered_function_child",
+                  "original programme is closed"),paid) =>
+             (closed_paid := paid;paid>0 andalso paid<again)
+         | _ => false)
+      val _ = require "closed programme accepted a foreign birth"
+        (refusal (prepare prepared (NONE,SOME (#birth other),NONE))=
+           List.hd memoised)
+      (* A birth whose context was begun without claiming it: refused
+         inside the body by the claim check, which comes after its payment.
+         Memoising the same child through the original entry changes
+         neither the diagnostic nor the paid prefix. *)
+      val {graph=ug,root=ur,storage=us,birth=ub,limits=ul,meter=um} = born ()
+      val uc = G.begin_original_import_context us ur
+        {limits=ul,originals=[boolSyntax.negation]}
+      val unclaimed = {graph=ug,root=ur,storage=us,birth=ub,context=uc,
+                       meter=um} : owned
+      val before_memo = refusal (prepare unclaimed (NONE,NONE,NONE))
+      val _ = require "unclaimed context was not refused by the body"
+        (case before_memo of
+           SOME (("SmtReplayGraph","owned_application",
+                  "context is not claimed"),paid) =>
+             paid>(!closed_paid)
+         | _ => false)
+      val _ = G.prepare_original_function_child us ur uc
+      val _ = require "memoised child was reused before the claim check"
+        (refusal (prepare unclaimed (NONE,NONE,NONE))=before_memo)
+      val _ = List.app finish [fresh,prepared,other,unclaimed]
+    in () end
 
   fun naming_rejection mode =
     let
@@ -723,6 +862,8 @@ struct
        (fn () => List.app naming modes);
      test "Task50 G standalone/meter exact diagnostics across boundaries"
        naming_diagnostics;
+     test "Task50 G owned function child refuses before memo reuse"
+       owned_function_child;
      test "Task50 W rejected naming keeps G diagnostic and paid prefix"
        (fn () => List.app naming_rejection bounded_modes);
      test "Task50 W planning failure retires even Uncapped"

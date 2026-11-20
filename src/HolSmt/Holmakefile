@@ -522,11 +522,23 @@ SmtReplayScopedNativeQueue.uo: SmtReplayNamedBooleanFn.uo \
 SmtReplayOwnedScopedValueProgramme.uo: Z3_NamedReplayStepFn.uo
 SmtReplayRules.uo: SmtReplayImplicationLawFn.uo
 
+# The rule matchers apply SmtLib_RuleMatchSharedFn, which applies
+# SmtLib_RuleMatchTreeFn, unqualified.
+SmtLib_GraphNumericRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo
+SmtLib_LocalContextRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo
+SmtLib_RuleMatchSharedFn.uo: SmtLib_RuleMatchTreeFn.uo \
+  SmtReplayResourcePolicy.uo
+SmtLib_RuleMatchTreeFn.uo: SmtReplayGraph.uo
+
 # Static sparse clients use the same private ordinary programme workers.
 SmtReplayCanonGraph.uo: SmtReplayCanonAssemblyFn.uo
 SmtLib_GraphSourcePortfolio.uo: SmtReplaySourcePortfolioAssemblyFn.uo \
   SmtReplayImplicationLawFn.uo
 SmtLib_GraphPreprocess.uo: SmtReplayPreprocessAssemblyFn.uo
+
+# Both positive-goal Source stages apply the shared prefix functor.
+SmtLib_OwnedPositiveGoalSourceStage.uo: SmtLib_PositiveGoalSourceStageFn.uo
+SmtLib_CompactPositiveGoalSourceStage.uo: SmtLib_PositiveGoalSourceStageFn.uo
 
 # Holdep does not retain these alias-only module references.
 SmtReplayOwnedScopedValueSyntax.uo: SmtReplayValueNames.uo
@@ -568,6 +580,9 @@ SmtReplayValueRealizationFn.uo: SmtReplayOwnedValueSpecialize.uo
 SmtReplayValueRealizationFn.uo: SmtReplayProof.uo
 SmtReplayValueRealizationFn.uo: SmtReplayRuleObservation.uo
 SmtReplayValueRealizationFn.uo: SmtReplaySource.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplayGraph.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplayInvocationWork.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplaySource.uo
 
 # The CPC declared-target receiver uses this alias-only typed worker.
 CPC_OwnedValueNamedReplay.uo: SmtReplayValueAtomPairs.uo

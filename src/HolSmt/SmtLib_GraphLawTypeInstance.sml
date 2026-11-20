@@ -66,11 +66,14 @@ struct
              in walk (Args :: pending :: rest) end)
     in walk [[root]] end
 
-  fun begin_internal work graph scope {original,template_limit,check_type} =
+  (* The original-law inspection shared by the int and policy producers.
+     The caller supplies what differs: the cap the charges run against,
+     the Work spend, the original-fact validation and the extra guard. *)
+  fun begin_walk {graph,scope,original,template_limit,charge_limit,
+                  validate_original,spend_work,extra_guard} =
     let
-      val _ = G.validate_scope graph scope
       val epoch = Type.type_epoch ()
-      val _ = P.validate_closed_fact graph scope template_limit original
+      val _ = validate_original ()
       val node = P.closed_node original
       val _ = List.app (fn kind =>
         case G.unfolded_nodes graph kind template_limit node of
@@ -91,12 +94,12 @@ struct
       val used = ref 0
       val bytes = ref 0
       fun charge n =
-        if n < 0 orelse n > template_limit - !used then
+        if n < 0 orelse n > charge_limit - !used then
           raise ERR "begin_original" "original annotation/name cap exhausted"
-        else ((case work of NONE => () | SOME budget => W.spend budget n);
-              used := !used + n)
+        else (spend_work n;used := !used + n)
       fun guard () =
-        (G.validate_scope graph scope;
+        (extra_guard ();
+         G.validate_scope graph scope;
          if Type.type_epoch () = epoch then () else
            raise ERR "begin_original" "type epoch changed")
       val annotations = ref ([] : Type.hol_type list)
@@ -152,10 +155,24 @@ struct
         end
       val _ = walk term
       val _ = guard ()
+    in {epoch = epoch,used = used,bytes = bytes,raw = raw,binder = binder,
+        annotations = List.rev (!annotations),
+        variables = Vector.fromList (List.rev (!variables))} end
+
+  fun begin_internal work graph scope {original,template_limit,check_type} =
+    let
+      val _ = G.validate_scope graph scope
+      val {epoch,used,bytes,raw,binder,annotations,variables} = begin_walk
+        {graph = graph,scope = scope,original = original,
+         template_limit = template_limit,charge_limit = template_limit,
+         validate_original = fn () =>
+           P.validate_closed_fact graph scope template_limit original,
+         spend_work = fn n => (case work of NONE => ()
+           | SOME budget => W.spend budget n),
+         extra_guard = fn () => ()}
     in Producer {graph = graph,scope = scope,original = original,
       limit = template_limit,used = used,bytes = bytes,epoch = epoch,
-      annotations = List.rev (!annotations),
-      variables = Vector.fromList (List.rev (!variables)),
+      annotations = annotations,variables = variables,
       raw = raw,binder = binder,check_type = check_type,work = work} end
 
   (* Existing APIs retain their old per-producer cap and no-op hook. *)
@@ -168,33 +185,34 @@ struct
          {original = original,template_limit = template_limit,
           check_type = check_type}))
 
-  fun prepare_internal (p as Producer
-      {graph,scope,limit,variables,annotations,bytes,raw,binder,...})
-      {bindings} =
+  (* The instance preparation shared by the int and policy producers.  The
+     caller supplies what differs: the error origin, the Work-charging spend,
+     the remaining cumulative cap, the activity check and the Type policy. *)
+  fun prepare_walk {name,active,spend,remaining,check,variables,annotations,
+                    bytes,raw,binder} {bindings} =
     let
-      val _ = active p
+      val _ = active ()
       val seen = ref ([] : int list)
       fun seen_index _ [] = false
         | seen_index index (old :: rest) =
-            (spend p 1;old = index orelse seen_index index rest)
+            (spend 1;old = index orelse seen_index index rest)
       fun reserve_product factors =
-        let val Producer {used,...} = p
-            val remaining = limit - !used
+        let val remaining = remaining ()
             fun product [] value = value
               | product (factor :: rest) value =
                   if factor = 0 then 0
                   else if factor < 0 orelse value > remaining div factor
-                  then raise ERR "prepare" "comparison work exceeds cap"
+                  then raise ERR name "comparison work exceeds cap"
                   else product rest (value * factor)
-        in spend p (product factors 1) end
+        in spend (product factors 1) end
       fun rows [] = []
         | rows ((index,residue) :: rest) =
             let
-              val _ = spend p 1 (* BEFORE ordinal/table lookup *)
+              val _ = spend 1 (* BEFORE ordinal/table lookup *)
               val _ = if index >= 0 andalso index < Vector.length variables
                   andalso not (seen_index index (!seen))
-                then () else raise ERR "prepare" "invalid/duplicate domain"
-              val _ = type_walk (spend p) bytes (fn _ => ()) residue
+                then () else raise ERR name "invalid/duplicate domain"
+              val _ = type_walk spend bytes (fn _ => ()) residue
               val _ = seen := index :: !seen
               val redex = Vector.sub (variables,index)
             in {redex = redex,residue = residue} :: rows rest end
@@ -208,18 +226,18 @@ struct
                Type.type_subst over annotations and actual INST_TYPE.
                Domain variables are admitted atomic types; text-byte work
                remains an explicit prerequisite outside this node counter. *)
-            (spend p 3;
+            (spend 3;
              if Type.compare (redex,ty) = EQUAL then SOME residue
              else lookup ty rest)
       fun output ty =
-        let val _ = spend p 5
+        let val _ = spend 5
         in if Type.is_vartype ty then
           (case lookup ty theta of
              NONE =>
                (bytes := !bytes + String.size (Type.dest_vartype ty);1)
            | SOME residue =>
                let val count = ref 0
-                   fun charge n = (spend p (5*n);count := !count+n)
+                   fun charge n = (spend (5*n);count := !count+n)
                    val _ = type_walk charge bytes (fn _ => ()) residue
                in !count end)
         else let val {Thy,Args,...} = Type.dest_thy_typeid ty
@@ -234,20 +252,20 @@ struct
       (* Reserve typed graph and P-recording incidences BEFORE proof work.
          Type instantiation preserves syntax shape under this no-rename
          envelope; binder variable slots are included independently. *)
-      val _ = spend p raw
-      val _ = spend p binder
-      val _ = spend p 1
+      val _ = spend raw
+      val _ = spend binder
+      val _ = spend 1
       val output_types = List.map (Type.type_subst theta) annotations
       (* Table construction occurs before proof and charges EVERY actual
          comparison plus both already admitted type trees. No trusted
          equality or uncharged full-list membership is used afterward. *)
       fun compare (left,right) =
-        (spend p 1;
-         type_walk (spend p) bytes (fn _ => ()) left;
-         type_walk (spend p) bytes (fn _ => ()) right;
+        (spend 1;
+         type_walk spend bytes (fn _ => ()) left;
+         type_walk spend bytes (fn _ => ()) right;
          Type.compare (left,right))
       val charged_table = List.foldl (fn (ty,table) =>
-        (spend p 1;Redblackmap.insert (table,ty,())))
+        (spend 1;Redblackmap.insert (table,ty,())))
         (Redblackmap.mkDict compare) output_types
       val items = Redblackmap.numItems charged_table
       fun ceil_log n =
@@ -264,8 +282,17 @@ struct
       val _ = reserve_product [items,3]
       val expected = Redblackmap.fromOrderedList Type.compare
         (Redblackmap.listItems charged_table)
-      val _ = List.app (policy p) (annotations @ output_types)
-      val _ = active p
+      val _ = List.app check (annotations @ output_types)
+      val _ = active ()
+    in {theta = theta,expected = expected,output_types = output_types} end
+
+  fun prepare_internal (p as Producer
+      {limit,variables,annotations,bytes,raw,binder,used,...}) args =
+    let val {theta,expected,output_types} = prepare_walk
+          {name = "prepare",active = fn () => active p,spend = spend p,
+           remaining = fn () => limit - !used,check = policy p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           raw = raw,binder = binder} args
     in Plan {producer = p,theta = theta,expected = expected,
              typed_annotations = output_types,executed = ref false} end
 
@@ -285,29 +312,41 @@ struct
       ((case work of NONE => () | SOME budget => W.close budget);
        raise primary)
 
-  fun prepare_identity_internal (p as Producer
-      {original,variables,annotations,bytes,check_type,...}) =
+  (* The empty-variable identity preparation shared by the int and policy
+     producers.  The caller supplies the error origin, the activity and
+     identity guards, the Work-charging spend and the Type policy. *)
+  fun identity_walk {name,active,identity_guard,spend,variables,annotations,
+                     bytes,original,check_type} =
     let
-      val _ = active p
+      val _ = active ()
       val _ = if Vector.length variables = 0 then () else
-        raise ERR "prepare_identity" "original law has type variables"
+        raise ERR name "original law has type variables"
       val epoch = Term.term_epoch ()
-      fun guard () = identity_active p epoch
+      fun guard () = identity_guard epoch
       (* Borrow the original list. Pay each retained policy-list incidence
          and actual type node BEFORE inspecting it or invoking policies. *)
       fun quote [] = ()
         | quote (ty :: rest) =
-            (guard ();spend p 1;
-             type_walk (spend p) bytes (fn _ => ()) ty;
+            (guard ();spend 1;
+             type_walk spend bytes (fn _ => ()) ty;
              guard ();quote rest)
       val _ = quote annotations
-      val _ = spend p 2 (* Plan and retained identity-result records. *)
+      val _ = spend 2 (* Plan and retained identity-result records. *)
       val _ = if Term.uptodate_term (Thm.concl (P.closed_original original))
-        then () else raise ERR "prepare_identity" "retired original law"
+        then () else raise ERR name "retired original law"
       val _ = guard ()
       fun checked ty = (guard ();check_type ty;guard ())
       val _ = List.app checked annotations
       val _ = guard ()
+    in epoch end
+
+  fun prepare_identity_internal (p as Producer
+      {original,variables,annotations,bytes,check_type,...}) =
+    let val epoch = identity_walk
+          {name = "prepare_identity",active = fn () => active p,
+           identity_guard = identity_active p,spend = spend p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           original = original,check_type = check_type}
     in IdentityPlan {producer = p,term_epoch = epoch,
                      executed = ref false} end
 
@@ -322,37 +361,56 @@ struct
         (identity_active p term_epoch;
          {raw = raw,binder = binder,typed_annotations = annotations})
 
-  fun execute_internal (Plan {producer = p as Producer
-      {graph,scope,original,limit,...},theta,expected,executed,...}) =
+  (* The single-use INST_TYPE execution shared by the int and policy
+     producers.  The caller supplies the error origin and consumed-plan
+     message, the activity check, and the Graph import/open and Proof
+     recording calls (int or policy); the type-count caps use limit. *)
+  fun execute_walk {name,consumed,active,graph,scope,original,limit,theta,
+                    expected,executed,import,record_opened,record_closed} =
     let
-      val _ = active p
-      val _ = if !executed then raise ERR "execute" "instance plan consumed"
+      val _ = active ()
+      val _ = if !executed then raise ERR name consumed
         else executed := true
       val theorem = Thm.INST_TYPE theta (P.closed_original original)
-      val _ = active p
+      val _ = active ()
       (* Retain the whole genuine source bridge, including distinct raw
-         occurrences of an alpha-shared binder. Do not discard child bridges.
-           *)
-      val imported = G.import graph scope limit (Thm.concl theorem)
-      val _ = active p
-      val opened = G.record_opened_view graph scope limit (#node imported)
-      val _ = active p
+         occurrences of an alpha-shared binder. Do not discard child
+         bridges. *)
+      val imported = import (Thm.concl theorem)
+      val _ = active ()
+      val opened = record_opened (#node imported)
+      val _ = active ()
       val _ = G.validate_opened_view graph scope (#node imported) opened
       val node = #node opened
       val _ = List.app (fn kind =>
         case G.unfolded_nodes graph kind limit node of
           SOME n => if n <= limit then () else
-            raise ERR "execute" "typed result metric exceeds original cap"
-        | NONE => raise ERR "execute" "typed result remains opaque")
+            raise ERR name "typed result metric exceeds original cap"
+        | NONE => raise ERR name "typed result remains opaque")
         [G.RawNodes,G.BinderInclusiveNodes]
       fun admitted ty =
-        (active p;
+        (active ();
          case Redblackmap.peek (expected,ty) of SOME () => ()
-         | NONE => raise ERR "execute" "unplanned typed annotation")
-      val typed = P.record_closed_from_import graph scope
-        {node = node,theorem = theorem,template_limit = limit,
-         check_type = admitted}
-      val _ = active p
+         | NONE => raise ERR name "unplanned typed annotation")
+      val typed = record_closed {node = node,theorem = theorem,
+                                 check_type = admitted}
+      val _ = active ()
+    in typed end
+
+  fun execute_internal (Plan {producer = p as Producer
+      {graph,scope,original,limit,...},theta,expected,executed,...}) =
+    let val typed = execute_walk
+          {name = "execute",consumed = "instance plan consumed",
+           active = fn () => active p,graph = graph,scope = scope,
+           original = original,limit = limit,theta = theta,
+           expected = expected,executed = executed,
+           import = fn term => G.import graph scope limit term,
+           record_opened = fn node =>
+             G.record_opened_view graph scope limit node,
+           record_closed = fn {node,theorem,check_type} =>
+             P.record_closed_from_import graph scope
+               {node = node,theorem = theorem,template_limit = limit,
+                check_type = check_type}}
     in Instance {producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
     | execute_internal (IdentityPlan _) =
@@ -472,29 +530,6 @@ struct
   fun policy (p as PolicyProducer {check_type,...}) ty =
     (active p;check_type ty;active p)
 
-  (* Types are visited BEFORE type_subst/compare/type_vars/matching. The
-     declaration ID is retained by the actual Type object, not its text.
-     Symbol byte totals are reported, not an invented admission allowance. *)
-  fun type_walk spend bytes collect root =
-    let
-      (* A stack of borrowed spines avoids copying an unadmitted Args
-         list. Each child is charged_with_policy BEFORE its own type
-           inspection. *)
-      fun walk [] = ()
-        | walk ([] :: rest) = walk rest
-        | walk ((ty :: pending) :: rest) =
-            (spend 1;
-             if Type.is_vartype ty then
-               (bytes := !bytes + String.size (Type.dest_vartype ty);
-                collect ty;walk (pending :: rest))
-             else let
-               val {Thy,Tyop,Args} = Type.dest_thy_typeid ty
-               val _ = bytes := !bytes + String.size Thy
-               (* Tyop is the original kernel declaration identity. *)
-               val _ = ignore Tyop
-             in walk (Args :: pending :: rest) end)
-    in walk [[root]] end
-
   fun begin_internal work native_contract graph scope
       {original,template_limit,check_type} =
     let
@@ -505,97 +540,20 @@ struct
           #template_limit (W.semantic_policy budget)
         | NONE=>raise ERR "begin_policy" "unhooked policy producer"
       val model_limit=Int.min (template_limit,#type_work_limit native)
-      val epoch = Type.type_epoch ()
-      val _ = P.validate_closed_fact_with_policy graph scope policy_limit
-        original
-      val node = P.closed_node original
-      val _ = List.app (fn kind =>
-        case G.unfolded_nodes graph kind template_limit node of
-          SOME n => if n <= template_limit then () else
-            raise ERR "begin_original" "original graph metric exceeds cap"
-        | NONE => raise ERR "begin_original" "unknown original graph metric")
-        [G.RawNodes,G.BinderInclusiveNodes]
-      val theorem = P.closed_original original
-      val term = Thm.concl theorem
-      (* Measure ACTUAL original input, not the canonical graph spelling.
-         The existing counter has its own small binder/count-body envelope;
-         it is not a theorem-free whole early-admission claim. *)
-      val raw = case I.bounded_raw_size template_limit term of SOME n => n
-        | NONE => raise ERR "begin_original" "actual original raw size"
-      val binder = case I.bounded_binder_size template_limit term of
-          SOME n => n
-        | NONE => raise ERR "begin_original" "actual original binder size"
-      val used = ref 0
-      val bytes = ref 0
-      fun charge n =
-        if n < 0 orelse n > model_limit - !used then
-          raise ERR "begin_original" "original annotation/name cap exhausted"
-        else ((case work of NONE => () | SOME budget => W.spend_policy budget
-          (IntInf.fromInt n));
-              used := !used + n)
-      fun guard () =
-        ((case work of SOME budget=>NC.validate_for budget native_contract
-          | NONE=>raise ERR "guard" "unhooked policy producer");
-         G.validate_scope graph scope;
-         if Type.type_epoch () = epoch then () else
-           raise ERR "begin_original" "type epoch changed")
-      val annotations = ref ([] : Type.hol_type list)
-      val variables = ref ([] : Type.hol_type list)
-      fun variable ty =
-        let fun exists [] = false
-              | exists (v :: rest) =
-                  (charge 1; (* Each admitted atomic variable comparison. *)
-                   Type.compare (v,ty) = EQUAL orelse exists rest)
-        in if exists (!variables) then () else variables := ty :: !variables
-        end
-      fun annotation ty =
-        (type_walk charge bytes variable ty;
-         annotations := ty :: !annotations)
-      (* Experimental inst1 can rename only when a matching new variable
-         key has a DIFFERENT original type. ONE actual original type per
-         spelling excludes that branch, including repeated same-type
-         binder names in fixed BAG laws. Different-type collisions remain
-         an explicitly unsupported pre-kernel refusal. *)
-      val spellings = ref ([] : (string * Type.hol_type) list)
-      fun spelling (name,ty) =
-        let fun find [] = NONE
-              | find ((held,old) :: rest) =
-                  (charge 1; (* Text work has no symbol-byte grant. *)
-                   if held = name then SOME old else find rest)
-        in case find (!spellings) of
-          NONE => spellings := (name,ty) :: !spellings
-        | SOME held =>
-            (type_walk charge bytes (fn _ => ()) held;
-             type_walk charge bytes (fn _ => ()) ty;
-             if Type.compare (held,ty) = EQUAL then () else
-               raise ERR "begin_original" "ambiguous actual variable spelling")
-        end
-      fun walk current =
-        let val _ = guard () val _ = charge 1
-            val _ = annotation (Term.type_of current)
-        in
-          if Term.is_comb current then
-            let val (f,x) = Term.dest_comb current in
-              walk f;walk x end
-          else if Term.is_abs current then
-            let val (v,body) = Term.dest_abs current
-                val (name,ty) = Term.dest_var v
-                val _ = annotation ty
-                val _ = bytes := !bytes + String.size name
-                val _ = spelling (name,ty)
-            in walk body end
-          else if Term.is_var current then
-            let val value as (name,_) = Term.dest_var current
-                val _ = bytes := !bytes + String.size name
-            in spelling value end
-          else ()
-        end
-      val _ = walk term
-      val _ = guard ()
+      val {epoch,used,bytes,raw,binder,annotations,variables} = begin_walk
+        {graph = graph,scope = scope,original = original,
+         template_limit = template_limit,charge_limit = model_limit,
+         validate_original = fn () =>
+           P.validate_closed_fact_with_policy graph scope policy_limit
+             original,
+         spend_work = fn n => (case work of NONE => ()
+           | SOME budget => W.spend_policy budget (IntInf.fromInt n)),
+         extra_guard = fn () =>
+           (case work of SOME budget=>NC.validate_for budget native_contract
+            | NONE=>raise ERR "guard" "unhooked policy producer")}
     in PolicyProducer {graph = graph,scope = scope,original = original,
       limit = template_limit,used = used,bytes = bytes,epoch = epoch,
-      annotations = List.rev (!annotations),
-      variables = Vector.fromList (List.rev (!variables)),
+      annotations = annotations,variables = variables,
       raw = raw,binder = binder,check_type = check_type,work = work,
       native_contract=native_contract,model_limit=model_limit,
       policy_limit=policy_limit} end
@@ -614,105 +572,12 @@ struct
      handle primary=>(W.close work;raise primary))
 
   fun prepare_internal (p as PolicyProducer
-    {graph,scope,limit,model_limit,variables,annotations,bytes,raw,binder,...})
-      {bindings} =
-    let
-      val _ = active p
-      val seen = ref ([] : int list)
-      fun seen_index _ [] = false
-        | seen_index index (old :: rest) =
-            (spend p 1;old = index orelse seen_index index rest)
-      fun reserve_product factors =
-        let val PolicyProducer {used,...} = p
-            val remaining = model_limit - !used
-            fun product [] value = value
-              | product (factor :: rest) value =
-                  if factor = 0 then 0
-                  else if factor < 0 orelse value > remaining div factor
-                  then raise ERR "prepare_with_policy"
-                    "comparison work exceeds cap"
-                  else product rest (value * factor)
-        in spend p (product factors 1) end
-      fun rows [] = []
-        | rows ((index,residue) :: rest) =
-            let
-              val _ = spend p 1 (* BEFORE ordinal/table lookup *)
-              val _ = if index >= 0 andalso index < Vector.length variables
-                  andalso not (seen_index index (!seen))
-                then () else raise ERR "prepare_with_policy"
-                  "invalid/duplicate domain"
-              val _ = type_walk (spend p) bytes (fn _ => ()) residue
-              val _ = seen := index :: !seen
-              val redex = Vector.sub (variables,index)
-            in {redex = redex,residue = residue} :: rows rest end
-      val theta = rows bindings
-      (* Repeated annotations count separately. A returned residue is walked
-         literally, never recursively substituted: self ranges/swaps are
-         valid finite simultaneous instances, not unification cycles. *)
-      fun lookup _ [] = NONE
-        | lookup ty ({redex,residue} :: rest) =
-            (* One forecast search plus TWO reserved kernel searches:
-               Type.type_subst over annotations and actual INST_TYPE.
-               Domain variables are admitted atomic types; text-byte work
-               remains an explicit prerequisite outside this node counter. *)
-            (spend p 3;
-             if Type.compare (redex,ty) = EQUAL then SOME residue
-             else lookup ty rest)
-      fun output ty =
-        let val _ = spend p 5
-        in if Type.is_vartype ty then
-          (case lookup ty theta of
-             NONE =>
-               (bytes := !bytes + String.size (Type.dest_vartype ty);1)
-           | SOME residue =>
-               let val count = ref 0
-                   fun charge n = (spend p (5*n);count := !count+n)
-                   val _ = type_walk charge bytes (fn _ => ()) residue
-               in !count end)
-        else let val {Thy,Args,...} = Type.dest_thy_typeid ty
-                 val _ = bytes := !bytes + String.size Thy
-                 fun children [] size = size
-                   | children (child :: rest) size =
-                       children rest (size + output child)
-             in children Args 1 end
-        end
-      val sizes = List.map output annotations
-      val max_size = List.foldl Int.max 0 sizes
-      (* Reserve typed graph and P-recording incidences BEFORE proof work.
-         Type instantiation preserves syntax shape under this no-rename
-         envelope; binder variable slots are included independently. *)
-      val _ = spend p raw
-      val _ = spend p binder
-      val _ = spend p 1
-      val output_types = List.map (Type.type_subst theta) annotations
-      (* Table construction occurs before proof and charges EVERY actual
-         comparison plus both already admitted type trees. No trusted
-         equality or uncharged full-list membership is used afterward. *)
-      fun compare (left,right) =
-        (spend p 1;
-         type_walk (spend p) bytes (fn _ => ()) left;
-         type_walk (spend p) bytes (fn _ => ()) right;
-         Type.compare (left,right))
-      val charged_table = List.foldl (fn (ty,table) =>
-        (spend p 1;Redblackmap.insert (table,ty,())))
-        (Redblackmap.mkDict compare) output_types
-      val items = Redblackmap.numItems charged_table
-      fun ceil_log n =
-        if n <= 1 then 0 else 1 + ceil_log (n div 2 + n mod 2)
-      (* Okasaki red-black height <= 2*ceil(log2(items+1)); this slightly
-         larger bound avoids overflowing items+1 at the original Int cap.
-         Peek performs ONE key comparison per visited node. *)
-      val height = if items = 0 then 0 else 2 * (ceil_log items + 1)
-      val _ = reserve_product [binder,height]
-      val _ = reserve_product [binder,height,max_size]
-      val _ = reserve_product [binder,height,max_size]
-      (* Copy a known bounded ordered portfolio into a table whose ordinary
-         comparator consumes the already retained lookup reservation. *)
-      val _ = reserve_product [items,3]
-      val expected = Redblackmap.fromOrderedList Type.compare
-        (Redblackmap.listItems charged_table)
-      val _ = List.app (policy p) (annotations @ output_types)
-      val _ = active p
+    {model_limit,variables,annotations,bytes,raw,binder,used,...}) args =
+    let val {theta,expected,output_types} = prepare_walk
+          {name = "prepare_with_policy",active = fn () => active p,
+           spend = spend p,remaining = fn () => model_limit - !used,
+           check = policy p,variables = variables,annotations = annotations,
+           bytes = bytes,raw = raw,binder = binder} args
     in PolicyPlan {policy_producer = p,theta = theta,expected = expected,
              typed_annotations = output_types,executed = ref false} end
 
@@ -734,29 +599,11 @@ struct
 
   fun prepare_identity_internal (p as PolicyProducer
       {original,variables,annotations,bytes,check_type,...}) =
-    let
-      val _ = active p
-      val _ = if Vector.length variables = 0 then () else
-        raise ERR "prepare_identity_with_policy"
-          "original law has type variables"
-      val epoch = Term.term_epoch ()
-      fun guard () = identity_active p epoch
-      (* Borrow the original list. Pay each retained policy-list incidence
-         and actual type node BEFORE inspecting it or invoking policies. *)
-      fun quote [] = ()
-        | quote (ty :: rest) =
-            (guard ();spend p 1;
-             type_walk (spend p) bytes (fn _ => ()) ty;
-             guard ();quote rest)
-      val _ = quote annotations
-      val _ = spend p 2 (* PolicyPlan and retained identity-result records. *)
-      val _ = if Term.uptodate_term (Thm.concl (P.closed_original original))
-        then () else raise ERR "prepare_identity_with_policy"
-          "retired original law"
-      val _ = guard ()
-      fun checked ty = (guard ();check_type ty;guard ())
-      val _ = List.app checked annotations
-      val _ = guard ()
+    let val epoch = identity_walk
+          {name = "prepare_identity_with_policy",active = fn () => active p,
+           identity_guard = identity_active p,spend = spend p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           original = original,check_type = check_type}
     in PolicyIdentityPlan {policy_producer = p,term_epoch = epoch,
                      executed = ref false} end
 
@@ -777,44 +624,24 @@ struct
   fun execute_internal (PolicyPlan {policy_producer = p as PolicyProducer
       {graph,scope,original,limit,policy_limit,native_contract,work,...},
        theta,expected,executed,...}) =
-    let
-      val _ = active p
-      val _ = if !executed then raise ERR "execute_with_policy"
-        "policy_instance policy_plan consumed"
-        else executed := true
-      val theorem = Thm.INST_TYPE theta (P.closed_original original)
-      val _ = active p
-      (* Retain the whole genuine source bridge, including distinct raw
-         occurrences of an alpha-shared binder. Do not discard child bridges.
-           *)
-      val imported = G.import_with_policy graph scope
-        (RP.AtMost (IntInf.fromInt (#import_limit
-          (case work of SOME budget=>NC.for_work budget native_contract
-           | NONE=>raise ERR "execute_policy" "unhooked policy instance"))))
-        (Thm.concl theorem)
-      val _ = active p
-      val opened = G.record_opened_view_with_policy graph scope
-        (RP.AtMost (IntInf.fromInt limit)) (#node imported)
-      val _ = active p
-      val _ = G.validate_opened_view graph scope (#node imported) opened
-      val node = #node opened
-      val _ = List.app (fn kind =>
-        case G.unfolded_nodes graph kind limit node of
-          SOME n => if n <= limit then () else
-            raise ERR "execute_with_policy"
-              "typed result metric exceeds original cap"
-        | NONE => raise ERR "execute_with_policy"
-          "typed result remains opaque")
-        [G.RawNodes,G.BinderInclusiveNodes]
-      fun admitted ty =
-        (active p;
-         case Redblackmap.peek (expected,ty) of SOME () => ()
-         | NONE => raise ERR "execute_with_policy"
-           "unplanned typed annotation")
-      val typed = P.record_closed_from_import_with_policy graph scope
-        {node = node,theorem = theorem,template_limit = policy_limit,
-         check_type = admitted}
-      val _ = active p
+    let val typed = execute_walk
+          {name = "execute_with_policy",
+           consumed = "policy_instance policy_plan consumed",
+           active = fn () => active p,graph = graph,scope = scope,
+           original = original,limit = limit,theta = theta,
+           expected = expected,executed = executed,
+           import = fn term => G.import_with_policy graph scope
+             (RP.AtMost (IntInf.fromInt (#import_limit
+               (case work of SOME budget=>NC.for_work budget native_contract
+                | NONE=>raise ERR "execute_policy"
+                    "unhooked policy instance")))) term,
+           record_opened = fn node =>
+             G.record_opened_view_with_policy graph scope
+               (RP.AtMost (IntInf.fromInt limit)) node,
+           record_closed = fn {node,theorem,check_type} =>
+             P.record_closed_from_import_with_policy graph scope
+               {node = node,theorem = theorem,template_limit = policy_limit,
+                check_type = check_type}}
     in PolicyInstance {policy_producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
     | execute_internal (PolicyIdentityPlan _) =
