@@ -2907,6 +2907,21 @@ val _ =
          not (valid_closes (clasimpLib.AUTO_TAC []) goal)
        end)
 
+val _ =
+  check
+    ("AUTO_TAC instantiates one commuting assumption at distinct redexes",
+     fn () =>
+       valid_closes (clasimpLib.AUTO_TAC [])
+         (permutation_rule :: permutation_condition :: permutation_context @
+          [``clasimp_perm_R (clasimp_perm_e : num)
+                            (clasimp_perm_f : num) : bool``,
+           ``EVEN (clasimp_perm_e : num)``,
+           ``(clasimp_perm_Q : num -> bool)
+              ((clasimp_perm_c : num) - (clasimp_perm_d : num))``],
+          boolSyntax.mk_conj
+            (permutation_target,
+             ``EVEN ((clasimp_perm_e : num) - (clasimp_perm_f : num))``)))
+
 val auto_linarith_rewrite =
   hd (Drule.CONJUNCTS arithmeticTheory.MIN_EQ_LE)
 

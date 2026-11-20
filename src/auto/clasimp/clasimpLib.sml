@@ -2310,11 +2310,9 @@ local
       List.foldl step matched conditions
     end
 
-  fun instance find_condition specialised (redex, occurrences) =
+  fun instance find_condition specialised match_redex (redex, occurrences) =
     let
-      val matched =
-        Drule.PART_MATCH (boolSyntax.lhs o snd o boolSyntax.strip_imp)
-          specialised redex
+      val matched = match_redex redex
       val rewrite = discharge find_condition matched
       val (left, right) = boolSyntax.dest_eq (Thm.concl rewrite)
     in
@@ -2379,8 +2377,19 @@ in
         case permutative_equation theorem of
             NONE => []
           | SOME (specialised, head) =>
-              List.mapPartial (instance find_condition specialised)
-                (goal_redexes head)
+              (case goal_redexes head of
+                   [] => []
+                 | redexes =>
+                     (let
+                        val match_redex = Drule.PART_MATCH
+                          (boolSyntax.lhs o snd o boolSyntax.strip_imp)
+                          specialised
+                      in
+                        List.mapPartial
+                          (instance find_condition specialised match_redex)
+                          redexes
+                      end
+                      handle HOL_ERR _ => []))
     in
       List.concat (map instances theorems)
     end
@@ -3245,39 +3254,39 @@ fun transport_candidates budget ss goals candidates =
       let val {Thy, Name, ...} = dest_thy_const head in (Thy, Name) end
     val head_compare = Lib.pair_compare (String.compare, String.compare)
     val no_heads = HOLset.empty head_compare
-    fun collect term heads =
+    fun fold_heads add term state =
       if boolSyntax.is_forall term then
-        collect (snd (boolSyntax.dest_forall term)) heads
+        fold_heads add (snd (boolSyntax.dest_forall term)) state
       else if boolSyntax.is_exists term then
-        collect (snd (boolSyntax.dest_exists term)) heads
+        fold_heads add (snd (boolSyntax.dest_exists term)) state
       else if is_abs term then
-        collect (snd (dest_abs term)) heads
+        fold_heads add (snd (dest_abs term)) state
       else if boolSyntax.is_imp term then
         let val (left, right) = boolSyntax.dest_imp term
-        in collect right (collect left heads) end
+        in fold_heads add right (fold_heads add left state) end
       else if boolSyntax.is_conj term then
         let val (left, right) = boolSyntax.dest_conj term
-        in collect right (collect left heads) end
+        in fold_heads add right (fold_heads add left state) end
       else if boolSyntax.is_disj term then
         let val (left, right) = boolSyntax.dest_disj term
-        in collect right (collect left heads) end
+        in fold_heads add right (fold_heads add left state) end
       else if boolSyntax.is_neg term then
-        collect (boolSyntax.dest_neg term) heads
+        fold_heads add (boolSyntax.dest_neg term) state
       else if boolSyntax.is_eq term then
         let val (left, right) = boolSyntax.dest_eq term
-        in collect right (collect left heads) end
+        in fold_heads add right (fold_heads add left state) end
       else
         let
           val (head, arguments) = strip_comb term
-          val heads' =
+          val state =
             if is_const head andalso
                not (aconv head boolSyntax.T) andalso
                not (aconv head boolSyntax.F) then
-              HOLset.add (heads, key head)
-            else heads
+              add (state, key head)
+            else state
         in
-          List.foldl (fn (argument, found) =>
-            collect argument found) heads' arguments
+          List.foldl (fn (argument, state) =>
+            fold_heads add argument state) state arguments
         end
     fun root_head term =
       let val (head, _) = strip_comb term
@@ -3300,6 +3309,7 @@ fun transport_candidates budget ss goals candidates =
       List.concat
         (map simpLib.frag_rewrites (simpLib.ssfrags_of ss))
     val bridges = List.mapPartial bridge rewrites
+    fun collect term heads = fold_heads HOLset.add term heads
     fun collect_goal ((assumptions, target), heads) =
       List.foldl (fn (term, found) => collect term found)
         (collect target heads) assumptions
@@ -3354,14 +3364,15 @@ fun transport_candidates budget ss goals candidates =
             if passes = 1 then indexed_growth heads
             else grow (passes - 1) heads
     val relevant = grow 8 goal_heads
+    (* One relevant head suffices, regardless of its position. *)
+    exception RelevantHead
+    fun check_head ((), head) =
+      if HOLset.member (relevant, head) then raise RelevantHead else ()
     fun related (_, (_, theorem)) =
-      let
-        val _ = searchBudget.charge budget searchBudget.Candidate
-        val heads = collect (concl theorem) no_heads
-      in
-        Option.isSome
-          (HOLset.find (fn head => HOLset.member (relevant, head)) heads)
-      end
+      (searchBudget.charge budget searchBudget.Candidate;
+       fold_heads check_head (concl theorem) ();
+       false)
+      handle RelevantHead => true
   in
     List.filter related candidates
   end

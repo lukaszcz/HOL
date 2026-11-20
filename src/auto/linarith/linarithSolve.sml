@@ -88,30 +88,17 @@ fun mk_multiplied n just =
         Multiplied (m, inner) => mk_multiplied (Arbint.* (n, m)) inner
       | _ => Multiplied (n, just)
 
-fun multiply_ineq_with work n
-      (ineq as Lineq (k, ty, coeffs, just)) =
-  if ai_one n then ineq
+fun scale_row n ty =
+  if ai_one n then Lib.I
   else if ai_zero n andalso ty = Lt then
     raise ERR "multiply_ineq" "zero multiplier on a strict inequality"
   else if ai_neg n andalso (ty = Le orelse ty = Lt) then
     raise ERR "multiply_ineq" "negative multiplier on an inequality"
-  else
-    Lineq (Arbint.* (n, k), ty,
-           List.map
-             (fn c => (candidate work; Arbint.* (n, c))) coeffs,
-           mk_multiplied n just)
+  else fn c => Arbint.* (n, c)
 
-fun add_ineq_with work (Lineq (k1, ty1, coeffs1, just1))
-             (Lineq (k2, ty2, coeffs2, just2)) =
-  Lineq (Arbint.+ (k1, k2), find_add_type (ty1, ty2),
-         ListPair.mapEq
-           (fn pair => (candidate work; Arbint.+ pair))
-           (coeffs1, coeffs2),
-         Added (just1, just2))
-
-fun elim_var_with work
-      (ineq1 as Lineq (_, ty1, _, _), c1)
-      (ineq2 as Lineq (_, ty2, _, _), c2) =
+fun elim_var_with (work : work)
+      (Lineq (k1, ty1, coeffs1, just1), c1)
+      (Lineq (k2, ty2, coeffs2, just2), c2) =
   let
     val a1 = Arbint.abs c1
     val a2 = Arbint.abs c2
@@ -132,10 +119,25 @@ fun elim_var_with work
          (ai_eq n1 negone orelse ai_eq n2 negone)
       then (Arbint.~ n1, Arbint.~ n2)
       else (n1, n2)
+    val scale1 = scale_row p1 ty1
+    val scale2 = scale_row p2 ty2
+    val coeffs =
+      if #metered work then
+        (* Charge the two scaling passes before charging the addition. *)
+        let
+          fun scale factor times cs =
+            if ai_one factor then cs
+            else List.map (fn c => (candidate work; times c)) cs
+        in
+          ListPair.mapEq (fn pair => (candidate work; Arbint.+ pair))
+            (scale p1 scale1 coeffs1, scale p2 scale2 coeffs2)
+        end
+      else
+        ListPair.mapEq (fn (a, b) => Arbint.+ (scale1 a, scale2 b))
+          (coeffs1, coeffs2)
   in
-    add_ineq_with work
-      (multiply_ineq_with work p1 ineq1)
-      (multiply_ineq_with work p2 ineq2)
+    Lineq (Arbint.+ (scale1 k1, scale2 k2), find_add_type (ty1, ty2),
+           coeffs, Added (mk_multiplied p1 just1, mk_multiplied p2 just2))
   end
 
 fun is_trivial_with work (Lineq (_, _, coeffs, _)) =

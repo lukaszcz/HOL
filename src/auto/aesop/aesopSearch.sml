@@ -229,9 +229,11 @@ fun same_goal_context
   Portable.pointer_eq
     (aesopTree.active_store previous,
      aesopTree.active_store goal) andalso
-  clasetGoal.equal
-    (aesopTree.child_node previous,
-     aesopTree.child_node goal) andalso
+  (Portable.pointer_eq (aesopTree.active_cgoal previous,
+                        aesopTree.active_cgoal goal) orelse
+   clasetGoal.equal
+     (aesopTree.child_node previous,
+      aesopTree.child_node goal)) andalso
   ListPair.allEq (fn (left, right) => Term.aconv left right)
     (#forwarded previous, #forwarded goal)
 
@@ -1176,10 +1178,9 @@ fun winning_forest tree =
                             raise ERR "extract"
                               ("winning rule application contains " ^
                                "unproved cluster " ^ Int.toString cid)
-                        val all_members = #goals cluster
-                        val members =
-                          List.filter (independently_proved tree)
-                            all_members
+                        val (members, copies) =
+                          List.partition (independently_proved tree)
+                            (#goals cluster)
                         val _ =
                           if null members then
                             raise ERR "extract"
@@ -1189,11 +1190,10 @@ fun winning_forest tree =
                         val copy_members =
                           List.filter
                             (fn id =>
-                              not (independently_proved tree id) andalso
                               not
                                 (Option.isSome
                                   (Redblackmap.peek (selection, id))))
-                            all_members
+                            copies
                         val required' =
                           if null copy_members then required
                           else

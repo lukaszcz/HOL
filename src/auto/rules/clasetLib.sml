@@ -1517,13 +1517,36 @@ fun invocation_facts theorems =
    every variable is one of its own. *)
 fun matchable_subterms_with charge eligible term =
   let
-    fun head sub = fst (strip_comb sub)
-    fun headed sub =
-      (charge searchBudget.Candidate;
-       is_comb sub andalso is_const (head sub) andalso eligible sub)
-    fun keyed sub = (fst (dest_const (head sub)), sub)
+    fun head_name sub =
+      if is_comb sub then head_name (rator sub)
+      else if is_const sub then SOME (fst (dest_const sub))
+      else NONE
+
+    (* Visit in [find_terms] order, returning the sites in reverse.  Every
+       operator in an application spine has the same head. *)
+    fun visit head sub sites =
+      let val _ = charge searchBudget.Candidate
+      in
+        if is_comb sub then
+          let
+            val (operator, operand) = dest_comb sub
+            val name =
+              case head of
+                  NONE => head_name operator
+                | SOME known => known
+            val sites' =
+              case name of
+                  SOME key =>
+                    if eligible sub then (key, sub) :: sites else sites
+                | NONE => sites
+          in
+            visit NONE operand (visit (SOME name) operator sites')
+          end
+        else if is_abs sub then visit NONE (body sub) sites
+        else sites
+      end
   in
-    map keyed (find_terms headed term)
+    visit NONE term []
   end
 
 fun matching_pairs_with charge goal_terms patterns =
@@ -1762,8 +1785,17 @@ fun goal_variables goal_terms =
    List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
      [] goal_terms)
 
-fun polymorphic_instances_with charge get_goal_variables matching_pairs fact
-      original_types =
+fun distinct_type_substitutions substitutions =
+  let
+    fun compare_binding ({redex, residue}, {redex = other, residue = value}) =
+      Lib.pair_compare (Type.compare, Type.compare)
+        ((redex, residue), (other, value))
+  in
+    listUtil.distinct_by (List.collate compare_binding) Lib.I substitutions
+  end
+
+fun polymorphic_instances_with charge prepare_substitutions
+      get_goal_variables matching_pairs fact original_types =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
     val specialized =
@@ -1842,8 +1874,9 @@ fun polymorphic_instances_with charge get_goal_variables matching_pairs fact
                   then SOME proper
                   else NONE
                 end)
-        val substitutions = List.mapPartial instance_of
-          (matching_pairs patterns)
+        val substitutions =
+          prepare_substitutions
+            (List.mapPartial instance_of (matching_pairs patterns))
         fun add_instance (types, kept) =
           let
             val _ = charge searchBudget.Normalization
@@ -1870,13 +1903,14 @@ fun polymorphic_instances_with charge get_goal_variables matching_pairs fact
       end
   end
 
-fun goal_type_instances_with charge get_goal_variables matching_pairs fact =
+fun goal_type_instances_with charge prepare_substitutions
+      get_goal_variables matching_pairs fact =
   (charge searchBudget.Normalization;
    case type_vars_in_term (Thm.concl fact) of
        [] => [fact]
      | original_types =>
-         polymorphic_instances_with charge get_goal_variables matching_pairs
-           fact original_types)
+         polymorphic_instances_with charge prepare_substitutions
+           get_goal_variables matching_pairs fact original_types)
 
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
    back-to-front to leave them in declaration order.  Order is observable:
@@ -1891,18 +1925,20 @@ fun insert_facts_tac_with budget facts =
        val terms = target :: assumptions
        val variables = Portable.HOLSusp.delay (fn () => goal_variables terms)
        fun get_goal_variables () = Portable.HOLSusp.force variables
-       val (charge, matching_pairs) =
+       val (charge, matching_pairs, prepare_substitutions) =
          case budget of
-             NONE => (fn _ => (), matching_pairs_indexed terms)
+             NONE =>
+               (fn _ => (), matching_pairs_indexed terms,
+                distinct_type_substitutions)
            | SOME owned =>
                let val charge = searchBudget.charge owned
-               in (charge, matching_pairs_with charge terms) end
+               in (charge, matching_pairs_with charge terms, Lib.I) end
        val instances =
          List.rev
            (List.concat
              (map
-               (goal_type_instances_with charge get_goal_variables
-                 matching_pairs)
+               (goal_type_instances_with charge prepare_substitutions
+                 get_goal_variables matching_pairs)
                facts))
        fun assume fact inner ctxt =
          (charge searchBudget.Application;

@@ -4369,11 +4369,11 @@ fun joined_fact_fixture body =
                (CONJ (EQT_ELIM (ISPEC ``y:'b`` q_def))
                   (EQT_ELIM (ISPEC ``z:'c`` r_def))))
         val target = lhs (concl target_def)
-        fun inserted budget fact assumptions =
+        fun inserted insert fact assumptions =
           let
             val (remaining, validate) =
               Tactical.VALID
-                (clasetLib.INSERT_FACTS_TAC_BUDGETED budget [fact])
+                (insert [fact])
                 (assumptions, target) (Context.snapshot ())
             val theorem = validate [EQT_ELIM target_def]
             val _ =
@@ -4400,8 +4400,9 @@ fun joined_fact_fixture body =
                  end) o fst o strip_forall) facts
         fun inspect label assumptions =
           let
-            val result =
-              shapes (inserted (searchBudget.unbounded ()) fact assumptions)
+            val insert =
+              clasetLib.INSERT_FACTS_TAC_BUDGETED (searchBudget.unbounded ())
+            val result = shapes (inserted insert fact assumptions)
           in result end
       in
         body (fact, inserted, shapes, inspect)
@@ -4418,6 +4419,12 @@ val joined_fixture_result =
         val three =
           inspect "THREE_SITES"
             [``join_p (0:num)``, ``join_q T``, ``join_r ([]:num list)``]
+        val repeated_sites =
+          [``join_p (0:num) /\ join_p (1:num)``, ``join_q T /\ join_q F``,
+           ``join_r ([]:num list)``]
+        val repeated_measured = inspect "REPEATED_SITES" repeated_sites
+        val repeated_ordinary =
+          shapes (inserted clasetLib.INSERT_FACTS_TAC fact repeated_sites)
         val alternatives =
           inspect "ALTERNATIVES"
             [``join_p (0:num)``, ``join_p T``, ``join_q T``,
@@ -4432,14 +4439,17 @@ val joined_fixture_result =
         val renamed = GENL renamed_binders (Drule.SPECL renamed_binders fact)
         val renamed_two =
           shapes
-            (inserted (searchBudget.unbounded ()) renamed
+            (inserted
+               (clasetLib.INSERT_FACTS_TAC_BUDGETED (searchBudget.unbounded ()))
+               renamed
                [``join_p (0:num)``, ``join_q T``])
         val budget =
           searchBudget.create
             {candidates = SOME 0, applications = NONE,
              normalization = NONE}
         val cutoff =
-          ((inserted budget fact [``join_p (0:num)``]; false)
+          ((inserted (clasetLib.INSERT_FACTS_TAC_BUDGETED budget)
+              fact [``join_p (0:num)``]; false)
            handle searchBudget.LimitReached
                     (searchBudget.Candidate, _) => true)
       in
@@ -4459,6 +4469,7 @@ val joined_fixture_result =
               ["bool", "fresh", "fresh"],
               ["num", "bool", "num list"],
               ["bool", "bool", "num list"]] andalso
+           repeated_ordinary = three andalso repeated_measured = three andalso
            two = renamed_two andalso cutoff
       end);
 

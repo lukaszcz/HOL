@@ -95,6 +95,36 @@ val _ =
 
 val _ =
   check
+    ("distinct sources in one graph keep their own first proof paths",
+     fn () =>
+       let
+         fun fact left right = Thm.ASSUME (long_order_edge left right)
+         fun apart left right =
+           Thm.ASSUME
+             (boolSyntax.mk_neg
+               (boolSyntax.mk_eq (List.nth (long_order_nodes, left),
+                            List.nth (long_order_nodes, right))))
+         val chain = List.rev (List.tabulate (40, fn i => fact i (i + 1)))
+         val distinctions = [apart 0 43, apart 1 43, apart 0 40]
+         val facts =
+           (Thm.ASSUME long_order_axiom :: chain) @
+           (fact 40 0 :: distinctions)
+         val target = boolSyntax.F
+         val ordinary = orderSolve.prove_with facts target
+         fun same_hypotheses theorem =
+           Lib.list_eq Term.aconv (Thm.hyp ordinary) (Thm.hyp theorem)
+       in
+         Term.aconv (Thm.concl ordinary) target andalso
+         List.exists (Term.aconv (Thm.concl (List.last distinctions)))
+           (Thm.hyp ordinary) andalso
+         (case orderSolve.prove_with_budget
+                 (searchBudget.unbounded ()) facts target of
+              orderSolve.OrderProved metered => same_hypotheses metered
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("a budgeted invocation proves beyond the unbudgeted graph cap",
      fn () =>
        case orderSolve.prove_with_budget

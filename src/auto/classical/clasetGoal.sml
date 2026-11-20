@@ -273,6 +273,9 @@ fun cons_assumptions assumptions cgoal =
 fun delete_assumption pos ({params, asl, w} : cgoal) =
   {params = params, asl = delete_nth "delete_assumption" pos asl, w = w}
 
+fun append_fresh params [] = params
+  | append_fresh params reversed = params @ List.rev reversed
+
 fun children_from initial_avoids
   {parent, premises, consumed, store} =
   let
@@ -283,26 +286,26 @@ fun children_from initial_avoids
     val normalized = map (norm_term store) premises
     val initial_avoids = Term.FVL normalized initial_avoids
 
-    fun freshen_bound (bound, (avoids, subst, params, current_store)) =
+    fun freshen_bound (bound, (avoids, subst, reversed, current_store)) =
       let
         val (fresh, next_store) =
           register_fresh bound avoids current_store
       in
         (HOLset.add (avoids, fresh),
          {redex = bound, residue = fresh} :: subst,
-         params @ [fresh], next_store)
+         fresh :: reversed, next_store)
       end
 
     fun make_child (premise, (rev_children, avoids, current_store)) =
       let
         val (bounds, body) = strip_forall premise
-        val (avoids', subst, params', next_store) =
-          List.foldl freshen_bound
-            (avoids, [], #params parent', current_store) bounds
+        val (avoids', subst, fresh, next_store) =
+          List.foldl freshen_bound (avoids, [], [], current_store) bounds
         val body' = Term.subst subst body
         val (antecedents, conclusion) = strip_imp_only body'
         val base =
-          {params = params', asl = #asl parent', w = conclusion}
+          {params = append_fresh (#params parent') fresh,
+           asl = #asl parent', w = conclusion}
         val child = cons_assumptions antecedents base
       in
         (child :: rev_children, avoids', next_store)
@@ -334,7 +337,7 @@ fun exact_blast_children node {pos, premises, prefixes, consumed} =
         val (variable, next_store) =
           register_fresh bound avoids current_store
       in
-        (HOLset.add (avoids, variable), fresh @ [variable], next_store)
+        (HOLset.add (avoids, variable), variable :: fresh, next_store)
       end
 
     fun make_child
@@ -343,13 +346,15 @@ fun exact_blast_children node {pos, premises, prefixes, consumed} =
       let
         val bounds =
           clasetReplay.exact_prefix_bounds descriptor premise
-        val (avoids', fresh, next_store) =
+        val (avoids', reversed, next_store) =
           List.foldl freshen_bound (avoids, [], current_store) bounds
+        val fresh = List.rev reversed
         val {assumptions, residual, rebuild} =
           clasetReplay.split_exact_prefix
             {descriptor = descriptor, premise = premise, fresh = fresh}
         val base =
-          {params = #params parent' @ fresh,
+          {params = if null fresh then #params parent'
+                    else #params parent' @ fresh,
            asl = #asl parent', w = residual}
         val child = cons_assumptions assumptions base
       in

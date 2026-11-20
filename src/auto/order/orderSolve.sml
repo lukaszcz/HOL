@@ -110,35 +110,42 @@ fun settle target path (ReachedList reached_nodes) =
   | settle target path (ReachedIndex table) =
       ReachedIndex (Termtab.update (target, path) table)
 
+fun outgoing_edges edges =
+  let
+    fun add ((index, edge : edge), outgoing) =
+      let
+        val source = #source edge
+        val old = Option.getOpt (Termtab.lookup outgoing source, [])
+      in
+        Termtab.update (source, (index, edge) :: old) outgoing
+      end
+  in
+    List.foldl add Termtab.empty (Lib.enumerate 0 edges)
+  end
+
 (* A scan can use a newly reached node at later edges in the same round.
    Earlier edges must wait for the next round. Schedule just the edges
    that can relax, in the same (round, original position) order, so that
    a node still gets the same first path. Edges from a source reached
    in the initial scans are eligible from round zero. *)
-fun indexed_rounds work relax edges known source =
+fun indexed_rounds relax outgoing source nodes =
   let
     val empty =
       Redblackmap.mkDict (Lib.pair_compare (Int.compare, Int.compare))
     fun schedule round (index, edge) pending =
       Redblackmap.insert (pending, (round, index), edge)
-    fun index_edges ((position, edge : edge), (outgoing, pending)) =
-      let
-        val from = #source edge
-        val indexed = (position, edge)
-        val old = Option.getOpt (Termtab.lookup outgoing from, [])
-        val outgoing' = Termtab.update (from, indexed :: old) outgoing
-        val pending' =
-          if (aconv from source orelse
-              Option.isSome (reached work known from)) andalso
-             not (aconv (#target edge) source orelse
-                  Option.isSome (reached work known (#target edge)))
-          then schedule 0 indexed pending
-          else pending
-      in
-        (outgoing', pending')
-      end
-    val (outgoing, pending) =
-      List.foldl index_edges (Termtab.empty, empty) (Lib.enumerate 0 edges)
+    fun outgoing_from from =
+      Option.getOpt (Termtab.lookup outgoing from, [])
+    fun seed from pending =
+      List.foldl
+        (fn (entry as (_, edge : edge), pending) =>
+          if aconv (#target edge) source orelse
+             Option.isSome (Termtab.lookup nodes (#target edge)) then
+            pending
+          else schedule 0 entry pending)
+        pending (outgoing_from from)
+    val pending =
+      Termtab.fold (fn (from, _) => seed from) nodes (seed source empty)
     fun run known pending =
       case Redblackmap.firsti pending of
           NONE => known
@@ -149,26 +156,24 @@ fun indexed_rounds work relax edges known source =
               val next =
                 if changed then
                   let
-                    val entries =
-                      Option.getOpt (Termtab.lookup outgoing (#target edge), [])
                     fun add (entry as (position, _), pending) =
                       schedule (if position > last then round else round + 1)
                         entry pending
                   in
-                    List.foldl add rest entries
+                    List.foldl add rest (outgoing_from (#target edge))
                   end
                 else rest
             in
               run known' next
             end
   in
-    run known pending
+    run (ReachedIndex nodes) pending
   end
 
 (* Everything the source reaches, one path per node. A node is settled
    the first time it is reached. Ordinary calls construct proofs only
    along the paths a caller actually needs. *)
-fun reachable work transitive edges source =
+fun reachable work transitive edges outgoing source =
   case transitive of
       NONE =>
         ReachedList
@@ -215,9 +220,14 @@ fun reachable work transitive edges source =
                 List.foldl relax (reached, false) edges
             in
               if not changed then reached'
-              else if left = 1 then
-                indexed_rounds work relax edges reached' source
-              else rounds (if left = 0 then 0 else left - 1) reached'
+              else
+                case reached' of
+                    ReachedIndex nodes =>
+                      if left = 1 then
+                        indexed_rounds relax (Portable.HOLSusp.force outgoing)
+                          source nodes
+                      else rounds (left - 1) reached'
+                  | ReachedList _ => rounds 0 reached'
             end
         in
           (* Small or forward chains often finish before an index pays
@@ -227,7 +237,10 @@ fun reachable work transitive edges source =
 
 fun reach_from work transitive edges =
   let
-    fun compute source = reachable work transitive edges source
+    (* A contradiction can test several starting points on the same graph.
+       Build the shared index only if one needs more than two scans. *)
+    val outgoing = Portable.HOLSusp.delay (fn () => outgoing_edges edges)
+    fun compute source = reachable work transitive edges outgoing source
     (* Crossing can use two sources. Limit retained reachability tables
        and keep each metered traversal observable. *)
     val from =

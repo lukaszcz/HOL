@@ -279,7 +279,8 @@ fun joinTrackedMdMeasured checkpoint md formulas =
   end
 
 fun joinTrackedMd md formulas =
-  joinTrackedMdMeasured (fn () => ()) md formulas
+  if md then map (fn formula => (formula, true)) formulas
+  else joinTrackedMdMeasured (fn () => ()) false formulas
 
 fun initSearchBranchWith checkpoint addVars fresh (formulas, lim) :
       search_branch =

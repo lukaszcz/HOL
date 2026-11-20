@@ -541,13 +541,26 @@ fun prepare_statement_comparison goal =
       (term, Portable.HOLSusp.delay (fn () => normal_form term))
     (* Stripping a truth equivalence first reduces beta and eta redexes
        throughout the term and then selects at most a subterm. *)
-    val prepare_stripped = prepare statement_symmetry_normal_form
+    fun rigid_head term =
+      if Term.is_comb term then rigid_head (Term.rator term)
+      else if Term.is_const term andalso not (Term.same_const term predecessor)
+      then SOME term
+      else NONE
+    fun prepare_stripped term =
+      (rigid_head term, prepare statement_symmetry_normal_form term)
     fun strip_and_prepare term =
       prepare_stripped (strip_truth_equivalence term)
     fun same (left, left_normal) (right, right_normal) =
       Term.aconv left right orelse variants left right orelse
       Term.aconv (Portable.HOLSusp.force left_normal)
                  (Portable.HOLSusp.force right_normal)
+    (* Mutual matching preserves rigid heads. The symmetry normal form
+       also preserves them here, after beta and eta reduction and with PRE
+       excluded because its normalization can change the head. *)
+    fun same_stripped (left_head, left) (right_head, right) =
+      (case (left_head, right_head) of
+           (SOME a, SOME b) => Term.same_const a b
+         | _ => true) andalso same left right
     fun parts term =
       let
         val (_, body) = boolSyntax.strip_forall term
@@ -587,15 +600,18 @@ fun prepare_statement_comparison goal =
              whole-goal comparison. Use exact identity since stripping a
              quantifier retains its binder name. *)
           if Portable.pointer_eq (term, statement) then
-            same stripped conclusion andalso List.all covered premises
+            same_stripped stripped conclusion andalso
+            List.all covered premises
           else
             let val left = strip_and_prepare term
             in
-              same left whole orelse
-              (same left conclusion andalso List.all covered premises)
+              same_stripped left whole orelse
+              (same_stripped left conclusion andalso
+               List.all covered premises)
             end
       in
-        same stripped whole orelse List.exists matches (readings statement)
+        same_stripped stripped whole orelse
+        List.exists matches (readings statement)
       end
   end
 
