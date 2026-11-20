@@ -4401,3 +4401,18 @@ val _ =
       in
         one = 1 andalso !computed = 3
       end)
+
+val _ =
+  test ("bounded_memo with a bound below 1 keeps no entry",
+   fn () =>
+      let
+        fun recomputes n =
+          let
+            val computed = ref 0
+            val memo = memoUtil.bounded_memo n (Lib.curry (op =))
+                         (fn k : int => (computed := !computed + 1; k))
+            val _ = (memo 1; memo 1; memo 2; memo 1)
+          in !computed end
+      in
+        recomputes 0 = 4 andalso recomputes ~3 = 4
+      end)

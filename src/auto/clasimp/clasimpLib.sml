@@ -831,14 +831,18 @@ fun same_bottom_up_key ((a, b), (a', b')) =
    differ in the linear-arithmetic layer alone when they carry other
    [arith] facts.  A clasimp-derived value supplies its core, which is
    that simpset without the layer; any other simpset's base is the strip.
-   The base is delayed, so that a cache hit forces neither. *)
+   The base is delayed, so that a cache hit forces neither the core nor
+   the strip.  A clasimp-derived value's base is the strip of its core:
+   the core keeps whatever linear-arithmetic procedures srw_ss itself
+   carries.  The strip returns its argument where it has none. *)
 type view_base = simpLib.simpset Susp.susp
 
+fun strip_view_procedures ss =
+  remove_present_frags [linarithLib.linarith_fragment_name] ss
+  |> simpLib.remove_solver linarithLib.linarith_solver_name
+
 val view_derivation_simpset =
-  memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
-    (fn ss =>
-       remove_present_frags [linarithLib.linarith_fragment_name] ss
-       |> simpLib.remove_solver linarithLib.linarith_solver_name)
+  memoUtil.keyed_memo (Lib.curry Portable.pointer_eq) strip_view_procedures
 
 fun stripped_view_base ss : view_base =
   Susp.delay (fn () => view_derivation_simpset ss)
@@ -1565,9 +1569,10 @@ fun make_supplied_view_cache_core () =
                     #positions table
                   else positions_of_sources
                     (#1 (simpLib.rewrite_sources ss []))
-                (* The table's own simpset, or its suspension, which a
-                   prepared simpset is by the check in bind: the base
-                   is suspended in step. *)
+                (* ss is the table's simpset or its suspension by
+                   `suspended` (a prepared simpset is the latter, by the
+                   check in bind), so the base is the table's base,
+                   suspended the same way. *)
                 val base =
                   if Portable.pointer_eq (ss,#simpset table) then #base table
                   else Susp.delay (fn () =>
@@ -1856,17 +1861,21 @@ fun owned_working_simpset base ss =
    [arith] facts.  The srw_ss state keys the stored memo through the
    derived-value mechanism.  Inside it, the core is derived once, when
    first needed, and each fact list builds only the facts layer on it.
-   The lists, compared by pointer, key a memo of the four most recent, so
-   going back to an earlier fact list answers the value it had, working
-   state and LHS views included: one derivation per (srw_ss, facts) pair
-   for as long as a window alternates among a few lists.  The core is the
-   simpset the views of every layer derive from. *)
+   The lists, compared element-wise by identity, key a memo of the four
+   most recent, so going back to an earlier fact list answers the value it
+   had, working state and LHS views included: one derivation per
+   (srw_ss, facts) pair for as long as a window alternates among a few
+   lists.  The bound is 4 because each entry keeps a full simpset with its
+   working state and view tables alive, and the observed alternation uses
+   two fact lists.  The views of every layer derive from the strip of the
+   core, so they do not depend on arithmetic. *)
 fun derive_clasimp_value core facts =
   let val full = clasimp_with_facts (Susp.force core) facts
+      val base = Susp.delay (fn () => strip_view_procedures (Susp.force core))
   in {full = full,
       positions = positions_of_sources
         (#1 (simpLib.rewrite_sources full [])),
-      working = owned_working_simpset core full}
+      working = owned_working_simpset base full}
   end
 
 val {get = _, get_of = clasimp_derived_of} =

@@ -112,6 +112,8 @@ sig
      the same bounded cache without forcing an unused default derivation.
      Public tactic placement of view construction remains independent. *)
   val clasimp_working_simpset : unit -> working_simpset
+  (* The working state of that context's srw_ss and [arith] set. *)
+  val clasimp_working_simpset_of : Context.t -> working_simpset
   val working_simpset_of : simpExtLib.simpset -> working_simpset
 
   type supplied_rule_binding

@@ -26,11 +26,11 @@ fun keyed_memo same compute =
 fun bounded_memo n same compute =
   let
     val cache = ref []
-    fun first_n (0, _) = []
-      | first_n (_, []) = []
-      | first_n (k, entry :: rest) = entry :: first_n (k - 1, rest)
+    fun first_n (_, []) = []
+      | first_n (k, entry :: rest) =
+          if k <= 0 then [] else entry :: first_n (k - 1, rest)
     fun extract _ [] = NONE
-      | extract key ((entry as (recorded, value)) :: rest) =
+      | extract key ((entry as (recorded, _)) :: rest) =
           if same recorded key then SOME (entry, rest)
           else
             Option.map (fn (found, others) => (found, entry :: others))

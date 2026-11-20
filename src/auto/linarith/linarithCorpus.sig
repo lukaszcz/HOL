@@ -85,6 +85,10 @@ sig
      nothing is left behind afterwards. *)
   val with_arith_fact : (unit -> bool) -> bool
 
+  (* A snapshot that has the probe fact and one that lacks it, in that
+     order, both taken from the ambient state when called. *)
+  val contexts_with_and_without_fact : unit -> Context.t * Context.t
+
   (* Whether tactic closes goal in the given context, never raising. *)
   val closes_in : Context.t -> tactic -> goal -> bool
 

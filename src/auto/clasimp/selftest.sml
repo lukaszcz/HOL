@@ -5376,6 +5376,25 @@ fun working_simpset_fixture () =
             (full default_state,full (clasimpLib.working_simpset_of default_raw))
         val default_generation = clasimpLib.lhs_view_table_generation
           (table default_state)
+        (* The views do not depend on [arith] facts: a context with a
+           probe fact answers its own simpset and working state, but its
+           view table derives nothing and is no rebuild, and returning to
+           the context without it answers the objects it had. *)
+        val (arith_ctxt,plain_ctxt) = contexts_with_and_without_fact ()
+        val plain_ss = clasimpLib.clasimp_ss_of plain_ctxt
+        val plain_state = clasimpLib.clasimp_working_simpset_of plain_ctxt
+        val _ = table plain_state
+        val arith_state = clasimpLib.clasimp_working_simpset_of arith_ctxt
+        val arith_stats = clasimpLib.lhs_view_table_stats (table arith_state)
+        val arith_shares_views = #derived arith_stats = 0 andalso
+          not (#rebuild arith_stats) andalso
+          not (Portable.pointer_eq
+                 (plain_ss,clasimpLib.clasimp_ss_of arith_ctxt))
+        val arith_return =
+          Portable.pointer_eq
+            (plain_ss,clasimpLib.clasimp_ss_of plain_ctxt) andalso
+          Portable.pointer_eq
+            (plain_state,clasimpLib.clasimp_working_simpset_of plain_ctxt)
         val _ = BasicProvers.diminish_srw_ss ["work_default"]
         val removed = clasimpLib.clasimp_working_simpset ()
         val stateful_removal = clasimpLib.lhs_view_table_generation
@@ -5406,7 +5425,8 @@ fun working_simpset_fixture () =
              (clasimpLib.working_original state))
         val exact_metadata = List.all oracle
           [state,decision_state,excluded,absent,extended,exhausted_state,
-           once_state,retry_state,default_state,removed]
+           once_state,retry_state,default_state,plain_state,arith_state,
+           removed]
         val default_restore =
           let val _ = Context.restore saved
           in Portable.pointer_eq
@@ -5427,7 +5447,8 @@ fun working_simpset_fixture () =
            one_fragment,full_hit,decision_hit,stripping,retained,
            source_exclusion,reducer_exclusion,incremental,shared_quota,
            exhausted_quota,retry,bounded_cache,default_identity,default_views,
-           stateful_removal,default_restore,default_owned,explicit_independent,
+           stateful_removal,default_restore,arith_shares_views,arith_return,
+           default_owned,explicit_independent,
            decision_memo,decision_quota,exact_metadata]
         val _ = print ("WORKING_RESULTS " ^
           String.concatWith " " (map Bool.toString checks) ^ "\n")
