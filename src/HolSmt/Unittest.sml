@@ -25372,11 +25372,8 @@ let
       assert_no_hyps ("gate CNF conversion", theorem);
       check_oracle_tags "gate CNF conversion" theorem
     end
-  fun check definitions output =
+  fun check_cnf cnf output =
     let
-      val equivalence = SmtCircuitSat.balanced_equivalences
-        (List.map SmtCircuitSat.definition_cnf definitions)
-      val cnf = boolSyntax.rhs (Thm.concl equivalence)
       val theorem = SmtCircuitSat.prove_cnf (cnf, output)
     in
       assert (Term.aconv (Thm.concl theorem)
@@ -25385,6 +25382,11 @@ let
       assert_no_hyps ("checked gate CNF", theorem);
       check_oracle_tags "checked gate CNF" theorem
     end
+  fun check definitions output =
+    let
+      val equivalence = SmtCircuitSat.balanced_equivalences
+        (List.map SmtCircuitSat.definition_cnf definitions)
+    in check_cnf (boolSyntax.rhs (Thm.concl equivalence)) output end
   val true_input = ``circuit_true_input:bool``
   val false_input = ``circuit_false_input:bool``
   val constants =
@@ -25411,6 +25413,9 @@ in
   check [boolSyntax.mk_eq (root, boolSyntax.mk_imp (p, p))] root;
   check constants root;
   check [] boolSyntax.T;
+  check_cnf (boolSyntax.mk_neg boolSyntax.T) boolSyntax.T;
+  check_cnf (boolSyntax.mk_neg boolSyntax.F) boolSyntax.T;
+  check_cnf (boolSyntax.list_mk_conj [p, p, boolSyntax.mk_neg p]) q;
   assert (rejected andalso false_rejected andalso false_gate_rejected,
     "satisfiable gate CNF was accepted as a checked proof")
 end

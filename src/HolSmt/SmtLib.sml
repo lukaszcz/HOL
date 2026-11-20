@@ -3762,25 +3762,40 @@ local
   (* Only final emitted datatype blocks authorize grouped type records. *)
   fun type_declaration_records tydict datatype_records =
     let
-      val datatype_types = List.concat (List.map
-        (fn DatatypeDeclaration {hol_types, ...} => hol_types | _ => [])
-        datatype_records)
+      fun add_datatype (DatatypeDeclaration {hol_types, ...}, types) =
+            HOLset.addList (types, hol_types)
+        | add_datatype (_, types) = types
+      val datatype_types = List.foldl add_datatype
+        (HOLset.empty Type.compare) datatype_records
       fun add_type_record (ty, name, acc) =
-        if member_type ty datatype_types then acc
+        if HOLset.member (datatype_types, ty) then acc
         else type_decl_record (ty, name) :: acc
       val type_records = Redblackmap.foldl add_type_record [] tydict
     in List.rev type_records @ datatype_records end
 
   fun emitted_datatype_records tydict declarations =
-    let
-      fun record text = List.find
-        (fn DatatypeDeclaration {declaration,hol_types,smt_names} =>
-              declaration = text andalso
-              ListPair.allEq (fn (ty,name) =>
-                Redblackmap.peek (tydict,ty) = SOME name)
-                (hol_types,smt_names)
-          | _ => false) (!emitted_datatypes)
-    in List.mapPartial record declarations end
+    case !emitted_datatypes of
+      [] => []
+    | datatypes =>
+        let
+          fun index (record as DatatypeDeclaration {declaration, ...}, table) =
+                let val older =
+                  Option.getOpt (Redblackmap.peek (table, declaration), [])
+                in Redblackmap.insert (table, declaration, record :: older) end
+            | index (_, table) = table
+          (* Keep the newest matching record first for each declaration. *)
+          val indexed = List.foldr index
+            (Redblackmap.mkDict String.compare) datatypes
+          fun matches (DatatypeDeclaration {hol_types, smt_names, ...}) =
+                ListPair.allEq (fn (ty, name) =>
+                  Redblackmap.peek (tydict, ty) = SOME name)
+                  (hol_types, smt_names)
+            | matches _ = false
+          fun record text =
+            case Redblackmap.peek (indexed, text) of
+              NONE => NONE
+            | SOME candidates => List.find matches candidates
+        in List.mapPartial record declarations end
 
   fun build_translation_records regime regime_reason terms logic reason
       features tydict tmdict datatype_records =

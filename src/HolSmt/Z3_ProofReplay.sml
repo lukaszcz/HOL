@@ -9634,7 +9634,6 @@ local
   fun trans_star_exact_prove (thms, t) =
   let
     fun term_eq (t1, t2) = Term.compare (t1, t2) = EQUAL
-    fun term_member tm = List.exists (fn tm' => term_eq (tm, tm'))
     val (lhs, rhs) = boolSyntax.dest_eq t
       handle Feedback.HOL_ERR _ =>
         raise ERR "trans_star_exact_prove"
@@ -9649,30 +9648,36 @@ local
       in
         [(l, r, thm), (r, l, Thm.SYM thm)]
       end
-    val edges = List.concat (List.map edge_thms thms)
-    fun outgoing tm =
-      List.filter (fn (from, _, _) => term_eq (from, tm)) edges
-    fun search [] _ = NONE
-      | search ((node, path) :: rest) visited =
+    fun add_outgoing (from, next, thm) edges =
+      let val outgoing = Option.getOpt (Redblackmap.peek (edges, from), [])
+      in Redblackmap.insert (edges, from, (next, thm) :: outgoing) end
+    val edges = List.foldl
+      (fn (thm, edges) => List.foldl
+        (fn (edge, edges) => add_outgoing edge edges) edges (edge_thms thm))
+      (Redblackmap.mkDict Term.compare) thms
+    fun search [] [] _ = NONE
+      | search [] pending visited = search (List.rev pending) [] visited
+      | search ((node, path) :: rest) pending visited =
           if term_eq (node, rhs) then
             SOME (List.rev path)
           else
             let
-              fun add_edge ((_, next, thm), (queue, visited')) =
-                if term_member next visited' then
+              fun add_edge ((next, thm), (queue, visited')) =
+                if HOLset.member (visited', next) then
                   (queue, visited')
                 else
-                  ((next, thm :: path) :: queue, next :: visited')
+                  ((next, thm :: path) :: queue, HOLset.add (visited', next))
+              val outgoing = Option.getOpt (Redblackmap.peek (edges, node), [])
               val (new_queue, visited') =
-                List.foldl add_edge ([], visited) (outgoing node)
+                List.foldl add_edge (pending, visited) (List.rev outgoing)
             in
-              search (rest @ List.rev new_queue) visited'
+              search rest new_queue visited'
             end
     fun chain [] = Thm.ALPHA lhs rhs
       | chain (thm :: thms') =
           List.foldl (fn (next, acc) => Thm.TRANS acc next) thm thms'
   in
-    case search [(lhs, [])] [lhs] of
+    case search [(lhs, [])] [] (HOLset.singleton Term.compare lhs) of
       SOME path => chain path
     | NONE =>
         raise ERR "trans_star_exact_prove"

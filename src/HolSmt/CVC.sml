@@ -189,9 +189,23 @@ structure CVC = struct
 
   fun copy_file source target =
     SolverSpec.with_input_file source (fn input =>
-      let val text = TextIO.inputAll input
-      in SolverSpec.with_output_file target (fn output =>
-        TextIO.output (output, text)) end)
+      let
+        val prefix = TextIO.inputN (input, SolverSpec.copy_buffer_size)
+        fun write_prefix output = TextIO.output (output, prefix)
+      in
+        (* Finish reading before opening a destination that may alias the
+           source. Small artifacts fit in memory without a temporary file. *)
+        if TextIO.endOfStream input then
+          SolverSpec.with_output_file target write_prefix
+        else
+          let val spool = OS.FileSys.tmpName () in
+            SolverSpec.complete_owned (fn () => SolverSpec.remove_temp spool)
+              (fn () =>
+                (SolverSpec.with_output_file spool (fn output =>
+                   (write_prefix output; SolverSpec.copy_stream input output));
+                 SolverSpec.copy_file_bounded_memory spool target)) ()
+          end
+      end)
 
   (* Keeping these exact temporary artifacts is deliberately opt-in.  It lets
      the CPC corpus runner consume precisely the post-preprocessing SMT-LIB
@@ -403,10 +417,11 @@ structure CVC = struct
 
   val CVC_SMT_CPC_Prover =
     mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_command
-      (checked_post "CVC_SMT_CPC_Prover" cpc_command
-        (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
-          (version_string ()))
-        CPC_ProofReplay.check_proof_with_definitions)
+      (fn data => CPC_ProofParser.with_cpc_checked_post_scope
+        (checked_post "CVC_SMT_CPC_Prover" cpc_command
+          (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
+            (version_string ()))
+          CPC_ProofReplay.check_proof_with_definitions data))
 
   (* cvc5, SMT-LIB file format, checked proofs. *)
   val CVC_SMT_Prover = CVC_SMT_CPC_Prover

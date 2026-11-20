@@ -1171,10 +1171,11 @@ struct
                 (G.application graph scope
                   (G.constant graph scope equality_head, #node original),
                  result)
-              val facts = List.rev (!facts)
+              val facts = Vector.fromList (List.rev (!facts))
               val block = P.freeze graph
                 {scope = scope, roots = [equality],
-                 sources = List.map (fn (source, _) => #node source) facts,
+                 sources = Vector.foldr
+                   (fn ((source, _), rest) => #node source :: rest) [] facts,
                  template_limit = limit}
               val assembled = ref (Redblackmap.mkDict Int.compare)
               fun trans left right = P.compose block
@@ -1184,7 +1185,7 @@ struct
               fun reflexive node = P.checked block
                 (Thm.REFL (P.name block node))
               fun source_fact index =
-                let val node = #node (#1 (List.nth (facts, index))) in
+                let val node = #node (#1 (Vector.sub (facts, index))) in
                   P.compose block
                     (fn [constructor, premise] => Thm.EQ_MP
                         constructor premise
@@ -1232,7 +1233,7 @@ struct
               (* Restore the supplied semantic definition theorems after
                  the compact context has been discharged. Their original
                  hypotheses survive; constructor/context facts do not. *)
-              val restored = List.foldl
+              val restored = Vector.foldl
                 (fn ((source, theorem), result) =>
                   let
                     val witness = Thm.EQ_MP (#bridge source) theorem

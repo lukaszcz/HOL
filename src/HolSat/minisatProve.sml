@@ -82,17 +82,19 @@ fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
         let
           val _ = sat_trace (fn () =>
                     "solver start clauses=" ^ int_to_string nr)
-          val answer = profile_stage "solver"
-            (invokeSat solver T (SOME vc) (SOME nr) svm sva) in_name
+          val answer = profile_stage "solver" (fn name =>
+            if is_proved andalso not check_sat_model then
+              Option.map (fn () => NONE) (invokeSat_status solver sva name)
+            else Option.map SOME
+              (invokeSat solver T (SOME vc) (SOME nr) svm sva name)) in_name
           val _ = sat_trace (fn () => "solver done")
           val _ = sat_trace (fn () => case answer of
                                SOME _ => "solver result SAT"
                              | NONE => "solver result UNSAT")
         in case answer of
-              SOME model => (* returns |- model ==> ~t *)
-              let val _ = if is_proved andalso not check_sat_model then
-                            raise SAT_satisfiable () else ()
-                  val model' = transform_model cnfv lfn model
+              SOME NONE => raise SAT_satisfiable ()
+            | SOME (SOME model) => (* returns |- model ==> ~t *)
+              let val model' = transform_model cnfv lfn model
               in if is_proved then
                    profile_stage "model-check" (satCheck model') ntm
                  else mk_sat_oracle_thm([],mk_imp(list_mk_conj model',ntm)) end
@@ -138,7 +140,22 @@ fun finalise is_cnf th =
 (* if infile is SOME name, then assume name.cnf exists and is_cnf=true  *)
 (* if is_cnf, then assume tm \equiv ~s where s is in CNF                *)
 (* if CNF conversion found true or false, return theorem directly       *)
-exception initexp of thm;
+exception initexp of term * thm;
+
+(* Test the common binder-free case without building a variable set.  A
+   binder may hide bound occurrences, so use the kernel's free-variable
+   traversal for that subtree. *)
+fun has_free_variable tm =
+    let fun scan [] = false
+          | scan (t :: rest) =
+              if is_var t then true
+              else if is_comb t then scan (rator t :: rand t :: rest)
+              else if is_abs t then
+                not (HOLset.isEmpty (FVL [t] Term.empty_varset))
+                orelse scan rest
+              else scan rest
+    in scan [tm] end
+
 fun initialise check_sat_model infile is_cnf tm =
     let
         fun prepare tm =
@@ -148,31 +165,33 @@ fun initialise check_sat_model infile is_cnf tm =
                    Counting compound atoms must not change that contract.
                    Proof-only callers instead refute the prepared clauses. *)
                 val vc = if check_sat_model andalso is_cnf andalso
-                            null (free_vars tm) then 0 else vc
+                            not (has_free_variable tm) then 0 else vc
             in (cnfv,vc,lfn,clauses) end
+            handle to_cnf_unsat nottm_thm =>
+              (* nottm_thm : |- ~(~tm), peel double-negation to get |- tm *)
+              raise initexp (tm, CONV_RULE NOT_NOT_CONV nottm_thm)
         val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
             (if isSome infile
              then let val fname = valOf infile
                       val (tm,svm,sva) = genReadDimacs fname
+                      val ntm = mk_neg tm
                       val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" prepare (mk_neg tm)
-                  in (cnfv,vc,svm,sva,"",fname,mk_neg tm,lfn,clauseth) end
-             else let val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" prepare (mk_neg tm)
+                          profile_stage "cnf" prepare ntm
+                  in (cnfv,vc,svm,sva,"",fname,ntm,lfn,clauseth) end
+             else let val ntm = mk_neg tm
+                      val (cnfv,vc,lfn,clauseth) =
+                          profile_stage "cnf" prepare ntm
                       val (tmpname,cnfname,sva,svm) =
                           profile_stage "dimacs"
                             (generateDimacs (SOME vc) tm (SOME clauseth))
                             (SOME (Array.length clauseth))
-                  in (cnfv,vc,svm,sva,tmpname,cnfname,mk_neg tm,lfn,clauseth)
+                  in (cnfv,vc,svm,sva,tmpname,cnfname,ntm,lfn,clauseth)
                   end)
-            handle to_cnf_unsat nottm_thm =>
-              (* nottm_thm : |- ~(~tm), peel double-negation to get |- tm *)
-              raise initexp (CONV_RULE NOT_NOT_CONV nottm_thm)
     in if vc=0 then
          (* no vars: all 'presimp'-ified conjuncts were either T or F *)
            let val th0 = presimp_conv (dest_neg ntm)
            in if is_F (rhs (concl th0)) then raise SAT_cex (EQF_ELIM th0)
-              else raise initexp (EQT_ELIM th0)
+              else raise initexp (ntm, EQT_ELIM th0)
            end
        else
          (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth)
@@ -197,48 +216,51 @@ fun GEN_SAT_WITH check_sat_model conf =
                 | OS.SysErr _ => false)
         val sat_trace = sat_tracer ()
         val _ = sat_trace (fn () => "CNF start")
+        (* File input replaces the configured term. Check against the CNF
+           already read by initialise so replay and validation share it. *)
+        fun check_endpoint ntm th =
+          if check_sat_model then th
+          else
+            let
+              val expected = if is_cnf orelse isSome infile then ntm
+                             else dest_neg ntm
+              val (oracles, axioms) = Tag.dest_tag (tag th)
+              val _ = null (hyp th) andalso aconv (concl th) expected
+                andalso null axioms andalso
+                List.all (fn s => s = "DISK_THM") oracles
+                orelse raise mk_HOL_ERR "minisatProve" "GEN_SAT_PROVE_ONLY"
+                  "checked refutation endpoint/hypotheses/tags mismatch"
+            in th end
+    in
+      (let
         val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
             profile_stage "initialise"
               (initialise check_sat_model infile is_cnf) tm
-    in with_cleanup
-         (fn () => cleanup_solver_files cleanup_trace solver infile
-                                        tmpname in_name)
-         (fn () =>
-           let
-             val _ = sat_trace (fn () =>
-                       "CNF done variables=" ^ int_to_string vc ^
-                       " clauses=" ^ int_to_string (Array.length clauseth))
-             val th = if isSome proof
-                      then replay_proof sat_trace check_sat_model is_proved
-                             sva (Array.length clauseth) in_name solver vc
-                             clauseth lfn ntm proof
-                      else invoke_solver sat_trace solver lfn ntm clauseth
-                             cnfv vc is_proved check_sat_model svm sva
-                             in_name
-             val res = profile_stage "finalise" (finalise is_cnf) th
-             val _ = sat_trace (fn () => "finalise done")
-           in res end) ()
+        fun solve () =
+          let
+            val _ = sat_trace (fn () =>
+                      "CNF done variables=" ^ int_to_string vc ^
+                      " clauses=" ^ int_to_string (Array.length clauseth))
+            val th = if isSome proof
+                     then replay_proof sat_trace check_sat_model is_proved
+                            sva (Array.length clauseth) in_name solver vc
+                            clauseth lfn ntm proof
+                     else invoke_solver sat_trace solver lfn ntm clauseth
+                            cnfv vc is_proved check_sat_model svm sva in_name
+            val res = profile_stage "finalise" (finalise is_cnf) th
+            val _ = sat_trace (fn () => "finalise done")
+          in res end
+        val th = with_cleanup
+          (fn () => cleanup_solver_files cleanup_trace solver infile
+                                         tmpname in_name) solve ()
+      in check_endpoint ntm th
+      end)
+      handle initexp (ntm, th) => check_endpoint ntm th
     end
-    handle initexp th => th
 
 fun GEN_SAT conf = GEN_SAT_WITH true conf
 fun GEN_SAT_PROVE_ONLY conf =
-    let
-      val checked = set_flag_is_proved true conf
-      val th = GEN_SAT_WITH false checked
-      (* Unlike the legacy entry, proof-only clients accept only the requested
-         closed endpoint, never a partial refutation with residual literals.
-         File input replaces the configured term and denotes a CNF problem. *)
-      val expected = case get_infile checked of
-          NONE => if get_flag_is_cnf checked then mk_neg (get_term checked)
-                  else get_term checked
-        | SOME name => mk_neg (#1 (genReadDimacs name))
-      val (oracles, axioms) = Tag.dest_tag (tag th)
-      val _ = null (hyp th) andalso aconv (concl th) expected andalso
-        null axioms andalso List.all (fn s => s = "DISK_THM") oracles
-        orelse raise mk_HOL_ERR "minisatProve" "GEN_SAT_PROVE_ONLY"
-          "checked refutation endpoint/hypotheses/tags mismatch"
-    in th end
+    GEN_SAT_WITH false (set_flag_is_proved true conf)
     handle SAT_cex _ => raise SAT_satisfiable ()
 
 (* default config invokes pre-installed MiniSat 1.14p *)

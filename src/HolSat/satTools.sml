@@ -81,7 +81,7 @@ fun observed_internal_solver action =
     (count_call #internal_calls; action ())
 end
 
-fun invokeSat sat_solver tm vc nr svm sva infile =
+fun invokeSat_result model sat_solver infile =
  let
    val (name,executable,notime_run,only_true,failure_string,start_string,
         end_string) =
@@ -106,19 +106,30 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
   if result
    then NONE
    else
-    let val model1 = parseSat (start_string,end_string) sat_res_ss
-        val model2 = if only_true then
-                       model1 @
-                       (map (fn n => 0-n)
-                            (subtract
-                               (map snd (snd(dimacsTools.showSatVarMap svm)))
-                               model1))
-                     else model1
-    in let val model3 = SOME(map (dimacsTools.intToLiteral sva) model2)
-        in model3 end
-    end
+    SOME (model only_true (parseSat (start_string,end_string) sat_res_ss))
  end
 handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
+
+fun invokeSat sat_solver tm vc nr svm sva infile =
+  let
+    fun model only_true numbers =
+      let
+        val all = if only_true then
+                    numbers @ map (fn n => 0-n)
+                      (subtract
+                         (map snd (snd (dimacsTools.showSatVarMap svm)))
+                         numbers)
+                  else numbers
+      in map (dimacsTools.intToLiteral sva) all end
+  in invokeSat_result model sat_solver infile end
+
+(* Keep parsing and variable-number validation for proof-only SAT answers.
+   Missing variables for only_true solvers come from the valid DIMACS map;
+   completing that assignment is only needed when returning a model. *)
+fun invokeSat_status sat_solver sva infile =
+  invokeSat_result
+    (fn _ => List.app (fn n => ignore (dimacsTools.lookup_sat_num sva (abs n))))
+    sat_solver infile
 
 (*
 ** satCheck [l1,...,ln] t

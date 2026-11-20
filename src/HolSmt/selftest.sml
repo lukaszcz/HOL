@@ -45650,6 +45650,29 @@ in
        #retired (W.audit_policy w2) andalso
        not (#retired (W.audit_policy w))) end)
 
+  val _=test "Warm policy frontier rejects a retired binder body frame"
+    (fn()=>let
+        val (g,r,_,w)=setup RP.Uncapped RP.Uncapped
+        val binder_frame=G.new_scope g r []
+        val variable=Term.mk_var ("frontier_closure_revision",Type.bool)
+        val binder=G.variable g binder_frame G.Bound variable
+        val body_frame=G.new_scope g binder_frame [(variable,binder)]
+        val body=G.constant g r boolSyntax.T
+        val node=G.recorded_abstraction g r 128
+          {binder=binder,body=body,body_frame=body_frame}
+        val f=frontier w [node] [] []
+        val data=P.realization_frontier_data_with_policy_for w f
+        val _=require "frontier fixture lost its binder root"
+          (#roots data=[node])
+        val _=G.close_scope g body_frame
+        val _=G.validate_scope g r
+        val _=require "binder node did not stay in the live root"
+          (G.node_scope g node=r)
+        val denied=refuses (fn()=>ignore
+          (P.realization_frontier_data_with_policy_for w f))
+    in require "warm frontier accepted a retired binder body frame"
+      (denied andalso #retired (W.audit_policy w)) end)
+
   val _=test "Policy table naming snapshot rejects intervening graph mint"
     (fn()=>let val(g,r,s,w)=setup RP.Uncapped RP.Uncapped
         val f=frontier w [] [] []

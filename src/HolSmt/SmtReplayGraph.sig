@@ -206,6 +206,9 @@ sig
   (* Registry publication and retirement witness; DATA only. It gives no
      proof, syntax admission, lifetime grant or prior Work credit. *)
   val validation_revision : graph -> scope -> IntInf.int
+  (* Freshness data for callback-free checks on unmetered graph indices.
+     Metered indices return NONE without a scope lookup or debit. *)
+  val unpriced_validation_revision : graph -> scope -> IntInf.int option
   val scope_retirement_epoch : graph -> scope -> IntInf.int
   val close_scope : graph -> scope -> unit
   val scope_visible : graph -> scope -> scope -> bool

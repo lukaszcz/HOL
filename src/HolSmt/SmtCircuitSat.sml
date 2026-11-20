@@ -45,28 +45,6 @@ struct
   fun definition_cnf definition =
     definition_cnf_using SmtReplayRuleObservation.inst_ty_term definition
 
-  (* Balanced proof trees avoid a linear-depth conjunction spine during
-     congruence and subsequent instantiation of large definition graphs. *)
-  fun balanced_equivalences_using reflexive congruence [] =
-        reflexive boolSyntax.T
-    | balanced_equivalences_using reflexive congruence [theorem] = theorem
-    | balanced_equivalences_using reflexive congruence theorems =
-        let
-          val half = List.length theorems div 2
-          val conjunction = Term.rator (Term.rator
-            (boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)))
-          val left = balanced_equivalences_using reflexive congruence
-            (List.take (theorems, half))
-          val right = balanced_equivalences_using reflexive congruence
-            (List.drop (theorems, half))
-        in
-          congruence (congruence (reflexive conjunction, left), right)
-        end
-
-  fun balanced_equivalences proofs =
-    balanced_equivalences_using SmtReplayRuleObservation.REFL
-      SmtReplayRuleObservation.MK_COMB proofs
-
   local
     fun balanced_using empty combine [] = empty
       | balanced_using _ _ [leaf] = leaf
@@ -82,6 +60,23 @@ struct
                 in (combine (left, right), remaining) end
           in #1 (build (List.length leaves) leaves) end
   in
+    (* Balanced proof trees avoid a linear-depth conjunction spine during
+       congruence and subsequent instantiation of large definition graphs. *)
+    fun balanced_equivalences_using reflexive _ [] = reflexive boolSyntax.T
+      | balanced_equivalences_using _ _ [theorem] = theorem
+      | balanced_equivalences_using reflexive congruence
+          (theorems as first :: _) =
+          let
+            val conjunction = Term.rator (Term.rator
+              (boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)))
+            fun combine (left, right) =
+              congruence (congruence (reflexive conjunction, left), right)
+          in balanced_using first combine theorems end
+
+    fun balanced_equivalences proofs =
+      balanced_equivalences_using SmtReplayRuleObservation.REFL
+        SmtReplayRuleObservation.MK_COMB proofs
+
     val balanced_conjunction_term =
       balanced_using boolSyntax.T boolSyntax.mk_conj
     val balanced_conjunction =
@@ -108,45 +103,49 @@ struct
       (* DIMACS abstracts T and F as atoms.  Supply their checked values. *)
       val constants =
         [boolTheory.TRUTH, SmtReplayRuleObservation.D_EQF_ELIM (SmtReplayRuleObservation.REFL boolSyntax.F)]
-      val refutation_proof = List.foldr
-        (fn (clause, rest) => SmtReplayRuleObservation.CONJ clause rest)
-        (SmtReplayRuleObservation.ASSUME denied) (clauses @ constants)
-      val refutation = Thm.concl refutation_proof
-      fun original () = HolSatLib.GEN_SAT_PROVE_ONLY
-        (satConfig.set_flag_is_cnf true
-          (satConfig.set_term refutation satConfig.base_config))
-      fun native () =
+      val denied_proof = SmtReplayRuleObservation.ASSUME denied
+      val inventory = clauses @ (constants @ [denied_proof])
+      fun original () =
         let
-          val inventory = flatten [Thm.ASSUME refutation] []
-          val clauses = Array.fromList (List.map Thm.concl inventory)
+          val refutation_proof = List.foldr
+            (fn (clause, rest) => SmtReplayRuleObservation.CONJ clause rest)
+            denied_proof (clauses @ constants)
+          val refutation = Thm.concl refutation_proof
+          val no_refutation = HolSatLib.GEN_SAT_PROVE_ONLY
+            (satConfig.set_flag_is_cnf true
+              (satConfig.set_term refutation satConfig.base_config))
+          val _ = List.null (Thm.hyp no_refutation) andalso
+            Term.aconv (Thm.concl no_refutation)
+              (boolSyntax.mk_neg refutation) orelse
+            raise ERR "prove_cnf" "checked CNF refutation endpoint mismatch"
+          val _ = Library.check_oracle_tags
+            "SmtCircuitSat" "CNF refutation" no_refutation
         in
-          case SmtCnfProve.prove clauses of
-            SmtCnfProve.Unknown => original ()
-          | SmtCnfProve.Model _ => raise HolSatLib.SAT_satisfiable ()
-          | SmtCnfProve.Refuted proof =>
-              let
-                val used = Thm.hypset proof
-                val needed = List.filter
-                  (fn law => HOLset.member (used, Thm.concl law)) inventory
-                (* Discharge the compact clauses before inserting their
-                   existing proofs under the single refutation context. *)
-                val closed = List.foldl
-                  (fn (law, result) => Thm.DISCH (Thm.concl law) result)
-                  proof needed
-                val expanded = List.foldl
-                  (fn (law, result) => Thm.MP result law)
-                  closed (List.rev needed)
-              in Thm.NOT_INTRO (Thm.DISCH refutation expanded) end
+          SmtReplayRuleObservation.MP
+            (SmtReplayRuleObservation.NOT_ELIM no_refutation) refutation_proof
         end
-      val no_refutation = native ()
-      val _ = List.null (Thm.hyp no_refutation) andalso
-        Term.aconv (Thm.concl no_refutation)
-          (boolSyntax.mk_neg refutation) orelse
-        raise ERR "prove_cnf" "checked CNF refutation endpoint mismatch"
-      val _ = Library.check_oracle_tags
-        "SmtCircuitSat" "CNF refutation" no_refutation
-      val contradiction = SmtReplayRuleObservation.MP
-        (SmtReplayRuleObservation.NOT_ELIM no_refutation) refutation_proof
+      val contradiction =
+        case SmtCnfProve.prove
+            (Array.fromList (List.map Thm.concl inventory)) of
+          SmtCnfProve.Unknown => original ()
+        | SmtCnfProve.Model _ => raise HolSatLib.SAT_satisfiable ()
+        | SmtCnfProve.Refuted proof =>
+            let
+              val used = Thm.hypset proof
+              val needed = List.filter
+                (fn law => HOLset.member (used, Thm.concl law)) inventory
+              (* Discharge every clause before introducing cnf or denied:
+                 either hypothesis may also be a clause in the inventory. *)
+              val closed = List.foldl
+                (fn (law, result) => Thm.DISCH (Thm.concl law) result)
+                proof needed
+              val _ = List.null (Thm.hyp closed) andalso
+                Term.aconv (Thm.concl proof) boolSyntax.F orelse
+                raise ERR "prove_cnf" "checked CNF refutation endpoint mismatch"
+            in
+              List.foldl (fn (law, result) => Thm.MP result law)
+                closed (List.rev needed)
+            end
       val theorem = SmtReplayRuleObservation.DISCH cnf (SmtReplayRuleObservation.CCONTR output contradiction)
       val _ = List.null (Thm.hyp theorem) andalso
         Term.aconv (Thm.concl theorem) (boolSyntax.mk_imp (cnf, output))

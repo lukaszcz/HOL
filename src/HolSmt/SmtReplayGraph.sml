@@ -507,6 +507,10 @@ struct
     #validation_changes g := !(#validation_changes g) + 1
   fun validation_revision (g : graph) caller =
     (check_scope g caller;!(#validation_changes g))
+  fun unpriced_validation_revision (g : graph) caller =
+    case #indices g of
+      LegacyIndices _ => SOME (validation_revision g caller)
+    | PaidIndices _ => NONE
   fun scope_retirement_epoch (g : graph) caller =
     (check_scope g caller;!(#scope_retirements g))
   fun close_scope (g : graph) (Scope {owner,id}) =

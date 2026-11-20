@@ -19,20 +19,32 @@ local
   val cpc_term_intern = ref
     (Array.array (term_intern_bucket_count, [] : Term.term list))
   val cpc_shell_parents = ref ([] : Term.term list Array.array list)
+  datatype intern_order = Empty | Latest of Term.term | HasShallowEntries
+  val cpc_intern_order = ref Empty
 
-  (* Replay alternatives can share the caller's parsed shells without
-     publishing their own temporary terms into that longer-lived table. *)
-  fun with_cpc_shell_scope action input =
+  fun reset_term_intern () =
+    (cpc_intern_order := Empty;
+     cpc_term_intern := Array.array (term_intern_bucket_count, []))
+
+  fun with_cpc_intern_state action input =
     let
       val parent = !cpc_term_intern
       val parents = !cpc_shell_parents
+      val parent_order = !cpc_intern_order
       fun restore () =
-        (cpc_term_intern := parent; cpc_shell_parents := parents)
-      fun run () =
-        (cpc_term_intern := Array.array (term_intern_bucket_count, []);
-         cpc_shell_parents := parent :: parents;
-         action input)
+        (cpc_term_intern := parent;
+         cpc_shell_parents := parents;
+         cpc_intern_order := parent_order)
+      fun run () = action (parent, parents) input
     in Portable.finally restore run () end
+
+  (* Replay alternatives can share the caller's parsed shells without
+     publishing their own temporary terms into that longer-lived table. *)
+  fun with_cpc_shell_scope action =
+    with_cpc_intern_state (fn (parent, parents) => fn input =>
+      (reset_term_intern ();
+       cpc_shell_parents := parent :: parents;
+       action input))
 
   fun term_intern_hash term =
     let
@@ -64,77 +76,160 @@ local
             else head_hash tm
     in bounded 6 term end
 
+  (* Applications are interned bottom-up by their canonical children.
+     Abstractions remain opaque: CPC alpha_equiv mappings name their
+     source binders, so alpha-equivalent abstractions are not
+     interchangeable parser occurrences.  Do not open them merely to
+     recover sharing, or collect them in one quadratic-search bucket. *)
+  fun same_intern_candidate candidate saved =
+    Portable.pointer_eq (saved, candidate) orelse
+    if Term.is_comb saved andalso Term.is_comb candidate then
+      let
+        val (saved_operator, saved_operand) = Term.dest_comb saved
+        val (operator, operand) = Term.dest_comb candidate
+      in
+        Portable.pointer_eq (saved_operator, operator) andalso
+        Portable.pointer_eq (saved_operand, operand)
+      end
+    else if Term.is_var saved andalso Term.is_var candidate then
+      let
+        val (saved_name, saved_type) = Term.dest_var saved
+        val (name, ty) = Term.dest_var candidate
+      in
+        saved_name = name andalso Type.compare (saved_type, ty) = EQUAL
+      end
+    else if Term.is_const saved andalso Term.is_const candidate then
+      Term.same_const saved candidate andalso
+      Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
+    else false
+
+  val empty_rebuilt_terms =
+    Redblackmap.mkDict Int.compare :
+      (int, (Term.term * Term.term) list) Redblackmap.dict
+
   fun intern_cpc_term term =
     let
-      (* Applications are interned bottom-up by their canonical children.
-         Abstractions remain opaque: CPC alpha_equiv mappings name their
-         source binders, so alpha-equivalent abstractions are not
-         interchangeable parser occurrences.  Do not open them merely to
-         recover sharing, or collect them in one quadratic-search bucket. *)
-      fun same_candidate saved candidate =
-        Portable.pointer_eq (saved, candidate) orelse
-        if Term.is_comb saved andalso Term.is_comb candidate then
-          let
-            val (saved_operator, saved_operand) = Term.dest_comb saved
-            val (operator, operand) = Term.dest_comb candidate
-          in
-            Portable.pointer_eq (saved_operator, operator) andalso
-            Portable.pointer_eq (saved_operand, operand)
-          end
-        else if Term.is_var saved andalso Term.is_var candidate then
-          let
-            val (saved_name, saved_type) = Term.dest_var saved
-            val (name, ty) = Term.dest_var candidate
-          in
-            saved_name = name andalso Type.compare (saved_type, ty) = EQUAL
-          end
-        else if Term.is_const saved andalso Term.is_const candidate then
-          Term.same_const saved candidate andalso
-          Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
-        else false
-      fun lookup bucket candidate = List.find
-        (fn saved => same_candidate saved candidate)
+      fun lookup bucket candidate = List.find (same_intern_candidate candidate)
         (Array.sub (!cpc_term_intern, bucket))
       fun insert bucket candidate =
         let
           val entries = Array.sub (!cpc_term_intern, bucket)
+          val _ =
+            case !cpc_intern_order of
+              HasShallowEntries => ()
+            (* Publish order first. An interrupted insert can leave an
+               unpublished tag, which also has no parent in this table. *)
+            | _ => cpc_intern_order := Latest candidate
         in
           Array.update (!cpc_term_intern, bucket, candidate :: entries);
           candidate
         end
-      fun intern candidate =
+      (* Bottom-up insertion puts each parent after its children. A new
+         application over the most recently inserted child cannot already be
+         in this table. Shell-only inserts can violate that order. *)
+      fun uses_latest (operator, operand) =
+        case !cpc_intern_order of
+          Latest child => Portable.pointer_eq (operator, child) orelse
+            Portable.pointer_eq (operand, child)
+        | _ => false
+      fun lookup_pointer bucket candidate =
+        List.find (fn saved => Portable.pointer_eq (saved, candidate))
+          (Array.sub (!cpc_term_intern, bucket))
+      (* A raw shared child can be rebuilt to a different representative.
+         Keep those results until the current traversal finishes. *)
+      val rebuilt_terms = ref empty_rebuilt_terms
+      fun lookup_rebuilt bucket candidate =
+        case Redblackmap.peek (!rebuilt_terms, bucket) of
+          NONE => NONE
+        | SOME entries =>
+            Option.map #2 (List.find (fn (source, _) =>
+              Portable.pointer_eq (source, candidate)) entries)
+      fun remember bucket candidate result =
+        rebuilt_terms := Redblackmap.update (!rebuilt_terms, bucket,
+          fn entries => (candidate, result) :: Option.getOpt (entries, []))
+      (* Check only one possible representative and follow at most one
+         unresolved child per shell. A clean table guarantees that the
+         saved shell uses its canonical children all the way down. *)
+      fun match_recent bucket candidate =
+        case !cpc_intern_order of
+          Latest _ =>
+            let
+              fun same_child left right =
+                Portable.pointer_eq (left, right) orelse
+                ((Term.is_var left orelse Term.is_const left) andalso
+                 same_intern_candidate right left)
+              fun follow fuel (source, saved) =
+                same_child source saved orelse
+                (fuel > 0 andalso Term.is_comb source andalso
+                 Term.is_comb saved andalso
+                 let
+                   val (fl, xl) = Term.dest_comb source
+                   val (fr, xr) = Term.dest_comb saved
+                 in
+                   if same_child fl fr then follow (fuel - 1) (xl, xr)
+                   else same_child xl xr andalso follow (fuel - 1) (fl, fr)
+                 end)
+              val entries = Array.sub (!cpc_term_intern, bucket)
+            in
+              case entries of
+                saved :: _ =>
+                  if follow (List.length entries + 8) (candidate, saved) then
+                    SOME saved else NONE
+              | [] => NONE
+            end
+        | _ => NONE
+      fun intern outer candidate =
         if Term.is_abs candidate then candidate
         else let val bucket = term_intern_hash candidate in
-          case List.find (fn saved => Portable.pointer_eq (saved, candidate))
-              (Array.sub (!cpc_term_intern, bucket)) of
-            SOME saved => saved
-          | NONE =>
-            if Term.is_comb candidate then
-              let
-                val (operator, operand) = Term.dest_comb candidate
-                val operator' = intern operator
-                val operand' = intern operand
-                val rebuilt =
-                  if Portable.pointer_eq (operator, operator') andalso
-                     Portable.pointer_eq (operand, operand') then candidate
-                  else Term.mk_comb (operator', operand')
-                (* Compute a candidate's hash once for both lookup and
-                   insertion; child canonicalization needs a new hash only
-                   when it actually rebuilt the candidate. *)
-                val rebuilt_bucket =
-                  if Portable.pointer_eq (candidate, rebuilt) then bucket
-                  else term_intern_hash rebuilt
-              in
-                case lookup rebuilt_bucket rebuilt of
-                  SOME saved => saved
-                | NONE => insert rebuilt_bucket rebuilt
-              end
-            else
-              case lookup bucket candidate of
+          if Term.is_comb candidate then
+            let
+              val children as (operator, operand) = Term.dest_comb candidate
+              val existing =
+                case lookup_rebuilt bucket candidate of
+                  SOME saved => SOME saved
+                | NONE =>
+                    if uses_latest children then NONE
+                    else
+                      case lookup_pointer bucket candidate of
+                        NONE => if outer then match_recent bucket candidate
+                                else NONE
+                      | some => some
+            in
+              case existing of
                 SOME saved => saved
-              | NONE => insert bucket candidate
+              | NONE =>
+                let
+                  val operator' = intern false operator
+                  val operand' = intern false operand
+                  val rebuilt =
+                    if Portable.pointer_eq (operator, operator') andalso
+                       Portable.pointer_eq (operand, operand') then candidate
+                    else Term.mk_comb (operator', operand')
+                  (* Child canonicalization needs a new hash only when it
+                     actually rebuilt the candidate. *)
+                  val rebuilt_bucket =
+                    if Portable.pointer_eq (candidate, rebuilt) then bucket
+                    else term_intern_hash rebuilt
+                  val result =
+                    if uses_latest (operator', operand') then
+                      insert rebuilt_bucket rebuilt
+                    else
+                      case lookup rebuilt_bucket rebuilt of
+                        SOME saved => saved
+                      | NONE => insert rebuilt_bucket rebuilt
+                  val _ = if outer orelse
+                    Portable.pointer_eq (candidate, result) then ()
+                    else remember bucket candidate result
+                in
+                  result
+                end
+            end
+          else
+            case lookup bucket candidate of
+              SOME saved => saved
+            | NONE => insert bucket candidate
         end
-    in intern term end
+    in intern true term end
 
   (* Intern only this shell, never canonicalizing or rebuilding children.
      The caller must admit leaf types before lookup: exact type comparison
@@ -144,27 +239,7 @@ local
     if Term.is_abs candidate then candidate
     else
       let
-        fun same_candidate saved =
-          Portable.pointer_eq (saved, candidate) orelse
-          if Term.is_comb saved andalso Term.is_comb candidate then
-            let
-              val (saved_operator, saved_operand) = Term.dest_comb saved
-              val (operator, operand) = Term.dest_comb candidate
-            in
-              Portable.pointer_eq (saved_operator, operator) andalso
-              Portable.pointer_eq (saved_operand, operand)
-            end
-          else if Term.is_var saved andalso Term.is_var candidate then
-            let
-              val (saved_name, saved_type) = Term.dest_var saved
-              val (name, ty) = Term.dest_var candidate
-            in
-              saved_name = name andalso Type.compare (saved_type, ty) = EQUAL
-            end
-          else if Term.is_const saved andalso Term.is_const candidate then
-            Term.same_const saved candidate andalso
-            Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
-          else false
+        val same_candidate = same_intern_candidate candidate
         val bucket = term_intern_hash candidate
         val entries = Array.sub (!cpc_term_intern, bucket)
         fun parent [] = NONE
@@ -179,7 +254,8 @@ local
             (case parent (!cpc_shell_parents) of
                SOME saved => saved
              | NONE =>
-                 (Array.update (!cpc_term_intern, bucket,
+                 (cpc_intern_order := HasShallowEntries;
+                  Array.update (!cpc_term_intern, bucket,
                     candidate :: entries);
                   candidate))
       end
@@ -1408,14 +1484,6 @@ local
       SOME {Thy, Name, ...} => Thy = thy andalso Name = name
     | NONE => false
 
-  fun cpc_strip_regex_concat regex =
-    case boolSyntax.strip_comb regex of
-      (head, [left, right]) =>
-        if cpc_same_const "smtstring" "reglan_concat" head then
-          cpc_strip_regex_concat left @ cpc_strip_regex_concat right
-        else [regex]
-    | _ => [regex]
-
   fun cpc_regex_concat_pair regex =
     case boolSyntax.strip_comb regex of
       (head, [left, right]) =>
@@ -1423,6 +1491,18 @@ local
           SOME (left, right)
         else NONE
     | _ => NONE
+
+  fun cpc_strip_regex_concat regex =
+    let
+      fun collect [] components = List.rev components
+        | collect (term :: pending) components =
+            case cpc_regex_concat_pair term of
+              SOME (left, right) =>
+                collect (left :: right :: pending) components
+            | NONE => collect pending (term :: components)
+    in
+      collect [regex] []
+    end
 
   fun cpc_re_unfold_pos_direct_star regex =
     let
@@ -4062,24 +4142,33 @@ in
      "declare-datatypes", "define", "assume", "assume-push", "step",
      "step-pop"]
 
-  fun parse_stream_with_version (dicts : dicts) version instream : proof =
+local
+  (* These lookup tables are only needed while elaborating a proof. The
+     command spine already retains its terms and occurrence provenance. *)
+  fun clear_parse_tables () =
+    (cpc_list_definitions := Redblackmap.mkDict String.compare;
+     cpc_list_names := [];
+     cpc_fp_private_parse_avoid := [];
+     cpc_fp_private_allocated := Term.empty_varset;
+     cpc_source_variables := Redblackmap.mkDict Term.var_compare;
+     cpc_source_images := Term.empty_varset;
+     cpc_reserved_source_scope := [];
+     cpc_term_provenances := Redblackmap.mkDict String.compare;
+     cpc_source_sort_symbols := HOLset.empty String.compare;
+     cpc_source_term_symbols := HOLset.empty String.compare;
+     cpc_proof_sort_symbols := HOLset.empty String.compare;
+     cpc_proof_term_symbols := HOLset.empty String.compare)
+
+  fun parse_stream_impl (dicts : dicts) version instream : proof =
     let
       (* Resolve once, here: everything downstream -- rule lookup, gating and
          diagnostics -- then works with a tested version. *)
       val version = resolve_version version
-      val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
-      val _ = cpc_list_names := []
       val _ = cpc_fp_private_bindings_ref := []
       val _ = cpc_fp_private_unbound_markers_ref := []
       val _ = cpc_fp_private_identity_index := empty_private_identity_index ()
-      val _ = cpc_fp_private_parse_avoid := []
-      val _ = cpc_fp_private_allocated := Term.empty_varset
-      val _ = cpc_source_variables := Redblackmap.mkDict Term.var_compare
-      val _ = cpc_source_images := Term.empty_varset
-      val _ = cpc_reserved_source_scope := []
-      val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
-      val _ = cpc_term_intern :=
-        Array.array (term_intern_bucket_count, [])
+      val _ = reset_term_intern ()
+      (* The standalone skolem test helper also looks up this metadata. *)
       val _ = cpc_forall_blocks := Redblackmap.mkDict Term.compare
       fun keys dictionary = Redblackmap.foldl
         (fn (key, _, set) => HOLset.add (set, key))
@@ -4098,8 +4187,6 @@ in
         (keys dictionary)
       val _ = cpc_source_sort_symbols := source_keys (#1 dicts)
       val _ = cpc_source_term_symbols := source_keys (#2 dicts)
-      val _ = cpc_proof_sort_symbols := HOLset.empty String.compare
-      val _ = cpc_proof_term_symbols := HOLset.empty String.compare
       val known_ids = ref (HOLset.empty String.compare)
       val scope_snapshots = ref ([] : string HOLset.set list)
       val seen_steps = ref
@@ -4146,6 +4233,29 @@ in
     in
       proof
     end
+
+in
+  (* The checked postprocessor either handles a status without interning,
+     or starts a fresh table in parse_stream_with_version before replay. *)
+  fun with_cpc_checked_post_scope action input =
+    let
+      val forall_blocks = !cpc_forall_blocks
+      val bindings = !cpc_fp_private_bindings_ref
+      val unbound = !cpc_fp_private_unbound_markers_ref
+      val identities = !cpc_fp_private_identity_index
+      fun restore () =
+        (cpc_forall_blocks := forall_blocks;
+         cpc_fp_private_bindings_ref := bindings;
+         cpc_fp_private_unbound_markers_ref := unbound;
+         cpc_fp_private_identity_index := identities)
+      fun run _ () = (cpc_shell_parents := []; action input)
+    in Portable.finally restore (with_cpc_intern_state run) () end
+
+  fun parse_stream_with_version dicts version instream =
+    (clear_parse_tables ();
+     Portable.finally clear_parse_tables (parse_stream_impl dicts version)
+       instream)
+end
 
   fun parse_stream dicts instream =
     parse_stream_with_version dicts unknown_cvc_version instream

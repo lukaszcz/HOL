@@ -70,15 +70,7 @@ structure Z3 = struct
     Position.toInt (OS.FileSys.fileSize source)
     handle Overflow => max_capture_file_bytes + 1
 
-  fun copy_file_bounded_memory source target =
-    SolverSpec.with_input_file source (fn input =>
-      SolverSpec.with_output_file target (fn output =>
-        let
-          fun copy () =
-            case TextIO.inputN (input, 65536) of
-              "" => ()
-            | chunk => (TextIO.output (output, chunk); copy ())
-        in copy () end))
+  val copy_file_bounded_memory = SolverSpec.copy_file_bounded_memory
 
   (* Exact solver artifacts are retained only when this E0 hook is enabled.
      Streaming the copy avoids allocating a proof-sized ML string.  A single
