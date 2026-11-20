@@ -126,6 +126,79 @@ struct
 
   val new_term_check = new_term_check_using false
 
+  (* For a check kept over a whole replay.  Every subterm of an admitted
+     term is admitted, with its own raw size, so admitted applications and
+     abstractions are recorded by pointer with their sizes, and a later
+     term built from
+     recorded parts is walked only through its new nodes.  Sizes and Type
+     checks are new_term_check's; a term that fails here is decided by
+     new_term_check, so failures keep its diagnostics.  A bucket keeps its
+     eight latest entries: equal but distinct terms share a bucket. *)
+  fun new_shared_term_check limit =
+    let
+      val full = new_term_check {limit=limit,observe=fn () => ()}
+      val check_type = new_type_check (fn () => ())
+      val buckets = 16381
+      val table = ref (NONE : (Term.term * int) list Array.array option)
+      exception Exceeds
+      fun recorded term = case !table of
+          NONE => NONE
+        | SOME array => Option.map #2 (List.find
+            (fn (old,_) => Portable.pointer_eq (old,term))
+            (Array.sub (array,SmtResource.pointer_bucket buckets term)))
+      fun record term size =
+        let
+          val array = case !table of
+              SOME array => array
+            | NONE =>
+                let val array = Array.array (buckets,[])
+                in table := SOME array;array end
+          val index = SmtResource.pointer_bucket buckets term
+          val bucket = Array.sub (array,index)
+        in
+          Array.update (array,index,
+            (term,size) :: List.take (bucket,Int.min (7,length bucket)))
+        end
+      (* The raw size of [term] if it is at most [budget].  Under a binder
+         already bounded ([bounded]), every term is within the budget. *)
+      fun size bounded budget term =
+        if budget < 1 then raise Exceeds
+        else case recorded term of
+          SOME n => if n <= budget then n else raise Exceeds
+        | NONE =>
+            (check_type (Term.type_of term);
+             if Term.is_comb term then
+               let
+                 val (operator,operand) = Term.dest_comb term
+                 val m = size bounded (budget - 1) operator
+                 val n = 1 + m + size bounded (budget - 1 - m) operand
+               in record term n;n end
+             else if Term.is_abs term then
+               let
+                 fun open_body () =
+                   let val (variable,body) =
+                         SmtReplayImport.dest_abs_preserving_names term
+                   in
+                     check_type (Term.type_of variable);
+                     1 + size true (budget - 1) body
+                   end
+                 (* Opening walks the whole body: bound the outermost binder
+                    first, once, so nested binders aren't walked again. *)
+                 val n =
+                   if bounded then open_body ()
+                   else case
+                       SmtReplayImport.bounded_raw_size_with_type_check_observed
+                         {check_type=check_type,observe=fn () => (),
+                          limit=budget} term of
+                     NONE => raise Exceeds
+                   | SOME _ => open_body ()
+               in record term n;n end
+             else 1)
+    in
+      fn term => ignore (size false limit term)
+        handle Exceeds => full term | Feedback.HOL_ERR _ => full term
+    end
+
   fun prove_admitted_using bounded_variables graph scope
       {inputs,template_limit,observe,procedure} =
     let

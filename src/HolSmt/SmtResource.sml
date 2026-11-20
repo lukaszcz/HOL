@@ -406,9 +406,10 @@ struct
   (* Preserve the binder-inclusive unfolded-tree metric, but compute each
      shared compound node's size once.  Summaries saturate at limit + 1;
      neither sharing nor memoization changes admission.  Keep the raw-size
-     preflight before opening a binder, since dest_abs may normalize its
-     entire body.  An ordinary tree visitor advances at every lookup and
-     pointer comparison, so collision-heavy or unshared inputs can finish
+     preflight before opening an outermost binder, since dest_abs may
+     normalize its entire body; a binder inside it is smaller.  An
+     ordinary tree visitor advances at every lookup and pointer
+     comparison, so collision-heavy or unshared inputs can finish
      without waiting for the memoized traversal.  Cache hints only index
      exact physical-identity checks. *)
   fun term_nodes_up_to limit root =
@@ -417,32 +418,38 @@ struct
     let
       exception Exceeded
       exception TreeComplete of int
-      datatype action = Visit of Term.term
+      datatype action = Visit of Term.term * bool
         | Finish of Term.term * int * Term.term * Term.term
       val maximum_buckets = 4093
       val buckets = ref (Array.array
         (32, [] : (Term.term * int * int) list))
       val entries = ref 0
       val observed = ref 0
-      val tree_pending = ref [root]
+      (* A pending term is paired with whether it lies under a binder whose
+         raw size was checked.  A binder there needs no check of its own:
+         its body is already within the budget, and if it is over what is
+         left, the walk exceeds the limit inside it all the same. *)
+      val tree_pending = ref [(root, false)]
       val tree_count = ref 0
       fun tree_step () =
         case !tree_pending of
           [] => raise TreeComplete (!tree_count)
-        | term :: rest =>
+        | (term, fits) :: rest =>
             let
               val count = !tree_count + 1
               val _ = if count <= limit then () else raise Exceeded
               val children =
                 if Term.is_comb term then
                   let val (left, right) = Term.dest_comb term
-                  in [left, right] end
+                  in [(left, fits), (right, fits)] end
                 else if Term.is_abs term then
-                  (case SmtReplayImport.bounded_raw_size (limit - count + 1) term of
-                     NONE => raise Exceeded
-                   | SOME _ =>
-                       let val (binder, body) = Term.dest_abs term
-                       in [binder, body] end)
+                  if fits orelse Option.isSome
+                       (SmtReplayImport.bounded_raw_size
+                          (limit - count + 1) term)
+                  then
+                    let val (binder, body) = Term.dest_abs term
+                    in [(binder, true), (body, true)] end
+                  else raise Exceeded
                 else []
             in tree_pending := children @ rest; tree_count := count end
       val hint = pointer_bucket maximum_buckets
@@ -483,7 +490,7 @@ struct
           SOME size => size
         | NONE => raise ERR "term_nodes_up_to" "incomplete size traversal"
       fun loop [] = completed root
-        | loop (Visit term :: pending) =
+        | loop (Visit (term, under) :: pending) =
             if not (compound term) then loop pending
             else
               let val code = hint term in
@@ -494,12 +501,15 @@ struct
                       val _ = observed := !observed + 1
                       val _ = if !observed <= limit then ()
                         else raise Exceeded
+                      val opens = Term.is_abs term
                       val (left, right) =
-                        if Term.is_comb term then Term.dest_comb term
-                        else case SmtReplayImport.bounded_raw_size limit term of
-                          NONE => raise Exceeded
-                        | SOME _ => Term.dest_abs term
-                    in loop (Visit left :: Visit right ::
+                        if not opens then Term.dest_comb term
+                        else if under orelse Option.isSome
+                          (SmtReplayImport.bounded_raw_size limit term)
+                        then Term.dest_abs term
+                        else raise Exceeded
+                      val under = under orelse opens
+                    in loop (Visit (left, under) :: Visit (right, under) ::
                       Finish (term, code, left, right) :: pending) end
               end
         | loop (Finish (term, code, left, right) :: pending) =
@@ -512,7 +522,7 @@ struct
               val _ = save term code (1 + left_size + right_size)
             in loop pending end
     in
-      loop [Visit root] handle Exceeded => limit + 1
+      loop [Visit (root, false)] handle Exceeded => limit + 1
         | TreeComplete size => size
     end
 
@@ -684,6 +694,13 @@ struct
            let val (_, body) = Term.dest_abs term in [body] end)
     else []
 
+  (* term_children for a walk that is [under] a binder term_children opened.
+     A binder there needs no check of its own: its raw size is less than
+     the outer binder's. *)
+  fun term_children_under under term =
+    if under andalso Term.is_abs term then [#2 (Term.dest_abs term)]
+    else term_children term
+
   type bounded_structure = {
     dag_nodes : int,
     edges : int,
@@ -695,7 +712,7 @@ struct
   (* A compact diagnostic scan with a hard distinct-node bound.  Edges count
      children of each admitted DAG node once; identifier sizes come only from
      variable and constant metadata and never render a term. *)
-  fun bounded_structure_with_children children_of inspect limit root
+  fun bounded_structure_with_children_at children_at inspect limit root
       : bounded_structure =
     let
       val bucket_count = 4093
@@ -744,7 +761,7 @@ struct
               let
                 val _ = inspect term
                 val nodes = nodes + 1
-                val children = children_of term
+                val children = children_at binder_depth term
                 val edges = saturated_add edges (List.length children)
                 val depth = Int.max (depth, binder_depth)
                 val identifier = Int.max
@@ -766,8 +783,12 @@ struct
       loop ([(root, 0)], 0, 0, 0, 0)
   end
 
+  fun bounded_structure_with_children children_of =
+    bounded_structure_with_children_at (fn _ => children_of)
+
   val bounded_structure_with_inspector =
-    bounded_structure_with_children term_children
+    bounded_structure_with_children_at
+      (fn depth => term_children_under (depth > 0))
 
   fun bounded_structure limit root =
     bounded_structure_with_inspector (fn _ => ()) limit root
@@ -945,10 +966,11 @@ struct
       val maximum = max_bv_replay_term_nodes
       fun inspect node =
         if not (prune node) andalso predicate node then raise Found else ()
-      fun children node = if prune node then [] else term_children node
+      fun children depth node =
+        if prune node then [] else term_children_under (depth > 0) node
     in
       (let
-         val summary = bounded_structure_with_children
+         val summary = bounded_structure_with_children_at
            children inspect maximum root
          val _ = if #complete summary then () else
            check_dag_size_with_limit "Skeleton" "theory-classification"

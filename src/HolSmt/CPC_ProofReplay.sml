@@ -3019,6 +3019,36 @@ local
              oriented premise theorems around it.  Whole-equality conversion
              can collapse a non-reflexive CPC bridge to T and lose which
              outer endpoint this TRANS route selected. *)
+          val conversions = Vector.fromList
+            [SmtReplayCanon.cpc_canon_conv,
+             cpc_integer_spelling_conv,
+             strong_canon,
+             SmtReplayCanon.reorient_equality_conv]
+          (* Each orientation pairs two of the four premise endpoints, so
+             the same endpoint is normalized for several orientations.
+             Keep each endpoint's chain of normal forms, one theorem per
+             conversion applied, and extend it only when first needed. *)
+          val chains = Array.array (4, [] : Thm.thm list)
+          fun normalized index term rung =
+            let val chain = Array.sub (chains, index) in
+              if rung < List.length chain then
+                List.nth (chain, List.length chain - 1 - rung)
+              else
+                let
+                  val previous = if rung = 0 then NONE
+                    else SOME (normalized index term (rung - 1))
+                  val theorem = case previous of
+                      NONE => Thm.REFL term
+                    | SOME theorem =>
+                        Thm.TRANS theorem (Conv.QCONV
+                          (Vector.sub (conversions, rung - 1))
+                          (boolSyntax.rhs (Thm.concl theorem)))
+                in
+                  Array.update (chains, index,
+                    theorem :: Array.sub (chains, index));
+                  theorem
+                end
+            end
           fun canonical_bridge accumulated_side next_side =
             let
               val accumulated' = if accumulated_side = 1 then accumulated
@@ -3027,13 +3057,6 @@ local
               val (_, middle_left) = boolSyntax.dest_eq
                 (Thm.concl accumulated')
               val (middle_right, _) = boolSyntax.dest_eq (Thm.concl next')
-              fun extend conv theorem =
-                let
-                  val current = boolSyntax.rhs (Thm.concl theorem)
-                  val refinement = Conv.QCONV conv current
-                in
-                  Thm.TRANS theorem refinement
-                end
               fun finish left_norm right_norm =
                 let
                   val bridge = Thm.TRANS left_norm (Thm.SYM right_norm)
@@ -3046,32 +3069,33 @@ local
                 in
                   (theorem, provenance)
                 end
-              fun refine [] _ = raise ERR "trans"
-                    "canonical middle endpoints have distinct normal forms"
-                | refine (conv :: rest) (left_norm, right_norm) =
-                    let
-                      val left_norm' = extend conv left_norm
-                      val right_norm' = extend conv right_norm
-                      val normalized_left = boolSyntax.rhs
-                        (Thm.concl left_norm')
-                      val normalized_right = boolSyntax.rhs
-                        (Thm.concl right_norm')
-                    in
-                      if Term.aconv normalized_left normalized_right then
-                        finish left_norm' right_norm'
-                      else case Lib.total quantified_boolean_equality
-                          (normalized_left, normalized_right) of
-                        SOME bridge =>
-                          finish (Thm.TRANS left_norm' bridge) right_norm'
-                      | NONE => refine rest (left_norm', right_norm')
-                    end
+              (* Rung 0 is the endpoints themselves: a bridge between equal
+                 middles needs no conversion. *)
+              fun refine rung =
+                if rung > Vector.length conversions then raise ERR "trans"
+                  "canonical middle endpoints have distinct normal forms"
+                else
+                  let
+                    val left_norm' =
+                      normalized accumulated_side middle_left rung
+                    val right_norm' =
+                      normalized (2 + next_side) middle_right rung
+                    val normalized_left = boolSyntax.rhs
+                      (Thm.concl left_norm')
+                    val normalized_right = boolSyntax.rhs
+                      (Thm.concl right_norm')
+                  in
+                    if Term.aconv normalized_left normalized_right then
+                      finish left_norm' right_norm'
+                    else if rung = 0 then refine 1
+                    else case Lib.total quantified_boolean_equality
+                        (normalized_left, normalized_right) of
+                      SOME bridge =>
+                        finish (Thm.TRANS left_norm' bridge) right_norm'
+                    | NONE => refine (rung + 1)
+                  end
             in
-              refine
-                [SmtReplayCanon.cpc_canon_conv,
-                 cpc_integer_spelling_conv,
-                 strong_canon,
-                 SmtReplayCanon.reorient_equality_conv]
-                (Thm.REFL middle_left, Thm.REFL middle_right)
+              refine 0
             end
           fun canonical_orientations () =
             try (fn () => canonical_bridge 1 0) (fn () =>
@@ -5068,6 +5092,146 @@ local
     SmtResource.contains (fn term =>
       wordsSyntax.is_word_type (Term.type_of term)) target
 
+  (* Whether a word-typed subterm occurs in term, visiting each physical
+     node once. *)
+  fun mentions_word term =
+    let
+      val buckets = 8191
+      val seen = Array.array (buckets, [] : Term.term list)
+      fun visit term =
+        let val index = SmtResource.pointer_bucket buckets term
+            val bucket = Array.sub (seen, index)
+        in
+          if List.exists (fn saved => Portable.pointer_eq (saved, term))
+               bucket then false
+          else
+            (Array.update (seen, index, term :: bucket);
+             wordsSyntax.is_word_type (Term.type_of term) orelse
+             List.exists visit (SmtResource.term_children term))
+        end
+    in visit term end
+
+  (* |- (x + y) ' k = bsum (x ' k) (y ' k) carry_k for each k < width.
+     Each carry_k is built on carry_(k - 1), so the bit theorems share one
+     linear carry chain instead of each unfolding its own. *)
+  fun adder_bits x y width =
+    let
+      val X = Term.rator (fcpSyntax.mk_fcp_index (x, numSyntax.zero_tm))
+      val Y = Term.rator (fcpSyntax.mk_fcp_index (y, numSyntax.zero_tm))
+      val dimension = fcpLib.DIMINDEX (Arbnum.fromInt width)
+      fun next_carry (n, previous) =
+        let
+          val unfolded = Conv.CONV_RULE (Conv.LAND_CONV
+            (Conv.RATOR_CONV (Conv.RATOR_CONV (Conv.RATOR_CONV
+              (Conv.RAND_CONV numLib.REDUCE_CONV)))))
+            (Drule.SPECL [numSyntax.term_of_int n, X, Y, boolSyntax.F]
+              (Thm.CONJUNCT2 blastTheory.BCARRY_def))
+          val chained = Thm.TRANS unfolded (Thm.AP_TERM
+            (Term.rator (boolSyntax.rhs (Thm.concl unfolded))) previous)
+        in Conv.CONV_RULE (Conv.RAND_CONV
+            (Conv.REWR_CONV blastTheory.bcarry_def)) chained end
+      fun carries n previous acc =
+        if n = width then List.rev acc
+        else carries (n + 1) (next_carry (n, previous)) (previous :: acc)
+      val sum = wordsSyntax.mk_word_add (x, y)
+      val adder = Drule.ISPECL [x, y] blastTheory.BITWISE_ADD
+      fun bit (k, carry) =
+        let
+          val projected = Conv.RATOR_CONV (Conv.RAND_CONV
+            (Conv.REWR_CONV adder))
+            (fcpSyntax.mk_fcp_index (sum, numSyntax.term_of_int k))
+          val beta = Drule.PART_MATCH
+            (boolSyntax.lhs o Lib.snd o boolSyntax.dest_imp)
+            fcpTheory.FCP_BETA (boolSyntax.rhs (Thm.concl projected))
+          val bound = Drule.EQT_ELIM (Conv.THENC
+            (Conv.RAND_CONV (Conv.REWR_CONV dimension), numLib.REDUCE_CONV)
+            (Lib.fst (boolSyntax.dest_imp (Thm.concl beta))))
+          val bsum = Conv.CONV_RULE (Conv.RAND_CONV (Conv.THENC
+            (Thm.BETA_CONV, Conv.THENC (Conv.REWR_CONV blastTheory.BSUM_def,
+              Conv.THENC (Conv.RAND_CONV (Conv.REWR_CONV carry),
+                Conv.REWR_CONV blastTheory.bsum_def)))))
+            (Thm.MP beta bound)
+        in Thm.TRANS projected bsum end
+      val base = Drule.SPECL [X, Y, boolSyntax.F]
+        (Thm.CONJUNCT1 blastTheory.BCARRY_def)
+    in
+      Vector.fromList (List.map bit
+        (Lib.zip (List.tabulate (width, Lib.I)) (carries 0 base [])))
+    end
+
+  (* |- (!i. i < c ==> P i) <=> P (c - 1) /\ ... /\ P 0 /\ T, for a numeral
+     c.  Only the bound and index numerals are reduced. *)
+  fun bounded_forall_conv term =
+    let
+      val (_, body) = boolSyntax.dest_forall term
+      val bound = boolSyntax.rand (Lib.fst (boolSyntax.dest_imp body))
+      val reduce_index = Conv.THENC
+        (Conv.LAND_CONV (Conv.RAND_CONV numLib.REDUCE_CONV),
+         Conv.RAND_CONV (Conv.RAND_CONV numLib.REDUCE_CONV))
+    in
+      if Term.aconv bound numSyntax.zero_tm then
+        simpLib.SIMP_CONV boolSimps.bool_ss [prim_recTheory.NOT_LESS_0] term
+      else
+        Conv.THENC (Conv.HO_REWR_CONV (Thm.MP
+            (Thm.SPEC bound arithmeticTheory.BOUNDED_FORALL_THM)
+            (Drule.EQT_ELIM (numLib.REDUCE_CONV
+               (numSyntax.mk_less (numSyntax.zero_tm, bound))))),
+          Conv.THENC (Conv.LAND_CONV reduce_index,
+            Conv.RAND_CONV (Conv.THENC (Conv.QUANT_CONV (Conv.LAND_CONV
+              (Conv.RAND_CONV numLib.REDUCE_CONV)), bounded_forall_conv))))
+          term
+    end
+
+  (* |- (x + y = w) <=> (bsum_(n-1) <=> w ' (n - 1)) /\ ... /\
+        (bsum_0 <=> w ' 0) /\ T for an n-bit addition, with the sums'
+     carries shared (adder_bits).  Projecting x + y bit by bit instead
+     blasts the whole adder again for every bit. *)
+  fun adder_equation_conversion term =
+    let
+      val (left, right) = boolSyntax.dest_eq term
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      val (x, y) = wordsSyntax.dest_word_add left
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      (* The kernel steps below walk the operands as trees at every bit, so
+         they must be small; the bit-blasted adders cvc5 emits add literals
+         and variables. *)
+      fun small operand =
+        Option.isSome (SmtReplayImport.bounded_raw_size 64 operand)
+      val _ = small x andalso small y orelse raise Conv.UNCHANGED
+      val size = wordsSyntax.size_of left
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      (* The result has a conjunct per bit, so a wider adder could not pass
+         the word graph's DAG bound anyway. *)
+      val _ = Arbnum.<= (size,
+          Arbnum.fromInt SmtResource.max_skeleton_replay_dag_nodes)
+        orelse raise Conv.UNCHANGED
+      val width = Arbnum.toInt size
+      (* DIMINDEX below proves the width only for a plain numeral type. *)
+      val _ = Type.compare (wordsSyntax.dim_of left,
+          fcpSyntax.mk_int_numeric_type width) = EQUAL
+        orelse raise Conv.UNCHANGED
+      val bits = adder_bits x y width
+      (* A variable for w keeps the forall expansion from copying it. *)
+      val w = Term.genvar (Term.type_of right)
+      val extensional = Conv.CONV_RULE (Conv.RAND_CONV (Conv.QUANT_CONV
+        (Conv.LAND_CONV (Conv.RAND_CONV (Conv.REWR_CONV
+          (fcpLib.DIMINDEX (Arbnum.fromInt width)))))))
+        (Drule.ISPECL [left, w] fcpTheory.CART_EQ)
+      (* Only the small extensional side is instantiated: INST rebuilds
+         every subterm, which would unshare the carry chain below. *)
+      val expanded = Thm.INST [{redex = w, residue = right}]
+        (Conv.CONV_RULE (Conv.RAND_CONV bounded_forall_conv) extensional)
+      val equality = Term.inst [{redex = Type.alpha, residue = Type.bool}]
+        boolSyntax.equality
+      fun bit_equation k = Thm.AP_THM (Thm.AP_TERM equality
+        (Vector.sub (bits, k)))
+        (fcpSyntax.mk_fcp_index (right, numSyntax.term_of_int k))
+      fun conjunction k tail = if k = width then tail
+        else conjunction (k + 1) (Thm.MK_COMB (Thm.AP_TERM
+          boolSyntax.conjunction (bit_equation k), tail))
+      val blasted = conjunction 0 (Thm.REFL boolSyntax.T)
+    in Thm.TRANS expanded blasted end
+
   fun replay_bv_poly_norm args =
     let
       val target = expect_one_arg "bv_poly_norm" args
@@ -5324,18 +5488,25 @@ local
                         raise Feedback.HOL_ERR holerr
                       else raise Conv.UNCHANGED)
           fun legacy () = let
+          fun node_conversion term =
+            adder_equation_conversion term
+            handle Conv.UNCHANGED => fp_projection_conversion term
           val first_blast =
             SmtWordGraph.normalize_with_node_conversion
-              fp_projection_conversion boolean_template
+              node_conversion boolean_template
           val first_residue = boolSyntax.rhs (Thm.concl first_blast)
+          (* Words left after the first pass get a second one.  A residue
+             without them is already Boolean, and the circuit below treats
+             its atoms as leaves. *)
           val second_blast =
-            (SmtWordGraph.normalize_with_node_conversion
-               fp_projection_conversion first_residue
-             handle Conv.UNCHANGED => Thm.REFL first_residue)
+            if mentions_word first_residue then
+              (SmtWordGraph.normalize_with_node_conversion
+                 node_conversion first_residue
+               handle Conv.UNCHANGED => Thm.REFL first_residue)
+            else Thm.REFL first_residue
           val blasted = Thm.TRANS first_blast second_blast
           val blast_residue = boolSyntax.rhs (Thm.concl blasted)
-          val circuit_memo =
-            ref ([] : (Term.term * Term.term) list)
+          val circuit_memo = ref (Redblackmap.mkDict Term.compare)
           val circuit_substitutions =
             ref ([] : {redex : Term.term, residue : Term.term} list)
           val circuit_definitions =
@@ -5349,11 +5520,8 @@ local
             in variable end
           fun circuit_leaf term = circuit_variable term
           fun circuit term =
-            case List.find
-                (fn (saved, _) => Portable.pointer_eq (term, saved) orelse
-                  Term.aconv term saved)
-                (!circuit_memo) of
-              SOME (_, result) => result
+            case Redblackmap.peek (!circuit_memo, term) of
+              SOME result => result
             | NONE =>
                 let
                   fun internal skeleton =
@@ -5409,7 +5577,8 @@ local
                       in internal (boolSyntax.mk_neg (boolSyntax.mk_eq
                         (circuit left, circuit right))) end
                     else circuit_leaf term
-                  val _ = circuit_memo := (term, result) :: !circuit_memo
+                  val _ = circuit_memo :=
+                    Redblackmap.insert (!circuit_memo, term, result)
                 in result end
           val circuit_root = circuit blast_residue
           val definitions = List.rev (!circuit_definitions)
@@ -5434,9 +5603,11 @@ local
           val generalized_theorem = Thm.EQ_MP (Thm.SYM blasted)
             residue_theorem
           in generalized_theorem end
-        in
-          if compact_word_target target then
-            SmtWordGraph.prove_with_node_conversion
+          fun circuit_path () =
+            (profile_event "CPC(bvite_words:circuit)"; legacy ())
+          fun compact_path () =
+            (profile_event "CPC(bvite_words:compact)";
+             SmtWordGraph.prove_with_node_conversion
               (fn term => fp_projection_conversion term
                 handle Conv.UNCHANGED =>
                   if is_holsmt_xor term then
@@ -5445,8 +5616,18 @@ local
             handle HolSatLib.SAT_cex _ =>
               raise ERR "bv_poly_norm" "Boolean circuit is not valid"
                  | HolSatLib.SAT_satisfiable _ =>
-              raise ERR "bv_poly_norm" "Boolean circuit is not valid"
-          else legacy ()
+              raise ERR "bv_poly_norm" "Boolean circuit is not valid")
+        in
+          (* The circuit path goes first: with the shared word schemas it
+             checks wide words about twice as fast as the compact path (a
+             256-bit mask-and-add goal via cvc5: 18-22 s against 30-32 s).
+             The compact path takes what the circuit path rejects, and a
+             target the word graph leaves unchanged. *)
+          if compact_word_target target then
+            circuit_path ()
+            handle Feedback.HOL_ERR _ => compact_path ()
+                 | Conv.UNCHANGED => compact_path ()
+          else circuit_path ()
         end
       fun schematic_bvite () =
         let
@@ -20331,38 +20512,56 @@ local
                       Thm.MK_COMB (theorem, canon operand))
                     (Thm.REFL operator) operands
                 end
-              fun normalized_term term =
-                boolSyntax.rhs (Thm.concl (source_canon term))
-              val normalized_args = List.map normalized_term args
               val normalized_prems =
                 List.map (Conv.CONV_RULE canon) prems
+              fun normalized_step
+                  ((premise_step : replayed_step), normalized_theorem) =
+                let
+                  val original_theorem = step_theorem premise_step
+                  val normalized_provenance =
+                    align_canonical_provenance
+                      canon (Thm.concl original_theorem)
+                      (Thm.concl normalized_theorem)
+                      (step_provenance premise_step)
+                in
+                  {rule_name = #rule_name premise_step,
+                   result = exact_result normalized_provenance
+                     normalized_theorem}
+                end
+              val normalized_steps = ListPair.mapEq normalized_step
+                (premise_steps, normalized_prems)
+              (* Every exact route rewrites a nontrivial equality premise
+                 through its equality endpoints, and alignment never
+                 recovers endpoints a premise lacks.  Fail before the
+                 source canonicalization and alignment, which can cost
+                 seconds on binder-heavy sources. *)
+              fun require_endpoints (step : replayed_step) =
+                case (step_provenance step,
+                      Lib.total boolSyntax.dest_eq
+                        (Thm.concl (step_theorem step))) of
+                  (EqualityProvenance _, _) => ()
+                | (_, SOME (left, right)) =>
+                    if Term.aconv left right orelse
+                       Term.aconv left boolSyntax.T orelse
+                       Term.aconv right boolSyntax.T then ()
+                    else raise ERR "cong_provenance"
+                      (description ^
+                       " congruence premise lacks equality endpoints")
+                | _ => ()
+              val _ = List.app require_endpoints normalized_steps
+              val source_normalizations = List.map source_canon args
             in
-              case (located_args, normalized_args) of
-                ([source], [normalized_source]) =>
+              case (located_args, source_normalizations) of
+                ([source], [source_normalization]) =>
                   let
-                    val source_normalization = source_canon (#term source)
+                    val normalized_source =
+                      boolSyntax.rhs (Thm.concl source_normalization)
                     val normalized_located = {
                       term = normalized_source,
                       provenance = align_canonical_provenance
                         canon (#term source) normalized_source
                         (#provenance source)
                     }
-                    fun normalized_step
-                        ((premise_step : replayed_step), normalized_theorem) =
-                      let
-                        val original_theorem = step_theorem premise_step
-                        val normalized_provenance =
-                          align_canonical_provenance
-                            canon (Thm.concl original_theorem)
-                            (Thm.concl normalized_theorem)
-                            (step_provenance premise_step)
-                      in
-                        {rule_name = #rule_name premise_step,
-                         result = exact_result normalized_provenance
-                           normalized_theorem}
-                      end
-                    val normalized_steps = ListPair.mapEq normalized_step
-                      (premise_steps, normalized_prems)
                     val exact = replay_exact_cong_result NONE
                       normalized_located normalized_steps
                     val theorem = Thm.TRANS source_normalization
@@ -20381,6 +20580,80 @@ local
                   (description ^
                    " congruence lacks one exact source occurrence")
             end
+      (* A congruence under a binder block with one body equation is the
+         kernel's binder lift of that equation, with the source's
+         occurrence structure around the premise's right-hand side.  A
+         canonicalizing fallback may instead return the body's normal
+         form, which later steps do not mention.  A negation over the
+         block lifts the same way. *)
+      fun binder_cong_result () =
+        case (conclusion, located_args, premise_steps) of
+          (NONE, [source], [premise_step]) =>
+            let
+              val premise = step_theorem premise_step
+              val body = boolSyntax.lhs (Thm.concl premise)
+              val right_provenance =
+                case step_provenance premise_step of
+                  EqualityProvenance (_, right) => right
+                | _ => UnavailableProvenance
+                    "binder congruence premise lacks equality provenance"
+              fun dest_binder term =
+                if boolSyntax.is_forall term then
+                  (Drule.FORALL_EQ, boolSyntax.dest_forall term)
+                else if boolSyntax.is_exists term then
+                  (Drule.EXISTS_EQ, boolSyntax.dest_exists term)
+                else raise ERR "cong" "no binder block over the premise"
+              (* Lift through [count] binders of [term]; [inner] lifts the
+                 body left after them. *)
+              fun under count term inner =
+                if count = 0 then inner term
+                else
+                  let
+                    val (bound, (variable, rest)) = dest_binder term
+                    val (theorem, provenance) = under (count - 1) rest inner
+                  in (bound variable theorem, provenance) end
+              fun lift term provenance =
+                if Term.aconv term body then (premise, right_provenance)
+                else
+                  case provenance of
+                    ApplicationProvenance ("not", [inner]) =>
+                      let
+                        val (theorem, inner') =
+                          lift (boolSyntax.dest_neg term) inner
+                      in
+                        (Thm.AP_TERM boolSyntax.negation theorem,
+                         ApplicationProvenance ("not", [inner']))
+                      end
+                  | BinderProvenance (head, inner) =>
+                      Lib.apsnd (fn inner' => BinderProvenance (head, inner'))
+                        (under 1 term (fn rest => lift rest inner))
+                  | BinderBlockProvenance (head, size, inner) =>
+                      Lib.apsnd (fn inner' =>
+                          BinderBlockProvenance (head, size, inner'))
+                        (under size term (fn rest => lift rest inner))
+                  | _ =>
+                      Lib.apsnd (fn _ => UnavailableProvenance
+                          "binder congruence source lacks binder provenance")
+                        (under 1 term (fn rest => lift rest provenance))
+              fun is_block term =
+                boolSyntax.is_forall term orelse boolSyntax.is_exists term
+              val _ = is_block (#term source) orelse
+                (boolSyntax.is_neg (#term source) andalso
+                 is_block (boolSyntax.dest_neg (#term source))) orelse
+                raise ERR "cong" "source is not a binder block"
+              val (theorem, right) = lift (#term source) (#provenance source)
+            in
+              exact_result (EqualityProvenance (#provenance source, right))
+                theorem
+            end
+        | _ => raise ERR "cong" "not a unary binder congruence"
+      (* The lift is a few kernel steps; the canonicalizing fallbacks
+         can take seconds on a large quantified source, so they run only
+         when there is no lift. *)
+      fun binder_checked_cong_result fallback =
+        case Lib.total binder_cong_result () of
+          SOME lifted => lifted
+        | NONE => fallback ()
       fun canonical_cong_result () =
         canonical_cong_result_with SmtReplayCanon.cpc_canon_conv
           "canonical"
@@ -20840,12 +21113,18 @@ local
                             val raw = raw_unavailable_result
                               "congruence checked at exact operand cuts"
                               theorem
+                            (* Keep a source binder block too: SKOLEMIZE
+                               consumes it after eq_resolve and
+                               not_implies_elim2 even when no conjunction
+                               occurs. *)
                             val keep = exact_small andalso
                               List.all (exact_small_term o Thm.concl) prems
-                              andalso not (definitely_no_conjunction_dag
+                              andalso (contains_binder_block_dag
+                                (#provenance source) orelse
+                              not (definitely_no_conjunction_dag
                                 (#provenance source) andalso List.all
                                   (definitely_no_conjunction_dag o
-                                    step_provenance) premise_steps)
+                                    step_provenance) premise_steps))
                             fun retained () =
                               SmtResource.or_else
                                 (fn () =>
@@ -20907,7 +21186,8 @@ local
                      (require_declared "cong"
                        (replay_cong conclusion args prems)))
                 handle Feedback.HOL_ERR direct_error =>
-                  (canonical_cong_result ()
+                  (binder_checked_cong_result (fn () =>
+                   canonical_cong_result ()
                    handle Feedback.HOL_ERR canonical_error =>
                      (integer_spelling_cong_result ()
                       handle Feedback.HOL_ERR spelling_error =>
@@ -20957,7 +21237,7 @@ local
                                  Feedback.message_of spelling_error ^
                                  "; strong: " ^
                                  Feedback.message_of strong_error)
-                                (reducing_cong ())))))))
+                                (reducing_cong ()))))))))
            | HHoCong => opaque ( replay_ho_cong prems)
            | HBetaReduce => opaque ( replay_beta_reduce args)
            | HLambdaElim => opaque ( replay_lambda_elim args)
@@ -21912,7 +22192,8 @@ local
   fun reset_replay_memos limit =
     (resolution_literal_normalizations := Redblackmap.mkDict Term.compare;
      reset_fp_memos ();
-     word_graph_tautology_cache := new_word_graph_tautology_cache limit)
+     word_graph_tautology_cache := new_word_graph_tautology_cache limit;
+     SmtWordGraph.clear_shared_schemas ())
 
 
 in
@@ -23395,13 +23676,16 @@ in
          fp_boolean_atom_normalizations := booleans;
          fp_atom_bridge_laws := bridges;
          word_graph_tautology_cache := words)
-      fun run () = (reset_replay_memos limit; action input)
+      (* Word schemas are shared within this replay only. *)
+      fun run () = SmtWordGraph.with_shared_schemas
+        (fn input => (reset_replay_memos limit; action input)) input
     in
       (run () before restore ())
       handle error => (restore (); raise error)
     end
 
   val with_replay_memos_for_test = with_replay_memos_for
+  val reset_replay_memos_for_test = reset_replay_memos
   val word_graph_tautology_using_for_test = prove_word_graph_tautology_using
   val max_word_graph_tautology_entries_for_test =
     max_word_graph_tautology_entries

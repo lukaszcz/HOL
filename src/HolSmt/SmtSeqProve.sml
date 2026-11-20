@@ -77,8 +77,9 @@ struct
 
   val mentions = SmtResource.contains
 
-  fun is_append tm = named "list" ["APPEND"] tm
   fun is_length tm = named "list" ["LENGTH"] tm
+  (* Either of the two, in one scan of a term. *)
+  fun is_append_or_length tm = named "list" ["APPEND","LENGTH"] tm
   fun is_cons_or_nil tm = named "list" ["CONS", "NIL"] tm
   fun is_access tm =
     named "HolSmt" ["smt_seq_nth", "smt_seq_extract", "smt_seq_at"] tm
@@ -1202,7 +1203,7 @@ struct
       "update-reverse"
     else if mentions is_access t then
       "extract-nth"
-    else if mentions is_append t orelse mentions is_length t then
+    else if mentions is_append_or_length t then
       "concat-length"
     else if mentions is_cons_or_nil t then
       "unit-empty"
@@ -1218,7 +1219,7 @@ struct
        "conclusion=" ^ Library.term_to_string t)
 
   fun concat_length_prove t =
-    if mentions is_append t orelse mentions is_length t then simp_prove t
+    if mentions is_append_or_length t then simp_prove t
     else raise ERR "concat_length_prove" "not a concat/length shape"
 
   fun unit_empty_prove t =

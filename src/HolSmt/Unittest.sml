@@ -22403,6 +22403,566 @@ in
   check_oracle_tags "shared bitblast equality" theorem
 end
 
+(* cvc5's bv_bitblast_step for a 256-bit bvadd of a literal: a ripple-carry
+   adder over @bit projections.  Blasting x + 31w bit by bit re-derives the
+   carry chain from bit 0 for every bit, which took about 30 s of CPU. *)
+fun cpc_wide_adder_bitblast_success () =
+let
+  val x = wordsSyntax.mk_n2w (Term.mk_var ("n", numSyntax.num),
+    fcpSyntax.mk_int_numeric_type 256)
+  val y = wordsSyntax.mk_wordii (31, 256)
+  fun xor (a, b) = Term.list_mk_comb (``HolSmt$xor``, [a, b])
+  fun bit word i =
+    if Term.aconv word y then
+      (if i < 5 then boolSyntax.T else boolSyntax.F)
+    else wordsSyntax.mk_word_bit (numSyntax.term_of_int i, word)
+  fun adder (i, (carry, sums)) =
+    let
+      val (a, b) = (bit x i, bit y i)
+      val half = xor (a, b)
+      val next = boolSyntax.mk_disj
+        (boolSyntax.mk_conj (a, b), boolSyntax.mk_conj (half, carry))
+    in (next, xor (half, carry) :: sums) end
+  val (_, sums) =
+    List.foldl adder (boolSyntax.F, []) (List.tabulate (256, Lib.I))
+  val target = boolSyntax.mk_eq (wordsSyntax.mk_word_add (x, y),
+    SmtLib_Theories.mk_bbterm (List.rev sums))
+  (* Unshared, the carry chain takes about 30 s. *)
+  val theorem = within_mutator_seconds 10
+    CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "wide adder bitblast replay changed the adder equation");
+  check_oracle_tags "wide adder bitblast" theorem
+end
+
+(* A masked wide word reaches schematic_bvite_words; the circuit path goes
+   first there, and the compact path takes only what it rejects. *)
+fun cpc_bvite_words_circuit_first_success () =
+let
+  val width = 16
+  val x = wordsSyntax.mk_n2w (Term.mk_var ("n", numSyntax.num),
+    fcpSyntax.mk_int_numeric_type width)
+  val mask = wordsSyntax.mk_wordii (65280, width)
+  val bits = List.tabulate (width, fn i =>
+    if i < 8 then boolSyntax.F
+    else wordsSyntax.mk_word_bit (numSyntax.term_of_int i, x))
+  val target = boolSyntax.mk_eq (wordsSyntax.mk_word_and (x, mask),
+    SmtLib_Theories.mk_bbterm bits)
+  val _ = assert (CPC_ProofReplay.compact_word_target target,
+    "masked word regression is no longer a compact word target")
+  val _ = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "masked word bitblast replay changed the equation");
+  check_oracle_tags "masked word bitblast" theorem;
+  assert (profile_call_count "CPC(bvite_words:circuit)" = 1 andalso
+      profile_call_count "CPC(bvite_words:compact)" = 0,
+    "a compact word target did not take the circuit path first");
+  (* A target the word graph leaves unchanged goes to the compact path. *)
+  let
+    val bit = wordsSyntax.mk_index (Term.mk_var ("x", ``:word16``),
+      numSyntax.term_of_int 0)
+    val unchanged = boolSyntax.mk_eq (bit, bit)
+    val _ = Profile.reset_all ()
+    val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [unchanged]
+  in
+    assert (Thm.concl theorem ~~ unchanged andalso
+        null (Thm.hyp theorem) andalso
+        profile_call_count "CPC(bvite_words:compact)" = 1,
+      "a target the word graph leaves unchanged lost the compact path");
+    check_oracle_tags "unchanged word target" theorem
+  end
+end
+
+(* Word operator schemas are shared by the normalizations of one replay
+   and nowhere else: not before or after it, not with a nested replay. *)
+fun cpc_word_schemas_shared_per_replay_success () =
+let
+  val x = Term.mk_var ("schema_x", ``:word8``)
+  val y = Term.mk_var ("schema_y", ``:word8``)
+  val target = wordsSyntax.mk_index
+    (wordsSyntax.mk_word_add (x, y), numSyntax.term_of_int 7)
+  val theorems = ref ([] : Thm.thm list)
+  fun hits () =
+    let val (theorem, metrics) = SmtWordGraph.normalize_with_metrics target
+    in theorems := theorem :: !theorems; #memo_hits metrics end
+  fun replay action = CPC_ProofReplay.with_replay_memos_for_test 0 action
+  val before_first = hits ()
+  val before_second = hits ()
+  val (first, nested, after_nested, after_reset) = replay (fn () =>
+    let
+      val first = hits ()
+      val nested = replay hits ()
+      val after_nested = hits ()
+      val () = CPC_ProofReplay.reset_replay_memos_for_test 0
+    in (first, nested, after_nested, hits ()) end) ()
+  val after = hits ()
+  val cold = List.last (!theorems)
+in
+  (* Every call, cold or with shared schemas, proves the same equation. *)
+  assert (List.all (fn theorem =>
+      boolSyntax.lhs (Thm.concl theorem) ~~ target andalso
+      Thm.concl theorem ~~ Thm.concl cold andalso
+      null (Thm.hyp theorem)) (!theorems),
+    "a shared word schema changed the normalization theorem");
+  List.app (check_oracle_tags "shared word schema") (!theorems);
+  assert (before_second = before_first andalso after = before_first,
+    "word schemas were shared outside a replay");
+  assert (nested = first,
+    "a nested replay saw its caller's word schemas");
+  assert (after_nested > first,
+    "word schemas were not shared within a replay or a nested replay " ^
+    "erased them");
+  assert (after_reset = first,
+    "resetting the replay memos kept the replay's word schemas")
+end
+
+(* The canonicalisation passes propose their conversion only at a term
+   headed by one of their laws' left-hand heads, so binder bodies without
+   such a term are not opened; one only under a binder still rewrites. *)
+fun replay_canon_proposes_only_at_law_heads_success () =
+let
+  val not_heads =
+    SmtReplayCanon.at_law_heads SmtReplayCanon.not_clauses Conv.ALL_CONV
+  val alias_heads =
+    SmtReplayCanon.at_law_heads SmtReplayCanon.cpc_alias_rewrites
+      Conv.ALL_CONV
+  val _ = assert (Option.isSome (not_heads ``~~(p:bool)``) andalso
+      not (Option.isSome (not_heads ``(p:bool) /\ q``)) andalso
+      Option.isSome (alias_heads ``(x:int) > 0``) andalso
+      not (Option.isSome (alias_heads ``(x:int) <= 0``)),
+    "a canonicalisation pass proposed away from its laws' heads")
+  fun check label conversion (source, expected) =
+    let val theorem = conversion source in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (source, expected) andalso
+          null (Thm.hyp theorem),
+        label ^ " changed its result under a binder");
+      check_oracle_tags label theorem
+    end
+  val unchanged = fn source => (source, source)
+in
+  List.app (check "relation dual" SmtReplayCanon.z3_relation_dual_conv)
+    [(``!x:int. P x ==> x >= 0``, ``!x:int. P x ==> 0 <= x``),
+     unchanged ``!x:int. P x ==> x <= 0``];
+  List.app (check "not clauses" SmtReplayCanon.not_clauses_conv)
+    [(``!x:bool. Q (~~x) /\ x``, ``!x:bool. Q x /\ x``),
+     unchanged ``!x:bool. Q (~x) /\ x``];
+  List.app (check "alias" SmtReplayCanon.cpc_alias_conv)
+    [(``!x:int. P x ==> x > 0``, ``!x:int. P x ==> 0 < x``),
+     unchanged ``!x:int. P x ==> x <= 0``]
+end
+
+(* A canonicalisation pass first scans its input once, memoised on
+   physical identity and binder bodies included, and returns the input
+   unchanged when its rules match nowhere in it. *)
+fun replay_canon_skips_passes_without_triggers_success () =
+let
+  val triggered = ``!x:int. P x ==> x >= 0``
+  val untriggered = ``!x:int. P x ==> x <= 0``
+  val _ = assert (SmtReplayCanon.may_trigger intSyntax.is_geq triggered andalso
+      not (SmtReplayCanon.may_trigger intSyntax.is_geq untriggered),
+    "the trigger scan missed a trigger under a binder or found a false one")
+  fun shared 0 = ``trigger_leaf:bool``
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child, child) end
+  val depth = 40
+  val calls = ref 0
+  val found = SmtReplayCanon.may_trigger
+    (fn _ => (calls := !calls + 1; false)) (shared depth)
+  val _ = assert (not found andalso !calls <= 3 * depth,
+    "the trigger scan walked shared subterms more than once")
+  (* Under a binder a body of this shape over the raw-size budget (depth
+     21: four million nodes as a tree) makes the scans answer yes at once,
+     before the trigger sees the binder and without opening it.  Building
+     the abstraction walks it once. *)
+  val binder = Term.mk_abs (``trigger_bound:bool``, shared 21)
+  val calls = ref 0
+  val (binder_found, binder_relevant, eta_found) =
+    within_mutator_seconds 5 (fn () =>
+      (SmtReplayCanon.may_trigger
+         (fn _ => (calls := !calls + 1; false)) binder,
+       SmtReplayCanon.secondary_rewrite_needed binder,
+       SmtReplayCanon.may_trigger SmtReplayCanon.eta_shape binder)) ()
+  val _ = assert (binder_found andalso binder_relevant andalso eta_found
+      andalso !calls = 0,
+    "a trigger scan opened a binder over its budget")
+  val _ = assert (SmtReplayCanon.eta_shape ``\y:int. (f:int -> bool) y``
+      andalso not (SmtReplayCanon.eta_shape ``\y:int. y``) andalso
+      not (SmtReplayCanon.eta_shape ``(f:int -> bool) 1``),
+    "the eta trigger missed an eta redex or found one in another shape")
+  fun propose term = if intSyntax.is_geq term then
+      SOME SmtReplayCanon.relation_dual_schema_conv else NONE
+  fun pass term = SmtReplayCanon.compact_conversion_status
+    SmtReplayCanon.canonical_schema_patterns true false propose term
+  val (skipped, skipped_changed) = pass untriggered
+  val (rewritten, rewritten_changed) = pass triggered
+  val _ = assert (not skipped_changed andalso
+      Thm.concl skipped ~~ boolSyntax.mk_eq (untriggered, untriggered) andalso
+      rewritten_changed andalso
+      Thm.concl rewritten ~~ ``(!x:int. P x ==> x >= 0) <=>
+                                !x:int. P x ==> 0 <= x``,
+    "a pass without a trigger was not skipped or one with a trigger was")
+  val ground = boolSyntax.mk_forall (``x:int``, intSyntax.mk_leq (``x:int``,
+    Term.list_mk_comb (SmtReplayCanon.smt_ediv_total_tm, [``7i``, ``2i``])))
+  (* Nested ground divisions shared as a DAG, over the native admission
+     bound as a tree: the pass reduces each child to a numeral first. *)
+  fun divisions 0 = ``7i``
+    | divisions n = let val child = divisions (n - 1)
+        in Term.list_mk_comb (SmtReplayCanon.smt_ediv_total_tm,
+             [child, child]) end
+  val nested = intSyntax.mk_leq (``x:int``, divisions 21)
+  fun check (source, expected) =
+    let val theorem = SmtReplayCanon.cpc_term_canon_conv source in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (source, expected) andalso
+          null (Thm.hyp theorem),
+        "CPC term canonicalisation changed its result under a binder");
+      check_oracle_tags "CPC term canonicalisation" theorem
+    end
+in
+  List.app check
+    [(ground, ``!x:int. x <= 3``),
+     (``!x:int. Q x (\y:int. (f:int -> bool) y)``,
+      ``!x:int. Q x (f:int -> bool)``),
+     (``!x:int. P x /\ R``, ``!x:int. P x /\ R``),
+     (nested, ``x:int <= 1``)]
+end
+
+(* Z3's secondary rewrite pass runs when a term one of its passes
+   rewrites occurs, also under a binder, and not merely because a binder
+   occurs; without one the result is the primary pass's. *)
+fun z3_secondary_canon_triggers_under_binders_success () =
+let
+  val _ = assert (SmtReplayCanon.secondary_rewrite_needed ``\x:int. x + 1``
+      andalso SmtReplayCanon.secondary_rewrite_needed
+        ``\x:int. \y:int. x < y`` andalso
+      not (SmtReplayCanon.secondary_rewrite_needed ``\x:bool. ~x``),
+    "the secondary pass trigger scan stopped at or fired on a binder")
+  val source = ``(!x:int. x + 1 <= y) <=> (!x:int. 1 + x <= y)``
+  val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+  val target = boolSyntax.rhs (Thm.concl theorem)
+  val _ = assert (boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal target,
+    "a trigger only under a binder did not run the secondary pass")
+  val _ = check_oracle_tags "secondary canonicalisation" theorem
+  val plain = ``(!x:bool. ~x) <=> (!x:bool. F)``
+  val _ = assert (Thm.concl (SmtReplayCanon.z3_rewrite_canon_conv plain) ~~
+      Thm.concl (SmtReplayCanon.z3_primary_rewrite_canon_conv plain),
+    "a term without a secondary trigger did not keep the primary result")
+  (* Each operator a secondary pass rewrites triggers it under a binder. *)
+  val operators =
+    [``\x:int. P (x + 1):bool``, ``\x:int. P (x - 1):bool``,
+     ``\x:int. P (x * 2):bool``, ``\x:int. P (~x):bool``,
+     ``\x:int. x < y``, ``\x:int. x <= y``, ``\x:int. x > y``,
+     ``\x:int. x >= y``, ``\x:int. ~(x < y)``,
+     ``\x:int. if ~b then x else y``,
+     ``\x:real. Q (x + 1):bool``, ``\x:real. Q (x - 1):bool``,
+     ``\x:real. Q (x * 2):bool``, ``\x:real. Q (~x):bool``,
+     ``\x:real. x < z``, ``\x:real. x <= z``, ``\x:real. x > z``,
+     ``\x:real. x >= z``]
+  val _ = assert (List.all SmtReplayCanon.secondary_rewrite_needed operators,
+    "an operator a secondary pass rewrites did not trigger it")
+  fun closes source =
+    let val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+    in
+      check_oracle_tags "secondary canonicalisation" theorem;
+      boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal
+        (boolSyntax.rhs (Thm.concl theorem))
+    end
+in
+  assert (List.all closes
+      [``(!x:int. P (x * 2):bool) <=> (!x:int. P (2 * x))``,
+       ``(!x:int. P (x - 1):bool) <=> (!x:int. P (-1 + x))``,
+       ``(!x:int. P (~x):bool) <=> (!x:int. P (-1 * x))``],
+    "a rewrite under a binder differing by *, - or negation was not closed")
+end
+
+(* Types of at most 64 nodes compare directly, larger ones through the
+   memo; both give one antisymmetric order that is EQUAL on equal Types. *)
+fun replay_type_order_small_and_large_agree_success () =
+let
+  fun copy ty = if Type.is_vartype ty then ty else
+    let val {Thy, Tyop, Args} = Type.dest_thy_type ty
+    in Type.mk_thy_type {Thy = Thy, Tyop = Tyop, Args = List.map copy Args}
+    end
+  fun mono 0 = Type.bool
+    | mono n = let val ty = mono (n - 1) in Type.--> (ty, ty) end
+  val large = mono 7
+  val small = [Type.bool, ``:word8``, ``:word16``, numSyntax.num,
+    intSyntax.int_ty, Type.alpha, Type.beta, ``:bool -> bool``,
+    ``:num list``, ``:word8 -> word16``]
+  val order = SmtReplayTermBridge.new_type_order ()
+  fun invert LESS = GREATER | invert GREATER = LESS | invert EQUAL = EQUAL
+  fun check (left, right) =
+    let val direct = order (left, right) in
+      assert (order (right, left) = invert direct andalso
+          (direct = EQUAL) = (Type.compare (left, right) = EQUAL) andalso
+          order (copy left, right) = direct andalso
+          order (Type.--> (large, left), Type.--> (copy large, right)) =
+            direct andalso
+          order (Type.--> (left, large), Type.--> (right, copy large)) =
+            direct,
+        "the replay type order is not one antisymmetric order on small " ^
+        "and large Types")
+    end
+in
+  List.app (fn left => List.app (fn right => check (left, right)) small)
+    small
+end
+
+(* A cong under a binder block, or a negation over one, is the binder lift
+   of its premise, tried before the canonicalising fallbacks. *)
+fun cpc_binder_cong_lifts_through_negation_success () =
+let
+  val prefix =
+    "(define @x () (@var \"x\" Bool)) (define @t () (not (not @x))) \
+    \(step @p1 :rule bool-double-not-elim :args (@x))"
+  fun replay steps = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string ("(" ^ prefix ^ steps ^ ")"))
+  val body = replay ""
+  val x = boolSyntax.rhs (Thm.concl body)
+  val lifted = Drule.FORALL_EQ x body
+  fun check label (steps, expected) =
+    let val theorem = replay steps in
+      assert (Thm.concl theorem ~~ Thm.concl expected andalso
+          null (Thm.hyp theorem),
+        "CPC " ^ label ^ " congruence is not the binder lift of its premise");
+      check_oracle_tags ("CPC " ^ label ^ " congruence") theorem
+    end
+in
+  check "binder"
+    (" (step @p2 :rule cong :premises (@p1) \
+     \:args ((forall (@list @x) @t)))", lifted);
+  check "negated binder"
+    (" (step @p2 :rule cong :premises (@p1) \
+     \:args ((not (forall (@list @x) @t))))",
+     Thm.AP_TERM boolSyntax.negation lifted)
+end
+
+(* The canonical TRANS route keeps its orientation order and conclusion
+   when each middle endpoint's normal forms are reused across orientations
+   and equal middles bridge without conversion. *)
+fun cpc_canonical_trans_endpoint_chains_success () =
+let
+  val first_hyp = ``(p:bool) = ((x:int) >= 0)``
+  val middle = ``0 <= (x:int)``
+  fun check ((first, second), second_hyp) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x Int) (declare-const p Bool) \
+         \(declare-const q Bool) (assume @a " ^ first ^ ") \
+         \(assume @b " ^ second ^ ") (step @c :rule trans :premises (@a @b)))")
+      val _ = Profile.reset_all ()
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ ``(p:bool) = q`` andalso
+          HOLset.equal (Thm.hypset theorem,
+            HOLset.fromList Term.compare [first_hyp, second_hyp]),
+        "canonical CPC trans changed its conclusion or hypotheses");
+      assert (profile_call_count
+          "CPC(rung:canonical_trans/provenance-canonical)" = 1,
+        "CPC trans did not take the canonical route");
+      check_oracle_tags "canonical CPC trans" theorem
+    end
+in
+  (* The second needs the first premise's right endpoint again after its
+     first orientation fails. *)
+  List.app check
+    [(("(= p (>= x 0))", "(= (<= 0 x) q)"),
+      boolSyntax.mk_eq (middle, ``q:bool``)),
+     (("(= p (>= x 0))", "(= q (<= 0 x))"),
+      boolSyntax.mk_eq (``q:bool``, middle))]
+end
+
+(* Checked datatype procedures admit each term object once per call. *)
+fun datatype_procedures_admit_each_term_once_success () =
+let
+  val admitted = ref ([] : Term.term list)
+  fun admit term = admitted := term :: !admitted
+  val target =
+    ``(SOME (f (f (f (x:num)))) = SOME (f (f (f x)))) <=>
+      (f (f (f x)) = f (f (f x)))``
+  val theorem = SmtDatatypeProve.datatype_prove_with_admission admit target
+  fun repeated [] = false
+    | repeated (term :: rest) =
+        List.exists (fn other => Portable.pointer_eq (term, other)) rest
+        orelse repeated rest
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "datatype proof changed its conclusion");
+  check_oracle_tags "datatype admission" theorem;
+  assert (not (null (!admitted)) andalso not (repeated (!admitted)),
+    "a datatype procedure admitted the same term twice in one call")
+end
+
+(* Binder admission checks the synthesized abstraction Type without
+   interning it; only the atoms' Types get IDs. *)
+fun skeleton_binder_admission_skips_synthesized_type_success () =
+let
+  val admission = SmtSkeletonProve.new_type_admission_context ()
+  val identity = ``\x:bool. x``
+  val nested = ``\x:bool. \y:bool. x``
+  val _ = #admit_abstraction admission "binder-type" identity
+  val _ = #admit_abstraction admission "binder-type" nested
+  val _ = assert (!(#nodes admission) = 1,
+    "binder admission interned a synthesized abstraction Type")
+in
+  assert (#raw_size admission 100 nested =
+      SmtReplayImport.bounded_raw_size 100 nested,
+    "binder admission changed a binder's raw size")
+end
+
+(* The shared term check admits and rejects what new_term_check does,
+   including a binder bounded before it is opened. *)
+fun datatype_shared_term_check_matches_full_check_success () =
+let
+  val limit = 20
+  val full = SmtReplayArithmetic.new_term_check
+    {limit = limit, observe = fn () => ()}
+  val shared = SmtReplayArithmetic.new_shared_term_check limit
+  fun outcome check term = (check term; "admitted")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  val part = ``(p:bool) /\ q``
+  val terms = [part, boolSyntax.mk_conj (part, part), ``\x:bool. x /\ y``,
+    ``\x:bool. x /\ x /\ x /\ x /\ x /\ x``,
+    boolSyntax.mk_conj (boolSyntax.mk_conj (part, part),
+      boolSyntax.mk_conj (part, part)),
+    ``\x:bool. \y:bool. \z:bool. x /\ y /\ z``,
+    ``\x:bool. \y:bool. x /\ y /\ x /\ y /\ x /\ y /\ x``]
+  val _ = List.app (fn term =>
+      assert (outcome shared term = outcome full term,
+        "the shared term check disagreed with the full check"))
+    terms
+  val _ = assert (outcome shared (List.nth (terms, 3)) <> "admitted",
+    "the shared term check admitted an oversized binder")
+  val _ = assert (outcome shared (List.nth (terms, 5)) = "admitted" andalso
+      outcome shared (List.nth (terms, 6)) <> "admitted",
+    "the shared term check misjudged nested binders")
+  val theorem = SmtDatatypeProve.datatype_prove ``!x:num. NONE <> SOME x``
+in
+  assert (Thm.concl theorem ~~ ``!x:num. NONE <> SOME x`` andalso
+      null (Thm.hyp theorem),
+    "datatype proof under a binder changed its conclusion");
+  check_oracle_tags "datatype binder" theorem
+end
+
+(* A nested binder takes its raw size from its built node and its Type ID
+   from its argument IDs. *)
+fun graph_nested_binder_reuses_enclosing_size_success () =
+let
+  val graph = SmtReplayGraph.new ()
+  val scope = SmtReplayGraph.root_scope graph
+  val outer = ``\x:bool. \y:bool. x /\ y``
+  val source = SmtReplayGraph.admit_binder graph scope 100 outer
+  val inner = case SmtReplayGraph.view graph (#node source) of
+      SmtReplayGraph.AdmittedBinder {body, ...} => body
+    | _ => die "FAIL: admitted binder lost its body"
+  fun raw node =
+    SmtReplayGraph.unfolded_nodes graph SmtReplayGraph.RawNodes 100 node
+  val function = SmtReplayGraph.import graph scope 100
+    (Term.mk_var ("nested_binder_function", ``:bool -> bool``))
+in
+  assert (Thm.concl (#bridge source) ~~ boolSyntax.mk_eq (outer, outer) andalso
+      null (Thm.hyp (#bridge source)),
+    "nested binder admission changed its bridge");
+  check_oracle_tags "nested binder admission" (#bridge source);
+  assert (SmtReplayGraph.representative graph inner ~~ ``\y:bool. x /\ y``,
+    "nested binder admission changed the inner binder");
+  assert (raw (#node source) = SmtReplayImport.bounded_raw_size 100 outer
+      andalso raw inner =
+        SmtReplayImport.bounded_raw_size 100 ``\y:bool. x /\ y``,
+    "a nested binder's raw size differs from its walked size");
+  assert (SmtReplayGraph.type_id graph inner =
+      SmtReplayGraph.type_id graph (#node function),
+    "a nested binder's Type ID differs from its Type's")
+end
+
+(* The overload-free grammar is reused while the grammar and the constants
+   are unchanged, and rebuilt when either changes. *)
+fun term_to_string_follows_grammar_changes_success () =
+let
+  val term = ``(x:int) - y <> z /\ m < (n:num)``
+  val first = Library.term_to_string term
+  val second = Library.term_to_string term
+  val saved = Parse.current_grammars ()
+  val _ = Parse.temp_remove_termtok {term_name = "/\\", tok = "/\\"}
+  val _ = Parse.temp_remove_termtok
+    {term_name = "/\\", tok = UTF8.chr 0x2227}
+  val changed = Library.term_to_string term
+  val _ = Parse.temp_set_grammars saved
+  val restored = Library.term_to_string term
+  (* Made after the last call, which used the saved grammar.  The new
+     constant replaces the grammar; installing the saved one again brings
+     back the grammar that call cleared, which predates the constant.
+     The grammar with the constant is installed again afterwards. *)
+  val _ = Theory.new_constant ("smt_printer_late_constant", Type.bool)
+  val declared = Parse.current_grammars ()
+  val _ = Parse.temp_set_grammars saved
+  val late = Library.term_to_string
+      (Term.prim_mk_const {Thy = Theory.current_theory (),
+         Name = "smt_printer_late_constant"})
+    handle e => (Parse.temp_set_grammars declared; raise e)
+  val _ = Parse.temp_set_grammars declared
+in
+  assert (late = "smt_printer_late_constant",
+    "term_to_string missed a constant made after its last call: " ^ late);
+  assert (String.isSubstring "~(x int_sub y = z)" first andalso
+      second = first andalso restored = first,
+    "term_to_string printed one term two ways under one grammar");
+  assert (changed = "/\\ (~(x int_sub y = z)) (m < n)",
+    "term_to_string kept a grammar after it changed: " ^ changed)
+end
+
+(* term_types visits each term object once, also when equal copies were
+   built apart, and gives the list the fold over every occurrence gave. *)
+fun datatype_term_types_per_distinct_subterm_success () =
+let
+  fun occurrences term = List.foldl (fn (subterm, types) =>
+      SmtDatatypeProve.type_closure (Term.type_of subterm) types)
+    [] (SmtDatatypeProve.subterms term)
+  fun shared 0 = ``h :: (l:num list) = l``
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child, child) end
+  val _ = List.app (fn term =>
+      assert (SmtDatatypeProve.term_types term = occurrences term,
+        "term_types changed its list of types"))
+    [``\l:num list. (h:num) :: l = h :: l``, shared 4,
+     ``!x:(num # num list) option.
+         x = NONE \/ ?y. x = SOME (y, [y + 1])``]
+  val types = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (shared 40)
+  (* Each call of [shared] builds its own objects. *)
+  val copies = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (boolSyntax.mk_conj (shared 40, shared 40))
+in
+  assert (List.length types = List.length (occurrences (shared 1)),
+    "term_types changed its types on a shared term");
+  assert (copies = types,
+    "term_types changed its types on two equal copies")
+end
+
+(* The sequence prover takes a step with APPEND or LENGTH, either alone. *)
+fun seq_concat_length_single_scan_success () =
+let
+  fun check goal =
+    let val theorem = SmtSeqProve.concat_length_prove goal in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "concat/length proof changed its conclusion");
+      check_oracle_tags "concat/length" theorem
+    end
+in
+  List.app check [``APPEND [] (l:int list) = l``,
+    ``LENGTH [a:int; b] = 2``,
+    ``LENGTH (APPEND l1 (l2:int list)) = LENGTH l1 + LENGTH l2``];
+  expect_hol_error_contains "concat/length without either"
+    "not a concat/length shape"
+    (fn () => SmtSeqProve.concat_length_prove ``(l:int list) = l``)
+end
+
 fun cpc_word_aci_literal_identity_success () =
 let
   val bits = String.implode (List.tabulate (128, fn _ => #"1"))
@@ -26604,6 +27164,18 @@ let
      profile_call_count "th_lemma[bv](shared-word)_OK" = 1,
      "cross-metadata replay lost nine general proofs or its word schema")
   val () = Profile.reset_all ()
+  val wide_bit =
+    ``0w = ~(task19_wide:256 word) ==> (7 >< 7) task19_wide = 1w:1 word``
+  val () = timed "wide-word-bit" (fn () =>
+    replay "general reduction wide word bit"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-wide-bit", [], wide_bit)) wide_bit)
+  val () = assert
+    (profile_call_count "th_lemma[bv](wide-skeleton)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 1 andalso
+     profile_call_count "th_lemma[bv](owned-width)_OK" = 0,
+     "wide word bit did not take the skeleton route first")
+  val () = Profile.reset_all ()
   val () = timed "legacy-arithmetic" (fn () =>
     replay "legacy arithmetic transitivity full replay"
       (Z3_Proof.TH_LEMMA_ARITH
@@ -27635,6 +28207,193 @@ let
     (ignore (Z3_ProofReplay.asserted_equality_substitution_prove_for_test
        [sum_source] (sum_target ``\b:bool. ~b``)); false)
     handle Feedback.HOL_ERR _ => true
+  (* Equations whose left sides occur in their own right sides, directly or
+     through each other, are used only right to left: left to right,
+     rewriting to a fixpoint never ends. *)
+  val self_source = ``(asserted_x:int) = asserted_x * 1``
+  val self_target = ``(asserted_x:int) * 1 + -3 = asserted_x + -3``
+  val self_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [self_source] self_target
+  val cycle_source =
+    ``((asserted_x:int) = asserted_y * 1) /\ (asserted_y = asserted_x * 1)``
+  val cycle_target = ``(asserted_x:int) * 1 + -3 = asserted_y + -3``
+  val cycle_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [cycle_source] cycle_target
+  (* x = k x is cyclic left to right and w y = y right to left, so only
+     one direction of each, together, closes the target. *)
+  val mixed_source =
+    ``((asserted_x:int) = asserted_k asserted_x) /\
+      (asserted_w (asserted_y:int) = asserted_y)``
+  val mixed_target =
+    ``asserted_p (asserted_k (asserted_x:int)) (asserted_w asserted_y) =
+      asserted_p asserted_x (asserted_y:int):int``
+  val mixed_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [mixed_source] mixed_target
+  (* A rewrite can also create a redex in the term around it, which no
+     check of the equations alone sees.  Left to right, a = b and
+     f b = f (f a) grow f b without end; right to left they terminate.
+     x = y and f y = f x make f x and f y swap places. *)
+  val context_source =
+    ``((asserted_a:int) = asserted_b) /\
+      (asserted_f asserted_b = asserted_f (asserted_f asserted_a):int)``
+  val context_target =
+    ``asserted_f (asserted_f (asserted_a:int)) = asserted_f asserted_b:int``
+  val context_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [context_source] context_target
+  val swap_source =
+    ``((asserted_x:int) = asserted_y) /\
+      (asserted_f asserted_y = asserted_f asserted_x:int)``
+  val swap_target =
+    ``asserted_f (asserted_x:int) + -3 = asserted_f asserted_y + -3``
+  val swap_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [swap_source] swap_target
+  (* Left to right, a = b and f b = g (f a) (f a) double the redexes every
+     two rewrites; the bound stops that direction before it exhausts the
+     replay. *)
+  val copy_source =
+    ``((asserted_a:int) = asserted_b) /\
+      (asserted_f asserted_b =
+       asserted_g (asserted_f asserted_a) (asserted_f asserted_a):int)``
+  val copy_target =
+    ``asserted_g (asserted_f (asserted_a:int)) (asserted_f asserted_a) =
+      asserted_f asserted_b:int``
+  val copy_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [copy_source] copy_target
+  (* x = f (\x. x) passes the cycle check, but the rewriter opens the
+     abstraction and rewrites its bound x without end, so that direction
+     is bounded too; the reverse one closes the target. *)
+  val rebind_source =
+    ``(asserted_x:int) = asserted_l (\asserted_x:int. asserted_x)``
+  val rebind_target =
+    ``asserted_f (asserted_x:int) =
+      asserted_f (asserted_l (\asserted_x:int. asserted_x)):int``
+  val rebind_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [rebind_source] rebind_target
+  (* A deep nest of one redex takes one rewrite per level; f x = x has no
+     usable reverse. *)
+  val nest_source = ``asserted_f (asserted_x:int) = asserted_x``
+  val nest_function = ``asserted_f:int -> int``
+  fun nest 0 term = term
+    | nest n term = nest (n - 1) (Term.mk_comb (nest_function, term))
+  val nest_target = boolSyntax.mk_eq
+    (intSyntax.mk_plus (nest 300 ``asserted_x:int``, ``-3:int``),
+     ``(asserted_x:int) + -3``)
+  val nest_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [nest_source] nest_target
+  (* An acyclic chain of 32 equations whose ends each occur 300 times takes
+     32 rewrites per occurrence in either direction: with variables on the
+     left it is rewritten to its end, as before any bound; with
+     applications on the left, within the bound for 32 equations. *)
+  fun chain_link i =
+    Term.mk_var ("asserted_c" ^ Int.toString i, intSyntax.int_ty)
+  fun chain_case wrap =
+    let
+      val source = boolSyntax.list_mk_conj (List.tabulate (32, fn i =>
+        boolSyntax.mk_eq (wrap (chain_link i), wrap (chain_link (i + 1)))))
+      fun repeated term = List.foldl (fn (_, sum) =>
+        intSyntax.mk_plus (sum, term)) term (List.tabulate (299, fn i => i))
+      val target = boolSyntax.mk_eq
+        (repeated (wrap (chain_link 0)), repeated (wrap (chain_link 32)))
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  val chains = [chain_case (fn link => link),
+    chain_case (fn link => Term.mk_comb (``asserted_f:int -> int``, link))]
+  (* One equation with an application on the left, whose two sides each
+     occur 131072 times in a target shared as a 17-level DAG: the budget
+     counts the target's unfolded tree, not a capped prefix of it. *)
+  val shared_case =
+    let
+      val apply = fn link =>
+        Term.mk_comb (``asserted_f:int -> int``, chain_link link)
+      val source = boolSyntax.mk_eq (apply 0, apply 1)
+      fun doubled term = Portable.funpow 17 (fn sum =>
+        intSyntax.mk_plus (sum, sum)) term
+      val target = boolSyntax.mk_eq (doubled (apply 0), doubled (apply 1))
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  (* Competing rules for one left side: the rewriter fires only the
+     first, x = z, so x = y and y = x form no cycle that rewriting meets. *)
+  val shadow_case =
+    let
+      val (x, y, z) = (chain_link 0, chain_link 1, chain_link 2)
+      val source = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (x, z), boolSyntax.mk_eq (x, y),
+         boolSyntax.mk_eq (y, x)]
+      val target = boolSyntax.mk_eq (x, y)
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  (* A compound left side is rewritten before the terms inside it, so
+     the apparent cycle through x inside f x (or y inside f y) is never
+     followed: x = f x with f x = c rewrites x to c. *)
+  val apply = fn term =>
+    Term.mk_comb (``asserted_f:int -> int``, term)
+  val outer = fn term =>
+    Term.mk_comb (``asserted_h:int -> int``, term)
+  fun substitution_case (source, target) =
+    (source, target,
+     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+       [source] target)
+  val preempted_cases =
+    let
+      val (u, x, c) = (chain_link 0, chain_link 1, chain_link 2)
+      val first = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (u, c), boolSyntax.mk_eq (x, apply x),
+         boolSyntax.mk_eq (apply x, c)]
+      val (w, z, y) = (chain_link 3, chain_link 4, chain_link 5)
+      val second = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (w, z), boolSyntax.mk_eq (x, apply y),
+         boolSyntax.mk_eq (apply y, z), boolSyntax.mk_eq (y, x)]
+    in
+      List.map substitution_case
+        [(first, boolSyntax.mk_eq (outer x, outer c)),
+         (second, boolSyntax.mk_eq (x, z))]
+    end
+  (* The same in the reversed direction: the cycle check drops reversed
+     x = f x (or z = x and x = f z), which the rewriter uses once and
+     then rewrites f x (or z) with a later equation. *)
+  val reversed_preempted_cases =
+    let
+      val (c, u, x) = (chain_link 9, chain_link 10, chain_link 11)
+      val first = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (c, u), boolSyntax.mk_eq (apply x, x),
+         boolSyntax.mk_eq (c, apply x)]
+      val (z, b) = (chain_link 12, chain_link 13)
+      val second = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (c, z), boolSyntax.mk_eq (x, z),
+         boolSyntax.mk_eq (apply z, b), boolSyntax.mk_eq (apply z, x)]
+    in
+      List.map substitution_case
+        [(first, boolSyntax.mk_eq (outer x, outer c)),
+         (second, boolSyntax.mk_eq (x, apply c))]
+    end
+  (* The first rule for x is cyclic and is dropped; the later x = a is
+     still used. *)
+  val cyclic_first_case =
+    let val (b, a, x) = (chain_link 6, chain_link 7, chain_link 8)
+    in
+      substitution_case (boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (b, a), boolSyntax.mk_eq (x, apply x),
+         boolSyntax.mk_eq (x, a)], boolSyntax.mk_eq (outer x, outer a))
+    end
+  val chains = preempted_cases @ reversed_preempted_cases @
+    cyclic_first_case :: shadow_case :: shared_case :: chains
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
@@ -27654,7 +28413,42 @@ in
   assert (rejects ``(asserted_x:int) = asserted_y ==> asserted_guard`` andalso
       rejects ``~(asserted_guard ==> (asserted_x:int) = asserted_y)`` andalso
       rejects ``asserted_guard \/ asserted_other_guard``,
-    "asserted equality substitution crossed its structural admission boundary")
+    "asserted equality substitution crossed its structural admission boundary");
+  assert (Thm.concl self_theorem ~~ self_target andalso
+      exact_source self_source self_theorem andalso
+      Thm.concl cycle_theorem ~~ cycle_target andalso
+      exact_source cycle_source cycle_theorem,
+    "cyclic asserted equalities were not substituted right to left");
+  check_oracle_tags "self-referential asserted equality" self_theorem;
+  check_oracle_tags "cyclic asserted equalities" cycle_theorem;
+  assert (Thm.concl mixed_theorem ~~ mixed_target andalso
+      exact_source mixed_source mixed_theorem,
+    "a cyclic equation was not reversed beside the others");
+  check_oracle_tags "mixed-direction asserted equalities" mixed_theorem;
+  assert (Thm.concl context_theorem ~~ context_target andalso
+      exact_source context_source context_theorem andalso
+      Thm.concl swap_theorem ~~ swap_target andalso
+      exact_source swap_source swap_theorem,
+    "a rewrite that recreates its redex was not bounded");
+  check_oracle_tags "context-cyclic asserted equalities" context_theorem;
+  check_oracle_tags "swapping asserted equalities" swap_theorem;
+  assert (Thm.concl copy_theorem ~~ copy_target andalso
+      exact_source copy_source copy_theorem andalso
+      Thm.concl nest_theorem ~~ nest_target andalso
+      exact_source nest_source nest_theorem,
+    "asserted equality substitution was not bounded by its rewrites");
+  check_oracle_tags "copying asserted equalities" copy_theorem;
+  check_oracle_tags "nested asserted equality" nest_theorem;
+  assert (Thm.concl rebind_theorem ~~ rebind_target andalso
+      exact_source rebind_source rebind_theorem,
+    "an equation whose right side rebinds its left side was not bounded");
+  check_oracle_tags "rebinding asserted equality" rebind_theorem;
+  assert (List.all (fn (source, target, theorem) =>
+      Thm.concl theorem ~~ target andalso exact_source source theorem)
+      chains,
+    "a long acyclic chain of asserted equalities was not substituted");
+  List.app (fn (_, _, theorem) =>
+      check_oracle_tags "chained asserted equalities" theorem) chains
 end
 
 fun z3_hyp_removal_beta_lookup_success () =
@@ -32665,10 +33459,12 @@ let
       let val (binder, body) = Term.dest_abs term
       in 1 + reference_size binder + reference_size body end
     else 1
+  val z = Term.mk_var ("binder_resource_z", Type.bool)
   val small_graphs = List.concat (List.tabulate (7, fn depth =>
     let val body = shared depth in
       [body, Term.mk_abs (x, body),
-       Term.mk_comb (Term.mk_abs (x, body), y)]
+       Term.mk_comb (Term.mk_abs (x, body), y),
+       Term.mk_abs (z, Term.mk_abs (y, Term.mk_abs (x, body)))]
     end))
   val index = SmtResource.new_bounded_term_index 8192
   val indexed_terms = [x, y, identity, nested, shadowed,
@@ -32738,6 +33534,12 @@ in
   check_exact ("shadowed abstraction", 5, shadowed);
   check_exact ("abstraction after application", 5, after_application);
   List.app check_graph small_graphs;
+  assert (List.all (fn term =>
+      SmtResource.contains (fn node => Term.is_var node andalso node ~~ x)
+        term andalso
+      #complete (SmtResource.bounded_structure 1000 term))
+      (List.drop (small_graphs, 3)),
+    "a scan missed a node under nested binders");
   List.app compare_index indexed;
   assert (Option.isSome admitted_id andalso limited_index x = admitted_id
       andalso limited_index y = NONE,
@@ -39123,6 +39925,38 @@ let
       replay_polynomial_normal_form_success),
     ("cpc_shared_bitblast_equality_success",
       cpc_shared_bitblast_equality_success),
+    ("cpc_wide_adder_bitblast_success",
+      cpc_wide_adder_bitblast_success),
+    ("cpc_bvite_words_circuit_first_success",
+      cpc_bvite_words_circuit_first_success),
+    ("cpc_word_schemas_shared_per_replay_success",
+      cpc_word_schemas_shared_per_replay_success),
+    ("replay_canon_proposes_only_at_law_heads_success",
+      replay_canon_proposes_only_at_law_heads_success),
+    ("replay_canon_skips_passes_without_triggers_success",
+      replay_canon_skips_passes_without_triggers_success),
+    ("z3_secondary_canon_triggers_under_binders_success",
+      z3_secondary_canon_triggers_under_binders_success),
+    ("replay_type_order_small_and_large_agree_success",
+      replay_type_order_small_and_large_agree_success),
+    ("cpc_binder_cong_lifts_through_negation_success",
+      cpc_binder_cong_lifts_through_negation_success),
+    ("cpc_canonical_trans_endpoint_chains_success",
+      cpc_canonical_trans_endpoint_chains_success),
+    ("datatype_procedures_admit_each_term_once_success",
+      datatype_procedures_admit_each_term_once_success),
+    ("skeleton_binder_admission_skips_synthesized_type_success",
+      skeleton_binder_admission_skips_synthesized_type_success),
+    ("datatype_shared_term_check_matches_full_check_success",
+      datatype_shared_term_check_matches_full_check_success),
+    ("graph_nested_binder_reuses_enclosing_size_success",
+      graph_nested_binder_reuses_enclosing_size_success),
+    ("term_to_string_follows_grammar_changes_success",
+      term_to_string_follows_grammar_changes_success),
+    ("datatype_term_types_per_distinct_subterm_success",
+      datatype_term_types_per_distinct_subterm_success),
+    ("seq_concat_length_single_scan_success",
+      seq_concat_length_single_scan_success),
     ("cpc_word_aci_literal_identity_success",
       cpc_word_aci_literal_identity_success),
     ("cpc_quantified_imp_disj_trans_success",

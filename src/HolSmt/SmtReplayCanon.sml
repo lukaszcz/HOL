@@ -63,13 +63,19 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
-  fun is_ground_total tm =
+  (* Whether tm applies ediv or emod to two arguments: the trigger of the
+     ground-total pass, which reduces children before their parent, so a
+     parent that is not ground yet may become ground. *)
+  fun is_total_application tm =
     let val (head,args) = boolSyntax.strip_comb tm in
       (Term.same_const head smt_ediv_total_tm orelse
        Term.same_const head smt_emod_total_tm) andalso
-      List.length args = 2 andalso
-      (admit_native "canon-ground-total" tm; null (Term.free_vars tm))
+      List.length args = 2
     end
+
+  fun is_ground_total tm =
+    is_total_application tm andalso
+    (admit_native "canon-ground-total" tm; null (Term.free_vars tm))
 
   fun ground_total_conv tm =
     if is_ground_total tm then bossLib.EVAL tm else raise Conv.UNCHANGED
@@ -84,6 +90,63 @@ struct
      checked equality for this invocation.  Tree-depth conversions revisit
      exponentially many paths through solver-generated shared circuits.
      [orient source] rewrites a node whose input occurrence was [source]. *)
+  (* Whether a scan may open the binder [term]: its raw size is within
+     [limit], counted with the pass's own opening admission. A refused
+     admission means the same as an oversized binder. *)
+  fun scan_may_open limit term =
+    Option.isSome (SmtReplayImport.bounded_raw_size_with_type_check
+        admit_count_type limit term)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then false
+      else raise Feedback.HOL_ERR holerr
+
+  (* Whether [trigger] holds at some subterm of [root], binder bodies
+     included: one walk, memoized on physical identity. Past the term
+     budget it answers true, so no pass is skipped that was not scanned.
+     A binder the pass's own opening would refuse answers true before
+     [trigger] or the walk opens it.  Only the outermost binder is checked
+     ([admitted] below it): its check covers every binder inside. *)
+  fun may_trigger trigger root =
+    let
+      exception Found
+      val bucket_count = 4093
+      val seen = Array.array (bucket_count, [] : Term.term list)
+      val visited = ref 0
+      fun visit admitted term =
+        let
+          val index = SmtResource.pointer_bucket bucket_count term
+          val bucket = Array.sub (seen, index)
+        in
+          if List.exists (fn old => Portable.pointer_eq (old, term)) bucket
+          then ()
+          else
+            (Array.update (seen, index, term :: bucket);
+             visited := !visited + 1;
+             if !visited > SmtResource.max_bv_replay_term_nodes orelse
+                (not admitted andalso Term.is_abs term andalso
+                 not (scan_may_open SmtResource.max_bv_replay_term_nodes term))
+                orelse trigger term then raise Found
+             else if Term.is_comb term then
+               (visit admitted (Term.rator term);
+                visit admitted (Term.rand term))
+             else if Term.is_abs term then
+               visit true (#2 (SmtReplayImport.dest_abs_preserving_names term))
+             else ())
+        end
+    in (visit false root; false) handle Found => true end
+
+  (* Where ETA_CONV may rewrite: an abstraction whose body applies
+     something to the bound variable. Builds no theorem. *)
+  fun eta_shape term =
+    Term.is_abs term andalso
+    let val (variable,body) = SmtReplayImport.dest_abs_preserving_names term
+    in Term.is_comb body andalso Term.aconv (Term.rand body) variable end
+
+  (* A conversion that can only rewrite where [trigger] holds. *)
+  fun when_triggered trigger conversion root =
+    if may_trigger trigger root then conversion root
+    else raise Conv.UNCHANGED
+
   fun dag_conversion revisit orient root =
     let
       val bucket_count = 4093
@@ -371,6 +434,10 @@ struct
      Bounded binder bodies use the same compact pass; only their opening
      and final ABS/alpha bridge are native island operations. *)
   fun compact_conversion_status patterns descend revisit propose root =
+    (* A pass whose rules match nowhere in [root] needs no graph. *)
+    if descend andalso not (may_trigger (Option.isSome o propose) root)
+    then (checked_refl root,false)
+    else
     let
       val graph = G.new ()
       val scope = G.root_scope graph
@@ -482,13 +549,38 @@ struct
   (* Build rewrite nets once, but run them only on compact prefixes (or
      already admitted native binder islands), never on an expanded DAG. *)
   val alias_schema_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
-  val not_schema_conv = Rewrite.PURE_REWRITE_CONV
+  val not_clauses =
     [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
      Thm.CONJUNCT2 boolTheory.NOT_CLAUSES]
+  val not_schema_conv = Rewrite.PURE_REWRITE_CONV not_clauses
+  (* Proposes [conversion] only at a term headed by a constant that heads
+     the left-hand side of one of [laws], so that binder bodies without
+     one are not opened. *)
+  fun at_law_heads laws conversion =
+    let
+      fun head term = #1 (boolSyntax.strip_comb term)
+      val heads = List.map (head o boolSyntax.lhs o Thm.concl)
+        (List.concat (List.map Rewrite.mk_rewrites laws))
+      fun constant_id term = #Name (Term.dest_thy_constid term)
+    in
+      if List.all Term.is_const heads then
+        let val ids = List.map constant_id heads in
+          fn term =>
+            let val operator = head term in
+              if Term.is_const operator andalso
+                 List.exists (fn id =>
+                   KernelSig.id_compare (id, constant_id operator) = EQUAL)
+                   ids
+              then SOME conversion else NONE
+            end
+        end
+      else fn _ => SOME conversion
+    end
+
   val cpc_alias_conv = compact_conversion true true
-    (fn _ => SOME alias_schema_conv)
+    (at_law_heads cpc_alias_rewrites alias_schema_conv)
   val not_clauses_conv = compact_conversion true true
-    (fn _ => SOME not_schema_conv)
+    (at_law_heads not_clauses not_schema_conv)
 
   (* Kept for the arithmetic adapter below, not the selected graph pass. *)
   val real_div_conv = Rewrite.PURE_REWRITE_CONV [realTheory.real_div]
@@ -522,8 +614,21 @@ struct
        realTheory.real_ge,
        realTheory.REAL_NOT_LT,
        realTheory.REAL_NOT_LE])
+  fun is_order term =
+    intSyntax.is_less term orelse intSyntax.is_leq term orelse
+    realSyntax.is_less term orelse realSyntax.is_leq term
+
+  fun is_dual_order term =
+    intSyntax.is_greater term orelse intSyntax.is_geq term orelse
+    realSyntax.is_greater term orelse realSyntax.is_geq term
+
+  (* Proposed only at the laws' left-hand shapes, so that binder bodies
+     without one are not opened. *)
   val z3_relation_dual_conv = compact_conversion true false
-    (fn _ => SOME relation_dual_schema_conv)
+    (fn term =>
+      if is_dual_order term orelse
+         (boolSyntax.is_neg term andalso is_order (boolSyntax.dest_neg term))
+      then SOME relation_dual_schema_conv else NONE)
 
   (* After relation aliases are normalized, a non-strict order in an ite
      guard is the complement of the reversed strict order.  Expose that
@@ -684,7 +789,11 @@ struct
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
      compact_conversion true false
-       (fn _ => SOME z3_order_cond_polarity_conv),
+       (fn term =>
+         if boolSyntax.is_cond term andalso
+            (intSyntax.is_leq (#1 (boolSyntax.dest_cond term)) orelse
+             realSyntax.is_leq (#1 (boolSyntax.dest_cond term)))
+         then SOME z3_order_cond_polarity_conv else NONE),
      z3_cond_polarity_conv,
      z3_strict_difference_conv,
      polynomial_components_conv,
@@ -695,26 +804,41 @@ struct
     let val (left,right) = boolSyntax.dest_eq tm
     in new_term_order () (left,right) = EQUAL end
 
-  (* Only these arithmetic heads and negated conditional guards can change
-     the difference normal form. The primary pass has already admitted the
-     source. An incomplete scan or any binder retains all original passes. *)
+  (* Only a term one of the secondary passes below rewrites can change the
+     difference normal form, also under a binder: an order or its dual
+     (the relation, strict-difference and ite-guard passes), a conditional
+     with a negated guard (the polarity pass) or an arithmetic node (the
+     polynomial and additive passes).  The scan uses those passes' own
+     recognisers and descends into binder bodies; a binder over the
+     scan's budget counts as relevant without being opened; when the whole
+     source is within it, so is every binder, and none is checked again.
+     The primary pass has already admitted the source.  An incomplete scan
+     retains all original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
-      val heads = [intSyntax.plus_tm,intSyntax.less_tm,intSyntax.leq_tm,
-        intSyntax.greater_tm,intSyntax.geq_tm,realSyntax.plus_tm,
-        realSyntax.less_tm,realSyntax.leq_tm,realSyntax.greater_tm,
-        realSyntax.geq_tm]
+      val checked = ref NONE
+      fun whole () = case !checked of
+          SOME fits => fits
+        | NONE =>
+            let val fits =
+                  scan_may_open SmtResource.max_skeleton_replay_dag_nodes root
+            in checked := SOME fits; fits end
       fun inspect term =
-        if Term.is_abs term orelse
-            (Term.is_const term andalso
-             List.exists (Term.same_const term) heads) orelse
-            (boolSyntax.is_cond term andalso
-             boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
+        if is_order term orelse is_dual_order term orelse
+           is_arithmetic term orelse
+           (boolSyntax.is_cond term andalso
+            boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
           raise Relevant
         else ()
-      fun children term = if Term.is_comb term then
-          [Term.rator term,Term.rand term] else []
+      fun children term =
+        if Term.is_comb term then [Term.rator term,Term.rand term]
+        else if Term.is_abs term then
+          if whole () orelse
+             scan_may_open SmtResource.max_skeleton_replay_dag_nodes term
+          then [#2 (SmtReplayImport.dest_abs_preserving_names term)]
+          else raise Relevant
+        else []
       fun scan () =
         let val {complete,...} = SmtResource.bounded_structure_with_children
           children inspect SmtResource.max_skeleton_replay_dag_nodes root
@@ -769,9 +893,10 @@ struct
   val cpc_term_canon_conv =
     compose
       [cpc_alias_conv,
-       dag_rewrite_conv ground_total_conv,
+       when_triggered is_total_application
+         (dag_rewrite_conv ground_total_conv),
        cpc_alias_conv,
-       dag_orientation_conv Drule.ETA_CONV]
+       when_triggered eta_shape (dag_orientation_conv Drule.ETA_CONV)]
 
   val cpc_operand_canon_conv =
     compose

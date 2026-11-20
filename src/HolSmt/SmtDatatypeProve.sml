@@ -57,9 +57,44 @@ struct
 
   fun subterms t = HolKernel.find_terms (fn _ => true) t
 
+  (* The types of [subterms t], in the order a fold over that list adds
+     them.  That list holds every occurrence of a shared subterm, so each
+     term object is visited once here instead, children before their
+     parent and operands before operators, the list's order.  Objects are
+     told apart by pointer: comparing two equal but separately built
+     objects walks every path through them. *)
   fun term_types t =
-    List.foldl (fn (tm, acc) => type_closure (Term.type_of tm) acc)
-      [] (subterms t)
+    let
+      val table = ref (Array.array (64, [] : Term.term list))
+      val entries = ref 0
+      fun insert buckets tm =
+        let val index = SmtResource.pointer_bucket (Array.length buckets) tm
+        in Array.update (buckets, index, tm :: Array.sub (buckets, index)) end
+      fun seen tm =
+        List.exists (fn old => Portable.pointer_eq (old, tm))
+          (Array.sub (!table,
+             SmtResource.pointer_bucket (Array.length (!table)) tm))
+      fun add tm =
+        let
+          val old = !table
+          val _ =
+            if !entries < 2 * Array.length old then () else
+              let val grown = Array.array (2 * Array.length old, [])
+              in Array.app (List.app (insert grown)) old; table := grown end
+        in insert (!table) tm; entries := !entries + 1 end
+      fun visit (tm, tys) =
+        if seen tm then tys
+        else
+          let
+            val _ = add tm
+            val tys =
+              if Term.is_abs tm then visit (Term.body tm, tys)
+              else if Term.is_comb tm then
+                let val (operator, operand) = Term.dest_comb tm
+                in visit (operator, visit (operand, tys)) end
+              else tys
+          in type_closure (Term.type_of tm) tys end
+    in visit (t, []) end
 
   fun has_constructors ty =
     case TypeBase.fetch ty of
@@ -292,7 +327,24 @@ struct
   let
   (* Admission/Work/observer failures must not become proof-search misses. *)
   exception AdmissionFailure of exn
-  fun admit term = check term handle primary => raise AdmissionFailure primary
+  (* Simplification visits the same term objects many times; each one is
+     checked once by the procedures built here, which keep their check.
+     Failures are not cached. A bucket keeps
+     only its eight latest terms: equal but distinct objects share a
+     bucket, and an unbounded list makes each lookup linear. *)
+  val admitted_buckets = 4093
+  val admitted = Array.array (admitted_buckets,[] : Term.term list)
+  fun admit term =
+    let
+      val index = SmtResource.pointer_bucket admitted_buckets term
+      val bucket = Array.sub (admitted,index)
+    in
+      if List.exists (fn old => Portable.pointer_eq (old,term)) bucket then ()
+      else
+        (check term handle primary => raise AdmissionFailure primary;
+         Array.update (admitted,index,
+           term :: List.take (bucket,Int.min (7,length bucket))))
+    end
   fun protect f x = f x handle AdmissionFailure primary => raise primary
   fun admit_thm th = (admit (Thm.concl th);List.app admit (Thm.hyp th))
   (* Traverse consumes conversion sides with kernel congruence/TRANS, not
@@ -1234,8 +1286,8 @@ struct
       (checked_procedures_using_preflight source_ss
         (fn _ => raise Conv.UNCHANGED) true (SOME preflight) check) prove
 
-  fun default_admission () = SmtReplayArithmetic.new_term_check
-    {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
+  fun default_admission () = SmtReplayArithmetic.new_shared_term_check
+    SmtResource.max_bv_replay_term_nodes
   fun datatype_prove_with_admission admit t =
     #prove (checked_procedures admit) t
   fun datatype_prove t = datatype_prove_with_admission (default_admission ()) t
