@@ -59,23 +59,42 @@ struct
 
   (* The types of [subterms t], in the order a fold over that list adds
      them.  That list holds every occurrence of a shared subterm, so each
-     distinct subterm is visited once here instead, children before their
-     parent and operands before operators, the list's order. *)
+     term object is visited once here instead, children before their
+     parent and operands before operators, the list's order.  Objects are
+     told apart by pointer: comparing two equal but separately built
+     objects walks every path through them. *)
   fun term_types t =
     let
-      fun visit (tm, (seen, tys)) =
-        if HOLset.member (seen, tm) then (seen, tys)
+      val table = ref (Array.array (64, [] : Term.term list))
+      val entries = ref 0
+      fun insert buckets tm =
+        let val index = SmtResource.pointer_bucket (Array.length buckets) tm
+        in Array.update (buckets, index, tm :: Array.sub (buckets, index)) end
+      fun seen tm =
+        List.exists (fn old => Portable.pointer_eq (old, tm))
+          (Array.sub (!table,
+             SmtResource.pointer_bucket (Array.length (!table)) tm))
+      fun add tm =
+        let
+          val old = !table
+          val _ =
+            if !entries < 2 * Array.length old then () else
+              let val grown = Array.array (2 * Array.length old, [])
+              in Array.app (List.app (insert grown)) old; table := grown end
+        in insert (!table) tm; entries := !entries + 1 end
+      fun visit (tm, tys) =
+        if seen tm then tys
         else
           let
-            val seen = HOLset.add (seen, tm)
-            val (seen, tys) =
-              if Term.is_abs tm then visit (Term.body tm, (seen, tys))
+            val _ = add tm
+            val tys =
+              if Term.is_abs tm then visit (Term.body tm, tys)
               else if Term.is_comb tm then
                 let val (operator, operand) = Term.dest_comb tm
-                in visit (operator, visit (operand, (seen, tys))) end
-              else (seen, tys)
-          in (seen, type_closure (Term.type_of tm) tys) end
-    in #2 (visit (t, (HOLset.empty Term.compare, []))) end
+                in visit (operator, visit (operand, tys)) end
+              else tys
+          in type_closure (Term.type_of tm) tys end
+    in visit (t, []) end
 
   fun has_constructors ty =
     case TypeBase.fetch ty of

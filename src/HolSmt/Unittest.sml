@@ -22917,8 +22917,8 @@ in
     "term_to_string kept a grammar after it changed: " ^ changed)
 end
 
-(* term_types visits each distinct subterm once and gives the list the
-   fold over every occurrence gave. *)
+(* term_types visits each term object once, also when equal copies were
+   built apart, and gives the list the fold over every occurrence gave. *)
 fun datatype_term_types_per_distinct_subterm_success () =
 let
   fun occurrences term = List.foldl (fn (subterm, types) =>
@@ -22935,9 +22935,14 @@ let
          x = NONE \/ ?y. x = SOME (y, [y + 1])``]
   val types = within_mutator_seconds 2 SmtDatatypeProve.term_types
     (shared 40)
+  (* Each call of [shared] builds its own objects. *)
+  val copies = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (boolSyntax.mk_conj (shared 40, shared 40))
 in
   assert (List.length types = List.length (occurrences (shared 1)),
-    "term_types changed its types on a shared term")
+    "term_types changed its types on a shared term");
+  assert (copies = types,
+    "term_types changed its types on two equal copies")
 end
 
 (* The sequence prover takes a step with APPEND or LENGTH, either alone. *)
