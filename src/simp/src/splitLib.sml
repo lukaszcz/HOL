@@ -215,31 +215,6 @@ fun const_key c =
   in KernelSig.name_toString {Thy=Thy,Name=Name}
   end
 
-fun applied_arities tms =
-  let
-    fun visit (tm,acc) =
-      if is_abs tm then visit (body tm,acc)
-      else
-        let
-          val (head,args) = strip_comb tm
-          val acc = List.foldl visit acc args
-          val n = length args
-        in
-          if is_const head then
-            let val key = const_key head
-            in
-              case Binarymap.peek (acc,key) of
-                  SOME old =>
-                    if old >= n then acc else Binarymap.insert (acc,key,n)
-                | NONE => Binarymap.insert (acc,key,n)
-            end
-          else if is_abs head then visit (head,acc)
-          else acc
-        end
-  in
-    List.foldl visit (Binarymap.mkDict String.compare) tms
-  end
-
 (* The registered case constants, indexed by name.  [order] is the
    constant's position in [TypeBase.elts], retained so that the groups
    below can be handed back in the order a walk over the TypeBase leaves
@@ -289,30 +264,32 @@ fun case_const_index_of () =
 (* This deliberately does not use [TypeBase.is_case].  That predicate
    delegates to Pmatch's stricter and substantially more expensive case
    recognition.  Splitting only needs a saturated application of the
-   registered case constant, which the maximum-arity table identifies in
-   one walk over the goal and assumptions.  The looper is offered a goal
-   on every simplification round, so the constants the goal does contain
-   are looked up in the index rather than the whole TypeBase walked.  The
-   derived rules themselves use [type_split_cache], so with
-   [case_const_index] these are the only datatype-split caches. *)
+   registered case constant. Count arguments along each application spine
+   and collect matching types in their TypeBase order. The looper can do
+   this on each simplification round without recording unrelated constants. *)
 fun goal_split_rule_groups terms =
   let
-    val arities = applied_arities terms
     val index = case_const_index_of ()
-    fun saturated (key,n,found) =
-      let
-        fun keep (entry : case_const, found) =
-          if n >= #arity entry then (#order entry, #ty entry) :: found
-          else found
-      in
-        List.foldl keep found (Symtab.lookup_list index key)
-      end
-    val matched = Binarymap.foldl saturated [] arities
-    fun group ((_,ty),result) =
+    fun collect arity ({order,ty,arity=min_arity} : case_const, found) =
+      if arity < min_arity orelse Option.isSome (Binarymap.peek (found,order))
+      then found
+      else Binarymap.insert (found,order,ty)
+    fun visit tm arity found =
+      if is_comb tm then
+        let val (f,x) = dest_comb tm
+        in visit f (arity + 1) (visit x 0 found) end
+      else if is_abs tm then visit (body tm) 0 found
+      else if is_const tm then
+        List.foldl (collect arity) found
+          (Symtab.lookup_list index (const_key tm))
+      else found
+    val matched = List.foldl (fn (tm,found) => visit tm 0 found)
+                    (Binarymap.mkDict Int.compare) terms
+    fun group (_,ty,result) =
       (ty, type_split_rules ty) :: result
       handle HOL_ERR _ => result
   in
-    List.foldl group [] (Listsort.sort (Lib.measure_cmp fst) matched)
+    Binarymap.foldl group [] matched
   end
 
 fun goal_split_rules terms =
@@ -326,7 +303,7 @@ fun same_type_shape (ty1, ty2) =
 fun same_key (h1,h2) =
   same_const h1 h2 andalso same_type_shape (type_of h1, type_of h2)
 
-fun insert_rule (rule : split_rule) (cmap : cmap) =
+fun insert_rule (rule : split_rule, cmap : cmap) =
   let
     val head = #head rule
     fun insert [] = [(head, [rule])]
@@ -337,16 +314,12 @@ fun insert_rule (rule : split_rule) (cmap : cmap) =
     Symtab.map_default (const_key head, []) insert cmap
   end
 
-fun index_rules rules =
-  let
-    fun index (rule : split_rule, (concls, asms)) =
-      if #asm rule then (concls, insert_rule rule asms)
-      else (insert_rule rule concls, asms)
-  in
-    foldl index (Symtab.empty, Symtab.empty) rules
-  end
+fun index_rules asm =
+  foldl (fn (rule : split_rule, cmap) =>
+           if #asm rule = asm then insert_rule (rule,cmap) else cmap)
+        Symtab.empty
 
-fun index_theorems thms = index_rules (map analyse_rule thms)
+fun index_theorems asm thms = index_rules asm (map analyse_rule thms)
 
 (* Paths are in [Conv.PATH_CONV] notation: "l" rator, "r" rand, "a" body. *)
 datatype path_step = Body | Argument of int * int
@@ -526,7 +499,7 @@ fun split_conv cmap tm =
     first_success packs tm
   end
 
-fun SPLIT_CONV thms = split_conv (#1 (index_theorems thms))
+fun SPLIT_CONV thms = split_conv (index_theorems false thms)
 
 fun clean_asm_eq th =
   let
@@ -597,14 +570,21 @@ fun split_asm_tac cmap =
     tac
   end
 
-fun SPLIT_ASM_TAC thms = split_asm_tac (#2 (index_theorems thms))
+fun SPLIT_ASM_TAC thms = split_asm_tac (index_theorems true thms)
 
-(* Analyse the rules once and share the result between both attempts. *)
+(* Analyse rules eagerly, but index assumption rules only if the conclusion
+   does not split. A saved tactic can reuse the assumption lookup. *)
 fun SPLIT_RULE_TAC rules =
-  let val (concls,asms) = index_rules rules
+  let
+    fun prepare (rule : split_rule, (concls,asms)) =
+      if #asm rule then (concls,rule::asms)
+      else (insert_rule (rule,concls),asms)
+    val (concls,asms) = foldl prepare (Symtab.empty,[]) rules
+    val asm_tac = Susp.delay
+      (fn () => split_asm_tac (List.foldr insert_rule Symtab.empty asms))
   in
     CHANGED_TAC (CONV_TAC (split_conv concls)) ORELSE
-    CHANGED_TAC (split_asm_tac asms)
+    CHANGED_TAC (fn g => Susp.force asm_tac g)
   end
 
 fun SPLIT_TAC thms = SPLIT_RULE_TAC (map analyse_rule thms)

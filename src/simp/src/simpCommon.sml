@@ -131,13 +131,6 @@ fun std_conv_ss {conv_ss, merge_ss} {name,conv,pats} =
       merge_ss (map (fn p => cnv (SOME([],p))) pats)
   end
 
-fun partition_ssfrags name_of names ssdata =
-     List.partition
-       (fn f =>
-          case name_of f
-          of SOME name => Lib.mem name names
-           | NONE => false) ssdata
-
 fun same_frag name_of f1 f2 =
     case (name_of f1, name_of f2) of
         (SOME n1, SOME n2) => n1=n2
@@ -150,8 +143,67 @@ fun name_set_member s =
       fn SOME n => Binaryset.member(s,n)
        | NONE => nil_included
     end
-fun names_member names =
-    name_set_member (Binaryset.addList (Binaryset.empty String.compare, names))
+fun names_member [] = K false
+  | names_member [name] =
+    let val anonymous = name = ""
+    in fn SOME n => n = name | NONE => anonymous end
+  (* These names are read repeatedly during a history scan. Sort once for
+     larger batches, and use direct comparisons for short lists. *)
+  | names_member (names as first::_::_::_::_) =
+    if List.all (fn name => name = first) names then names_member [first]
+    else
+    (let
+      val keys = Vector.fromList (Lib.uniq (Listsort.sort String.compare names))
+      fun member key =
+        let
+          fun search lo hi =
+            if lo >= hi then false
+            else
+              let val mid = lo + (hi - lo) div 2
+              in
+                case String.compare (key, Vector.sub (keys,mid)) of
+                    LESS => search lo mid
+                  | EQUAL => true
+                  | GREATER => search (mid + 1) hi
+              end
+        in search 0 (Vector.length keys) end
+      val anonymous = member ""
+    in fn SOME n => member n | NONE => anonymous end
+    handle Size =>
+      name_set_member (Binaryset.addList (Binaryset.empty String.compare,
+                                          names)))
+  | names_member names =
+    let val anonymous = Lib.mem "" names
+    in fn SOME n => Lib.mem n names | NONE => anonymous end
+
+fun partition_ssfrags name_of names frags =
+  let
+    fun at_least 0 _ = true
+      | at_least _ [] = false
+      | at_least n (_::rest) = at_least (n - 1) rest
+  in
+    case names of
+        [selected] =>
+          List.partition
+            (fn f => case name_of f of
+                         SOME name =>
+                           Portable.pointer_eq (name,selected) orelse
+                           name = selected
+                       | NONE => false) frags
+      | _ =>
+          (* Sorting the names pays off only for a large enough scan. *)
+          if at_least 16 names andalso at_least 64 frags then
+            let val member = names_member names
+            in
+              List.partition
+                (fn f => case name_of f of n as SOME _ => member n
+                                         | NONE => false) frags
+            end
+          else
+            List.partition
+              (fn f => case name_of f of SOME name => Lib.mem name names
+                                       | NONE => false) frags
+  end
 
 fun is_excluded excluded nameopt =
     case nameopt of
@@ -185,47 +237,81 @@ fun entry_name_match (thypart, ssnm) pats =
       List.exists check1 pats
     end
 
-fun prepare_entry_name_match pats =
+fun prepare_entry_pattern (pattern as (thy,base)) =
     let
-      fun prepare (thy,base) =
-          let val rewrite = "rewrite:" ^ base
-          in (thy,base,rewrite,rewrite ^ ".") end
-      fun matches [] _ _ = false
-        | matches ((thy,base,rewrite,prefix)::rest) thypart name =
-            ((not (isSome thy) orelse thy = thypart) andalso
-             (base = name orelse rewrite = name orelse
-              String.isPrefix prefix name)) orelse matches rest thypart name
+      val rewrite = "rewrite:" ^ base
+      val prefix = rewrite ^ "."
+      fun matches name =
+          base = name orelse rewrite = name orelse String.isPrefix prefix name
     in
-      matches (map prepare pats)
-      handle Size =>
-        (* A very long pattern may have matched without adding a prefix. *)
-        fn thypart => fn name => entry_name_match (thypart,name) pats
+      case thy of
+          NONE => K matches
+        | SOME _ => fn thypart => if thy = thypart then matches else K false
+    end
+    handle Size =>
+      fn thypart => fn name => entry_name_match (thypart,name) [pattern]
+
+datatype entry_patterns =
+    Pending of (string option * string) list
+  | Ready of string option * string * string * string * entry_patterns ref
+  | Oversized of (string option * string) list
+
+fun prepare_entry_name_match [] = K (K false)
+  | prepare_entry_name_match [pattern] = prepare_entry_pattern pattern
+  | prepare_entry_name_match pats =
+    let
+      (* Prepare and cache each pattern only as far as a match requires. *)
+      val first = ref (Pending pats)
+      fun matches current thypart name =
+          case !current of
+              Ready (thy,base,rewrite,prefix,next) =>
+                ((not (isSome thy) orelse thy = thypart) andalso
+                 (base = name orelse rewrite = name orelse
+                  String.isPrefix prefix name)) orelse matches next thypart name
+            | Pending [] => false
+            | Pending (remaining as (thy,base)::rest) =>
+                let
+                  val ready =
+                      (let val rewrite = "rewrite:" ^ base
+                       in Ready (thy,base,rewrite,rewrite ^ ".",
+                                 ref (Pending rest)) end)
+                      handle Size => Oversized remaining
+                in
+                  current := ready;
+                  matches current thypart name
+                end
+            | Oversized remaining => entry_name_match (thypart,name) remaining
+    in
+      matches first
     end
 
-val split_dot = Substring.position "."
-
 fun munge_simpset_name p =
-    let val (thy,suffix) = split_dot (Substring.full p)
+    let
+      val n = String.size p
+      fun next_dot i =
+          if i = n orelse String.sub (p,i) = #"." then i else next_dot (i + 1)
+      val first = next_dot 0
     in
-      if Substring.isEmpty suffix then (NONE,p)
+      if first = n then (NONE,p)
       else
         let
-          val name = Substring.triml 1 suffix
-          val (_,conjunct) = split_dot name
+          val start = first + 1
+          val second = next_dot start
+          fun digits i =
+              i = n orelse (Char.isDigit (String.sub (p,i)) andalso
+                            digits (i + 1))
         in
-          if Substring.isEmpty conjunct then
-            if Substring.isEmpty (#2 (Substring.splitl Char.isDigit name))
-            then (NONE,p)
+          if second = n then
+            if digits start then (NONE,p)
             else
-              let val s = Substring.string thy
+              let val thy = String.substring (p,0,first)
               in
-                if mem s (Theory.ancestry "-")
-                then (SOME s,Substring.string name)
-                else raise ERR ("-*", "bad theory name: "^s)
+                if mem thy (Theory.ancestry "-") then
+                  (SOME thy,String.extract (p,start,NONE))
+                else raise ERR ("-*", "bad theory name: "^thy)
               end
-          else if Substring.isEmpty
-                    (#2 (split_dot (Substring.triml 1 conjunct)))
-          then (SOME (Substring.string thy),Substring.string name)
+          else if next_dot (second + 1) = n then
+            (SOME (String.substring (p,0,first)),String.extract (p,start,NONE))
           else raise ERR ("-*", "User key has too many dots")
         end
     end
