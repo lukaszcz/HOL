@@ -337,10 +337,6 @@ struct
       | Exn.Res theorem =>
           (Exn.release packet_close;Exn.release scope_close;theorem) end
 
-  fun cvc_original_with_clauses_and_work owned translation version input =
-    cvc_original_with_clauses_and_work_impl
-      D.prove_cpc_with_clauses_and_work_using owned translation version input
-
   fun z3_original_with_work
       (owned as OwnedInvocation
         {invocation = invocation as Invocation

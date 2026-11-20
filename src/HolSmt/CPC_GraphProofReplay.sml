@@ -384,8 +384,6 @@ struct
       val admit_type = admit_type_using (fn () => ())
       fun raw node = let val term = G.representative graph node in
         admit term;admit_type (Term.type_of term);term end
-      fun legacy step : located_term =
-        {term = raw (node step),provenance = #provenance (fact step)}
       fun argument (Q.GraphTerm value) : located_term =
             {term = raw (#node value),
              provenance = occurrence_provenance (#occurrence value)}
@@ -691,9 +689,13 @@ struct
                 | _ => raise ERR "arithmetic" "changed conditional schema")
                 (#node result) used
               val _ = arithmetic_node := SOME body
-              val theorem = List.foldl (fn (index,proof) =>
-                Thm.MP proof (Thm.ASSUME (#term (List.nth (inputs,index)))))
-                (#theorem result) used
+              val theorem = if null used then #theorem result else
+                let val inputs = Vector.fromList inputs in
+                  List.foldl (fn (index,proof) =>
+                    Thm.MP proof
+                      (Thm.ASSUME (#term (Vector.sub (inputs,index)))))
+                    (#theorem result) used
+                end
             in (theorem,{term = Thm.concl theorem,provenance = provenance},
                 NONE) end
           fun ordinary_argument (Q.GraphList entries) =
@@ -889,13 +891,13 @@ struct
                 let fun find [] _ = raise OriginGap OriginHypAlignment
                       | find (node :: rest) index =
                           if Portable.pointer_eq
-                              (term,G.representative graph node) then index
+                              (term,G.representative graph node)
+                          then (index,node)
                           else find rest (index+1)
                 in find nodes 0 end
-              val used = Listsort.sort Int.compare
-                (List.map hypothesis (Thm.hyp theorem))
-              val selected_nodes = List.map (fn index => List.nth (nodes,index))
-                used
+              val (used,selected_nodes) = ListPair.unzip
+                (Listsort.sort (fn ((i,_),(j,_)) => Int.compare (i,j))
+                  (List.map hypothesis (Thm.hyp theorem)))
               val minimal = R.implication graph scope selected_nodes
                 (#node current)
               val expected = G.representative graph minimal
@@ -942,22 +944,22 @@ struct
                  check_type = check_type,
                  prove = fn {constructor,premise,...} =>
                    let
-                     fun apply [] cursor proof =
+                     fun apply [] _ cursor proof =
                            if cursor = #node current then proof else
                              raise ERR "producer_origin" "wrong conditional end"
-                       | apply (index :: rest) cursor proof =
+                       | apply (expected :: rest) index cursor proof =
                            (case R.operands graph boolSyntax.implication 2
                                cursor of SOME [left,right] =>
-                             if left = List.nth (selected_nodes,index) then
-                               apply rest right
+                             if left = expected then
+                               apply rest (index+1) right
                                  (Thm.MP (Thm.EQ_MP (constructor cursor) proof)
                                    (premise index)) else
                                  raise ERR "producer_origin"
                                    "changed antecedent"
                             | _ => raise ERR "producer_origin"
                                 "missing antecedent")
-                   in apply (List.tabulate (length selected_nodes,fn i => i))
-                     minimal (premise (length selected_nodes)) end}
+                   in apply selected_nodes 0 minimal
+                     (premise (length selected_nodes)) end}
               val recorded = Lib.mapi (fn index => fn step =>
                 {index = index,node = node step,
                  command_occurrence = SOME (serial step)}) premises

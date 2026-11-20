@@ -16,7 +16,6 @@ struct
   val _ = CVC.CVC_SMT_Owned_Original_Source_Prover
   val _ = CVC.CVC_SMT_Owned_Original_Source_Prover_With_Emissions
   val _ = Z3.Z3_SMT_Original_Source_Prover_With_Work_And_Emissions
-  val ERR = Feedback.mk_HOL_ERR "SmtLib_CheckedCarrierCallsite"
   type request =
     {limits : SmtCheckedGraph.limits,semantic_limits : W.limits,
      work_limit : int,check_type : Type.hol_type -> unit,

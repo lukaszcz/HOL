@@ -11222,18 +11222,6 @@ end
 
 fun smtlib_preprocessing_and_gap_diagnostics () =
 let
-  fun expect_translation_error label term expected =
-    let
-      val _ = SmtLib.goal_to_SmtLib_translation NONE ([], term)
-    in
-      die ("expected translation diagnostic for " ^ label)
-    end
-    handle Feedback.HOL_ERR holerr =>
-      let val msg = Feedback.message_of holerr
-      in
-        assert (contains expected msg,
-          label ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
-      end
   fun preprocessing_removes label term forbidden =
     let
       val (subgoals, _) =
@@ -13000,10 +12988,6 @@ fun cpc_skolem_parser_witnesses proof =
           if String.isPrefix "@w" id then SOME term else NONE
       | _ => NONE)
     (CPC_Proof.proof_commands proof)
-
-fun cpc_skolem_variables arity =
-  List.tabulate (arity, fn index =>
-    Term.mk_var ("cpc_sk" ^ Int.toString index, Type.bool))
 
 fun cpc_skolem_witness_nary_case arity =
 let
@@ -34711,7 +34695,7 @@ let
   val frame = G.new_scope graph scope []
   val local_sources = S.new graph frame 8192
     {goal = boolSyntax.T,assumptions = []}
-  val local_goal = S.canonical_goal local_sources
+  val _ = S.canonical_goal local_sources
   val local_denied = G.representative graph (S.denied_goal_node local_sources)
   val local_contradiction = Thm.MP (Thm.NOT_ELIM (Thm.ASSUME local_denied))
     boolTheory.TRUTH

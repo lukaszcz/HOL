@@ -53,7 +53,6 @@ struct
     guard owner (fn () => W.spend work 1)
   fun add (p:profile) (q:profile) : profile =
     {raw= #raw p + #raw q,inc= #inc p + #inc q,ann= #ann p + #ann q}
-  val zero : profile = {raw=0,inc=0,ann=0}
   fun equality (p:profile) : profile =
     {raw=3+2 * #raw p,inc=3+2 * #inc p,ann=9+2 * #ann p}
   fun evidence_node work graph scope cap value =

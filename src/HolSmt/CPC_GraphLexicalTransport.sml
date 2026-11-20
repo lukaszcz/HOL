@@ -56,8 +56,6 @@ struct
                    in walk (operator :: operand :: rest) end
                  else walk rest end
     in walk terms end
-  fun law conclusion hypotheses = List.foldr boolSyntax.mk_imp
-    conclusion hypotheses
   fun located_term (located : CPC_Proof.located_term) = #term located
   datatype plan = Plan of
     {graph : G.graph, scope : G.scope, validate : unit -> unit,

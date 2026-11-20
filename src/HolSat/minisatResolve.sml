@@ -64,7 +64,8 @@ fun balanced_array empty leaf join clauses =
       val count = Array.length clauses
     in if count = 0 then empty else build 0 count end
 
-fun root_context clauseth =
+local
+fun make_root_context eager clauseth =
     let
       val conjunction = balanced_array T fst mk_conj clauseth
       val count = Array.length clauseth
@@ -78,11 +79,35 @@ fun root_context clauseth =
               collect start half (CONJUNCT1 theorem);
               collect (start + half) (count - half) (CONJUNCT2 theorem)
             end
-      val _ = if count = 0 then ()
-              else collect 0 count (ASSUME conjunction)
+      val _ = if eager andalso count <> 0
+              then collect 0 count (ASSUME conjunction) else ()
     in {conjunction = conjunction, projections = projections} end
 
+in
+fun root_context clauseth = make_root_context true clauseth
+fun sparse_root_context clauseth = make_root_context false clauseth
+end
+
 local
+fun root_projection ({conjunction,projections} : root_context) index =
+    let
+      val cached = Array.sub (projections,index)
+      fun project start count th =
+          if count = 1 then th
+          else
+            let val half = count div 2
+                val mid = start + half
+            in if index < mid then project start half (CONJUNCT1 th)
+               else project mid (count - half) (CONJUNCT2 th)
+            end
+    in
+      (* Only the sparse context leaves unrequested entries as TRUTH. *)
+      if not (Portable.pointer_eq (cached,TRUTH)) then cached
+      else
+        let val th =
+              project 0 (Array.length projections) (ASSUME conjunction)
+        in Array.update (projections,index,th); th end
+    end
 
 val A = mk_var("A",bool)
 val B = mk_var("B",bool)
@@ -96,7 +121,7 @@ in
    where t = (x0 \/ ... \/ xn) and t' = (p0 \/ ... \/ pn),
    i.e. the "expanded" t
 *)
-fun dualise lfn ({projections, ...} : root_context) orc clauseth ci =
+fun dualise lfn roots orc clauseth ci =
     let
       fun dualise' th =
           let
@@ -124,7 +149,7 @@ fun dualise lfn ({projections, ...} : root_context) orc clauseth ci =
               in dualise' th2 end
             else
               let
-                  val root = Array.sub (projections, orc)
+                  val root = root_projection roots orc
                   val th2 = MP (INST [A|->t1] AND_INV_IMP2) root
                   (* All compact clauses are projections of one balanced CNF
                      assumption.  Resolution therefore carries one shared

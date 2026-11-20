@@ -521,7 +521,7 @@ struct
   type policy_common =
     {request:policy_request,root_scope:G.scope,limits:W.limits,
      policy_limits:RP.semantic_policy,native_budget:native_budget,
-     admission:F.policy_focus option,source_limit:int,source_policy:RP.limit,
+     admission:F.policy_focus,source_limit:int,source_policy:RP.limit,
      handles:G.closure_child list ref,frames:G.scope list ref,
      minted:(G.scope * G.closure_child) list ref,
      originals:(G.node * Term.term) list ref,validated:guard_cache}
@@ -539,9 +539,9 @@ struct
     (W.validate_policy work graph root_scope sources policy_limits;
      ignore (native_budget_for work native_budget);
      G.validate_scope graph scope;
-     (case admission of NONE => () | SOME held =>
-       let val d = F.describe_with_policy_for
-             {graph = graph,scope = scope,sources = sources,work = work} held
+     (let val d = F.describe_with_policy_for
+             {graph = graph,scope = scope,sources = sources,work = work}
+             admission
        in if #source_limit d = source_policy andalso
            native_source_limit (native_budget_for work native_budget)
              (#category d) = source_limit andalso #node d =
@@ -664,12 +664,10 @@ struct
       val native=native_budget_for work native_budget
       val limits= #semantic_limits native
       val policy_limits=W.semantic_policy work
-      val selected=Option.map (F.describe_with_policy_for
-        {graph=graph,scope=scope,sources=sources,work=work}) admission
-      val source_limit=case selected of NONE=> #input_limit limits
-        | SOME data=>native_source_limit native (#category data)
-      val source_policy=case selected of NONE=> #input_limit policy_limits
-        | SOME data=> #source_limit data
+      val selected=F.describe_with_policy_for
+        {graph=graph,scope=scope,sources=sources,work=work} admission
+      val source_limit=native_source_limit native (#category selected)
+      val source_policy= #source_limit selected
       val common : policy_common=
         {request=request,root_scope=root_scope,limits=limits,
          policy_limits=policy_limits,native_budget=native_budget,
@@ -851,7 +849,6 @@ struct
     in W.with_step work attempt end
     handle primary=>(W.close work;raise primary)
 
-  fun prepare_with_policy request = pb_prepare_internal NONE request
   fun prepare_admitted_with_policy
       ({graph,scope,sources,work,ordinal,admission,native_budget,
         check_type,scope_opened}
@@ -859,7 +856,7 @@ struct
     let val _=ignore (native_budget_for work native_budget)
         val d = F.describe_with_policy_for
           {graph = graph,scope = scope,sources = sources,work = work} admission
-    in pb_prepare_internal (SOME admission)
+    in pb_prepare_internal admission
       {graph = graph,scope = scope,sources = sources,work = work,
        ordinal=ordinal,redex= #child d,native_budget=native_budget,
        check_type=check_type,

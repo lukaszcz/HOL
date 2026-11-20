@@ -20,17 +20,11 @@ struct
     end
 
   val fp_type_id = #Tyop (Type.dest_thy_typeid ``:(1,2) smtfp``)
-  val rounding_type_id = #Tyop (Type.dest_thy_typeid ``:rounding``)
 
   fun is_fp_type ty =
     not (Type.is_vartype ty) andalso
     KernelSig.id_compare
       (#Tyop (Type.dest_thy_typeid ty), fp_type_id) = EQUAL
-
-  fun is_rounding_type ty =
-    not (Type.is_vartype ty) andalso
-    KernelSig.id_compare
-      (#Tyop (Type.dest_thy_typeid ty), rounding_type_id) = EQUAL
 
   val unsupported_producers =
     ["smtfp_mul", "smtfp_div", "smtfp_fma",
@@ -305,12 +299,6 @@ struct
 
   val priority_laws = Drule.CONJUNCTS
     smtfloatReplayWordTheory.smtfp_word_priority_compute
-
-  type helper_metrics =
-    {visited : int, memo_hits : int, rewrites : int, output_nodes : int,
-     literals : int, lets : int, betas : int, pairs : int,
-     projections : int, conditionals : int, helpers : int,
-     priorities : int, ordinary : int, beta_seconds : real}
 
   (* Arithmetic schemas expose fields lazily below. The former eager helper
      closure had no callers and duplicated these projection rules. *)
@@ -683,36 +671,28 @@ struct
       val _ = if Term.aconv (boolSyntax.lhs (Thm.concl result)) semantic
         then () else raise Fail "arithmetic schema lost its endpoint"
       val _ = validate_arithmetic_output result
-      val metrics =
-        {visited = 0, memo_hits = 0, rewrites = 1,
-         output_nodes = SmtResource.dag_nodes_up_to
-           SmtResource.max_bv_replay_term_nodes
-           (boolSyntax.rhs (Thm.concl result)),
-         literals = 0, lets = 0, betas = 0, pairs = 0,
-         projections = 3, conditionals = 0, helpers = 1,
-         priorities = 0, ordinary = 0, beta_seconds = 0.0}
-    in (result, metrics) end
+    in result end
 
   type schema_entry =
     {source_type : hol_type, subtract : bool,
-     theorem : thm, metrics : helper_metrics}
+     theorem : thm}
 
   fun arithmetic_schema admission cache subtract head left_bits right_bits =
     let val source_type = Term.type_of left_bits
     in
       case List.find (fn entry => #subtract entry = subtract andalso
           Type.compare (#source_type entry, source_type) = EQUAL) (!cache) of
-        SOME entry => (#theorem entry, #metrics entry)
+        SOME entry => #theorem entry
       | NONE =>
           let
-            val (theorem, metrics) = SmtResource.profile_phase
+            val theorem = SmtResource.profile_phase
               "fp-graph/static-schema"
               (fn () => build_arithmetic_schema admission subtract
                 head left_bits right_bits) ()
             val entry = {source_type = source_type, subtract = subtract,
-              theorem = theorem, metrics = metrics}
+              theorem = theorem}
             val _ = cache := entry :: !cache
-          in (theorem, metrics) end
+          in theorem end
     end
 
   fun represent_internal admission word_admission schema_cache memo term =
@@ -817,7 +797,7 @@ struct
       val actual = boolSyntax.rhs (Thm.concl congruence)
       val (left_bits, _) = placeholder left_descriptor
       val (right_bits, _) = placeholder right_descriptor
-      val (schema, _) = arithmetic_schema word_admission schema_cache
+      val schema = arithmetic_schema word_admission schema_cache
         subtract head left_bits right_bits
       val instantiated = SmtResource.profile_phase
         "fp-graph/late-insertion"

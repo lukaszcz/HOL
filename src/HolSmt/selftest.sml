@@ -3280,13 +3280,17 @@ local
          admission = admission,equations = [],template_limit = 2000000,
          check_type = check_type}
       val certificate = #certificate selected
-      val canonical = S.assumption_nodes sources @ [S.denied_goal_node sources]
+      val assumptions = S.assumption_nodes sources
+      val canonical = assumptions @ [S.denied_goal_node sources]
+      val selected_indices = C.selected certificate
+      val _ = ensure "symmetry did not select the first Source occurrence"
+        (selected_indices = [0,length assumptions])
       val falsehood = G.constant graph scope boolSyntax.F
       val block = P.freeze graph {scope = scope,sources = canonical,
         roots = C.roots certificate,template_limit = 2000000}
       val actual = List.map (fn index =>
         {index = index,node = List.nth (canonical,index),
-         edge = P.source block index}) (C.selected certificate)
+         edge = P.source block index}) selected_indices
       val theorem = P.realize block falsehood
         (C.assemble block certificate actual)
       val _ = S.check_contradiction sources theorem

@@ -85,8 +85,6 @@ struct
          validated := SOME (revision,ds,ts,ps) else
          raise ERR "active" "validation state changed during backing pass")
     end
-  fun revalidate (owner as Owner {validated,...}) =
-    (validated := NONE;active owner)
   fun meta (owner as Owner {work,...}) action = protected owner (fn () =>
     W.with_step work (fn () =>
       (active owner;W.spend work 1;

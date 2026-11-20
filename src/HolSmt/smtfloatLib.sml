@@ -13,7 +13,6 @@ open smtfloatIntegralRoundTheory
 structure IntegralRound = smtfloatIntegralRoundTheory
 
 val ERR = Feedback.mk_HOL_ERR "smtfloatLib"
-val lhsc = boolSyntax.lhs o Thm.concl
 val rhsc = boolSyntax.rhs o Thm.concl
 
 fun mk_tw (t, w) =
