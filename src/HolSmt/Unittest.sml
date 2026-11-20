@@ -2658,7 +2658,22 @@ let
   val ((strip_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
     ([``(m:num) < 5``, ``(n:num) < 3 /\ (k:num) < 2``,
       ``?j:num. j < m``], ``m + n + k < 10``)
+  (* an existential's witness is fresh for the transferred assumptions
+     still to be stripped: here one has a free i of the witness's name, and
+     the proof uses it *)
+  fun witness_fresh asl =
+    Tactical.TAC_PROOF ((asl, ``0 <= &(n:num) + (5:int)``),
+      Tactical.THEN (SmtLib.NUM_TO_INT_TAC,
+        Tactical.THEN (Tactical.REPEAT (Tactical.POP_ASSUM Tactic.MP_TAC),
+                       intLib.ARITH_TAC)))
+  val exists_first =
+    witness_fresh [``?i:int. i = &(n:num) + 1``, ``(i:int) = &(n:num) + 5``]
+  val exists_last =
+    witness_fresh [``(i:int) = &(n:num) + 5``, ``?i:int. i = &(n:num) + 1``]
 in
+  List.app (fn (what, thm) =>
+      check_oracle_tags ("num transfer witness, " ^ what) thm)
+    [("existential first", exists_first), ("existential last", exists_last)];
   assert (not (List.exists (fn a => boolSyntax.is_conj a orelse
                                     boolSyntax.is_exists a) strip_asl),
     "num transfer left a transferred assumption unstripped");
