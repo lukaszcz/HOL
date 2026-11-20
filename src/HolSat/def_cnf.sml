@@ -10,8 +10,6 @@ open Lib boolLib Globals Parse Term Type Thm Drule Psyntax Conv Feedback
 
 open satCommonTools satTheory
 
-val dpfx = "dcnf_"
-
 val presimp_conv =
     QCONV (GEN_REWRITE_CONV REDEPTH_CONV empty_rewrites
             [NOT_CLAUSES, AND_CLAUSES, OR_CLAUSES, IMP_CLAUSES, EQ_CLAUSES,
@@ -67,11 +65,8 @@ val GCONJUNCTS  =
                       | _ => th::acc)
                  end
                | "/\\" =>
-                 let val (p,q) = (hd args,last args)
-                 in
-                   GCONJUNCTS' (CONJUNCT1 th)
-                               (GCONJUNCTS' (CONJUNCT2 th) acc)
-                 end
+                 GCONJUNCTS' (CONJUNCT1 th)
+                             (GCONJUNCTS' (CONJUNCT2 th) acc)
                | _ => th::acc
           end
         fun findTF tm =
@@ -184,7 +179,6 @@ fun transvar_clause cnfv (n,tm,vdefs,lfn) =
 (* convert tm to CNF, assuming that it is of the form v =  v' op v'' *)
 (* where all the v's are vars, and op is one of [~,\/,/\,==>,=]      *)
 (* of course when op is ~, there is only one argument               *)
-exception To_cnf_false
 local
 val p_tm = mk_var("p",bool)
 val q_tm = mk_var("q",bool)
@@ -283,29 +277,5 @@ fun to_cnf is_cnf tm =
             in (SOME cnfv,vc,eqs,tops,lfn) end
         val all_clauses = itlist (clausify tm lfn) eqs tops
      in (cnfv,vc,lfn,Array.fromList all_clauses) end
-
-(* verify that each t \in eqs in to_cnf above is of the required form:
-     v = v' op v'' *)
-(* this is only used during development, for sanity checking *)
-fun verq eqs =
-List.app (fn eq =>
-             if is_eq eq then
-                 let val (l,r) = dest_eq eq
-                 in if not (is_var l) then print "LHS is not a var\n" else
-                    let val (opr,args) = strip_comb r
-                    in if List.length args>2 then print "RHS op >2 args\n" else
-                       if is_neg r then
-                           if is_var (hd args) then ()
-                           else print "neg RHS not a var\n"
-                       else if  is_conj r orelse is_disj r orelse
-                                is_imp r orelse is_eq r
-                       then if is_var (hd args) andalso is_var (last args)
-                            then () else print "RHS binop args not vars\n"
-                       else print "RHS not a recognized op\n"
-                    end
-                 end
-             else print "Not top-level eq!\n") eqs
-
-
 
 end

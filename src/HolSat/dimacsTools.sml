@@ -218,11 +218,14 @@ fun intToPrefixedLiteral n =
 ** Raises exception Empty on the empty list
 *)
 
-fun buildClause l =
- foldl
-  (fn (n,t) => mk_disj(intToPrefixedLiteral n, t))
-  (intToPrefixedLiteral (hd l))
-  (tl l);
+local
+fun build_clause literal l =
+    List.foldl (fn (n,t) => mk_disj(literal n,t))
+      (literal (hd l)) (tl l)
+in
+val buildClause = build_clause intToPrefixedLiteral
+val buildMappedClause = build_clause o intToLiteral
+end
 
 (*
 ** dimacsToTerm l
@@ -285,6 +288,21 @@ fun termToDimacsFile fname clause_count var_count clauses =
             fun write_file () =
                 let val outstr = TextIO.openOut cnfname
                     fun out s = output(outstr,s)
+                    fun flush parts = out (String.concat (List.rev parts))
+                    (* Bound the pending text independently of clause width.
+                       Include the separator so runs of short clauses batch
+                       together too. *)
+                    val chunk_size = 1024
+                    fun emit parts count =
+                        if count = chunk_size then (flush parts; ([],0))
+                        else (parts,count)
+                    fun add_literal (literal,(parts,count)) =
+                        emit (" " :: LiteralToString literal :: parts)
+                             (count+1)
+                    fun add_clause (literals,buffer) =
+                        let val (parts,count) =
+                              List.foldl add_literal buffer literals
+                        in emit ("\n0\n" :: parts) (count+1) end
                     val _ = with_cleanup (fn () => closeOut outstr)
                       (fn () =>
                         (out "c File "; out cnfname;
@@ -293,11 +311,7 @@ fun termToDimacsFile fname clause_count var_count clauses =
                          out "p cnf ";
                          out (Int.toString var_count); out " ";
                          out (Int.toString clause_count); out "\n";
-                         Array.app
-                           (fn l =>
-                             (List.app (fn p => (out(LiteralToString p);
-                                                out " ")) l;
-                              out "\n0\n")) numclauses;
+                         flush (#1 (Array.foldl add_clause ([],0) numclauses));
                          flushOut outstr)) ()
                 in tmp_name := tmp; (tmp,cnfname,svm',sva) end
             val res = write_file () handle e =>
@@ -381,9 +395,12 @@ fun getIntClause sva svm get src =
             case getInt get src of
                 SOME(i, src) => if i = 0 then SOME((acc,svm), src)
                                 else
-                                    let val ai = (if i<0 then ~i else i)
-                                        val v = intToPrefixedLiteral ai
-                                        val svm' = update_maps svm sva v ai
+                                    let val ai = Int.abs i
+                                        val svm' =
+                                            if is_T (Array.sub(sva,ai)) then
+                                              update_maps svm sva
+                                                (intToPrefixedLiteral ai) ai
+                                            else svm
                                     in loop src ((i::acc),svm') end
               | NONE         => if List.null acc then NONE
                                 else SOME((acc,svm), src)
@@ -395,14 +412,15 @@ fun getIntClause sva svm get src =
 *)
 
 fun getTerms sva svm get src =
-    let fun loop src (acc,svm,sva) =
+    let val build = buildMappedClause sva
+        fun loop src (acc,svm,sva) =
             let val res = getIntClause sva svm get src
             in case res of
-                SOME((ns,svm'), src) => loop src (buildClause ns::acc,svm',sva)
+                SOME((ns,svm'), src) => loop src (build ns::acc,svm',sva)
               | NONE          => SOME((acc,svm,sva), src)
             end
     in case getIntClause sva svm get src of
-           SOME((ns,svm'), src) => loop src ([buildClause ns],svm',sva)
+           SOME((ns,svm'), src) => loop src ([build ns],svm',sva)
          | NONE          => NONE
     end;
 

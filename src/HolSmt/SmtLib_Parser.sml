@@ -1705,17 +1705,15 @@ local
   fun declared_sort_parsefn sort_name arity =
   let
     val nullary_ty = Type.mk_vartype ("'" ^ sort_name)
-    val cache = ref ([] : (Type.hol_type list * Type.hol_type) list)
-    fun same_args (args1, args2) =
-      Lib.list_compare Type.compare (args1, args2) = EQUAL
+    val cache = ref (Redblackmap.mkDict (Lib.list_compare Type.compare))
     fun cached_ty args =
-      case List.find (fn (cached_args, _) => same_args (cached_args, args)) (!cache) of
-        SOME (_, ty) => ty
+      case Redblackmap.peek (!cache, args) of
+        SOME ty => ty
       | NONE =>
           let
             val ty = Type.gen_tyvar ()
           in
-            cache := (args, ty) :: !cache;
+            cache := Redblackmap.insert (!cache, args, ty);
             ty
           end
     fun arity_mismatch actual =
@@ -6401,13 +6399,13 @@ local
                SortedVar (name, _) =>
                  let val name_text = located_string_node name
                  in
-                   if List.exists (fn prior => prior = name_text) seen then
+                   if HOLset.member (seen, name_text) then
                      type_error "typecheck_lambda" context (loc_of name)
                        NONE NONE
                        ("duplicate lambda binder '" ^ name_text ^ "'")
-                   else reject_duplicates (name_text :: seen) rest
+                   else reject_duplicates (HOLset.add (seen, name_text)) rest
                  end)
-      val _ = reject_duplicates [] vars
+      val _ = reject_duplicates (HOLset.empty String.compare) vars
       val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =
         List.foldl

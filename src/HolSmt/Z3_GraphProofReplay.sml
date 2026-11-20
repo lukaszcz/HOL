@@ -1359,11 +1359,14 @@ struct
                     val producer = if use_fresh_bits then
                         SmtReplayPackedSCC.resolve_with_fresh_bits
                       else SmtReplayPackedSCC.resolve
+                    val law_ids = Redblackset.addList
+                      (Redblackset.empty Int.compare,
+                       List.map (G.node_id o #1) actual_laws)
                   in SOME (producer graph
                     {scope = scope,allocated = allocated,
                      sources = source_nodes,needed = List.filter (fn node =>
-                       not (List.exists (fn (held,_) => held = node)
-                         actual_laws)) definition_needed,
+                       not (Redblackset.member (law_ids,G.node_id node)))
+                       definition_needed,
                      roots = desired :: !roots,preserved = [desired],
                      laws = actual_laws @ (case checked of NONE => []
                        | SOME result => #reflexive_sources result),admission = {metric = G.RawNodes,

@@ -88,27 +88,34 @@ struct
         (Thm.concl o P.theorem block o P.definition block) constructors)
       val _ = if Term.aconv (tree_term terms tree) context then () else
         raise ERR "discover" "constructor context shape mismatch"
-      fun premise index = if index < 0 orelse index >= List.length premises
-        then raise ERR "premise" "unknown recorded premise" else
-          Thm.ASSUME (P.name block (List.nth (premises,index)))
+      val premise_nodes = Vector.fromList premises
+      fun premise index =
+        if index < 0 orelse index >= Vector.length premise_nodes then
+          raise ERR "premise" "unknown recorded premise"
+        else Thm.ASSUME (P.name block (Vector.sub (premise_nodes,index)))
       val result = prove {name = P.name block,
         constructor = P.theorem block o P.constructor block,premise = premise}
       val _ = List.app guard (Thm.concl result :: Thm.hyp result)
       val _ = if clean result andalso
           Term.aconv (Thm.concl result) (P.name block target) then () else
         raise ERR "discover" "invalid tags or discovery endpoint"
-      val indexed = Lib.mapi (fn index => fn node => (index,node)) premises
-      fun occurrence hypothesis = case List.find
-          (fn (_,node) => Term.aconv hypothesis (P.name block node)) indexed of
-          SOME entry => entry
-        | NONE => raise ERR "discover" "hypothesis outside discovery inputs"
       val hypotheses = Thm.hyp result
       val needs_context = List.exists (fn hypothesis =>
         Term.aconv hypothesis context) hypotheses
-      val selected = List.map occurrence (List.filter
+      val retained = HOLset.addList (Term.empty_tmset,List.filter
         (fn hypothesis => not (Term.aconv hypothesis context)) hypotheses)
-      val selected = Listsort.sort (fn ((i,_),(j,_)) => Int.compare (i,j))
-        selected
+      fun select index nodes pending found =
+        if HOLset.isEmpty pending then List.rev found
+        else case nodes of
+          [] => raise ERR "discover" "hypothesis outside discovery inputs"
+        | node :: rest =>
+            let val name = P.name block node in
+              if HOLset.member (pending,name) then
+                select (index+1) rest (HOLset.delete (pending,name))
+                  ((index,node) :: found)
+              else select (index+1) rest pending found
+            end
+      val selected = select 0 premises retained []
       val law = List.foldr (fn ((_,node),proof) =>
         Thm.DISCH (P.name block node) proof) result selected
       val law = if needs_context then Thm.DISCH context law else law

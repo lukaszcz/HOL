@@ -209,25 +209,26 @@ fun count_uses path =
                   (reference id (id-next ());
                    if next ()=0 then () else tail ())
             in tail (); true end
-      fun loop id =
-          if ended () then uses else
+      fun loop id roots =
+          if ended () then (uses,roots) else
           let val tag = next () in
             if isRoot tag then
-              (next (); root_tail (); loop (id+1))
-            else if branch id (id-rshift tag) then loop (id+1)
-            else loop id
+              (next (); root_tail (); loop (id+1) (roots+1))
+            else if branch id (id-rshift tag) then loop (id+1) roots
+            else loop id roots
           end
-    in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) loop 0)
+    in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) (loop 0) 0)
     end
     (* Metadata supplies hints only. Replay the original stream after a
        failed prepass, preserving an earlier checked replay exception. *)
     handle error =>
       if dimacsTools.is_terminal error then raise error else NONE
 
-fun read_live_trace path lfn roots cl sva vc clauseth fin id =
+fun read_live_trace path lfn make_roots cl sva vc clauseth fin id =
     let
       val bytes = OS.FileSys.fileSize path handle OS.SysErr _ => 0
       val uses = if bytes > 0 then count_uses path else NONE
+      val roots = make_roots (Option.map #2 uses)
       (* Any non-empty regular file: Basis input1 takes the stream lock for
          every byte; bounded blocks are cheaper even for small proofs. *)
       val {next,ended} = if bytes > 0 then buffered_input fin
@@ -239,7 +240,7 @@ fun read_live_trace path lfn roots cl sva vc clauseth fin id =
       val (consume, advance) =
           case uses of
               NONE => (fn _ => ignore, ignore)
-            | SOME table =>
+            | SOME (table,_) =>
                 let
                   fun consume _ ci =
                       let val remaining = Dynarray.sub (table,ci)-1 in
@@ -258,8 +259,8 @@ fun read_live_trace path lfn roots cl sva vc clauseth fin id =
                         release (current-1)
                       else ()
                 in (consume, advance) end
-    in readTrace next ended consume advance
-         lfn roots cl sva vc clauseth id end
+    in (readTrace next ended consume advance
+          lfn roots cl sva vc clauseth id,roots) end
 
 (*build the clause/chain list *)
 fun parseTrace make_roots cl sva fname solver vc clauseth lfn proof =
@@ -270,9 +271,7 @@ fun parseTrace make_roots cl sva fname solver vc clauseth lfn proof =
         (* Open first: a missing certificate must select the old fallback
            without constructing an unused compact root context. *)
         fun read () =
-          let val roots = make_roots ()
-          in (read_live_trace path lfn roots cl sva vc clauseth fin 0, roots)
-          end
+          read_live_trace path lfn make_roots cl sva vc clauseth fin 0
      in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) read ())
      end
 handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
@@ -292,13 +291,25 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
         (* One environment check per replay, not per message. *)
         val sat_trace = sat_tracer ()
         fun trace message = sat_trace (fn () => message)
-        fun make_roots () =
+        fun make_roots origins =
           if RBM.numItems lfn = 0 then
             {conjunction = T, projections = Array.array (0,TRUTH)}
           else
             let val _ = trace "resolution roots start"
+                val count = Array.length clauseth
+                fun depth n =
+                    if n <= 0 then 0 else 1 + depth (n div 2)
+                (* Each uncached origin needs at most depth projections.
+                   Keep the linear eager traversal for dense traces. *)
+                val build =
+                    case origins of
+                        SOME n =>
+                          if n <= count div Int.max (1,depth (count-1)) then
+                            minisatResolve.sparse_root_context
+                          else minisatResolve.root_context
+                      | NONE => minisatResolve.root_context
                 val roots = profile_stage "replay-roots"
-                  minisatResolve.root_context clauseth
+                  build clauseth
                 val _ = trace "resolution roots done"
             in roots end
         val _ = trace "resolution trace start"

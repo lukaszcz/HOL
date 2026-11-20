@@ -1571,15 +1571,6 @@ local
     if is_bag_type tm andalso not (mem_aconv tm terms) then tm :: terms
     else terms
 
-  fun dest_bag_binary head tm =
-    let val (rator, rands) = boolSyntax.strip_comb tm in
-      if same_const rator head then
-        case rands of [left, right] => (left, right)
-        | _ => raise ERR "dest_bag_binary" "wrong arity"
-      else
-        raise ERR "dest_bag_binary" "wrong head"
-    end
-
   (* cvc5 bag literals are parsed as their extensional HOL function.  Retain
      this exact shape so a checked proof can be sent back as a Bag literal,
      rather than as an unrelated higher-order lambda. *)
@@ -2761,11 +2752,23 @@ local
     emitted_term_sorts := (key, sorts) :: !emitted_term_sorts
 
   fun emitted_term_sorts_for (tm, arity) =
-    case List.find (fn ((other_tm, other_arity), _) =>
-      arity = other_arity andalso Term.aconv tm other_tm) (!emitted_term_sorts)
-      of
-        SOME (_, sorts) => SOME sorts
-      | NONE => NONE
+    Option.map Lib.snd (List.find (fn ((other_tm, other_arity), _) =>
+      arity = other_arity andalso Term.aconv tm other_tm) (!emitted_term_sorts))
+
+  fun emitted_sort_lookup entries =
+    let
+      fun add ((key, sorts), index) = Redblackmap.insert (index, key, sorts)
+      val index = Susp.delay (fn () =>
+        let
+          val empty = Redblackmap.mkDict
+            (Lib.pair_compare (Term.compare, Int.compare))
+        in
+          (* Apply older entries first so the newest value wins. *)
+          List.foldl add empty (List.rev entries)
+        end)
+    in
+      fn key => Redblackmap.peek (Susp.force index, key)
+    end
 
   type 'term term_declaration_operations = {
     type_of : 'term -> Type.hol_type,
@@ -2806,19 +2809,20 @@ local
        declaration = declaration}
     end
 
-  fun term_declaration_operations regime tydict :
+  fun term_declaration_operations_with recorded_sorts regime tydict :
       Term.term term_declaration_operations =
     {type_of=Term.type_of,is_injected_string=is_injected_string,
      is_injected_float=is_injected_float,
-     recorded_sorts=emitted_term_sorts_for,
+     recorded_sorts=recorded_sorts,
      sort_of_type=smt_sort_of_type regime tydict}
 
-  fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
+  val term_declaration_operations =
+    term_declaration_operations_with emitted_term_sorts_for
+
+  fun term_decl_for_tmdict operations regime ((tm, arity), name) =
     let
       val {domain_sorts,range_sort,declaration} =
-        term_declaration_metadata_with
-          (term_declaration_operations regime tydict) regime
-          ((tm,arity),name)
+        term_declaration_metadata_with operations regime ((tm,arity),name)
     in
       TermDeclaration {hol_term = tm, arity = arity, smt_name = name,
         domain_sorts = domain_sorts, range_sort = range_sort,
@@ -3121,13 +3125,8 @@ local
       List.rev names
     end
 
-  fun datatype_constructor_infos ty type_name =
+  fun datatype_constructor_infos_from ty type_name tyinfo =
     let
-      val tyinfo =
-        case TypeBase.fetch ty of
-          SOME info => info
-        | NONE => raise ERR "datatype_constructor_infos"
-            "missing TypeBase entry"
       val fields = TypeBasePure.fields_of tyinfo
       fun one (constructor, (used, acc)) =
         let
@@ -3153,13 +3152,18 @@ local
       List.rev infos
     end
 
+  fun datatype_constructor_infos ty type_name =
+    case TypeBase.fetch ty of
+      SOME info => datatype_constructor_infos_from ty type_name info
+    | NONE => raise ERR "datatype_constructor_infos" "missing TypeBase entry"
+
   fun type_decl_record (ty, name) =
     TypeDeclaration {hol_type = ty, smt_name = name,
       declaration = "(declare-sort " ^ name ^ " 0)\n"}
 
   fun datatype_declaration_text sort_of family names =
     let
-      val name_of = ListPair.zipEq (family, names)
+      val named_family = ListPair.zipEq (family, names)
       fun constructor_decs (ty, type_name) =
         let
           val tyinfo =
@@ -3167,7 +3171,7 @@ local
               SOME info => info
             | NONE => raise ERR "datatype_declaration_text"
                 "missing TypeBase entry"
-          val infos = datatype_constructor_infos ty type_name
+          val infos = datatype_constructor_infos_from ty type_name tyinfo
           fun one (_, cname, selectors) =
             let
               val selectors = List.map
@@ -3184,7 +3188,7 @@ local
           "(" ^ String.concatWith " " cdecs ^ ")"
         end
       val sort_decls = List.map (fn name => "(" ^ name ^ " 0)") names
-      val datatype_decls = ListPair.mapEq constructor_decs (family, names)
+      val datatype_decls = List.map constructor_decs named_family
     in
       "(declare-datatypes (" ^ String.concatWith " " sort_decls ^ ") (" ^
       String.concatWith " " datatype_decls ^ "))\n"
@@ -3798,15 +3802,17 @@ local
         in List.mapPartial record declarations end
 
   fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict datatype_records =
+      features tydict tmdict datatype_records recorded_sorts =
     let
       val regime_record =
         RegimeSelection {regime = regime, reason = regime_reason}
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
       val type_records = type_declaration_records tydict datatype_records
+      val operations =
+        term_declaration_operations_with recorded_sorts regime tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
-        term_decl_for_tmdict regime tydict (key, name) :: acc)
+        term_decl_for_tmdict operations regime (key, name) :: acc)
         [] tmdict
       val builtin_records = encoded_symbol_records terms
       val advanced_records = advanced_encoding_records regime terms features
@@ -4234,26 +4240,25 @@ local
         val tydict_with_family = ListPair.foldlEq
           (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
           tydict (family, names)
-        fun translate_constructor_doms (fam_ty, (dict, decls, sorts)) =
+        fun translate_constructor_doms (fam_ty, acc) =
           let
-            fun translate_dom (dom, (dict, decls, sorts)) =
+            fun translate_dom (dom, (dict, decls_rev, sorts)) =
               let
                 val (dict, (new_decls, sort)) =
                   translate_type regime (dict, dom)
               in
-                (dict, decls @ new_decls, (dom, sort) :: sorts)
+                (dict, List.revAppend (new_decls, decls_rev),
+                 Redblackmap.insert (sorts, dom, sort))
               end
           in
-            List.foldl translate_dom (dict, decls, sorts)
-              (constructor_doms fam_ty)
+            List.foldl translate_dom acc (constructor_doms fam_ty)
           end
-        val (tydict, dependency_decls, field_sorts) =
+        val (tydict, dependency_decls_rev, field_sorts) =
           List.foldl translate_constructor_doms
-            (tydict_with_family, [], []) family
+            (tydict_with_family, [], Redblackmap.mkDict Type.compare) family
         fun field_sort ty =
-          case List.find (fn (field_ty, _) => same_type (ty, field_ty))
-              field_sorts of
-            SOME (_, sort) => sort
+          case Redblackmap.peek (field_sorts, ty) of
+            SOME sort => sort
           | NONE => smt_sort_of_type regime tydict ty
         (* An acyclic datatype used as an Array index must already be
            declared: Z3 rejects it as non-covariant in a mutual block. *)
@@ -4274,7 +4279,8 @@ local
             SOME n => n
           | NONE => raise ERR "translate_datatype_type" "unregistered type"
       in
-        SOME (tydict, (dependency_decls @ declarations, name))
+        SOME (tydict, (List.revAppend (dependency_decls_rev, declarations),
+                       name))
       end
       handle Feedback.HOL_ERR _ => NONE
            | Redblackmap.NotFound => NONE
@@ -6726,7 +6732,7 @@ local
       !current_generated_forall_emissions
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
-    val record_emitted_term_sorts = !emitted_term_sorts
+    val recorded_sorts = emitted_sort_lookup (!emitted_term_sorts)
     val datatype_records = emitted_datatype_records tydict
       (List.concat (List.map Lib.fst smtlibs))
     fun records () =
@@ -6736,8 +6742,7 @@ local
           save_cell current_native_sequence_emission,
           save_cell current_generated_forall_emissions,
           save_cell current_set_backend,
-          save_cell current_bag_backend,
-          save_cell emitted_term_sorts
+          save_cell current_bag_backend
         ]
         fun work () =
           (current_backend_installation := NONE;
@@ -6746,9 +6751,9 @@ local
              record_generated_forall_emissions;
            current_set_backend := record_set_backend;
            current_bag_backend := record_bag_backend;
-           emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
-             selected_logic reason features tydict tmdict datatype_records)
+             selected_logic reason features tydict tmdict datatype_records
+             recorded_sorts)
         fun restore () = restore_cells restorers
       in
         Portable.finally restore work ()
@@ -8033,9 +8038,6 @@ local
   in
     Tactical.MAP_EVERY (fn v => Tactic.SPEC_TAC (v, v)) vars g
   end
-
-  val SPEC_NUM_FREE_VARS_TAC =
-    SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
   val thms_per_const =
     SmtLib_GraphNumericStock.for_head_preserving_num

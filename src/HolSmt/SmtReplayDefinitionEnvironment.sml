@@ -164,13 +164,18 @@ struct
                   SOME (anchor,_) => SOME (id,anchor,part)
                 | NONE => NONE
               end
-          in case List.mapPartial candidate names of
-              (id,anchor,part) :: _ => DuplicateSCC
+            fun first_candidate [] = NONE
+              | first_candidate (id :: rest) =
+                  case candidate id of
+                    NONE => first_candidate rest
+                  | result => result
+          in case first_candidate names of
+              SOME (id,anchor,part) => DuplicateSCC
                 {variable = Redblackmap.find (variables,id),anchor = anchor,
                  definitions = definitions id,component = List.map
                    (fn member => Redblackmap.find (variables,member))
                    (Redblackset.listItems part)}
-            | [] => Unresolved {definitions = List.length rows,
+            | NONE => Unresolved {definitions = List.length rows,
                 variables = List.length names,
                 direct_self = List.length (List.filter self names)}
           end
@@ -260,11 +265,14 @@ struct
         definitions
       (* Reflexivity is a closed obligation, not a dependency edge. Decide
          the remaining portfolio after removing just those exact Sources. *)
-      val Environment {selection = remaining_selection,...} =
-        prepare graph {scope = scope,allocated = allocated,
-        sources = sources,needed = List.filter (fn node => not (List.exists
-          (fn (row : definition) => #stored row = node) reflexive)) needed,
-        roots = roots}
+      val remaining_selection = if null reflexive then selection else
+        let
+          val ids = Redblackset.addList
+            (set (),List.map (G.node_id o #stored) reflexive)
+          val Environment {selection,...} = prepare graph
+            {scope = scope,allocated = allocated,sources = sources,
+             needed = List.filter (not o member ids) needed,roots = roots}
+        in selection end
       val supported = case remaining_selection of
           Empty => true | Leaf _ => true
         | _ => List.all variable_pair ordinary

@@ -200,12 +200,8 @@ fun initialise check_sat_model infile is_cnf tm =
          (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth)
     end
 
-val dbg_show_input = ref false;
-
 fun GEN_SAT_WITH check_sat_model conf =
     let val (tm,solver,infile,proof,is_cnf,is_proved) = dest_config conf
-        val _ = if !dbg_show_input then (print "\n"; print_term tm; print "\n")
-                else ()
         (* ZChaff's fixed-name output is eligible for cleanup only if it
            did not exist before this invocation's callbacks/solver/replay.
            isLink checks the directory entry, including dangling symlinks.
