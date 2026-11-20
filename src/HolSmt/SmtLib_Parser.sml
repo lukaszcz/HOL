@@ -4265,10 +4265,24 @@ local
     | ArraySort of surface_sort * surface_sort
     | MapSort of surface_sort * surface_sort
 
-  val surface_aliases =
-    ref ([] : (string * ((string * Type.hol_type) list * surface_sort)) list)
-  val surface_alias_frames =
-    ref ([] : (string * ((string * Type.hol_type) list * surface_sort)) list list)
+  type surface_alias_table =
+    (string, (string * Type.hol_type) list * surface_sort) Redblackmap.dict
+
+  val empty_surface_aliases : surface_alias_table =
+    Redblackmap.mkDict String.compare
+  val surface_aliases = ref empty_surface_aliases
+  val surface_alias_frames = ref ([] : surface_alias_table list)
+
+  fun with_shadowed_surface_aliases names f =
+    let
+      fun remove (name, aliases) =
+        case Redblackmap.peek (aliases, name) of
+          NONE => aliases
+        | SOME _ => #1 (Redblackmap.remove (aliases, name))
+      val aliases = List.foldl remove (!surface_aliases) names
+    in
+      Portable.with_flag (surface_aliases, aliases) f ()
+    end
 
   fun is_set_surface surface =
     case surface of
@@ -4994,6 +5008,9 @@ local
       (tmdict, sigdict)
     end
 
+  datatype checked_sort_tree =
+    CheckedSort of Type.hol_type * checked_sort_tree list
+
   fun index_term_from_ast_with_options elaborate_datatypes context
       (tydict, tmdict, sigdict) term_ast =
     case node_of term_ast of
@@ -5011,8 +5028,11 @@ local
             (tydict, tmdict, sigdict) term_ast)
 
   and typecheck_sort context tydict sort_ast =
+    typecheck_sort_with (List.map (typecheck_sort context tydict))
+      context tydict sort_ast
+
+  and typecheck_sort_with arg_sorts context tydict sort_ast =
     let
-      fun arg_sorts args = List.map (typecheck_sort context tydict) args
       fun array_sort_arity loc actual =
         type_error "typecheck_sort" context loc NONE NONE
           ("ArraysEx Array sort arity mismatch: expected exactly two " ^
@@ -5074,63 +5094,96 @@ local
     end
 
   and instantiate_alias_surface params args surface =
-    let
-      val params = List.map Lib.snd params
-      val type_subst = ListPair.map (fn (param, arg) =>
-        {redex = param, residue = surface_sort_type arg}) (params, args)
-      fun subst surface =
-        case surface of
-          PolySort ty =>
-            (case List.find (fn (param, _) => same_sort param ty)
-                (ListPair.zip (params, args)) of
-               SOME (_, arg) => arg
-             | NONE => surface)
-        | ConstructorSort (ty, children) =>
-            ConstructorSort (Type.type_subst type_subst ty,
-              List.map subst children)
-        | ArraySort (index, element) => ArraySort (subst index, subst element)
-        | MapSort (domain, range) => MapSort (subst domain, subst range)
-        | RigidSort ty =>
-            (case List.find (fn (param, _) => same_sort param ty)
-                (ListPair.zip (params, args)) of
-               SOME (_, arg) => arg
-             | NONE => surface)
-    in
-      subst surface
-    end
+    case ListPair.zip (params, args) of
+      [] => surface
+    | bindings =>
+        let
+          val type_subst = List.map (fn ((_, param), arg) =>
+            {redex = param, residue = surface_sort_type arg}) bindings
+          fun leaf ty original =
+            case List.find (fn ((_, param), _) => same_sort param ty)
+                bindings of
+              SOME (_, arg) => arg
+            | NONE => original
+          fun subst surface =
+            case surface of
+              PolySort ty => leaf ty surface
+            | RigidSort ty => leaf ty surface
+            | ConstructorSort (ty, children) =>
+                ConstructorSort (Type.type_subst type_subst ty,
+                  List.map subst children)
+            | ArraySort (index, element) =>
+                ArraySort (subst index, subst element)
+            | MapSort (domain, range) => MapSort (subst domain, subst range)
+        in
+          subst surface
+        end
 
   and surface_sort_of_ast context tydict sort_ast =
-    case node_of sort_ast of
-      SortIdentifier name =>
-        (case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
-           SOME (_, (params, surface)) =>
-             instantiate_alias_surface params [] surface
-         | NONE => RigidSort (typecheck_sort context tydict sort_ast))
-    | SortApply (head, args) =>
-        if located_string_node head = "->" andalso List.length args >= 2 then
-          let
-            val (domains, range) =
-              Lib.front_last
-                (List.map (surface_sort_of_ast context tydict) args)
-          in
-            List.foldr MapSort range domains
-          end
-        else if located_string_node head = "Array" andalso
-                List.length args = 2 then
-          case List.map (surface_sort_of_ast context tydict) args of
-            [index, element] => ArraySort (index, element)
-          | _ => raise ERR "surface_sort_of_ast" "impossible Array arity"
-        else
-          (case List.find
-              (fn (alias, _) => alias = located_string_node head)
-              (!surface_aliases) of
-             SOME (_, (params, surface)) =>
-               instantiate_alias_surface params
-                 (List.map (surface_sort_of_ast context tydict) args) surface
-           | NONE =>
-               ConstructorSort (typecheck_sort context tydict sort_ast,
-                 List.map (surface_sort_of_ast context tydict) args))
-    | _ => RigidSort (typecheck_sort context tydict sort_ast)
+    let
+      (* A constructor validates its complete sort before its surface
+         children are elaborated. Retain those child types for that pass. *)
+      fun check ast =
+        let
+          val children = ref []
+          fun arg_sorts args =
+            let val checked = List.map check args
+            in
+              children := checked;
+              List.map (fn CheckedSort (ty, _) => ty) checked
+            end
+          val ty = typecheck_sort_with arg_sorts context tydict ast
+        in
+          CheckedSort (ty, !children)
+        end
+
+      fun checked_type checked ast =
+        case checked of
+          NONE => typecheck_sort context tydict ast
+        | SOME (CheckedSort (ty, _)) => ty
+
+      fun surface checked ast =
+        let
+          fun surfaces checked args =
+            case checked of
+              NONE => List.map (surface NONE) args
+            | SOME (CheckedSort (_, children)) =>
+                ListPair.mapEq (fn (child, arg) => surface (SOME child) arg)
+                  (children, args)
+        in
+          case node_of ast of
+            SortIdentifier name =>
+              (case Redblackmap.peek (!surface_aliases, name) of
+                 SOME (params, body) =>
+                   instantiate_alias_surface params [] body
+               | NONE => RigidSort (checked_type checked ast))
+          | SortApply (head, args) =>
+              let val name = located_string_node head in
+                if name = "->" andalso List.length args >= 2 then
+                  let val (domains, range) =
+                    Lib.front_last (surfaces checked args)
+                  in List.foldr MapSort range domains end
+                else if name = "Array" andalso List.length args = 2 then
+                  (case surfaces checked args of
+                     [index, element] => ArraySort (index, element)
+                   | _ => raise ERR "surface_sort_of_ast"
+                       "impossible Array arity")
+                else
+                  case Redblackmap.peek (!surface_aliases, name) of
+                    SOME (params, body) =>
+                      instantiate_alias_surface params
+                        (surfaces checked args) body
+                  | NONE =>
+                      let
+                        val tree as CheckedSort (ty, _) =
+                          case checked of NONE => check ast | SOME tree => tree
+                      in ConstructorSort (ty, surfaces (SOME tree) args) end
+              end
+          | _ => RigidSort (checked_type checked ast)
+        end
+    in
+      surface NONE sort_ast
+    end
 
   and typecheck_sorted_var context tydict sorted_var =
     case node_of sorted_var of
@@ -6477,15 +6530,8 @@ local
       val param_tys = List.rev param_tys
       val body_ty = typecheck_sort context temp_tydict body
       (* Parameters shadow aliases in both sort representations. *)
-      val saved_surface_aliases = !surface_aliases
-      fun body_surface () =
-        (surface_aliases := List.filter
-           (fn (alias, _) => not (List.exists (Lib.equal alias) shadowed_names))
-           saved_surface_aliases;
-         surface_sort_of_ast context temp_tydict body)
-        handle e => (surface_aliases := saved_surface_aliases; raise e)
-      val body_surface = body_surface ()
-      val _ = surface_aliases := saved_surface_aliases
+      val body_surface = with_shadowed_surface_aliases shadowed_names
+        (fn () => surface_sort_of_ast context temp_tydict body)
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface body_surface then
@@ -6505,8 +6551,8 @@ local
         else
           SmtLib_Theories.decline ("<" ^ alias_name ^ ">") "wrong number of arguments"
     in
-      surface_aliases := (alias_name, (param_tys, body_surface)) ::
-        List.filter (fn (alias, _) => alias <> alias_name) (!surface_aliases);
+      surface_aliases := Redblackmap.insert
+        (!surface_aliases, alias_name, (param_tys, body_surface));
       Library.extend_dict ((alias_name, parsefn), tydict)
     end
 
@@ -6681,16 +6727,10 @@ local
           let
             val constructor_tydict = add_datatype_params params tydict
             val shadowed_names = List.map located_string_node params
-            val saved_surface_aliases = !surface_aliases
-            fun add_constructors () =
-              (surface_aliases := List.filter
-                 (fn (alias, _) => not (List.exists (Lib.equal alias)
-                   shadowed_names)) saved_surface_aliases;
-               List.foldl (add_constructor constructor_tydict)
-                 (tmdict, sigdict) constructors)
-              handle e => (surface_aliases := saved_surface_aliases; raise e)
-            val (tmdict, sigdict) = add_constructors ()
-            val _ = surface_aliases := saved_surface_aliases
+            val (tmdict, sigdict) =
+              with_shadowed_surface_aliases shadowed_names (fn () =>
+                List.foldl (add_constructor constructor_tydict)
+                  (tmdict, sigdict) constructors)
           in
             (tydict, tmdict, sigdict)
           end
@@ -6806,8 +6846,8 @@ local
       fun alias_contains_collection name =
         if shadows_alias name then false
         else
-          case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
-            SOME (_, (_, surface)) => contains_collection_surface surface
+          case Redblackmap.peek (!surface_aliases, name) of
+            SOME (_, surface) => contains_collection_surface surface
           | NONE => false
       fun contains_collection sort =
         case node_of sort of
@@ -7261,7 +7301,7 @@ local
               raise ERR "typecheck_script"
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
-            val _ = surface_aliases := []
+            val _ = surface_aliases := empty_surface_aliases
             val _ = surface_alias_frames := []
             val (tydict, tmdict) = parsedicts_for logic_name
           in
@@ -7504,7 +7544,7 @@ local
               let
                 val logic = visible_logic (#logic command_state)
                 val (tydict, tmdict) = parsedicts_for logic
-                val _ = surface_aliases := []
+                val _ = surface_aliases := empty_surface_aliases
                 val _ = surface_alias_frames := []
               in
                 finish (new_typecheck_state_with_queries logic tydict tmdict

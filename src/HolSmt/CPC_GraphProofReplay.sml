@@ -323,6 +323,17 @@ struct
         processed_sources
       val processed_ids = Redblackset.addList
         (Redblackset.empty Int.compare,List.map G.node_id processed_sources)
+      val original_index = ref NONE
+      fun original_source node =
+        let
+          val index = case !original_index of SOME index => index
+            | NONE =>
+                let val index = List.foldl (fn (source,index) =>
+                      Redblackmap.insert (index,G.node_id source,source))
+                      (Redblackmap.mkDict Int.compare) canonical_sources
+                    val _ = original_index := SOME index
+                in index end
+        in Redblackmap.peek (index,G.node_id node) = SOME node end
       val counter = ref 0
       val forced_counter = ref 0
       val known = ref (Redblackmap.mkDict String.compare)
@@ -2020,14 +2031,12 @@ struct
       fun discover (Q.GraphAssume (id,term)) =
             let
               val current = located_fact graph scope term
-              val route = if Redblackset.member
-                  (processed_ids,G.node_id (#node current)) then
-                PreprocessedSource else Assumption
+              val processed = Redblackset.member
+                (processed_ids,G.node_id (#node current))
+              val route = if processed then PreprocessedSource else Assumption
               val _ = case preprocessing of NONE => () | SOME _ =>
-                if Redblackset.member
-                    (processed_ids,G.node_id (#node current)) orelse
-                    List.exists (fn node => node = #node current)
-                      canonical_sources orelse
+                if processed orelse
+                    original_source (#node current) orelse
                     List.exists (fn (node,_) => node = #node current) (!pushes)
                 then () else raise ERR "discover"
                   "assertion outside original or processed Source portfolio"
@@ -2048,8 +2057,9 @@ struct
         in result end
       val completed = SmtResource.profile_phase "cvc/graph-rule-admission"
         (List.map observed) (#commands proof)
-      val final = case List.rev completed of root::_ => root
-        | [] => raise ERR "check_contradiction" "empty CPC proof"
+      val final = case completed of
+          [] => raise ERR "check_contradiction" "empty CPC proof"
+        | _ => List.last completed
       (* cvc5 can certify an already false input with only ASSUME commands,
          including the trailing denied-goal assumption. Select the actual
          recorded false Source edge, never a freshly solved contradiction.

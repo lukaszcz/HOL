@@ -1258,16 +1258,18 @@ local
       fun reaches _ [] = false
         | reaches seen (t :: ts) =
           if Type.compare (t, ty) = EQUAL then true
-          else if List.exists (fn s => Type.compare (s, t) = EQUAL) seen
-                  orelse has_type_builtin t then
+          else if HOLset.member (seen, t) orelse has_type_builtin t then
             reaches seen ts
-          else if is_function_type t then
-            let val (dom, rng) = Type.dom_rng t
-            in reaches (t :: seen) (dom :: rng :: ts) end
           else
-            reaches (t :: seen) (constructor_doms t @ ts)
+            let
+              val seen = HOLset.add (seen, t)
+              val pending = if is_function_type t then
+                  let val (dom, rng) = Type.dom_rng t
+                  in dom :: rng :: ts end
+                else constructor_doms t @ ts
+            in reaches seen pending end
     in
-      reaches [] [listSyntax.dest_list_type ty]
+      reaches (HOLset.empty Type.compare) [listSyntax.dest_list_type ty]
     end
 
   (* Lists are the native model of SMT sequences, except for HOL strings and
