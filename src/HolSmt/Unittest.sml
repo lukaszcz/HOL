@@ -22427,16 +22427,13 @@ let
     List.foldl adder (boolSyntax.F, []) (List.tabulate (256, Lib.I))
   val target = boolSyntax.mk_eq (wordsSyntax.mk_word_add (x, y),
     SmtLib_Theories.mk_bbterm (List.rev sums))
-  val timer = Timer.startCPUTimer ()
-  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
-  val {usr, ...} = Timer.checkCPUTimer timer
+  (* Unshared, the carry chain takes about 30 s. *)
+  val theorem = within_mutator_seconds 10
+    CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
 in
   assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
     "wide adder bitblast replay changed the adder equation");
-  check_oracle_tags "wide adder bitblast" theorem;
-  assert (Time.< (usr, Time.fromSeconds 10),
-    "wide adder bitblast replay took " ^ Time.toString usr ^
-    " s of CPU; the carry chain is no longer shared")
+  check_oracle_tags "wide adder bitblast" theorem
 end
 
 (* A masked wide word reaches schematic_bvite_words; the circuit path goes
@@ -22582,14 +22579,14 @@ let
      the abstraction walks it once. *)
   val binder = Term.mk_abs (``trigger_bound:bool``, shared 21)
   val calls = ref 0
-  val timer = Timer.startCPUTimer ()
-  val binder_found = SmtReplayCanon.may_trigger
-    (fn _ => (calls := !calls + 1; false)) binder
-  val binder_relevant = SmtReplayCanon.secondary_rewrite_needed binder
-  val eta_found = SmtReplayCanon.may_trigger SmtReplayCanon.eta_shape binder
-  val {usr, ...} = Timer.checkCPUTimer timer
+  val (binder_found, binder_relevant, eta_found) =
+    within_mutator_seconds 5 (fn () =>
+      (SmtReplayCanon.may_trigger
+         (fn _ => (calls := !calls + 1; false)) binder,
+       SmtReplayCanon.secondary_rewrite_needed binder,
+       SmtReplayCanon.may_trigger SmtReplayCanon.eta_shape binder)) ()
   val _ = assert (binder_found andalso binder_relevant andalso eta_found
-      andalso !calls = 0 andalso Time.< (usr, Time.fromSeconds 5),
+      andalso !calls = 0,
     "a trigger scan opened a binder over its budget")
   val _ = assert (SmtReplayCanon.eta_shape ``\y:int. (f:int -> bool) y``
       andalso not (SmtReplayCanon.eta_shape ``\y:int. y``) andalso
@@ -22884,7 +22881,7 @@ in
 end
 
 (* The overload-free grammar is reused while the grammar is unchanged and
-   rebuilt when it changes. *)
+   rebuilt when it changes.  A new constant changes the grammar. *)
 fun term_to_string_follows_grammar_changes_success () =
 let
   val term = ``(x:int) - y <> z /\ m < (n:num)``
@@ -22897,7 +22894,14 @@ let
   val changed = Library.term_to_string term
   val _ = Parse.temp_set_grammars saved
   val restored = Library.term_to_string term
+  (* Made after the last call, so it is printed with a rebuilt grammar. *)
+  val _ = Theory.new_constant ("smt_printer_late_constant", Type.bool)
+  val late = Library.term_to_string
+    (Term.prim_mk_const {Thy = Theory.current_theory (),
+       Name = "smt_printer_late_constant"})
 in
+  assert (late = "smt_printer_late_constant",
+    "term_to_string missed a constant made after its last call: " ^ late);
   assert (String.isSubstring "~(x int_sub y = z)" first andalso
       second = first andalso restored = first,
     "term_to_string printed one term two ways under one grammar");

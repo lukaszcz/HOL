@@ -407,8 +407,9 @@ struct
      shared compound node's size once.  Summaries saturate at limit + 1;
      neither sharing nor memoization changes admission.  Keep the raw-size
      preflight before opening an outermost binder, since dest_abs may
-     normalize its entire body; a binder inside it is smaller.  An ordinary tree visitor advances at every lookup and
-     pointer comparison, so collision-heavy or unshared inputs can finish
+     normalize its entire body; a binder inside it is smaller.  An
+     ordinary tree visitor advances at every lookup and pointer
+     comparison, so collision-heavy or unshared inputs can finish
      without waiting for the memoized traversal.  Cache hints only index
      exact physical-identity checks. *)
   fun term_nodes_up_to limit root =
