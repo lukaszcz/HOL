@@ -11281,13 +11281,13 @@ struct
      a condition (the canonical path logs it). *)
   fun sce_execute_action {guard,emit,before_assume} action theorem=
     case action of SCEClauseNative(SRSpec arg)=>
-      let val term=emit arg
-      in sce_guarded guard(fn()=>
-        SmtReplayRuleObservation.SPEC term theorem)end
+        let val term=emit arg
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.SPEC term theorem)end
     | SCEClauseNative(SRConjunct left)=>
-      sce_guarded guard(fn()=>if left then
-        SmtReplayRuleObservation.CONJUNCT1 theorem else
-        SmtReplayRuleObservation.CONJUNCT2 theorem)
+        sce_guarded guard(fn()=>if left then
+          SmtReplayRuleObservation.CONJUNCT1 theorem else
+          SmtReplayRuleObservation.CONJUNCT2 theorem)
     | SCEClauseNative SRCondition=>
         let val condition= #1
               (boolSyntax.dest_imp(Thm.concl theorem))
