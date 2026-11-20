@@ -556,7 +556,7 @@ local
             List.exists (fn entry => entry = ("root-literal-occurrences", 4))
               (minisatResolve.get_replay_counts ())
       end))
-  val _ = control "proof-only file input checks the file endpoint"
+  val _ = control "proof-only file input with sparse DIMACS numbers"
     (fn () =>
       let
         val input = OS.FileSys.tmpName ()
@@ -565,12 +565,12 @@ local
           in TextIO.output (out, text); TextIO.closeOut out end
         val result = Exn.capture (fn () =>
           let
-            val _ = put "p cnf 1 2\n1 0\n-1 0\n"
+            val _ = put "p cnf 11 2\n11 0\n-11"
             val problem = dimacsTools.readDimacs input
             val conf = set_infile input (internal base_config)
             val _ = checked (mk_neg problem) (GEN_SAT_PROVE_ONLY conf)
               orelse raise Fail "DIMACS endpoint"
-            val _ = put "p cnf 1 1\n1 0\n"
+            val _ = put "p cnf 11 1\n11 0\n"
           in sat_only conf end) ()
         val _ = OS.FileSys.remove input
       in Exn.release result end)
@@ -588,7 +588,7 @@ local
         (fn () => dimacsTools.clean_files
           [input,output,output^".proof",output^".stats"])
         (fn () =>
-          let val _ = put "p cnf 1 2\n1 0\n-1 0\n"
+          let val _ = put "p cnf 11 2\n11 0\n-11 0\n"
               val problem = dimacsTools.readDimacs input
               val conf = set_infile input base_config
               val external =
@@ -597,7 +597,7 @@ local
                   checked (mk_neg problem) (GEN_SAT conf) andalso exists ()
                 else true
               val fallback = model (internal conf) problem andalso exists ()
-              val _ = put "p cnf 1 1\n1 0\n"
+              val _ = put "p cnf 11 1\n11 0\n"
               val sat = dimacsTools.readDimacs input
           in external andalso fallback andalso
              model (internal conf) sat andalso exists () end) ()

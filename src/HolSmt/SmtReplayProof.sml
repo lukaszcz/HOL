@@ -2155,6 +2155,19 @@ struct
   fun needed_source_occurrences (block as Block {source_count,...}) edge =
     List.filter (fn index => index < source_count) (needed_leaves block edge)
 
+  (* Needed source indices are distinct and ascending. Keep the remaining
+     suffix so a sparse selection only walks as far as its last index. *)
+  fun selected_source_occurrences work slots indices =
+    let
+      fun select _ _ [] result = List.rev result
+        | select start slots (index::rest) result =
+            (W.spend work 1;
+             case List.drop (slots,index-start) of
+                 node::tail =>
+                   select (index+1) tail rest ((index,node)::result)
+               | [] => raise Subscript)
+    in select 0 slots indices [] end
+
   fun needed_sources_using (block as Block {graph,...}) edge witness =
     let
       val nodes = Vector.fromList (sources block)
@@ -5974,8 +5987,8 @@ struct
         val source_frame as RetainedSourceFrame
             {original_slots,...} = retained_source_frame_for expected block []
         val needed = needed_source_occurrences block edge
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest)) [] nodes
         val facts = Vector.foldr
@@ -7364,8 +7377,8 @@ struct
         fun discharged slot = List.exists (fn (_,index,_) =>
           (W.spend expected 1;slot = index)) rows
         val needed = List.filter (fn slot => not (discharged slot)) needed
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest)) [] nodes
         val facts = Vector.foldr
@@ -13537,8 +13550,8 @@ struct
         fun discharged slot = List.exists (fn (_,index,_) =>
           (W.spend expected 1;slot = index)) rows
         val needed = List.filter (fn slot => not (discharged slot)) needed
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest))
           [] nodes

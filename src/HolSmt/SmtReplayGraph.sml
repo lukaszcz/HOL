@@ -4223,13 +4223,14 @@ struct
                 closure_root g scope (#node (partial_source whole))
           | _ => #annotation incoming
         val paths = ref ([] : closure_child list)
-        val seen = ref ([] : node list)
+        val seen = ref (Redblackset.empty Int.compare)
         fun collect child =
           let val _ = guard () val _ = spend ()
               val node = closure_child_node g scope child
               val _ = paths := child :: !paths
-          in if List.exists (fn old => old = node) (!seen) then () else
-            (seen := node :: !seen;
+              val id = node_id node
+          in if Redblackset.member (!seen,id) then () else
+            (seen := Redblackset.add (!seen,id);
              case view g node of Application _ =>
                  let val (a,b) = closure_application_children g scope child
                  in collect a;collect b end

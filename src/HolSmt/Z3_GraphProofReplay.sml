@@ -1209,17 +1209,29 @@ struct
                       val prefix = gp_sources validation
                       val first = List.length prefix
                       val locals = List.drop (initial_sources,first)
-                      val rows = ListPair.zip (locals,List.tabulate
-                        (List.length locals,fn i => first+i))
-                      fun choose [] used = []
-                        | choose (node::rest) used =
-                          (case List.find (fn (held,index) =>
-                              held = node andalso not (List.exists (fn old => old = index) used))
-                              rows of
-                            SOME (_,index) => index :: choose rest (index::used)
-                          | NONE => raise ERR "owned_discharge"
-                              "local occurrence is outside retained slots")
-                      val indices = choose local_assumptions []
+                      fun index_slots [] _ slots = slots
+                        | index_slots (node::rest) index slots =
+                          let val key = G.node_id node
+                              val earlier = Option.getOpt
+                                (Redblackmap.peek (slots,key),[])
+                          in index_slots rest (index-1)
+                            (Redblackmap.insert (slots,key,index::earlier))
+                          end
+                      val slots = index_slots (List.rev locals)
+                        (List.length initial_sources - 1)
+                        (Redblackmap.mkDict Int.compare)
+                      fun choose [] _ result = List.rev result
+                        | choose (node::rest) slots result =
+                          let val key = G.node_id node in
+                            case Redblackmap.peek (slots,key) of
+                              SOME (index::remaining) =>
+                                choose rest
+                                  (Redblackmap.insert (slots,key,remaining))
+                                  (index::result)
+                            | _ => raise ERR "owned_discharge"
+                                "local occurrence is outside retained slots"
+                          end
+                      val indices = choose local_assumptions slots []
                       val _ = frame_guard current_frame scope
                     in P.discharge_sources_with_work work block
                       {indices = indices,body = target,edge = edge root} end
@@ -1236,8 +1248,9 @@ struct
                   val indices = P.needed_source_occurrences_with_work
                     work block edge
                   val slots = P.sources block
-                  val actual = List.map (fn index => List.nth (slots,index))
-                    indices
+                  val slot_vector = Vector.fromList slots
+                  val actual = List.map
+                    (fn index => Vector.sub (slot_vector,index)) indices
                   val original = case preprocessing of
                       SOME {validation,...} => gp_sources validation
                     | NONE => raise ERR "ground_definition" "missing GP"
@@ -1256,9 +1269,15 @@ struct
                               (List.rev (!ground_receipts)))
                       (* Dependencies are authentic retained paths only;
                          only executed LHS names authorize E assignments. *)
-                      val names = List.foldl (fn (data,names) =>
-                        if List.exists (fn old => old = #name data) names
-                        then names else names @ [#name data]) [] definitions
+                      val (_,names_rev) = List.foldl
+                        (fn (data,(seen,names)) =>
+                          let val name = #name data
+                              val id = G.node_id name
+                          in if Redblackset.member (seen,id) then (seen,names)
+                            else (Redblackset.add (seen,id),name::names)
+                          end)
+                        (Redblackset.empty Int.compare,[]) definitions
+                      val names = List.rev names_rev
                       val _ = List.app (fn _ =>
                         SmtReplayInvocationWork.spend work 1)
                         (slots @ actual @ names @ dependencies)

@@ -238,14 +238,17 @@ fun cnf_atom_count clauses =
          (List.foldl add_clause (HOLset.empty Term.compare) clauses)
     end
 
+fun explicit_cnf known_count tm =
+    let
+      val cnf = dest_neg tm
+      val clauses = strip_conj cnf
+      val count = case known_count of SOME count => count
+                                    | NONE => cnf_atom_count clauses
+    in (NONE, count, RBM.mkDict Term.var_compare,
+        Array.fromList (zip clauses (CONJUNCTSR (ASSUME cnf)))) end
+
 fun to_cnf is_cnf tm =
-    if is_cnf then
-        let val clauses = strip_conj (dest_neg tm)
-        in (NONE, cnf_atom_count clauses,
-            RBM.mkDict Term.var_compare,
-            Array.fromList
-              (zip clauses (CONJUNCTSR (ASSUME (dest_neg tm))))) end
-    else let
+    if is_cnf then explicit_cnf NONE tm else let
         val th = ASSUME tm
         val (is_cnf,ths) = GCONJUNCTS tm th
         val (cnfv,vc,eqs,tops,lfn) =

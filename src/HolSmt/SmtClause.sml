@@ -127,46 +127,49 @@ struct
 
   (* Move exactly the indexed occurrence.  Each recursive step uses a small
      general equality; it never reinterprets a literal's internal syntax. *)
-  fun extract 0 [literal] =
+  fun extract 0 [literal] _ =
         ([], (rule1 SmtReplayRuleObservation.SYM)
           ((rule2 SmtReplayRuleObservation.SPEC) literal right_false))
-    | extract 0 (literal :: rest) =
-        (rest, (rule1 SmtReplayRuleObservation.REFL) (term (literal :: rest)))
-    | extract position (literal :: rest) =
+    | extract 0 (_ :: rest) source =
+        (rest, (rule1 SmtReplayRuleObservation.REFL) source)
+    | extract position (literal :: rest) source =
         let
-          val (remaining, tail_eq) = extract (position - 1) rest
-          val pivot = boolSyntax.lhs (Thm.concl tail_eq)
-          val pivot = case remaining of
-              [] => pivot
-            | _ => #1 (boolSyntax.dest_disj
-                (boolSyntax.rhs (Thm.concl tail_eq)))
+          val (remaining, tail_eq) =
+            extract (position - 1) rest (#2 (boolSyntax.dest_disj source))
           val result =
             if List.null remaining then
-              (rule2 SmtReplayRuleObservation.D_SPECL) [literal, pivot] swap
+              (rule2 SmtReplayRuleObservation.D_SPECL)
+                [literal, boolSyntax.lhs (Thm.concl tail_eq)] swap
             else
               let
-                val lifted = Conv.RAND_CONV (fn _ => tail_eq)
-                  (term (literal :: rest))
+                val (pivot, suffix) =
+                  boolSyntax.dest_disj (boolSyntax.rhs (Thm.concl tail_eq))
+                val lifted = Conv.RAND_CONV (fn _ => tail_eq) source
                 val moved = (rule2 SmtReplayRuleObservation.D_SPECL)
-                  [literal, pivot, term remaining] move
+                  [literal, pivot, suffix] move
               in (rule2 SmtReplayRuleObservation.TRANS) lifted moved end
         in (literal :: remaining, result) end
-    | extract _ [] = raise ERR "extract" "invalid literal occurrence"
+    | extract _ [] _ = raise ERR "extract" "invalid literal occurrence"
 
-  fun merge [] right =
-        (rule2 SmtReplayRuleObservation.SPEC) (term right) left_false
-    | merge left [] =
-        (rule2 SmtReplayRuleObservation.SPEC) (term left) right_false
-    | merge [literal] right = (rule1 SmtReplayRuleObservation.REFL)
-        (boolSyntax.mk_disj (literal, term right))
-    | merge (literal :: rest) right =
-        let
-          val associated = (rule2 SmtReplayRuleObservation.D_SPECL)
-            [literal, term rest, term right] associate
-          val tail_eq = merge rest right
-          val lifted = Conv.RAND_CONV (fn _ => tail_eq)
-            (boolSyntax.rhs (Thm.concl associated))
-        in (rule2 SmtReplayRuleObservation.TRANS) associated lifted end
+  fun merge left right left_term right_term =
+    let
+      fun nonempty [_] source = (rule1 SmtReplayRuleObservation.REFL)
+            (boolSyntax.mk_disj (source, right_term))
+        | nonempty (literal :: rest) source =
+            let
+              val (_, suffix) = boolSyntax.dest_disj source
+              val associated = (rule2 SmtReplayRuleObservation.D_SPECL)
+                [literal, suffix, right_term] associate
+              val tail_eq = nonempty rest suffix
+              val lifted = Conv.RAND_CONV (fn _ => tail_eq)
+                (boolSyntax.rhs (Thm.concl associated))
+            in (rule2 SmtReplayRuleObservation.TRANS) associated lifted end
+        | nonempty [] _ = raise ERR "merge" "expected nonempty clause"
+    in case (left, right) of
+        ([], _) => (rule2 SmtReplayRuleObservation.SPEC) right_term left_false
+      | (_, []) => (rule2 SmtReplayRuleObservation.SPEC) left_term right_false
+      | _ => nonempty left left_term
+    end
 
   fun resolve pivot first second =
     let
@@ -176,19 +179,27 @@ struct
       case (find pivot first, find opposite second) of
         (SOME first_index, SOME second_index) =>
           let
-            val (left, first_eq) = extract first_index (literals first)
-            val (right, second_eq) = extract second_index (literals second)
+            val first_thm = theorem first
+            val (left, first_eq) =
+              extract first_index (literals first) (Thm.concl first_thm)
+            val second_thm = theorem second
+            val (right, second_eq) =
+              extract second_index (literals second) (Thm.concl second_thm)
+            fun residual equality =
+              #2 (boolSyntax.dest_disj (boolSyntax.rhs (Thm.concl equality)))
+            val left_term = residual first_eq
+            val right_term = residual second_eq
             val law = (rule2 SmtReplayRuleObservation.D_SPECL)
-              [atom, term left, term right]
+              [atom, left_term, right_term]
               (if negative then negative_resolution else positive_resolution)
             val resolved = (rule2 SmtReplayRuleObservation.MP)
               ((rule2 SmtReplayRuleObservation.MP) law
                 ((rule2 SmtReplayRuleObservation.EQ_MP)
-                  first_eq (theorem first)))
+                  first_eq first_thm))
               ((rule2 SmtReplayRuleObservation.EQ_MP)
-                second_eq (theorem second))
+                second_eq second_thm)
             val merged = (rule2 SmtReplayRuleObservation.EQ_MP)
-              (merge left right) resolved
+              (merge left right left_term right_term) resolved
           in SOME (from_literals (left @ right) merged) end
       | _ => NONE
     end
@@ -227,17 +238,20 @@ struct
       val source_thm = theorem source
       fun insert literal position =
         let
-          fun introduce 0 [_] thm = thm
-            | introduce 0 (_ :: rest) thm =
-                (rule2 SmtReplayRuleObservation.DISJ1) thm (term rest)
-            | introduce n (head :: rest) thm =
+          fun introduce 0 [_] _ thm = thm
+            | introduce 0 (_ :: _) suffix thm =
+                (rule2 SmtReplayRuleObservation.DISJ1) thm
+                  (#2 (boolSyntax.dest_disj suffix))
+            | introduce n (head :: rest) suffix thm =
                 (rule2 SmtReplayRuleObservation.DISJ2) head
-                  (introduce (n - 1) rest thm)
-            | introduce _ [] _ = raise ERR "align" "invalid target occurrence"
+                  (introduce (n - 1) rest
+                    (#2 (boolSyntax.dest_disj suffix)) thm)
+            | introduce _ [] _ _ =
+                raise ERR "align" "invalid target occurrence"
         in if position < 0 then
              (rule2 SmtReplayRuleObservation.D_CONTR) target_term
                ((rule1 SmtReplayRuleObservation.ASSUME) literal)
-           else introduce position target
+           else introduce position target target_term
              ((rule1 SmtReplayRuleObservation.ASSUME) literal) end
       fun derive [] [] thm =
             (rule2 SmtReplayRuleObservation.D_CONTR) target_term thm
@@ -248,7 +262,7 @@ struct
             (rule3 SmtReplayRuleObservation.DISJ_CASES) thm
               (insert literal position)
               (derive rest positions ((rule1 SmtReplayRuleObservation.ASSUME)
-                (term rest)))
+                (#2 (boolSyntax.dest_disj (Thm.concl thm)))))
         | derive _ _ _ = raise ERR "align" "invalid occurrence mapping"
     in
       if same target_term (Thm.concl source_thm) then
@@ -320,17 +334,19 @@ struct
       val destination = Option.map (List.map literal) target
       val root =
         SmtCircuitSat.balanced_conjunction_term (List.map term sources)
-      fun projections [] _ = []
-        | projections [literals] thm = [from_literals literals thm]
-        | projections clauses thm =
-            let val half = List.length clauses div 2 in
-              projections (List.take (clauses, half))
-                ((rule1 SmtReplayRuleObservation.CONJUNCT1) thm) @
-              projections (List.drop (clauses, half))
-                ((rule1 SmtReplayRuleObservation.CONJUNCT2) thm)
-            end
-      val schema_premises = projections sources
-        ((rule1 SmtReplayRuleObservation.ASSUME) root)
+      fun projections 0 clauses _ result = (clauses, result)
+        | projections 1 (literals :: rest) thm result =
+            (rest, from_literals literals thm :: result)
+        | projections count clauses thm result =
+            let
+              val half = count div 2
+              val (remaining, result) = projections half clauses
+                ((rule1 SmtReplayRuleObservation.CONJUNCT1) thm) result
+            in projections (count - half) remaining
+              ((rule1 SmtReplayRuleObservation.CONJUNCT2) thm) result end
+      val (_, reversed) = projections (List.length sources) sources
+        ((rule1 SmtReplayRuleObservation.ASSUME) root) []
+      val schema_premises = List.rev reversed
       val result = case schema_premises of
           [] => raise ERR "resolve_chain" "empty premise list"
         | first :: rest => List.foldl

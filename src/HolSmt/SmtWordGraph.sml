@@ -162,7 +162,9 @@ struct
      potentially large generated graph uses SmtPointerTable's shallow-hash
      buckets.  Neither lookup unfolds equal
      shared terms through Term.compare. *)
-  fun eager_bits value = String.size (Arbnum.toBinString value)
+  fun eager_bits value =
+    if value = Arbnum.zero then 1
+    else 1 + Arbnum.toInt (Arbnum.log2 value)
 
   fun bounded_eager_product digit_limit left right =
     if digit_limit < 1 orelse eager_bits left > digit_limit orelse

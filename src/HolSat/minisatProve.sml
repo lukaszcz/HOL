@@ -158,8 +158,10 @@ fun has_free_variable tm =
 
 fun initialise check_sat_model infile is_cnf tm =
     let
-        fun prepare tm =
-            let val (cnfv,vc,lfn,clauses) = to_cnf is_cnf tm
+        fun prepare known_count tm =
+            let val (cnfv,vc,lfn,clauses) =
+                  if is_cnf then explicit_cnf known_count tm
+                  else to_cnf false tm
                 (* The ordinary explicit-CNF entry historically uses the
                    zero-free-variable shortcut, even for T/F clauses.
                    Counting compound atoms must not change that contract.
@@ -176,11 +178,12 @@ fun initialise check_sat_model infile is_cnf tm =
                       val (tm,svm,sva) = genReadDimacs fname
                       val ntm = mk_neg tm
                       val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" prepare ntm
+                          profile_stage "cnf"
+                            (prepare (SOME (SVM.numItems (snd svm)))) ntm
                   in (cnfv,vc,svm,sva,"",fname,ntm,lfn,clauseth) end
              else let val ntm = mk_neg tm
                       val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" prepare ntm
+                          profile_stage "cnf" (prepare NONE) ntm
                       val (tmpname,cnfname,sva,svm) =
                           profile_stage "dimacs"
                             (generateDimacs (SOME vc) tm (SOME clauseth))

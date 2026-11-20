@@ -68151,6 +68151,32 @@ in
                    origin="SmtLib" andalso
                    where_="check_goal_operator_availability"
                  | NONE => false) end) () end)
+      val _ = test "RegLan preflight detects a partial equality under a binder"
+        (fn () =>
+          let val regex = ``query_r:smtstring$reglan``
+              val partial = Term.rator (boolSyntax.mk_eq (regex,regex))
+              val predicate = Term.mk_var ("query_regex_predicate",
+                Type.--> (Term.type_of partial,Type.bool))
+              val goal = boolSyntax.mk_forall (regex,
+                Term.mk_comb (predicate,partial))
+              val native = failure (fn () => ignore
+                (SmtLib.goal_to_SmtLib_translation_for_solver
+                  (options NONE) ([],goal)))
+          in owned [] goal (fn e =>
+            let val openings = ref 0
+                fun open_view caller node =
+                  (openings := !openings + 1;opening e caller node)
+                val graph = failure (fn () => ignore
+                  (E.prepare_backend (#work e)
+                    {query= #query e,options=options NONE,
+                     open_opaque=open_view}))
+            in require "RegLan rejection lost its diagnostic or opaque body"
+              (native=graph andalso !openings>0 andalso retired e andalso
+               case graph of SOME (origin,where_,_) =>
+                   origin="SmtLib" andalso
+                   where_="reject_reglan_hol_equalities"
+               | NONE => false) end)
+          end)
       val _ = test "Actual shared70 query streams bounded lexical output"
         (fn () =>
           let fun shared 0 = Term.mk_var ("query_shared_leaf",Type.bool)

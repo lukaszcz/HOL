@@ -819,8 +819,9 @@ struct
               val bound_visits = ref 0
               val computed = A.computed_applications
                 operations collection_terms ordered
-              val mixed = A.has_mixed_argument
-                operations collection_terms ordered
+              val mixed = A.has_mixed_argument_by
+                operations Int.compare (semantic_id []) collection_terms
+                ordered
               val bound = ref (Redblackmap.mkDict compare_bound)
               fun memoize variables term compute =
                 let

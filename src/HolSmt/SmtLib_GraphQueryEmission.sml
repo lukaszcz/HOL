@@ -84,13 +84,12 @@ struct
           if Redblackset.member (!seen,key) then preflight pending
           else
             let val _ = (#step context) ()
-                val _ = SmtLib.outbound_check_reglan_equality
-                  {strip_comb= #strip_comb context,
-                   known_const_matches=
-                     #known_const_matches operations,
-                   type_of= #type_of context} current
                 val children = case (#view context) current of
-                    Q.ApplicationView (left,right) => [left,right]
+                    Q.ApplicationView (left,right) =>
+                      (SmtLib.outbound_check_reglan_application
+                         {known_const_matches= #known_const_matches operations,
+                          type_of= #type_of context} (left,right);
+                       [left,right])
                   | Q.AbstractionView (_,body) => [body]
                   | _ => []
                 val _ = ignore ((#key context) (#goal context))

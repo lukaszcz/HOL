@@ -6638,8 +6638,8 @@ local
       SmtLib_CollectionApplicationAnalysis.computed_applications
         collection_operations bag_terms subterms
     fun has_mixed_collection_argument collection_terms =
-      SmtLib_CollectionApplicationAnalysis.has_mixed_argument
-        collection_operations collection_terms subterms
+      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_by
+        collection_operations Term.compare Lib.I collection_terms subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application collection_terms =
       SmtLib_CollectionApplicationAnalysis.has_bound_application
@@ -8409,26 +8409,33 @@ in
     target : {solver : string, version : string option} option
   }
 
-  (* The same head/first-argument grammar rejects intensional RegLan
-     equality before either native or graph serialization. *)
+  (* A constructor walk visits the first application of the equality
+     constant directly, including when it is used as a partial function. *)
+  fun outbound_check_reglan_application {known_const_matches,type_of}
+      (head,left) =
+    if known_const_matches boolSyntax.equality head andalso
+        same_type (type_of left,reglan_ty) then
+      raise ERR "reject_reglan_hol_equalities"
+        ("HOL equality on smtstring$reglan is intensional; " ^
+         "SMT-LIB RegLan equality is language equivalence")
+    else ()
+
   fun outbound_check_reglan_equality {strip_comb,known_const_matches,type_of}
       current =
-    let val (head,arguments) = strip_comb current in
-      case arguments of left::_ =>
-        if known_const_matches boolSyntax.equality head andalso
-            same_type (type_of left,reglan_ty) then
-          raise ERR "reject_reglan_hol_equalities"
-            ("HOL equality on smtstring$reglan is intensional; " ^
-             "SMT-LIB RegLan equality is language equivalence")
-        else ()
-      | [] => ()
-    end
+    case strip_comb current of
+      (head,left::_) => outbound_check_reglan_application
+        {known_const_matches=known_const_matches,type_of=type_of} (head,left)
+    | (_,[]) => ()
 
   fun reject_reglan_hol_equalities (assumptions, conclusion) =
     let
       fun children term pending =
         if Term.is_comb term then
           let val (operator, operand) = Term.dest_comb term
+              val _ = outbound_check_reglan_application
+                {type_of=Term.type_of,
+                 known_const_matches=fn expected => fn actual =>
+                   same_const actual expected} (operator,operand)
           in operator :: operand :: pending end
         else if Term.is_abs term then
           Lib.snd (Term.dest_abs term) :: pending
@@ -8437,15 +8444,7 @@ in
         | visit seen (term :: pending) =
             if HOLset.member (seen, term) then visit seen pending
             else
-              let
-                val seen = HOLset.add (seen, term)
-                val _ = outbound_check_reglan_equality
-                  {strip_comb=boolSyntax.strip_comb,type_of=Term.type_of,
-                   known_const_matches=fn expected => fn actual =>
-                     same_const actual expected} term
-              in
-                visit seen (children term pending)
-              end
+              visit (HOLset.add (seen, term)) (children term pending)
     in
       visit (HOLset.empty Term.compare) (conclusion :: assumptions)
     end
