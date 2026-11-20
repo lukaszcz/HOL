@@ -44,25 +44,24 @@ val last_pruning_count = ref 0
 fun node_count () = !last_node_count
 fun pruning_count () = !last_pruning_count
 
-val trace = clasetReplay.trace
-
 fun show_node node =
   Parse.term_to_string (clasetGoal.canonical_rendering node)
 
 (* Every driver reports an admitted expansion here, so this is also where
    the shared work meter is charged. *)
-fun expansion_trace verbosity driver count node =
+fun expansion_trace level driver count node =
   (searchWork.note_expansion ();
-   trace verbosity 2
+   traceUtil.trace level 2
      (fn () =>
        driver ^ " expansion " ^ Int.toString count ^
        ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^
        ", size=" ^ Int.toString (clasetGoal.size node));
-   trace verbosity 3 (fn () => driver ^ " candidate: " ^ show_node node))
+   traceUtil.trace level 3
+     (fn () => driver ^ " candidate: " ^ show_node node))
 
 fun member_node node = List.exists (fn old => clasetGoal.equal (node, old))
 
-fun DEPTH_FIRST verbosity satisfied expand initial =
+fun DEPTH_FIRST level satisfied expand initial =
   let
     fun depth _ [] = seq.empty
       | depth used (states :: rest) =
@@ -77,7 +76,7 @@ fun DEPTH_FIRST verbosity satisfied expand initial =
                       seq.cons current
                         (depth (current :: used) (siblings :: rest))
                     else
-                      (expansion_trace verbosity "depth-first"
+                      (expansion_trace level "depth-first"
                          (length used + 1) current;
                        depth used
                          (expand current :: siblings :: rest)))
@@ -255,7 +254,7 @@ fun repeats_ancestor node frames =
         | SOME source => clasetGoal.equal (node, source))
     frames
 
-fun DEPTH_SOLVE verbosity expand initial =
+fun DEPTH_SOLVE level expand initial =
   let
     fun frame_for source =
       {source = SOME source,
@@ -286,7 +285,7 @@ fun DEPTH_SOLVE verbosity expand initial =
                             val _ =
                               if discarded = 0 then ()
                               else
-                                trace verbosity 2
+                                traceUtil.trace level 2
                                   (fn () =>
                                     "dynamic pruning discarded " ^
                                     Int.toString discarded ^
@@ -302,13 +301,13 @@ fun DEPTH_SOLVE verbosity expand initial =
                         seq.cons current
                           (depth (current :: used) rest1)
                       else if repeats_ancestor current rest0 then
-                        (trace verbosity 2
+                        (traceUtil.trace level 2
                            (fn () =>
                              "depth-solve dropped a state repeating an \
                              \ancestor");
                          depth used rest1)
                       else
-                        (expansion_trace verbosity "depth-solve"
+                        (expansion_trace level "depth-solve"
                            (length used + 1) current;
                          depth used (frame_for current :: rest1))
                     end)
@@ -328,16 +327,16 @@ fun limit_reached limit count =
   limit > 0 andalso count >= limit andalso
   (count = limit orelse count mod check_period = 0)
 
-fun allow_expansion verbosity driver limit count node =
+fun allow_expansion level driver limit count node =
   if limit_reached (limit ()) count then
     (last_node_count := count;
-     trace verbosity 1
+     traceUtil.trace level 1
        (fn () =>
          driver ^ " stopped at node limit " ^ Int.toString (limit ()));
      false)
   else
     (last_node_count := count + 1;
-     expansion_trace verbosity driver (count + 1) node;
+     expansion_trace level driver (count + 1) node;
      true)
 
 fun add_nodes values heap =
@@ -361,7 +360,7 @@ fun add_nodes values heap =
    closed set.  This is deliberately past it: the suppressed expansion is
    one the driver has already made. *)
 fun frontier_search {driver, compare, remove_minimum, limit}
-      verbosity satisfied expand initial =
+      level satisfied expand initial =
   let
     fun classify (news, heap, count, seen) =
       let val (solutions, pending) = split_satisfied satisfied news
@@ -374,7 +373,7 @@ fun frontier_search {driver, compare, remove_minimum, limit}
     and next (heap, count, seen) =
       if searchHeap.is_empty heap then
         (last_node_count := count;
-         trace verbosity 1 (fn () => driver ^ " search exhausted");
+         traceUtil.trace level 1 (fn () => driver ^ " search exhausted");
          seq.empty)
       else
         let
@@ -382,11 +381,11 @@ fun frontier_search {driver, compare, remove_minimum, limit}
         in
           if Binaryset.member (seen, current) then
             (last_pruning_count := !last_pruning_count + 1;
-             trace verbosity 2
+             traceUtil.trace level 2
                (fn () =>
                  driver ^ " dropped a state it has already expanded");
              next (remaining, count, seen))
-          else if not (allow_expansion verbosity driver limit count current)
+          else if not (allow_expansion level driver limit count current)
           then
             seq.empty
           else
@@ -416,7 +415,7 @@ fun best_first limit =
     {driver = "best-first", compare = clasetGoal.compare,
      remove_minimum = best_minimum, limit = limit}
 
-fun BEST_FIRST verbosity = best_first (fn () => !node_limit) verbosity
+fun BEST_FIRST level = best_first (fn () => !node_limit) level
 
 fun BOUNDED_BEST_FIRST bound = best_first (fn () => bound)
 
@@ -426,12 +425,12 @@ fun astar_cost node =
 fun astar_compare (left, right) =
   Int.compare (astar_cost left, astar_cost right)
 
-fun ASTAR verbosity =
+fun ASTAR level =
   frontier_search
     {driver = "A*", compare = astar_compare,
      remove_minimum = searchHeap.delete_min,
      limit = fn () => !node_limit}
-    verbosity
+    level
 
 datatype frontier_state =
     Ready of
@@ -467,7 +466,7 @@ datatype frontier_outcome =
 
 fun new_frontier_session
       {driver, compare, remove_minimum}
-      verbosity budget satisfied expand initial =
+      level budget satisfied expand initial =
   let
     exception Yield of searchBudget.kind * searchBudget.usage
     val root = clasetGoal.set_level 0 initial
@@ -500,7 +499,8 @@ fun new_frontier_session
                 if searchHeap.is_empty heap then
                   (state := Done;
                    last_node_count := count;
-                   trace verbosity 1 (fn () => driver ^ " search exhausted");
+                   traceUtil.trace level 1
+                     (fn () => driver ^ " search exhausted");
                    StepExhausted)
                 else
                   let
@@ -509,7 +509,7 @@ fun new_frontier_session
                   in
                     if Binaryset.member (seen, current) then
                       (last_pruning_count := !last_pruning_count + 1;
-                       trace verbosity 2
+                       traceUtil.trace level 2
                          (fn () =>
                            driver ^
                            " dropped a state it has already expanded");
@@ -531,7 +531,8 @@ fun new_frontier_session
                 let
                   val _ = admit searchBudget.Application
                   val _ = last_node_count := count + 1
-                  val _ = expansion_trace verbosity driver (count + 1) current
+                  val _ =
+                    expansion_trace level driver (count + 1) current
                   val cursor =
                     seq.map (note_transition current) (expand current)
                 in
@@ -611,7 +612,7 @@ fun resume_frontier
     | StepLimitReached (kind, usage) =>
         FrontierLimitReached {kind = kind, usage = usage}
 
-fun DEEPEN verbosity (increment, limit) bounded start initial =
+fun DEEPEN level (increment, limit) bounded start initial =
   let
     val _ =
       if increment > 0 then ()
@@ -624,14 +625,14 @@ fun DEEPEN verbosity (increment, limit) bounded start initial =
         (fn () =>
           if List.null (clasetGoal.goals initial) then seq.empty
           else if bound > limit then
-            (trace verbosity 1
+            (traceUtil.trace level 1
                (fn () =>
                  "deepening exhausted at bound " ^ Int.toString limit);
              seq.empty)
           else
             let
               val _ =
-                trace verbosity 2
+                traceUtil.trace level 2
                   (fn () => "trying depth bound " ^ Int.toString bound)
             in
               case seq.cases (bounded bound initial) of

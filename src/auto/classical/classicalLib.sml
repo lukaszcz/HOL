@@ -93,7 +93,7 @@ fun CS_CLARIFY_TAC cs =
 
 (* The searches report at the classical.trace level of the tactic's
    context, read once when the tactic is run. *)
-val trace_level_of = clasetReplay.trace_level_of
+fun classical_level ctxt = traceUtil.level_of clasetReplay.tracer ctxt
 
 fun replay_node original node ctxt =
   let
@@ -105,7 +105,7 @@ fun replay_node original node ctxt =
   end
   handle HOL_ERR error =>
     let
-      val _ = clasetReplay.trace (trace_level_of ctxt) 1
+      val _ = traceUtil.trace (classical_level ctxt) 1
         (fn () =>
           "kernel replay failed for an engine solution; backtracking: " ^
           Feedback.message_of error)
@@ -186,15 +186,15 @@ fun solve search goal ctxt =
   end
 
 fun depth_driver step ctxt cs =
-  clasetSearch.DEPTH_SOLVE (trace_level_of ctxt)
+  clasetSearch.DEPTH_SOLVE (classical_level ctxt)
     (expand_settled_first (step ctxt) cs)
 
 fun best_driver step ctxt cs =
-  clasetSearch.BEST_FIRST (trace_level_of ctxt) solved
+  clasetSearch.BEST_FIRST (classical_level ctxt) solved
     (expand_at (step ctxt) cs 1)
 
 fun astar_driver step ctxt cs =
-  clasetSearch.ASTAR (trace_level_of ctxt) solved
+  clasetSearch.ASTAR (classical_level ctxt) solved
     (expand_at (step ctxt) cs 1)
 
 fun CS_FAST_TAC cs goal ctxt =
@@ -208,7 +208,7 @@ fun CS_SLOW_BEST_TAC cs goal ctxt =
 
 fun first_best search cs goal ctxt =
   solve
-    (search (trace_level_of ctxt) solved
+    (search (classical_level ctxt) solved
        (expand_first (clasetStep.step_in ctxt) cs))
     goal ctxt
 
@@ -249,7 +249,7 @@ datatype budget_outcome =
 
 fun CS_FIRST_BEST_SESSION budget cs goal ctxt : budget_session =
   {frontier =
-     clasetSearch.new_best_session (trace_level_of ctxt) budget solved
+     clasetSearch.new_best_session (classical_level ctxt) budget solved
        (expand_first
           (clasetStep.step_in_with
              (fn () => searchBudget.charge budget searchBudget.Candidate)
@@ -336,7 +336,7 @@ fun bounded_depth_in_with charge ctxt {dup} cs bound initial =
     val saturated =
       safe_saturate_node_in_with charge ctxt cs initial
     val search =
-      clasetSearch.DEPTH_SOLVE (trace_level_of ctxt)
+      clasetSearch.DEPTH_SOLVE (classical_level ctxt)
         (fn node =>
           (charge searchBudget.Application;
            seq.map
@@ -443,7 +443,7 @@ fun RESUME_DEPTH_SESSION
 
 fun CS_DEEPEN_TAC cs {start} goal ctxt =
   solve
-    (clasetSearch.DEEPEN (trace_level_of ctxt) (2, 10)
+    (clasetSearch.DEEPEN (classical_level ctxt) (2, 10)
       (bounded_depth_in ctxt {dup = true} cs) start) goal ctxt
 
 fun invocation body = clasetLib.with_context_claset clasetLib.SearchFacts body

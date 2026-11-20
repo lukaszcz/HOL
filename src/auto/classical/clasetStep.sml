@@ -25,8 +25,6 @@ val created_of = clasetReplay.created_of
 val eigenvariables_of = clasetReplay.eigenvariables_of
 val validation_of = clasetReplay.validation_of
 
-val trace = clasetReplay.trace
-
 fun normalize_term store tm = clasetMeta.norm store tm
 
 fun closing_equal store left right =
@@ -637,7 +635,8 @@ fun minor_prefixes policy is_elim premises =
    The level is read only when a refusal is noted, off the cascade's
    path. *)
 fun skip_note ctxt () =
-  trace (clasetReplay.trace_level_of ctxt) 1
+  traceUtil.trace
+    (traceUtil.level_of clasetReplay.tracer ctxt) 1
     (fn () => "skipping safe rule with unfixed premise variables")
 
 fun no_note () = ()
