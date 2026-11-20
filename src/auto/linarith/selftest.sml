@@ -701,6 +701,33 @@ val _ =
 
 val _ =
   check
+    ("FM keeps the first certificate for duplicate derived rows",
+     fn () =>
+       let
+         val width = 12
+         val positive = SOME (fm_row (1, 0) 0)
+         val negative = SOME (fm_row (~1, 0) 1)
+         val rows =
+           List.tabulate (width, fn _ => positive) @
+           List.tabulate (width, fn _ => negative)
+         val items =
+           ListPair.map
+             (fn (i, row) =>
+               (Term.mk_var ("fm_dup_" ^ Int.toString i, Type.bool), row))
+             (List.tabulate (2 * width, Lib.I), rows)
+       in
+         (case fm_refute rows of
+              SOME (Added (Asm 0, Asm second)) => second = width
+            | _ => false) andalso
+         (case fm_budgeted (searchBudget.unbounded ()) items of
+              CertificateFound
+                {justifications = [Added (Asm 0, Asm second)], ...} =>
+                  second = width
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("FM charges each row pair inside a broad elimination round",
      fn () =>
        let

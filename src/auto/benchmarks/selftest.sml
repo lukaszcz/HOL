@@ -1429,6 +1429,17 @@ val _ =
 
 val _ =
   check
+    ("A1 compares the same goal under replacement definitions",
+     fn () =>
+       without_definitions
+         (fn () =>
+           benchLib.theorem_is_goal wrapped_goal unwrapped_rule andalso
+           (benchLib.set_definitional_context
+              [parityTranslationTheory.source_of_char_def];
+            not (benchLib.theorem_is_goal wrapped_goal unwrapped_rule))))
+
+val _ =
+  check
     ("A1 leaves an ambient rule about the same constant alone",
      fn () =>
        not

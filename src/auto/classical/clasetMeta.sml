@@ -675,6 +675,24 @@ fun bindings store =
          (Redblackmap.listItems (#ty_bindings store))}
   end
 
+fun new_bindings old new =
+  let
+    fun add_term (name, _, terms) =
+      if Redblackmap.inDomain (#tm_bindings old, name) then terms
+      else
+        case Redblackmap.peek (#metas new, name) of
+            NONE => terms
+          | SOME meta => meta :: terms
+    fun add_type (name, (tymeta, _), types) =
+      if Redblackmap.inDomain (#ty_bindings old, name) then types
+      else tymeta :: types
+    fun added select add =
+      if Portable.pointer_eq (select old, select new) then []
+      else Redblackmap.foldr add [] (select new)
+  in
+    {terms = added #tm_bindings add_term, types = added #ty_bindings add_type}
+  end
+
 fun collapse store =
   let
     val ty_subst = type_substitution store

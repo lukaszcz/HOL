@@ -124,17 +124,17 @@ fun reachable work transitive edges source =
                         true)
                    | NONE => (reached, changed))
               )
-            fun rounds reached remaining =
-              if remaining <= 0 then reached
-              else
-                let
-                  val (reached', changed) =
-                    List.foldl relax (reached, false) edges
-                in
-                  if changed then rounds reached' (remaining - 1) else reached'
-                end
+            (* A changing round settles a new target from the finite
+               edge list. *)
+            fun rounds reached =
+              let
+                val (reached', changed) =
+                  List.foldl relax (reached, false) edges
+              in
+                if changed then rounds reached' else reached'
+              end
           in
-            rounds [] (List.length (nodes work edges) + 1)
+            rounds []
           end
   end
 

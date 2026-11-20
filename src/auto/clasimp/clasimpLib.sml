@@ -123,6 +123,10 @@ fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
                else Thm.REFL term
              val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
              val (vars, body) = boolSyntax.strip_exists pulled
+             val _ =
+               if null vars then
+                 raise ERR "witness_proof" "no contextual witness"
+               else ()
              val fixed =
                HOLset.difference
                  (Term.FVL [pulled] Term.empty_tmset,
@@ -139,9 +143,9 @@ fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
                    NONE => attempt (boolSyntax.strip_conj body)
                  | found => found
              val instance =
-               case (vars, matched) of
-                   (_ :: _, SOME instance) => instance
-                 | _ => raise ERR "witness_proof" "no contextual witness"
+               case matched of
+                   SOME instance => instance
+                 | NONE => raise ERR "witness_proof" "no contextual witness"
              fun find_context proposition =
                let
                  fun scan [] = NONE

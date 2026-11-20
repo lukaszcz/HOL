@@ -1421,6 +1421,37 @@ val _ =
          aesopTree.Unknown andalso
        aesopTree.goal_irrelevant stuck_tree3 stuck_right)
 
+val _ =
+  check
+    ("aesop tree propagates a reopened goal through stuck ancestors",
+     fn () =>
+       let
+         val reopened = aesopTree.set_safe_done stuck_left false stuck_tree3
+       in
+         #state (aesopTree.goal reopened stuck_left) = aesopTree.Unknown
+         andalso #state (aesopTree.rapp reopened stuck_rapp) =
+           aesopTree.Unknown
+         andalso #state (aesopTree.goal reopened stuck_root) =
+           aesopTree.Unknown
+       end)
+
+val _ =
+  check
+    ("aesop tree keeps a proof when an open alternative is installed",
+     fn () =>
+       let
+         val {tree, rapp, goals = children} =
+           install_tree_rapp proved_tree3 proved_root aesopRule.RSafe
+             "open_alternative" clasetMeta.empty [fifo_goal] []
+       in
+         #state (aesopTree.goal tree proved_root) = aesopTree.Proved
+         andalso #state (aesopTree.rapp tree rapp) = aesopTree.Unknown
+         andalso
+           List.all (fn id =>
+             #state (aesopTree.goal tree id) = aesopTree.Unknown) children
+         andalso aesopTree.child_rapps tree proved_root = [proved_rapp, rapp]
+       end)
+
 val unfinished_rule =
   hd (aesopRule.closers ())
 val completion_tree0 =

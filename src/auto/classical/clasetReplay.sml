@@ -52,9 +52,9 @@ datatype step_record =
 
 datatype script =
   Script of
-    {roots : step_record option list,
+    {records : step_record list,
      length : int,
-     open_paths : int list list}
+     open_goals : int}
 datatype grounded_script =
   Grounded of {store : clasetMeta.store, script : script}
 
@@ -1066,79 +1066,67 @@ fun empty count =
   if count < 0 then
     raise mk_HOL_ERR "clasetReplay" "empty" "negative root count"
   else
-    Script
-      {roots = List.tabulate (count, fn _ => NONE), length = 0,
-       open_paths = List.tabulate (count, fn index => [index])}
+    Script {records = [], length = 0, open_goals = count}
 
-fun install path record roots =
-  let
-    fun descend [] _ =
-          raise mk_HOL_ERR "clasetReplay" "append"
-            "the target does not identify an open goal"
-      | descend [index] options =
-          (case List.nth (options, index) of
-               NONE => Lib.apnth (K (SOME record)) index options
-             | SOME _ =>
-                 raise mk_HOL_ERR "clasetReplay" "append"
-                   "the target does not identify an open goal")
-      | descend (index :: rest) options =
-          (case List.nth (options, index) of
-               NONE =>
-                 raise mk_HOL_ERR "clasetReplay" "append"
-                   "the target does not identify an open goal"
-             | SOME
-                 (StepRecord
-                   {kind, target, consumed, created, eigenvariables,
-                    validation, action, children}) =>
-                 Lib.apnth
-                   (K (SOME
-                     (StepRecord
-                       {kind = kind, target = target, consumed = consumed,
-                        created = created,
-                        eigenvariables = eigenvariables,
-                        validation = validation, action = action,
-                        children = descend rest children})))
-                   index options)
-  in
-    descend path roots
-    handle Subscript =>
-      raise mk_HOL_ERR "clasetReplay" "append"
-        "the target does not identify an open goal"
-  end
+fun count_open [] count = count
+  | count_open (NONE :: rest) count = count_open rest (count + 1)
+  | count_open (SOME child :: rest) count =
+      count_open rest (count_open (children_of child) count)
 
-fun record_open_paths base (StepRecord {children, ...}) =
-  let
-    fun enumerate _ [] = []
-      | enumerate index (NONE :: rest) =
-          (base @ [index]) :: enumerate (index + 1) rest
-      | enumerate index (SOME child :: rest) =
-          record_open_paths (base @ [index]) child @
-          enumerate (index + 1) rest
-  in
-    enumerate 0 children
-  end
-
-fun append
-      (Script {roots, length, open_paths}) record =
+fun append (Script {records, length, open_goals}) record =
   let
     val target = target_of record
-    val index = target - 1
-    val path =
-      if index < 0 then
-        raise mk_HOL_ERR "clasetReplay" "append"
-          "the target does not identify an open goal"
-      else
-        List.nth (open_paths, index)
-        handle Subscript =>
-          raise mk_HOL_ERR "clasetReplay" "append"
-            "the target does not identify an open goal"
-    val roots' = install path record roots
-    val open_paths' =
-      List.take (open_paths, index) @ record_open_paths path record @
-      List.drop (open_paths, index + 1)
   in
-    Script
-      {roots = roots', length = length + 1, open_paths = open_paths'}
+    if target < 1 orelse target > open_goals then
+      raise mk_HOL_ERR "clasetReplay" "append"
+        "the target does not identify an open goal"
+    else
+      Script
+        {records = record :: records, length = length + 1,
+         open_goals = count_open (children_of record) (open_goals - 1)}
+  end
+
+(* Undo the frontier changes in reverse record order. At each recorded
+   target, the following slots are the finished subtrees (or open goals)
+   for the record's holes in depth-first order. Prefilled children keep
+   their shape and consume slots only for their own holes. *)
+fun materialize (Script {records, open_goals, ...}) =
+  let
+    fun graft (record as StepRecord {children = [], ...}) frontier =
+          (record, frontier)
+      | graft (StepRecord
+                 {kind, target, consumed, created, eigenvariables,
+                  validation, action, children}) frontier =
+          let
+            val (children', rest) = fill children frontier []
+          in
+            (StepRecord
+               {kind = kind, target = target, consumed = consumed,
+                created = created, eigenvariables = eigenvariables,
+                validation = validation, action = action, children = children'},
+             rest)
+          end
+    and fill [] frontier acc = (List.rev acc, frontier)
+      | fill (NONE :: children) (next :: frontier) acc =
+          fill children frontier (next :: acc)
+      | fill (NONE :: _) [] _ = raise Fail "missing replay frontier slot"
+      | fill (SOME child :: children) frontier acc =
+          let
+            val (child', rest) = graft child frontier
+          in
+            fill children rest (SOME child' :: acc)
+          end
+    fun install (record, frontier) =
+      let
+        fun at 1 slots =
+              let val (tree, rest) = graft record slots in SOME tree :: rest end
+          | at n (slot :: slots) = slot :: at (n - 1) slots
+          | at _ [] = raise Fail "invalid replay frontier target"
+      in
+        at (target_of record) frontier
+      end
+  in
+    List.foldl install (List.tabulate (open_goals, fn _ => NONE)) records
   end
 
 fun script_length (Script {length, ...}) = length
@@ -1179,13 +1167,13 @@ fun lines_of_record indent (StepRecord {kind, target, children, ...}) =
     line :: child_lines
   end
 
-fun to_string (Script {roots, ...}) =
+fun to_string script =
   String.concatWith "\n"
     (List.concat
       (map
         (fn NONE => ["open"]
           | SOME record => lines_of_record "" record)
-        roots))
+        (materialize script)))
 
 fun ground store script =
   Grounded {store = clasetMeta.ground store, script = script}
@@ -1287,11 +1275,10 @@ fun replay_roots _ _ [] [] = ([], fn [] => [] | _ =>
         "script root count does not match the input"
 
 fun replay_in ctxt
-      (Grounded
-        {store, script = script as Script {roots, ...}}) goal =
+      (Grounded {store, script}) goal =
   let
     val (goals, validate_roots) =
-      replay_roots ctxt store roots [goal]
+      replay_roots ctxt store (materialize script) [goal]
     fun validation theorems =
       case validate_roots theorems of
           [theorem] => theorem

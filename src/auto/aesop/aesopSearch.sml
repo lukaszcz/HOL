@@ -1183,15 +1183,17 @@ fun winning_forest tree =
                                   (Redblackmap.peek (selection, id))))
                             all_members
                         val required' =
-                          case
-                            aesopTree.select_copy_supports tree copy_members
-                              (Redblackmap.listItems required)
-                          of
-                              SOME result => requirements_of result
-                            | NONE =>
-                                raise ERR "extract"
-                                  ("proved cluster " ^ Int.toString cid ^
-                                   " has no compatible copy-support paths")
+                          if null copy_members then required
+                          else
+                            case
+                              aesopTree.select_copy_supports tree copy_members
+                                (Redblackmap.listItems required)
+                            of
+                                SOME result => requirements_of result
+                              | NONE =>
+                                  raise ERR "extract"
+                                    ("proved cluster " ^ Int.toString cid ^
+                                     " has no compatible copy-support paths")
                         val prepared =
                           (selection, rapp_selection, stores, required')
                       in

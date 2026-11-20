@@ -566,6 +566,74 @@ fun refresh tree =
     iterate (node_states tree, tree)
   end
 
+fun has_copies (Tree {index, ...}) =
+  Redblackmap.numItems (#copy_children index) <> 0
+
+(* Without copies, only the unique parent can depend on a changed state.
+   Stop at the first unchanged node.  Copy support can also depend on the
+   applications elsewhere in the tree, so those trees use the fixpoint. *)
+fun refresh_goal_ancestors id (tree as Tree fields) =
+  let
+    val current = goal tree id
+    val state = derive_goal tree current
+  in
+    if state = #state current then tree
+    else
+      let
+        val goals =
+          Redblackmap.insert
+            (#goals fields, id, goal_with_state state current)
+        val next = Tree (upd_tree fields (Fld #goals goals) $$)
+      in
+        case #parent current of
+            NONE => next
+          | SOME _ => refresh_cluster_ancestors (#cluster current) next
+      end
+  end
+and refresh_cluster_ancestors id (tree as Tree fields) =
+  let
+    val current = cluster tree id
+    val state = derive_cluster tree current
+  in
+    if state = #state current then tree
+    else
+      let
+        val clusters =
+          Redblackmap.insert
+            (#clusters fields, id, cluster_with_state state current)
+      in
+        refresh_rapp_ancestors (#parent current)
+          (Tree (upd_tree fields (Fld #clusters clusters) $$))
+      end
+  end
+and refresh_rapp_ancestors id (tree as Tree fields) =
+  let
+    val current = rapp tree id
+    val state = derive_rapp tree current
+  in
+    if state = #state current then tree
+    else
+      let
+        val rapps =
+          Redblackmap.insert
+            (#rapps fields, id, rapp_with_state state current)
+      in
+        refresh_goal_ancestors (#parent current)
+          (Tree (upd_tree fields (Fld #rapps rapps) $$))
+      end
+  end
+
+fun refresh_goal id independent_proof_changed tree =
+  if not (has_copies tree) then refresh_goal_ancestors id tree
+  else
+    let val current = goal tree id
+    in
+      if independent_proof_changed orelse
+         derive_goal tree current <> #state current
+      then refresh tree
+      else tree
+    end
+
 fun enqueue_goal id
       (tree as Tree (fields as {queue, next_insertion, ...})) =
   let
@@ -627,33 +695,11 @@ fun cgoal_under store ({params, asl, w} : cgoal) : cgoal =
    asl = map (clasetMeta.norm store) asl,
    w = clasetMeta.norm store w}
 
-fun term_bound bindings meta =
-  List.exists
-    (fn (redex, _) => clasetMeta.meta_compare (redex, meta) = EQUAL)
-    (#terms bindings)
-
-fun type_bound bindings tymeta =
-  List.exists
-    (fn (redex, _) => Type.compare (redex, tymeta) = EQUAL)
-    (#types bindings)
-
 fun assigned_between parent_store child_store =
-  let
-    val parent = clasetMeta.bindings parent_store
-    val child = clasetMeta.bindings child_store
+  let val {terms, types} = clasetMeta.new_bindings parent_store child_store
   in
-    {terms =
-       HOLset.fromList clasetMeta.meta_compare
-         (map #1
-           (List.filter
-             (fn (redex, _) => not (term_bound parent redex))
-             (#terms child))),
-     types =
-       HOLset.fromList Type.compare
-         (map #1
-           (List.filter
-             (fn (redex, _) => not (type_bound parent redex))
-             (#types child)))}
+    {terms = HOLset.fromList clasetMeta.meta_compare terms,
+     types = HOLset.fromList Type.compare types}
   end
 
 fun components tree ids =
@@ -830,7 +876,8 @@ fun install_rapp parent_id
     val assigned =
       assigned_between (active_store parent) child_store
     val copy_sources =
-      copying_sources tree parent_id assigned child_store child_cgoals
+      if dependencies_empty (#deps parent) then []
+      else copying_sources tree parent_id assigned child_store child_cgoals
     val child_specs =
       map
         (fn cgoal =>
@@ -937,7 +984,14 @@ fun install_rapp parent_id
         (fn (id, current) => enqueue_goal id current)
         installed child_ids
   in
-    {rapp = rid, goals = child_ids, tree = refresh queued}
+    (* A nonclosing application starts Unknown, as do all its children
+       and copies.  Its parent is not Stuck, so adding the alternative
+       and the new copy links cannot change an existing state. *)
+    {rapp = rid, goals = child_ids,
+     tree =
+       if not (null child_ids) then queued
+       else if has_copies queued then refresh queued
+       else refresh_rapp_ancestors rid queued}
   end
 
 (* [update] rewrites the fields of an existing goal; it neither adds nor
@@ -952,7 +1006,8 @@ fun replace_norm norm deps (goal : goal) : goal =
   upd_goal goal (Fld #norm norm) (Fld #deps deps) $$
 
 fun set_normalised id {records, cgoal, store} tree =
-  refresh
+  refresh_goal id
+    (case #norm (goal tree id) of NormProved _ => true | _ => false)
     (map_goal id
       (replace_norm
         (Normalised {records = records, cgoal = cgoal, store = store})
@@ -960,7 +1015,7 @@ fun set_normalised id {records, cgoal, store} tree =
       tree)
 
 fun set_norm_proved id {records, store} tree =
-  refresh
+  refresh_goal id true
     (map_goal id
       (fn current =>
         replace_norm
@@ -980,7 +1035,7 @@ fun replace_search_state {safe_done, unsafe_cursor, postponed}
    unique solution for given structural fields, so refreshing after each
    field separately would only repeat the same fixpoint. *)
 fun set_search_state id fields tree =
-  refresh (map_goal id (replace_search_state fields) tree)
+  refresh_goal id false (map_goal id (replace_search_state fields) tree)
 
 fun set_safe_done id value tree =
   let val {unsafe_cursor, postponed, ...} = goal tree id

@@ -96,18 +96,8 @@ fun add_tymeta (meta, metas) = Lib.op_insert same_tymeta meta metas
 fun union_metas left right = List.foldl add_meta right left
 fun union_tymetas left right = List.foldl add_tymeta right left
 
-fun binding_diff old_store new_store =
-  let
-    val old = clasetMeta.bindings old_store
-    val new = clasetMeta.bindings new_store
-    fun old_term (meta, _) =
-      List.exists (fn (known, _) => same_meta meta known) (#terms old)
-    fun old_type (meta, _) =
-      List.exists (fn (known, _) => same_tymeta meta known) (#types old)
-  in
-    {terms = map #1 (List.filter (not o old_term) (#terms new)),
-     types = map #1 (List.filter (not o old_type) (#types new))}
-  end
+fun binding_diff parent child =
+  clasetMeta.new_bindings (clasetGoal.store parent) (clasetGoal.store child)
 
 fun add_mark
       ({terms = more_terms, types = more_types} : clasetGoal.binding_mark)
@@ -123,15 +113,13 @@ fun replicate count value = List.tabulate (count, fn _ => value)
    enclosing choice point, whose store diff is checked separately. *)
 fun note_transition parent child =
   let
-    val difference =
-      binding_diff (clasetGoal.store parent) (clasetGoal.store child)
     val child_count = clasetGoal.child_count parent child
     val inherited = clasetGoal.binding_marks child
     val marks =
       if child_count = 1 then
         (case inherited of
              [] => []
-           | mark :: rest => add_mark difference mark :: rest)
+           | mark :: rest => add_mark (binding_diff parent child) mark :: rest)
       else if child_count > 1 then
         replicate child_count clasetGoal.empty_mark @
         List.drop (inherited, child_count)
@@ -191,16 +179,15 @@ fun dependency_closure store goals =
     close (initial_terms, initial_types)
   end
 
-fun mark_clashes child
+fun mark_clashes visible
       ({terms, types} : clasetGoal.binding_mark) =
-  let
-    val (visible_terms, visible_types) =
-      dependency_closure (clasetGoal.store child)
-        (clasetGoal.goals child)
-  in
-    List.exists (fn meta => member_meta meta visible_terms) terms orelse
-    List.exists (fn meta => member_tymeta meta visible_types) types
-  end
+  if List.null terms andalso List.null types then false
+  else
+    let val (visible_terms, visible_types) = Portable.HOLSusp.force visible
+    in
+      List.exists (fn meta => member_meta meta visible_terms) terms orelse
+      List.exists (fn meta => member_tymeta meta visible_types) types
+    end
 
 type frame = {source : node option, states : node seq.seq}
 
@@ -219,6 +206,10 @@ fun active_completed source child =
 
 fun discard_subtree child frames =
   let
+    val visible =
+      Portable.HOLSusp.delay
+        (fn () =>
+          dependency_closure (clasetGoal.store child) (clasetGoal.goals child))
     fun discard count [] = (count, [])
       | discard count (frame :: rest) =
           (case #source frame of
@@ -227,15 +218,9 @@ fun discard_subtree child frames =
                  if not (active_completed source child) then
                    (count, frame :: rest)
                  else
-                   let
-                     val difference =
-                       binding_diff (clasetGoal.store source)
-                         (clasetGoal.store child)
-                   in
-                     if mark_clashes child difference then
-                       (count, frame :: rest)
-                     else discard (count + 1) rest
-                   end)
+                   if mark_clashes visible (binding_diff source child) then
+                     (count, frame :: rest)
+                   else discard (count + 1) rest)
   in
     discard 0 frames
   end

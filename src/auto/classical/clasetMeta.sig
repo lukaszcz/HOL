@@ -46,6 +46,9 @@ sig
   val bindings : store ->
                  {terms : (meta * term) list,
                   types : (tymeta * hol_type) list}
+  (* [new_bindings old new] returns the metavariables bound in [new]
+     whose names had no binding in [old]. *)
+  val new_bindings : store -> store -> {terms : meta list, types : tymeta list}
   val collapse : store ->
                  (hol_type, hol_type) subst * (term, term) subst
 end

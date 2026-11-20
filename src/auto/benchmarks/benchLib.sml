@@ -415,8 +415,12 @@ fun defined_head theorem =
   end
   handle HOL_ERR _ => NONE
 
+(* Each ambient sweep compares the same goal against many theorems. *)
+val goal_comparison : (term * (term -> bool)) option ref = ref NONE
+
 fun set_definitional_context theorems =
-  (definitional_context := theorems;
+  (goal_comparison := NONE;
+   definitional_context := theorems;
    definitional_heads :=
      HOLset.addList
        (HOLset.empty String.compare, List.mapPartial defined_head theorems))
@@ -458,23 +462,6 @@ fun unfolded term =
   else unfold term
 
 fun definitional_theorems () = !definitional_context
-
-(* One goal is compared against every ambient rule in turn, so the
-   goal's unfolded reading is computed once and reused. *)
-val unfolded_goal : (term * term) option ref = ref NONE
-
-fun unfolded_for_goal goal =
-  case !unfolded_goal of
-      SOME (previous, value) =>
-        if Term.aconv previous goal then value
-        else
-          let val value = unfolded goal
-          in unfolded_goal := SOME (goal, value); value
-          end
-    | NONE =>
-        let val value = unfolded goal
-        in unfolded_goal := SOME (goal, value); value
-        end
 
 (* Unfolding a definition against itself leaves [t = t], and every
    vacuous statement matches every other.  A comparison of two of them
@@ -521,14 +508,16 @@ fun contentless term =
    loses it.  Moving a prefix out past a premise is an equivalence, so
    this adds readings without admitting any statement the rule does not
    make. *)
-fun statement_is_goal goal statement =
+fun prepare_statement_comparison goal =
   let
     val goal = strip_truth_equivalence goal
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
-    fun same left right =
+    fun prepare term =
+      (term, Portable.HOLSusp.delay (fn () => statement_normal_form term))
+    fun same left (right, normal) =
       Term.aconv left right orelse variants left right orelse
-      Term.aconv (statement_normal_form left) (statement_normal_form right)
+      Term.aconv (statement_normal_form left) (Portable.HOLSusp.force normal)
     fun parts term =
       let
         val (_, body) = boolSyntax.strip_forall term
@@ -552,31 +541,56 @@ fun statement_is_goal goal statement =
         here @ beyond
       end
     val (goal_premises, goal_body) = parts goal
-    val goal_conclusion = strip_truth_equivalence goal_body
-    fun covered term = List.exists (same term) goal_premises
-    fun matches (premises, conclusion) =
-      same conclusion goal orelse
-      (same conclusion goal_conclusion andalso List.all covered premises)
+    val whole = prepare goal
+    val conclusion = prepare (strip_truth_equivalence goal_body)
+    val premises = map prepare goal_premises
+    fun covered term = List.exists (same term) premises
+    fun matches (premises, term) =
+      same term whole orelse
+      (same term conclusion andalso List.all covered premises)
   in
-    same (strip_truth_equivalence statement) goal orelse
-    List.exists matches (readings statement)
+    fn statement =>
+      same (strip_truth_equivalence statement) whole orelse
+      List.exists matches (readings statement)
+  end
+
+fun prepare_goal_comparison goal =
+  let
+    val ordinary = prepare_statement_comparison goal
+    val expanded =
+      Portable.HOLSusp.delay (fn () =>
+        let val term = unfolded goal
+        in (term, prepare_statement_comparison term)
+        end)
+  in
+    fn statement =>
+      ordinary statement orelse
+      (not (List.null (!definitional_context)) andalso
+       let
+         val unfolded_statement = unfolded statement
+         val (unfolded_goal, compare) = Portable.HOLSusp.force expanded
+       in
+         not (Term.aconv unfolded_statement statement andalso
+              Term.aconv unfolded_goal goal) andalso
+         not (contentless unfolded_statement) andalso
+         compare unfolded_statement
+       end)
   end
 
 fun theorem_is_goal goal theorem =
   let
-    val statement = Thm.concl theorem
+    fun fresh () =
+      let val compare = prepare_goal_comparison goal
+      in goal_comparison := SOME (goal, compare); compare
+      end
+    val compare =
+      case !goal_comparison of
+          SOME (previous, compare) =>
+            (* The stripped reading retains the binder's variable name. *)
+            if Portable.pointer_eq (goal, previous) then compare else fresh ()
+        | NONE => fresh ()
   in
-    statement_is_goal goal statement orelse
-    (not (List.null (!definitional_context)) andalso
-     let
-       val unfolded_statement = unfolded statement
-       val unfolded_goal = unfolded_for_goal goal
-     in
-       not (Term.aconv unfolded_statement statement andalso
-            Term.aconv unfolded_goal goal) andalso
-       not (contentless unfolded_statement) andalso
-       statement_is_goal unfolded_goal unfolded_statement
-     end)
+    compare (Thm.concl theorem)
   end
 
 fun withheld_primitives goal =
@@ -755,16 +769,20 @@ fun preserve_target tactic (original as (_, target)) ctxt =
     fun restore theorems =
       let
         val theorem = validation theorems
-        val normalization =
-          Conv.QCONV
-            (Conv.REDEPTH_CONV
-               (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
-        val normalized = boolSyntax.rhs (concl normalization)
       in
         if aconv (concl theorem) target then theorem
-        else if aconv (concl theorem) normalized then
-          EQ_MP (SYM normalization) theorem
-        else theorem
+        else
+          let
+            val normalization =
+              Conv.QCONV
+                (Conv.REDEPTH_CONV
+                   (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
+            val normalized = boolSyntax.rhs (concl normalization)
+          in
+            if aconv (concl theorem) normalized then
+              EQ_MP (SYM normalization) theorem
+            else theorem
+          end
       end
   in
     (goals, restore)
@@ -1901,59 +1919,64 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
              TextIO.flushOut TextIO.stdOut)
           else
             ()
-        val started = Time.now ()
+        val diagnostic_timer =
+          if diagnostics_enabled () then SOME (Timer.startRealTimer ())
+          else NONE
         val (result, work) =
           searchWork.measure
             (fn () => run_goal budget (#recipe goal) goal)
-        val elapsed = Time.- (Time.now (), started)
-        val exclusion_names = map #name (#excl goal)
-        fun is_excluded name =
-          List.exists (equal name) exclusion_names
-        val excluded_claset =
-          map #name
-            (List.filter
-              (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
-                is_excluded name andalso
-                theorem_is_goal (#goal goal) thm)
-              (clasetLib.all_rules (clasetLib.the_claset ())))
-        val excluded_simpset =
-          map #name
-            (List.filter (is_excluded o #name)
-              (List.concat
-                (map named_rewrite (simpset_analogues (#goal goal)))))
-        val classification =
-          case List.find
-                 (fn ({id, ...} : shortfall) => id = #id goal)
-                 selected_shortfalls of
-              NONE => "None"
-            | SOME {note, ...} =>
-                (case String.tokens (equal #":") note of
-                     [] => "Unclassified"
-                   | first :: _ => first)
-        val search_statistics =
-          if recipe_has_tactic Linarith (#recipe goal) then
-            linarith_stats_text ()
-          else
-            searchWork.render work
         val _ =
-          if diagnostics_enabled () then
-            diagnostic_output
-              (String.concat
-                ["### ", #id goal, "\n\n",
-                 "- Source method: `", #source_method goal, "`\n",
-                 "- Assigned recipe: `", recipe_name (#recipe goal),
-                 "`\n",
-                 "- Excluded ambient simp analogues: ",
-                 "[", String.concatWith ", " excluded_simpset, "]\n",
-                 "- Excluded ambient claset analogues: ",
-                 "[", String.concatWith ", " excluded_claset, "]\n",
-                 "- Outcome: `", outcome_text result, "`\n",
-                 "- Elapsed: `", Time.toString elapsed, "`\n",
-                 "- Search statistics: ", search_statistics, "\n",
-                 "- Working classification: `", classification,
-                 "`\n\n"])
-          else
-            ()
+          case diagnostic_timer of
+              NONE => ()
+            | SOME timer =>
+              let
+                val elapsed = Timer.checkRealTimer timer
+                val exclusion_names = map #name (#excl goal)
+                fun is_excluded name =
+                  List.exists (equal name) exclusion_names
+                val excluded_claset =
+                  map #name
+                    (List.filter
+                      (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
+                        is_excluded name andalso
+                        theorem_is_goal (#goal goal) thm)
+                      (clasetLib.all_rules (clasetLib.the_claset ())))
+                val excluded_simpset =
+                  map #name
+                    (List.filter (is_excluded o #name)
+                      (List.concat
+                        (map named_rewrite (simpset_analogues (#goal goal)))))
+                val classification =
+                  case List.find
+                         (fn ({id, ...} : shortfall) => id = #id goal)
+                         selected_shortfalls of
+                      NONE => "None"
+                    | SOME {note, ...} =>
+                        (case String.tokens (equal #":") note of
+                             [] => "Unclassified"
+                           | first :: _ => first)
+                val search_statistics =
+                  if recipe_has_tactic Linarith (#recipe goal) then
+                    linarith_stats_text ()
+                  else
+                    searchWork.render work
+              in
+                diagnostic_output
+                  (String.concat
+                    ["### ", #id goal, "\n\n",
+                     "- Source method: `", #source_method goal, "`\n",
+                     "- Assigned recipe: `", recipe_name (#recipe goal),
+                     "`\n",
+                     "- Excluded ambient simp analogues: ",
+                     "[", String.concatWith ", " excluded_simpset, "]\n",
+                     "- Excluded ambient claset analogues: ",
+                     "[", String.concatWith ", " excluded_claset, "]\n",
+                     "- Outcome: `", outcome_text result, "`\n",
+                     "- Elapsed: `", Time.toString elapsed, "`\n",
+                     "- Search statistics: ", search_statistics, "\n",
+                     "- Working classification: `", classification,
+                     "`\n\n"])
+              end
         val _ =
           if OS.Process.getEnv "HOLBENCHPROGRESS" = SOME "1" then
             TextIO.print

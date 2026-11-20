@@ -525,6 +525,9 @@ fun rule_of_decl ({spec, name, orig, info, ...} : decl) : aesop_rule =
 
 fun all_rules (CS {decls, ...}) = map rule_of_decl (dest_decls decls)
 
+fun rules_for_derived_concl (CS {decls, ...}) conclusion =
+  map rule_of_decl (decls_for_derived_concl decls conclusion)
+
 (* The name/theorem view of a retrieved declaration: what a caller that has
    no use for the canonicalisation sees, in the [rules_of] shape. *)
 fun forget_info ({spec, name, thm, ...} : aesop_rule) = (spec, (name, thm))
@@ -1506,21 +1509,20 @@ fun invocation_facts theorems =
   end
 
 (* The subterms a match can be attempted at: applications at a constant
-   head.  On the fact's side [free] also rejects a subterm under one of
+   head.  On the fact's side [eligible] also rejects a subterm under one of
    the fact's own abstractions -- matching there would read a type off a
    variable that exists only under the binder -- and on the goal's side
    every variable is one of its own. *)
-fun matchable_subterms_with charge free term =
+fun matchable_subterms_with charge eligible term =
   let
+    fun head sub = fst (strip_comb sub)
     fun headed sub =
       (charge searchBudget.Candidate;
-       is_comb sub andalso is_const (fst (strip_comb sub)) andalso
-       List.all free (free_vars sub))
+       is_comb sub andalso is_const (head sub) andalso eligible sub)
+    fun keyed sub = (fst (dest_const (head sub)), sub)
   in
-    find_terms headed term
+    map keyed (find_terms headed term)
   end
-
-fun head_name term = fst (dest_const (fst (strip_comb term)))
 
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
 fun maximal_type_joins_with charge substitutions =
@@ -1747,7 +1749,8 @@ fun goal_type_instances_with charge (assumptions, target) fact =
         val schematic = free_vars match_body
         val patterns =
           matchable_subterms_with charge
-            (fn v => Lib.op_mem aconv v schematic)
+            (fn sub => List.all (fn v => Lib.op_mem aconv v schematic)
+                         (free_vars sub))
             match_body
         val sites =
           List.concat
@@ -1778,11 +1781,11 @@ fun goal_type_instances_with charge (assumptions, target) fact =
           List.mapPartial instance_of
             (List.concat
               (map
-                (fn pattern =>
+                (fn (pattern_head, pattern) =>
                   List.mapPartial
-                    (fn site =>
+                    (fn (site_head, site) =>
                       if (charge searchBudget.Candidate;
-                          head_name pattern = head_name site) then
+                          pattern_head = site_head) then
                         SOME (pattern, site)
                       else
                         NONE)

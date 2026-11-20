@@ -3533,6 +3533,28 @@ val _ =
 
 val _ =
   test
+    ("rule origins preserve declaration order across claset edits",
+     fn () =>
+       let
+         val theorem = boolTheory.TRUTH
+         val key = concl theorem
+         val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
+         fun add name = add_derived_rule spec (name, theorem)
+         fun origins cs = map #name (rules_for_derived_concl cs key)
+         val first = add "origin_first" empty_cs
+         val before_add = origins first
+         val second = add "origin_second" first
+         val before_remove = origins second
+         val removed = remove_rule "origin_first" second
+       in
+         before_add = ["origin_first"] andalso
+         before_remove = ["origin_second", "origin_first"] andalso
+         origins removed = ["origin_second"] andalso
+         origins first = before_add andalso origins second = before_remove
+       end)
+
+val _ =
+  test
     ("budgeted literal insertion charges matching and admitted facts",
      fn () =>
        let

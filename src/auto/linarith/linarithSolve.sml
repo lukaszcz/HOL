@@ -23,13 +23,14 @@ type linarith_config = linarithData.linarith_config
 
 (* The meter the search charges, and the linarith.trace level it
    reports at. *)
-type work = {meter : searchBudget.charger, level : traceUtil.level}
+type work =
+  {meter : searchBudget.charger, metered : bool, level : traceUtil.level}
 
 fun free_work level : work =
-  {meter = searchBudget.free_charger, level = level}
+  {meter = searchBudget.free_charger, metered = false, level = level}
 
 fun budget_work budget level : work =
-  {meter = searchBudget.charger budget, level = level}
+  {meter = searchBudget.charger budget, metered = true, level = level}
 
 fun candidate (work : work) = #candidate (#meter work) ()
 fun application (work : work) = #application (#meter work) ()
@@ -249,9 +250,36 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
            | order => order)
     | order => order
 
-fun distinct_rows_with work rows =
-  listUtil.distinct_by
-    (fn pair => (candidate work; compare_key pair)) row_key rows
+fun eliminate_pairs (work : work) v independent pos neg =
+  let
+    fun derive p n =
+      (application work; elim_var_with work v p n)
+
+    fun keep (row, acc as (seen, rev_rows)) =
+      let val key = row_key row
+      in
+        if HOLset.member (seen, key) then acc
+        else (HOLset.add (seen, key), row :: rev_rows)
+      end
+    val empty =
+      (HOLset.empty (fn pair => (candidate work; compare_key pair)), [])
+    val (_, rev_rows) =
+      if #metered work then
+        (* Charge all row applications before any key comparisons, as
+           callers with limited budgets can observe the cutoff order. *)
+        let val derived = List.map (fn p => List.map (derive p) neg) pos
+        in
+          List.foldl (fn (rows, kept) => List.foldl keep kept rows)
+            (List.foldl keep empty independent) derived
+        end
+      else
+        List.foldl
+          (fn (p, kept) =>
+            List.foldl (fn (n, kept) => keep (derive p n, kept)) kept neg)
+          (List.foldl keep empty independent) pos
+  in
+    List.rev rev_rows
+  end
 
 (* Elimination traces one line per pivot, so the message is built only
    once the level has asked for it. *)
@@ -317,19 +345,11 @@ fun elim_with work ineqs =
                             (fn Lineq (_, _, cs, _) =>
                               (candidate work;
                                ai_pos (List.nth (cs, v)))) dependent
-                        fun products [] = []
-                          | products (p :: ps) =
-                              List.map
-                                (fn row =>
-                                  (application work;
-                                   elim_var_with work v p row))
-                                neg @ products ps
                       in
                         trace work
                           (fn () => "inequality pivot " ^ Int.toString v);
                         elim_with work
-                          (distinct_rows_with work
-                            (independent @ products pos))
+                          (eliminate_pairs work v independent pos neg)
                       end
               end
       end

@@ -1626,15 +1626,15 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                    rule_count = rule_count,
                    noteAttempt = noteSafeRuleAttempt, fire = fire}
 
-              fun closeF [] = raise CLOSEF
-                | closeF (literal :: literals) =
+              fun closeF _ [] = raise CLOSEF
+                | closeF literal_of (item :: items) =
                     let
                       val _ = checkpointAt mark
                       val _ = noteLiteralAttempt ()
                     in
                       case tryCloseAt mark assumptions
-                             (formula, literal) of
-                          NONE => closeF literals
+                             (formula, literal_of item) of
+                          NONE => closeF literal_of items
                         | SOME step =>
                             let
                               val _ = noteLiteralSuccess ()
@@ -1650,7 +1650,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                                 (fn PRV =>
                                       SOME (fn () =>
                                         (rollbackAt mark;
-                                         closeF literals))
+                                         closeF literal_of items))
                                   | _ => NONE)
                                 (fn () =>
                                   prv
@@ -1670,8 +1670,8 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                        (fn () =>
                          onClose
                            (fn () => closeLevels rest)
-                           (fn () => closeF (map Lib.fst level_unsafe)))
-                       (fn () => closeF (map Lib.fst level_safe)))
+                           (fn () => closeF Lib.fst level_unsafe))
+                       (fn () => closeF Lib.fst level_safe))
 
               fun cascade () =
                 if lim < 0 then backtrack choices
@@ -1686,7 +1686,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                                   (fn () =>
                                     closeLevels
                                       ((safe, unsafe) :: pairs)))
-                              (fn () => closeF lits))
+                              (fn () => closeF Lib.I lits))
                       | _ => NONE)
                     (fn () =>
                       let

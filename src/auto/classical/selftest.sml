@@ -8561,6 +8561,57 @@ val _ =
 
 val _ =
   test
+    ("editing a replay frontier preserves siblings and earlier scripts",
+     fn () =>
+       let
+         open clasetReplay
+         val ctxt = Context.snapshot ()
+         val p = Term.mk_var ("replay_p", Type.bool)
+         val q = Term.mk_var ("replay_q", Type.bool)
+         val r = Term.mk_var ("replay_r", Type.bool)
+         val target = boolSyntax.mk_conj (p, boolSyntax.mk_conj (q, r))
+         val goal = ([p, q, r], target)
+         fun record kind target action children =
+           make_record
+             {kind = kind, target = target, consumed = NONE,
+              created = {terms = [], types = []}, eigenvariables = [],
+              validation = (fn _ => raise Fail "use the replay action"),
+              action = fn _ => action, children = children}
+         fun split position children =
+           record Wrapper position Tactic.CONJ_TAC children
+         fun close position tm =
+           record (Assumption position) position
+             (Tactic.ACCEPT_TAC (Thm.ASSUME tm)) []
+         val first =
+           append (empty 1)
+             (split 1 [NONE, SOME (split 1 [NONE, NONE])])
+         val last = append first (close 3 r)
+         val left = append last (close 1 p)
+         val middle = append last (close 2 q)
+         fun matches script residuals =
+           case replay_in ctxt (ground clasetMeta.empty script) goal of
+               Replayed (goals, validate) =>
+                 ListPair.allEq
+                   (fn ((_, tm), expected) => Term.aconv tm expected)
+                   (goals, residuals) andalso
+                 Term.aconv (Thm.concl (validate (map Thm.ASSUME residuals)))
+                   target
+             | ReplayFailed _ => false
+         fun rejects script position =
+           ((ignore (append script (close position p)); false)
+            handle Feedback.HOL_ERR _ => true)
+         val two_roots = append (empty 2) (close 2 p)
+       in
+         matches first [p, q, r] andalso matches last [p, q] andalso
+         matches left [q] andalso matches middle [p] andalso
+         length left = 3 andalso
+         to_string two_roots = "open\n2: assumption 2" andalso
+         rejects first 0 andalso rejects first 4 andalso
+         rejects (append left (close 1 q)) 1
+       end)
+
+val _ =
+  test
     ("an interrupt in a recorded action escapes replay",
      fn () =>
        let

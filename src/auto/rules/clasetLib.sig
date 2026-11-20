@@ -81,12 +81,13 @@ sig
   val app_safe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
   val app_unsafe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
 
-  (* Every declaration of the claset, in canonical declaration order.  A
-     caller that compares a theorem against a declaration's derived forms
-     -- classical replay identifies the declaration an applied theorem came
-     from that way -- reads them here rather than deriving them again for
-     each declaration it scans. *)
+  (* Every declaration of the claset, with its stored derived forms, in
+     canonical declaration order. *)
   val all_rules : claset -> aesop_rule list
+  (* Declarations with a matching derived conclusion, in [all_rules] order.
+     Classical replay checks the hypotheses and chooses the matching variant
+     among the plain, swapped, and duplicated forms. *)
+  val rules_for_derived_concl : claset -> term -> aesop_rule list
   (* The name/theorem view of [all_rules], in the same order. *)
   val rules_of : claset -> (rulespec * (string * thm)) list
   (* Runtime TypeBase clash entries are lazy, not theorem declarations.

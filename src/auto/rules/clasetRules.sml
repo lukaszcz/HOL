@@ -666,15 +666,43 @@ fun decl_merge_order (d1 : decl, d2 : decl) =
 
 fun canonical_key th = concl (canonical_rule th)
 
+fun ordered_decls byconcl =
+  Listsort.sort decl_order
+    (Termtab.fold (fn (_, ds) => fn acc => ds @ acc) byconcl [])
+
+fun derived_decls byconcl =
+  let
+    fun add (decl : decl, table) =
+      let
+        val {rl = (plain, swapped), dup_rl = (duplicate, dup_swapped)} =
+          #info decl
+        val keys = Lib.op_mk_set aconv
+          (map concl (plain :: duplicate ::
+             List.mapPartial Lib.I [swapped, dup_swapped]))
+      in
+        List.foldl
+          (fn (key, index) => Termtab.map_default (key, []) (cons decl) index)
+          table keys
+      end
+  in
+    List.foldr add Termtab.empty (ordered_decls byconcl)
+  end
+
 datatype decls =
   Decls of {next : int, byconcl : decl list Termtab.table,
-            byname : decl Symtab.table}
+            byname : decl Symtab.table,
+            derived : decl list Termtab.table Portable.HOLSusp.susp}
+
+fun make_decls next byconcl byname =
+  Decls {next = next, byconcl = byconcl, byname = byname,
+         derived = Portable.HOLSusp.delay (fn () => derived_decls byconcl)}
 
 val empty_decls =
-  Decls {next = ~1, byconcl = Termtab.empty, byname = Symtab.empty}
+  make_decls ~1 Termtab.empty Symtab.empty
 
-fun reserve_decl_indices count (Decls {next, byconcl, byname}) =
-  (next, Decls {next = next - count, byconcl = byconcl, byname = byname})
+fun reserve_decl_indices count (Decls {next, byconcl, byname, derived}) =
+  (next, Decls {next = next - count, byconcl = byconcl, byname = byname,
+                derived = derived})
 
 fun make_decl {name, spec, weight, info, orig} =
   {name = name, spec = spec, tag = {weight = weight, index = 0},
@@ -689,9 +717,13 @@ fun find_decl (Decls {byname, ...}) name = Symtab.lookup byname name
 
 fun decl_name_member decls name = Option.isSome (find_decl decls name)
 
-fun dest_decls (Decls {byconcl, ...}) =
-  Listsort.sort decl_order
-    (Termtab.fold (fn (_, ds) => fn acc => ds @ acc) byconcl [])
+fun dest_decls (Decls {byconcl, ...}) = ordered_decls byconcl
+
+(* Replay uses exact derived conclusions, with the same precedence as
+   [dest_decls]. It still checks hypotheses and variant priority. *)
+fun decls_for_derived_concl (Decls {derived, ...}) conclusion =
+  Option.getOpt
+    (Termtab.lookup (Portable.HOLSusp.force derived) conclusion, [])
 
 fun duplicate decl ds =
   List.exists (fn old => same_kind (#spec decl) (#spec old)) ds
@@ -709,11 +741,11 @@ fun rule_description ({kind, safe, ...} : rulespec) =
    declarations deriving the same rule each own a copy: retracting one must
    leave the other's contribution in place.  Name collisions are refused
    either way, since a name identifies at most one declaration. *)
-fun extend_decl_gen {derived} (decl : decl) (Decls {next, byconcl, byname}) =
+fun extend_decl_gen {derived} (decl : decl)
+      (decls as Decls {next, byconcl, byname, ...}) =
   let
     val key = canonical_key (#orig decl)
     val old = Option.getOpt (Termtab.lookup byconcl key, [])
-    val unchanged = Decls {next = next, byconcl = byconcl, byname = byname}
     fun warn message =
       if derived then ()
       else HOL_WARNING "clasetRules" "extend_decl" message
@@ -722,7 +754,7 @@ fun extend_decl_gen {derived} (decl : decl) (Decls {next, byconcl, byname}) =
        Option.isSome (Symtab.lookup byname (#name decl))
     then
       (warn ("Ignoring duplicate " ^ rule_description (#spec decl));
-       (NONE, unchanged))
+       (NONE, decls))
     else
       let
         val _ =
@@ -738,16 +770,15 @@ fun extend_decl_gen {derived} (decl : decl) (Decls {next, byconcl, byname}) =
            orig = #orig decl}
       in
         (SOME decl',
-         Decls {next = next - 1,
-                byconcl = Termtab.update (key, decl' :: old) byconcl,
-                byname = Symtab.update (#name decl', decl') byname})
+         make_decls (next - 1) (Termtab.update (key, decl' :: old) byconcl)
+           (Symtab.update (#name decl', decl') byname))
       end
   end
 
 val extend_decl = extend_decl_gen {derived = false}
 val extend_derived_decl = extend_decl_gen {derived = true}
 
-fun remove_decl name (decls as Decls {next, byconcl, byname}) =
+fun remove_decl name (decls as Decls {next, byconcl, byname, ...}) =
   case Symtab.lookup byname name of
       NONE => ([], decls)
     | SOME decl =>
@@ -759,9 +790,7 @@ fun remove_decl name (decls as Decls {next, byconcl, byname}) =
             if List.null kept then Termtab.delete_safe key byconcl
             else Termtab.update (key, kept) byconcl
         in
-          ([decl],
-           Decls {next = next, byconcl = byconcl',
-                  byname = Symtab.delete_safe name byname})
+          ([decl], make_decls next byconcl' (Symtab.delete_safe name byname))
         end
 
 fun merge_decls (left, right) =

@@ -583,11 +583,8 @@ fun theorem_equal left right =
   aconv (concl left) (concl right) andalso
   Lib.list_eq aconv (hyp left) (hyp right)
 
-(* The claset stores each declaration's derived forms, so this identifies
-   the declaration behind an applied theorem by reading them rather than by
-   deriving them again -- with real kernel inferences -- for every
-   declaration it scans.  The scan also stops at the first match: replay
-   runs this once per successful rule application. *)
+(* The derived-conclusion index supplies declarations in claset order.
+   Replay needs the first matching hypotheses and variant. *)
 fun rule_origin cs duplicated theorem =
   let
     fun inspect ({spec, thm = original, info, ...} : clasetLib.aesop_rule) =
@@ -616,7 +613,7 @@ fun rule_origin cs duplicated theorem =
                SOME result => result
              | NONE => search rest)
   in
-    search (clasetLib.all_rules cs)
+    search (clasetLib.rules_for_derived_concl cs (concl theorem))
   end
 
 datatype prefix_policy = FullPrefixes | ExactBlastPrefixes

@@ -37,25 +37,14 @@ fun ordered_rules rules =
     map #3 (Listsort.sort compare positioned)
   end
 
-(* Metavariable identity, not term equality: a type binding respells a
-   metavariable, and a respelling is not a new metavariable. *)
-fun member_term candidate =
-  List.exists
-    (fn existing => clasetMeta.meta_compare (candidate, existing) = EQUAL)
-
 fun new_binding created parent child =
   let
-    val parent_bindings = clasetMeta.bindings parent
-    val child_bindings = clasetMeta.bindings child
-    fun new_term (meta, _) =
-      not (member_term meta (map #1 (#terms parent_bindings))) andalso
-      not (member_term meta (#terms created))
-    fun new_type (tymeta, _) =
-      not (mem tymeta (map #1 (#types parent_bindings))) andalso
-      not (mem tymeta (#types created))
+    val {terms, types} = clasetMeta.new_bindings parent child
+    fun existing_term meta =
+      not (List.exists (clasetMeta.same_meta meta) (#terms created))
+    fun existing_type tymeta = not (mem tymeta (#types created))
   in
-    List.exists new_term (#terms child_bindings) orelse
-    List.exists new_type (#types child_bindings)
+    List.exists existing_term terms orelse List.exists existing_type types
   end
 
 (* Normalisation rewrites a goal in place, so a norm rule must be

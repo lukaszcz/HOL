@@ -747,6 +747,29 @@ val _ =
                | _ => false)
        end)
 
+val _ =
+  check
+    ("witness matching skips plain conditions without charging candidates",
+     fn () =>
+       let
+         val condition = ``witness_budget_p (4:num) : bool``
+         val context =
+           {stack = [], ctxt = Context.snapshot (),
+            context_thms =
+              [Thm.ASSUME ``witness_budget_p (3:num) : bool``],
+            recurse = Thm.REFL}
+         val budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val reduction =
+           clasimpLib.witness_subgoaler_budgeted budget context condition
+       in
+         Term.aconv (Thm.concl reduction)
+           (boolSyntax.mk_eq (condition, condition)) andalso
+         #candidates (searchBudget.usage budget) = 0
+       end)
+
 (* A plain conditional citation must remain available to the safe
    simplifier even if unsafe search also compiles a rule view of it. *)
 val invocation_q_def =

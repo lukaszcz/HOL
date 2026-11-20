@@ -53,16 +53,13 @@ fun apply_rule ctxt cs duplicate major rule node =
                 {theorem = replay_theorem, elim = is_elim,
                  major = major}) node
 
-          fun finish next =
-            let
-              val child_count = clasetGoal.child_count node next
-            in
-              if duplicate andalso is_elim then
-                move_children ctxt child_count next
-              else next
-            end
         in
-          seq.mapPartial (total finish) transitions
+          if duplicate andalso is_elim then
+            seq.mapPartial
+              (total (fn next =>
+                move_children ctxt (clasetGoal.child_count node next) next))
+              transitions
+          else transitions
         end
 
 fun execute ctxt cs step node =

@@ -82,6 +82,9 @@ sig
   val decl_name_member : decls -> string -> bool
   val get_decls : decls -> thm -> decl list
   val dest_decls : decls -> decl list
+  (* Look up the conclusion of any stored rule variant, in [dest_decls]
+     order. The caller checks hypotheses and chooses the variant. *)
+  val decls_for_derived_concl : decls -> term -> decl list
   (* The order [dest_decls] returns: kind-class group, then tag order
      within the group.  Exposed so that a derived list can be maintained
      in [dest_decls] order without re-sorting. *)
