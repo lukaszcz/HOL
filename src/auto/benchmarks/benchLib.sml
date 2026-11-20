@@ -299,21 +299,6 @@ fun strip_truth_equivalence term =
    missed identification leaves the pre-existing comparison in charge,
    and an identification that fires drops a citation, which can only
    ask HOL4 for more. *)
-fun occurrence_order term =
-  let
-    fun walk bound (term, seen) =
-      case Term.dest_term term of
-          VAR _ =>
-            if List.exists (Term.aconv term) bound orelse
-               List.exists (Term.aconv term) seen
-            then seen else seen @ [term]
-        | CONST _ => seen
-        | COMB (rator, rand) => walk bound (rand, walk bound (rator, seen))
-        | LAMB (variable, body) => walk (variable :: bound) (body, seen)
-  in
-    walk [] (term, [])
-  end
-
 fun rename_free term =
   let
     fun numbered (variable, (index, substitution)) =
@@ -323,7 +308,7 @@ fun rename_free term =
             ("%bench" ^ Int.toString index, Term.type_of variable)) ::
        substitution)
     val (_, substitution) =
-      List.foldl numbered (0, []) (occurrence_order term)
+      List.foldl numbered (0, []) (Term.free_vars_lr term)
   in
     Term.subst substitution term
   end
@@ -378,9 +363,11 @@ fun predecessor_normalise term =
         Term.mk_abs (variable, predecessor_normalise body)
     | _ => term
 
+fun statement_symmetry_normal_form term =
+  symmetry_normalise (rename_free (predecessor_normalise term))
+
 fun statement_normal_form term =
-  symmetry_normalise
-    (rename_free (predecessor_normalise (beta_eta_normalise term)))
+  statement_symmetry_normal_form (beta_eta_normalise term)
 
 (* A rule and the goal can state the same thing and still not look
    alike.  A corpus goal wears the translation's constants and a library
@@ -520,11 +507,17 @@ fun prepare_statement_comparison goal =
     val goal = strip_truth_equivalence goal
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
-    fun prepare term =
-      (term, Portable.HOLSusp.delay (fn () => statement_normal_form term))
-    fun same left (right, normal) =
+    fun prepare normal_form term =
+      (term, Portable.HOLSusp.delay (fn () => normal_form term))
+    (* Stripping a truth equivalence first reduces beta and eta redexes
+       throughout the term and then selects at most a subterm. *)
+    val prepare_stripped = prepare statement_symmetry_normal_form
+    fun strip_and_prepare term =
+      prepare_stripped (strip_truth_equivalence term)
+    fun same (left, left_normal) (right, right_normal) =
       Term.aconv left right orelse variants left right orelse
-      Term.aconv (statement_normal_form left) (Portable.HOLSusp.force normal)
+      Term.aconv (Portable.HOLSusp.force left_normal)
+                 (Portable.HOLSusp.force right_normal)
     fun parts term =
       let
         val (_, body) = boolSyntax.strip_forall term
@@ -539,7 +532,7 @@ fun prepare_statement_comparison goal =
               SOME (left, right) =>
                 map (fn (rest, c) => (premises @ rest, c))
                   (readings left @ readings right)
-            | NONE => [(premises, strip_truth_equivalence conclusion)]
+            | NONE => [(premises, conclusion)]
         val beyond =
           if not (List.null premises) andalso boolSyntax.is_forall conclusion
           then
@@ -549,17 +542,31 @@ fun prepare_statement_comparison goal =
         here @ beyond
       end
     val (goal_premises, goal_body) = parts goal
-    val whole = prepare goal
-    val conclusion = prepare (strip_truth_equivalence goal_body)
-    val premises = map prepare goal_premises
-    fun covered term = List.exists (same term) premises
-    fun matches (premises, term) =
-      same term whole orelse
-      (same term conclusion andalso List.all covered premises)
+    val whole = prepare_stripped goal
+    val conclusion = strip_and_prepare goal_body
+    val premises = map (prepare statement_normal_form) goal_premises
+    fun covered term =
+      let val left = prepare statement_normal_form term
+      in List.exists (same left) premises end
   in
     fn statement =>
-      same (strip_truth_equivalence statement) whole orelse
-      List.exists matches (readings statement)
+      let
+        val stripped = strip_and_prepare statement
+        fun matches (premises, term) =
+          (* A reading that kept the whole citation already failed the
+             whole-goal comparison. Use exact identity since stripping a
+             quantifier retains its binder name. *)
+          if Portable.pointer_eq (term, statement) then
+            same stripped conclusion andalso List.all covered premises
+          else
+            let val left = strip_and_prepare term
+            in
+              same left whole orelse
+              (same left conclusion andalso List.all covered premises)
+            end
+      in
+        same stripped whole orelse List.exists matches (readings statement)
+      end
   end
 
 fun prepare_goal_comparison goal =

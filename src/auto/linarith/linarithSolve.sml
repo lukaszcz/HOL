@@ -362,23 +362,38 @@ fun elim_with work ineqs =
 fun scale m rat =
   let
     val n = Arbrat.numerator rat
-    val d = Arbint.fromNat (Arbrat.denominator rat)
   in
-    Arbint.* (n, Arbint.div (m, d))
+    (* When the common denominator is one, all coefficients are integral. *)
+    if ai_one m then n
+    else
+      let
+        val d = Arbrat.denominator rat
+      in
+        if d = Arbnum.one then Arbint.* (n, m)
+        else Arbint.* (n, Arbint.div (m, Arbint.fromNat d))
+      end
   end
 
 fun integ (Decomp {lhs, lhs_const, rel, rhs, rhs_const,
                     discrete, negated}) =
   let
-    val rats =
-      lhs_const :: rhs_const ::
-      List.map #2 lhs @ List.map #2 rhs
+    fun include_denominator (rat, acc) =
+      let val denominator = Arbrat.denominator rat
+      in
+        if denominator = Arbnum.one then acc
+        else
+          let val d = Arbint.fromNat denominator
+          in
+            if ai_one acc orelse ai_eq acc d then d
+            else Arbint.lcm (acc, d)
+          end
+      end
+    fun include_coefficient ((_, c), acc) = include_denominator (c, acc)
+    val constants = include_denominator (rhs_const,
+                      include_denominator (lhs_const, one))
     val m =
-      List.foldl
-        (fn (rat, acc) =>
-            Arbint.lcm
-              (acc, Arbint.fromNat (Arbrat.denominator rat)))
-        one rats
+      List.foldl include_coefficient
+        (List.foldl include_coefficient constants lhs) rhs
     fun mult (tm, rat) = (tm, scale m rat)
   in
     (m, {lhs = List.map mult lhs, lhs_const = scale m lhs_const,

@@ -399,10 +399,9 @@ fun selected_mode goal =
    unifies.  Normalisation leaving the goal alone is exactly [iterations =
    0], and the safe phase then agrees with it whenever it too matches. *)
 fun phase_rules source initial_rules initial_iterations goal mode =
-  if initial_iterations = 0 andalso mode = clasetUnify.Match then
-    initial_rules
-  else
-    source (rule_input mode goal)
+  case (initial_iterations, mode, initial_rules) of
+      (0, clasetUnify.Match, SOME rules) => rules
+    | _ => source (rule_input mode goal)
 
 fun unsafe_cursor_rules source rules goal mode =
   #unsafe
@@ -426,12 +425,21 @@ fun next_safe_with ctxt level include_irrelevant pop_goal
             DepthLimit {goal = id, tree = remaining}
           else
             let
+              (* A requeued goal already has its unsafe cursor and no
+                 normalisation work.  Keep candidate charging unchanged
+                 in budgeted searches, where source may charge for lookup. *)
               val initial_rules =
-                source (rule_input clasetUnify.Match initial_goal)
+                if not (Option.isSome budget) andalso
+                   aesopTree.is_normalised initial_goal then NONE
+                else SOME (source (rule_input clasetUnify.Match initial_goal))
+              val norm_rules =
+                case initial_rules of
+                    NONE => []
+                  | SOME rules => #norm rules
             in
               case
                 aesopNorm.normalise_in ctxt budget
-                  {max_depth = max_depth, rules = #norm initial_rules}
+                  {max_depth = max_depth, rules = norm_rules}
                   id remaining
               of
                   aesopNorm.IterationLimit

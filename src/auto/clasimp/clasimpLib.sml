@@ -3250,9 +3250,10 @@ fun transport_candidates budget ss goals candidates =
     fun bridge theorem =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate
+        (* Opening the quantifiers is enough to inspect constant heads. *)
         val (_, body) =
           boolSyntax.strip_imp_only
-            (concl (Drule.SPEC_ALL theorem))
+            (snd (boolSyntax.strip_forall (concl theorem)))
         val (left, right) = dest_eq body
       in
         case (root_head left, root_head right) of

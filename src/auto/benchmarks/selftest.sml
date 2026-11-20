@@ -1254,6 +1254,15 @@ val subset_flipped = Conv.GSYM pred_setTheory.SUBSET_DEF
 
 val _ =
   check
+    ("a statement's normal form reduces raw beta and eta redexes",
+     fn () =>
+       Term.aconv
+         (benchLib.statement_normal_form
+            ``(\f : bool -> bool. \x : bool. f x) p``)
+         (benchLib.statement_normal_form ``p : bool -> bool``))
+
+val _ =
+  check
     ("A1 catches a supplied theorem that is the goal with a flipped iff",
      fn () =>
        benchLib.theorem_is_goal subset_goal subset_flipped andalso

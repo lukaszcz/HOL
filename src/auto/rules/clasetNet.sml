@@ -100,10 +100,10 @@ fun query_label checkpoint bvars tm =
 fun edge checkpoint label edges =
   Option.map #2 (findMeasured checkpoint (fn (l, _) => l = label) edges)
 
-fun replace_edge label net [] = [(label, net)]
-  | replace_edge label net ((entry as (label', _)) :: rest) =
-      if label = label' then (label, net) :: rest
-      else entry :: replace_edge label net rest
+fun update_edge label update [] = [(label, update empty)]
+  | update_edge label update ((entry as (label', child)) :: rest) =
+      if label = label' then (label, update child) :: rest
+      else entry :: update_edge label update rest
 
 fun stored_labels patvars pat =
   let
@@ -131,15 +131,7 @@ fun insert ({pat, patvars}, value) net =
   let
     fun enter [] (NODE (tips, edges)) = NODE (value :: tips, edges)
       | enter (label :: labels) (NODE (tips, edges)) =
-          let
-            val child =
-              case edge no_checkpoint label edges of
-                  NONE => empty
-                | SOME node => node
-            val child' = enter labels child
-          in
-            NODE (tips, replace_edge label child' edges)
-          end
+          NODE (tips, update_edge label (enter labels) edges)
   in
     enter (stored_labels patvars pat) net
   end

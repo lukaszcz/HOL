@@ -86,9 +86,16 @@ fun within_node_limit maximum edges =
     scan (0, HOLset.empty Term.compare) edges
   end
 
+datatype path =
+    Proved of thm
+  | Pending of thm Portable.HOLSusp.susp
+
+fun path_theorem (Proved theorem) = theorem
+  | path_theorem (Pending pending) = Portable.HOLSusp.force pending
+
 datatype reachability =
-    ReachedList of (term * thm) list
-  | ReachedIndex of thm Termtab.table
+    ReachedList of (term * path) list
+  | ReachedIndex of path Termtab.table
 
 fun reached work (ReachedList reached_nodes) tm =
       Option.map snd
@@ -98,19 +105,19 @@ fun reached work (ReachedList reached_nodes) tm =
           reached_nodes)
   | reached _ (ReachedIndex table) tm = Termtab.lookup table tm
 
-fun settle target theorem (ReachedList reached_nodes) =
-      ReachedList ((target, theorem) :: reached_nodes)
-  | settle target theorem (ReachedIndex table) =
-      ReachedIndex (Termtab.update (target, theorem) table)
+fun settle target path (ReachedList reached_nodes) =
+      ReachedList ((target, path) :: reached_nodes)
+  | settle target path (ReachedIndex table) =
+      ReachedIndex (Termtab.update (target, path) table)
 
-(* Everything the source reaches, one theorem per node.  A node is
-   settled the first time it is reached: the chain that reached it is a
-   witness, and a second one would prove the same thing. *)
+(* Everything the source reaches, one path per node. A node is settled
+   the first time it is reached. Ordinary calls construct proofs only
+   along the paths a caller actually needs. *)
 fun reachable work transitive edges source =
   case transitive of
       NONE =>
         ReachedList
-          (List.map (fn e => (#target e, #theorem e))
+          (List.map (fn e => (#target e, Proved (#theorem e)))
             (List.filter
               (fn e => (candidate work; aconv (#source e) source))
               edges))
@@ -124,19 +131,25 @@ fun reachable work transitive edges source =
                 NONE => ReachedList []
               | SOME _ => ReachedIndex Termtab.empty
           fun chain first second =
-            (application work;
-             MATCH_MP (MATCH_MP step first) second)
+            let
+              fun derive () =
+                MATCH_MP (MATCH_MP step (path_theorem first)) second
+            in
+              case #max_nodes work of
+                  NONE => (application work; Proved (derive ()))
+                | SOME _ => Pending (Portable.HOLSusp.delay derive)
+            end
           fun relax (e, (known, changed)) =
             (candidate work;
              if aconv (#target e) source orelse
                Option.isSome (reached work known (#target e))
              then (known, changed)
              else if aconv (#source e) source then
-               (settle (#target e) (#theorem e) known, true)
+               (settle (#target e) (Proved (#theorem e)) known, true)
              else
                (case reached work known (#source e) of
-                    SOME theorem =>
-                      (settle (#target e) (chain theorem (#theorem e)) known,
+                    SOME path =>
+                      (settle (#target e) (chain path (#theorem e)) known,
                        true)
                   | NONE => (known, changed)))
           (* A changing round settles a new target from the finite
@@ -162,7 +175,10 @@ fun reach_from work transitive edges =
           NONE => compute
         | SOME _ => memoUtil.bounded_memo 2 aconv compute
   in
-    fn source => reached work (from source)
+    fn source =>
+      let val known = from source
+      in fn target => Option.map path_theorem (reached work known target)
+      end
   end
 
 (* The two chains that meet on a distinction. *)

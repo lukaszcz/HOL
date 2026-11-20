@@ -897,7 +897,7 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
    pristine templates in a search cache, and give every acquisition fresh
    rule variables and fresh rule-local Skolems.  Variables and Skolems from
    the branch formula remain shared with the branch. *)
-fun copyRulesWith checkpoint
+fun copyRulesWith checkpoint eager_external_skolems
       cache vars formula fresh_skolems rules =
   let
     val variable_copies = ref ([] : (var * var) list)
@@ -952,7 +952,7 @@ fun copyRulesWith checkpoint
                 NONE => result
               | SOME item => add_skolems item result)) names variables
 
-    val external_skolems =
+    fun collect_external_skolems () =
       List.foldl
         (fn (variable, names) =>
            (checkpoint ();
@@ -960,6 +960,15 @@ fun copyRulesWith checkpoint
                 NONE => names
               | SOME term => add_skolems term names))
         (add_skolems formula []) vars
+
+    (* Only freshening a Skolem needs this information. In a measured
+       acquisition keep the traversal at its existing checkpoints. *)
+    val external_skolems =
+      Portable.HOLSusp.delay collect_external_skolems
+    val _ =
+      if eager_external_skolems then
+        ignore (Portable.HOLSusp.force external_skolems)
+      else ()
 
     fun copy_variable variable =
       (checkpoint ();
@@ -984,7 +993,7 @@ fun copyRulesWith checkpoint
     and copy_skolem name =
       (checkpoint ();
        if not fresh_skolems orelse
-          string_member name external_skolems
+          string_member name (Portable.HOLSusp.force external_skolems)
        then name
        else
          case find_skolem name (!skolem_copies) of
@@ -1032,11 +1041,13 @@ fun copyRulesWith checkpoint
     mapMeasured checkpoint copy_rule rules
   end
 
-fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
+fun acquireWith (monitor as {candidate, conversion, checkpoint})
+      eager_external_skolems
       cache claset safe vars formula =
   case cachedMeasured checkpoint cache safe vars formula of
       SOME rules =>
-        copyRulesWith checkpoint cache vars formula true rules
+        copyRulesWith checkpoint eager_external_skolems
+          cache vars formula true rules
     | NONE =>
         let
           val tagged = candidatesMeasured monitor claset safe formula
@@ -1069,17 +1080,18 @@ fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
             else appendMeasured checkpoint early_rules late_rules
           val _ = checkpoint ()
           val templates =
-            copyRulesWith checkpoint cache vars formula false rules
+            copyRulesWith checkpoint eager_external_skolems
+              cache vars formula false rules
           val _ = remember cache safe vars formula templates
         in
           rules
         end
 
 fun acquire cache claset safe vars formula =
-  acquireMeasured
+  acquireWith
     {candidate = fn () => (), conversion = fn () => (),
      checkpoint = fn () => ()}
-    cache claset safe vars formula
+    false cache claset safe vars formula
 
 fun safeRules cache claset vars formula =
   acquire cache claset true vars formula
@@ -1088,10 +1100,10 @@ fun unsafeRules cache claset vars formula =
   acquire cache claset false vars formula
 
 fun safeRulesMeasured monitor cache claset vars formula =
-  acquireMeasured monitor cache claset true vars formula
+  acquireWith monitor true cache claset true vars formula
 
 fun unsafeRulesMeasured monitor cache claset vars formula =
-  acquireMeasured monitor cache claset false vars formula
+  acquireWith monitor true cache claset false vars formula
 
 (* The tableau premises are the stored rule's minor premises: conversion
    takes the major premise of an elimination out of the list and leaves it

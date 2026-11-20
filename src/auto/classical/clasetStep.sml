@@ -421,13 +421,10 @@ fun type_variables th =
     (HOLset.fromList Type.compare
       (List.concat (map type_vars_in_term (concl th :: hyp th))))
 
-(* Freshening starts from the canonical form.  Callers that apply one rule
-   many times canonicalize once and reuse the result here. *)
-fun freshen_canonical node pos (form : clasetRules.canonical) =
+fun freshen_prepared node pos (canonical, types) =
   let
     val store0 = clasetGoal.store node
     val params = #params (clasetGoal.goal_at node pos)
-    val canonical = #thm form
 
     fun add_type (ty, (substitution, metas, store)) =
       let val (meta, store') = clasetMeta.new_tymeta store
@@ -437,7 +434,7 @@ fun freshen_canonical node pos (form : clasetRules.canonical) =
       end
 
     val (type_substitution, rev_types, store1) =
-      List.foldl add_type ([], [], store0) (type_variables canonical)
+      List.foldl add_type ([], [], store0) types
     val typed = INST_TYPE type_substitution canonical
     val (variables, _) = strip_forall (concl typed)
 
@@ -461,8 +458,20 @@ fun freshen_canonical node pos (form : clasetRules.canonical) =
      store = store2}
   end
 
-fun freshen_rule node pos kind theorem =
-  freshen_canonical node pos (clasetRules.canonical_form_of kind theorem)
+fun freshen_canonical node pos (form : clasetRules.canonical) =
+  freshen_prepared node pos (#thm form, type_variables (#thm form))
+
+(* Preparation is shared across major premises. Each application still
+   gets fresh rule metavariables and starts with the parent store. *)
+fun prepare_rule is_elim theorem =
+  Portable.HOLSusp.delay
+    (fn () =>
+      let
+        val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
+        val canonical = clasetRules.canonical_rule_of kind theorem
+      in
+        (canonical, type_variables canonical)
+      end)
 
 fun same_term_meta left right =
   is_var left andalso is_var right andalso
@@ -660,11 +669,10 @@ fun skip_note ctxt () =
 fun no_note () = ()
 
 fun try_rule note_skip policy mode cs duplicated node pos
-    (tag, (is_elim, theorem)) assumption =
+    (tag, (is_elim, theorem)) prepared assumption =
   let
     val (asl, w) = clasetGoal.render node pos
-    val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
-    val fresh = freshen_rule node pos kind theorem
+    val fresh = freshen_prepared node pos (Portable.HOLSusp.force prepared)
     val prefixes = minor_prefixes policy is_elim (#premises fresh)
     val config = {mode = mode, rule_metas = #metas fresh}
     val store1 =
@@ -1070,36 +1078,31 @@ fun rule_results_with derive note_skip mode cs duplicated part weight_filter
         val tagged = List.filter (weight_filter o #1)
           (candidates derive (clasetGoal.store node) mode part
             (clasetGoal.lookup_spellings node pos))
+        val majors = Portable.HOLSusp.delay (fn () => numbered asl)
 
-        fun intro_application entry =
-          seq.delay
-            (fn () =>
-              case total
-                (fn () =>
-                  try_rule note_skip FullPrefixes mode cs duplicated node pos
-                    entry NONE) ()
-              of
-                  SOME result => seq.result result
-                | NONE => seq.empty)
-
-        fun elim_applications _ [] = seq.empty
-          | elim_applications entry ((assumption_pos, major) :: rest) =
+        fun applications (entry as (_, (is_elim, theorem))) =
+          let
+            val prepared = prepare_rule is_elim theorem
+            val attempt = total
+              (try_rule note_skip FullPrefixes mode cs duplicated
+                node pos entry prepared)
+            fun eliminations [] = seq.empty
+              | eliminations (major :: rest) =
+                  seq.delay
+                    (fn () =>
+                      case attempt (SOME major) of
+                          SOME result => seq.cons result (eliminations rest)
+                        | NONE => eliminations rest)
+          in
+            if is_elim then
+              eliminations (Portable.HOLSusp.force majors)
+            else
               seq.delay
                 (fn () =>
-                  case total
-                    (fn () =>
-                      try_rule note_skip FullPrefixes mode cs duplicated
-                        node pos entry
-                        (SOME (assumption_pos, major))) ()
-                  of
-                      SOME result =>
-                        seq.cons result (elim_applications entry rest)
-                    | NONE => elim_applications entry rest)
-
-        fun applications (entry as (_, (false, _))) =
-              intro_application entry
-          | applications (entry as (_, (true, _))) =
-              elim_applications entry (numbered asl)
+                  case attempt NONE of
+                      SOME result => seq.result result
+                    | NONE => seq.empty)
+          end
 
         fun entries [] = seq.empty
           | entries (entry :: rest) =
@@ -1152,6 +1155,7 @@ fun supplied_rule_results_with charge note_skip selector policy mode cs
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
     val entry = (tag, (elim, theorem))
+    val prepared = prepare_rule elim theorem
 
     fun attempt assumption =
       seq.delay
@@ -1159,7 +1163,7 @@ fun supplied_rule_results_with charge note_skip selector policy mode cs
           (charge ();
            case total
             (fn () =>
-              try_rule note_skip policy mode cs false node pos entry
+              try_rule note_skip policy mode cs false node pos entry prepared
                 assumption) ()
           of
               SOME direct => seq.result direct

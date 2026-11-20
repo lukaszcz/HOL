@@ -25,15 +25,16 @@ struct
     let
       val (first, rest) = mlibHeap.remove heap
 
+      (* Stop at the first different minimum without merging its children. *)
       fun take values heap =
         if mlibHeap.is_empty heap then (List.rev values, heap)
+        else if compare (mlibHeap.top heap, first) <> EQUAL then
+          (List.rev values, heap)
         else
           let
             val (next, remaining) = mlibHeap.remove heap
           in
-            if compare (next, first) = EQUAL then
-              take (next :: values) remaining
-            else (List.rev values, heap)
+            take (next :: values) remaining
           end
 
       val (values, remaining) = take [first] rest
