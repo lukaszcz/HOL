@@ -7124,15 +7124,17 @@ local
                 Tactical.REPEAT Tactic.COND_CASES_TAC THEN
                 intLib.ARITH_TAC)
             end
-          (* an expanded real macro leaves linear real arithmetic *)
+          (* An expanded real macro leaves linear real arithmetic; its
+             arguments may be integer casts, which are atoms there. *)
           fun real_macro residue =
             let
+              fun arithmetic variable =
+                Term.type_of variable = realSyntax.real_ty orelse
+                Term.type_of variable = intSyntax.int_ty
               val _ = macro_fired andalso
                 SmtResource.term_nodes_up_to 4096 residue <= 4096 andalso
                 not (Library.has_quantifier residue) andalso
-                List.all (fn variable =>
-                    Term.type_of variable = realSyntax.real_ty)
-                  (Term.free_vars residue) orelse
+                List.all arithmetic (Term.free_vars residue) orelse
                 raise ERR "asserted_equality_substitution_prove"
                   "not a bounded, unquantified real macro residue"
             in

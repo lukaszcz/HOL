@@ -8865,7 +8865,6 @@ in
   fun CLEANUP_ASSUMPTIONS_TAC g =
   let
     open Tactic Tactical
-    val assumptions = #1 g
     val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
@@ -8888,9 +8887,9 @@ in
       else
         ASSUME_TAC thm
     end
-    val cleanup_one = POP_ASSUM cleanup
   in
-    MAP_EVERY (fn _ => cleanup_one) assumptions g
+    (* each assumption once, in its order *)
+    POP_ASSUM_LIST (MAP_EVERY cleanup o List.rev) g
   end
 
   fun has_set_complement tm =

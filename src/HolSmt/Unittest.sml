@@ -2659,6 +2659,20 @@ in
     "num transfer changed an assumption that mentions no num");
   assert (not (Lib.op_mem Term.aconv ord_c ord_asl),
     "num transfer held back an assumption over an unlisted num function");
+  (* every held assumption gets the encoding rewrites on its own: int_max
+     is unfolded in the second one too *)
+  List.app (fn tac =>
+    let
+      val ((max_asl, _), _) = SolverSpec.simplify tac
+        ([``q:bool``, ``int_max (x:int) y = x``], ``(y:int) <= x + 1``)
+    in
+      assert (List.length max_asl = 2 andalso
+          not (List.exists (Lib.can (HolKernel.find_term (fn t =>
+            Term.is_const t andalso
+            #Name (Term.dest_thy_const t) = "int_max"))) max_asl),
+        "preprocessing left int_max folded in a held assumption")
+    end)
+    [SmtLib.Z3_SIMP_TAC true, SmtLib.Z3_SIMP_TAC false];
   assert_concl_alpha ("num transfer keeping assumptions", thm,
     #2 proof_goal);
   assert (List.all (fn h => Lib.op_mem Term.aconv h (#1 proof_goal))
@@ -27394,6 +27408,13 @@ in
   proves_from "equalities before macros" [double, sum_source] [sum_source]
     sum_target;
   proves_from "real macro" [real_macro] [real_macro] real_target;
+  (* Z3 mixes Int and Real: the macro's argument is an integer cast *)
+  proves_from "real macro on a cast" [real_macro] [real_macro]
+    ``((macro_rf:real->real) (real_of_int asserted_n) = asserted_t) <=>
+      (5 + real_of_int asserted_n = asserted_t)``;
+  proves_from "real macro on a cast alone" [real_macro] [real_macro]
+    ``(macro_rf:real->real) (real_of_int asserted_n) =
+      5 + real_of_int asserted_n``;
   (* the equality alone closes it; the macro calls stay unexpanded *)
   proves_from "reflexive before macros" [double, equality] [equality]
     (boolSyntax.mk_eq
