@@ -22897,12 +22897,16 @@ let
   val restored = Library.term_to_string term
   (* Made after the last call, which used the saved grammar.  The new
      constant replaces the grammar; installing the saved one again brings
-     back the grammar that call cleared, which predates the constant. *)
+     back the grammar that call cleared, which predates the constant.
+     The grammar with the constant is installed again afterwards. *)
   val _ = Theory.new_constant ("smt_printer_late_constant", Type.bool)
+  val declared = Parse.current_grammars ()
   val _ = Parse.temp_set_grammars saved
   val late = Library.term_to_string
-    (Term.prim_mk_const {Thy = Theory.current_theory (),
-       Name = "smt_printer_late_constant"})
+      (Term.prim_mk_const {Thy = Theory.current_theory (),
+         Name = "smt_printer_late_constant"})
+    handle e => (Parse.temp_set_grammars declared; raise e)
+  val _ = Parse.temp_set_grammars declared
 in
   assert (late = "smt_printer_late_constant",
     "term_to_string missed a constant made after its last call: " ^ late);
@@ -28256,6 +28260,17 @@ let
   val copy_theorem =
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
       [copy_source] copy_target
+  (* x = f (\x. x) passes the cycle check, but the rewriter opens the
+     abstraction and rewrites its bound x without end, so that direction
+     is bounded too; the reverse one closes the target. *)
+  val rebind_source =
+    ``(asserted_x:int) = asserted_l (\asserted_x:int. asserted_x)``
+  val rebind_target =
+    ``asserted_f (asserted_x:int) =
+      asserted_f (asserted_l (\asserted_x:int. asserted_x)):int``
+  val rebind_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [rebind_source] rebind_target
   (* A deep nest of one redex takes one rewrite per level; f x = x has no
      usable reverse. *)
   val nest_source = ``asserted_f (asserted_x:int) = asserted_x``
@@ -28419,6 +28434,10 @@ in
     "asserted equality substitution was not bounded by its rewrites");
   check_oracle_tags "copying asserted equalities" copy_theorem;
   check_oracle_tags "nested asserted equality" nest_theorem;
+  assert (Thm.concl rebind_theorem ~~ rebind_target andalso
+      exact_source rebind_source rebind_theorem,
+    "an equation whose right side rebinds its left side was not bounded");
+  check_oracle_tags "rebinding asserted equality" rebind_theorem;
   assert (List.all (fn (source, target, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
       chains,

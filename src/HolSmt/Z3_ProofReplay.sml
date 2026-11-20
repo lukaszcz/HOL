@@ -6910,8 +6910,12 @@ local
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
       (* Rewriting to a fixpoint.  With a variable or constant on every
-         left side, the equations the cycle check below keeps rewrite to
-         an end, so they are not bounded.  Otherwise a rewrite can create
+         left side and no abstraction on any right side, the equations the
+         cycle check below keeps rewrite to an end, so they are not
+         bounded.  An abstraction can bind a left side's variable, which
+         the cycle check does not see: the rewriter opens \x. x under
+         x = f (\x. x) and rewrites the opened x again and again.
+         Otherwise a rewrite can create
          a redex in the term around it (x = y with f y = f x) or copy one
          (a = b with f b = g (f a) (f a)), which no check of the equations
          alone sees.
@@ -6932,6 +6936,10 @@ local
       fun atomic theorem =
         let val left = boolSyntax.lhs (Thm.concl theorem)
         in Term.is_var left orelse Term.is_const left end
+      (* A right side too large to scan counts as binding. *)
+      fun binds theorem =
+        SmtResource.contains Term.is_abs (boolSyntax.rhs (Thm.concl theorem))
+        handle Feedback.HOL_ERR _ => true
       fun substitute bounded rewrite_theorems =
         let
           fun max_rewrites () =
@@ -6952,7 +6960,8 @@ local
               if !rewrites <= maximum then theorem else raise Diverged
             end
           val depth =
-            if not bounded andalso List.all atomic rewrite_theorems then
+            if not bounded andalso List.all atomic rewrite_theorems andalso
+               not (List.exists binds rewrite_theorems) then
               Conv.TOP_DEPTH_CONV
             else Conv.TOP_DEPTH_CONV o counted (max_rewrites ())
         in
