@@ -4364,3 +4364,40 @@ val joined_fixture_result =
 val _ =
   (tprint "compatible partial fact types admit only maximal joins";
    if joined_fixture_result then OK () else die "compatible join missing");
+
+(* bounded_memo keeps the values of the most recently asked-for keys.
+   The counter records every call of the computation. *)
+val _ =
+  test ("bounded_memo answers recent keys without recomputing",
+   fn () =>
+      let
+        val computed = ref 0
+        val memo = memoUtil.bounded_memo 2 (Lib.curry (op =))
+                     (fn k : int => (computed := !computed + 1; k * 10))
+        val first = memo 1
+        val second = memo 2
+        val back = memo 1       (* within 2 entries: a hit *)
+        val after_hits = !computed
+        val _ = memo 3          (* evicts 2, the least recently asked for *)
+        val kept = memo 1       (* the hit moved 1 to the front: kept *)
+        val kept_count = !computed
+        val _ = memo 2          (* evicted, so recomputed *)
+      in
+        first = 10 andalso second = 20 andalso back = 10 andalso
+        after_hits = 2 andalso kept = 10 andalso kept_count = 3 andalso
+        !computed = 4
+      end)
+
+val _ =
+  test ("bounded_memo with a bound of 1 is a single-entry memo",
+   fn () =>
+      let
+        val computed = ref 0
+        val memo = memoUtil.bounded_memo 1 (Lib.curry (op =))
+                     (fn k : int => (computed := !computed + 1; k))
+        val _ = (memo 1; memo 1)
+        val one = !computed
+        val _ = (memo 2; memo 1)
+      in
+        one = 1 andalso !computed = 3
+      end)

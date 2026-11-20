@@ -21,4 +21,31 @@ fun keyed_memo same compute =
         | NONE => recompute key
   end
 
+(* The cache is most-recent-first.  A hit is removed from it and put
+   back in front. *)
+fun bounded_memo n same compute =
+  let
+    val cache = ref []
+    fun first_n (0, _) = []
+      | first_n (_, []) = []
+      | first_n (k, entry :: rest) = entry :: first_n (k - 1, rest)
+    fun extract _ [] = NONE
+      | extract key ((entry as (recorded, value)) :: rest) =
+          if same recorded key then SOME (entry, rest)
+          else
+            Option.map (fn (found, others) => (found, entry :: others))
+                       (extract key rest)
+  in
+    fn key =>
+      case extract key (!cache) of
+          SOME (entry as (_, value), others) =>
+            (cache := entry :: others; value)
+        | NONE =>
+            let
+              val value = compute key
+            in
+              cache := first_n (n, (key, value) :: !cache); value
+            end
+  end
+
 end
