@@ -187,16 +187,22 @@ fun with_arith_fact operation =
         end
 
 (* The [arith] set a tactic reads is that of the context it is applied in,
-   not the ambient one.  [ctxt_with_fact] is a snapshot that has the
-   probe fact and [ctxt_without_fact] one that lacks it; the tactic is run
-   with its context given explicitly, while the ambient set has the fact
-   (second group) or lacks it (first group). *)
-val ctxt_without_fact = Context.snapshot ()
-val ctxt_with_fact =
-  let val captured = ref ctxt_without_fact
-  in ignore (with_arith_fact
-               (fn () => (captured := Context.snapshot (); true)));
-     !captured
+   not the ambient one.  [contexts_with_and_without_fact] answers a
+   snapshot that has the probe fact and one that lacks it; the tactic is
+   run with its context given explicitly, while the ambient set has the
+   fact (second group) or lacks it (first group).  Both are taken from the
+   ambient state when the assertion runs, not when this structure loads:
+   a snapshot is a simpset-derivation key for the suites that read it,
+   and one from load time would carry a theory state older than the
+   suite's own. *)
+fun contexts_with_and_without_fact () =
+  let
+    val without_fact = Context.snapshot ()
+    val captured = ref without_fact
+    val _ = with_arith_fact
+              (fn () => (captured := Context.snapshot (); true))
+  in
+    (!captured, without_fact)
   end
 
 fun closes_in ctxt tactic goal =
@@ -205,13 +211,11 @@ fun closes_in ctxt tactic goal =
 
 fun follows_arith_context tactic_in goal =
   let
+    val (with_fact, without_fact) = contexts_with_and_without_fact ()
     fun closes ctxt = closes_in ctxt (tactic_in ctxt) goal
-    val ambient_without =
-      closes ctxt_with_fact andalso not (closes ctxt_without_fact)
-    val ambient_with =
-      with_arith_fact
-        (fn () => closes ctxt_with_fact andalso
-                  not (closes ctxt_without_fact))
+    fun discriminates () = closes with_fact andalso not (closes without_fact)
+    val ambient_without = discriminates ()
+    val ambient_with = with_arith_fact discriminates
   in ambient_without andalso ambient_with end
 
 fun selftest_level () =
