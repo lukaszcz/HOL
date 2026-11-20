@@ -68,8 +68,9 @@ fun aesop_ss_of ctxt =
 
 fun aesop_ss () = aesop_ss_of (Context.snapshot ())
 
-val {flag = trace, ...} =
-    HOLFlags.create_trace ({group = "aesop", name = "trace"},
-                           {initial = 0, max = 3})
+val tracer =
+    traceUtil.create
+      {group = "aesop", max = 3,
+       emit = fn message => Feedback.HOL_MESG ("Aesop: " ^ message)}
 
 end

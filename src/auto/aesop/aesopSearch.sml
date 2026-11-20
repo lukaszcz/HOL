@@ -56,13 +56,8 @@ val postponed_percent = 90
 fun charge NONE _ = ()
   | charge (SOME budget) kind = searchBudget.charge budget kind
 
-(* The level is read from the context the search runs in, so trace_tac
-   sets it for a proof and the search reads no ambient flag. *)
-fun traced ctxt level = level <= HOLFlags.get_flagC ctxt aesopData.trace
-
-fun trace ctxt level message =
-  if traced ctxt level then Feedback.HOL_MESG ("Aesop: " ^ message ())
-  else ()
+(* The trace level is read from the context the search runs in, so
+   trace_tac sets it for a proof and the search reads no ambient flag. *)
 
 fun cgoal_string ({params, asl, w} : cgoal) =
   let
@@ -77,10 +72,10 @@ fun cgoal_string ({params, asl, w} : cgoal) =
     parameters ^ "[" ^ assumptions ^ "] ?- " ^ Parse.term_to_string w
   end
 
-fun trace_goal ctxt label tree id =
+fun trace_goal level label tree id =
   let val goal = aesopTree.goal tree id
   in
-    trace ctxt 3
+    traceUtil.trace level 3
       (fn () =>
         label ^ " goal " ^ Int.toString id ^
         ", level=" ^ Int.toString (#level goal) ^
@@ -136,20 +131,20 @@ fun copies_in tree ids =
     (List.filter
       (fn id => Option.isSome (#copy_of (aesopTree.goal tree id))) ids)
 
-fun trace_install ctxt data result =
-  (trace ctxt 2
+fun trace_install level data result =
+  (traceUtil.trace level 2
      (fn () =>
        "installed " ^ #rule data ^ " below goal " ^
        Int.toString
        (#parent (aesopTree.rapp (#tree result) (#rapp result))) ^
        " with " ^ Int.toString (length (#goals result)) ^
        " child goal(s)");
-   if not (traced ctxt 2) then ()
+   if not (traceUtil.enabled level 2) then ()
    else
      case copies_in (#tree result) (#goals result) of
          0 => ()
        | count =>
-           trace ctxt 2
+           traceUtil.trace level 2
              (fn () =>
                "copied " ^ Int.toString count ^
                " metavariable-coupled goal(s)"))
@@ -166,10 +161,10 @@ fun data_with_phase
   {rule = rule, phase = phase, records = records, node = node,
    forwarded = forwarded}
 
-fun install_committed ctxt id data tree =
+fun install_committed level id data tree =
   let
     val installed = aesopTree.install_rapp id data tree
-    val _ = trace_install ctxt data installed
+    val _ = trace_install level data installed
   in
     aesopTree.set_search_state id
       {safe_done = true, unsafe_cursor = [], postponed = []}
@@ -283,7 +278,7 @@ fun forget_safe_scan (cache : safe_scan_cache) id =
        (!(#scans cache));
    #active cache := false)
 
-fun safe_phase ctxt budget (cache : safe_scan_cache)
+fun safe_phase ctxt level budget (cache : safe_scan_cache)
       max_rapps id rules tree =
   let
     val goal = aesopTree.goal tree id
@@ -380,7 +375,7 @@ fun safe_phase ctxt budget (cache : safe_scan_cache)
                            (charge budget searchBudget.Application;
                             forget_safe_scan cache id;
                             Committed
-                              (install_committed ctxt id data' tree))
+                              (install_committed level id data' tree))
                        end
                end)
   in
@@ -416,7 +411,7 @@ fun unsafe_cursor_rules source rules goal mode =
     (if mode = clasetUnify.Unify then rules
      else source (rule_input clasetUnify.Unify goal))
 
-fun next_safe_with ctxt include_irrelevant pop_goal
+fun next_safe_with ctxt level include_irrelevant pop_goal
       (config as {max_depth, max_rapps, rules = source,
                   budget, safe_cache,
                   checkpoint_ready, checkpoint_progress}) tree =
@@ -425,9 +420,9 @@ fun next_safe_with ctxt include_irrelevant pop_goal
     | (SOME id, remaining) =>
         let
           val initial_goal = aesopTree.goal remaining id
-          val _ = trace ctxt 2
+          val _ = traceUtil.trace level 2
             (fn () => "expanding goal " ^ Int.toString id)
-          val _ = trace_goal ctxt "candidate" remaining id
+          val _ = trace_goal level "candidate" remaining id
         in
           if #level initial_goal >= max_depth then
             DepthLimit {goal = id, tree = remaining}
@@ -454,7 +449,7 @@ fun next_safe_with ctxt include_irrelevant pop_goal
                         (not include_irrelevant andalso
                          aesopTree.goal_irrelevant normalised id)
                       then
-                        next_safe_with ctxt include_irrelevant pop_goal
+                        next_safe_with ctxt level include_irrelevant pop_goal
                           config normalised
                       else if #safe_done goal then
                         ReadyForUnsafe {goal = id, tree = normalised}
@@ -467,12 +462,12 @@ fun next_safe_with ctxt include_irrelevant pop_goal
                           val safe = aesopRule.safe_rules (#safe rules)
                           val _ = checkpoint_ready id normalised
                         in
-                          case safe_phase ctxt budget safe_cache
+                          case safe_phase ctxt level budget safe_cache
                             max_rapps id safe
                             normalised of
                               Committed installed =>
                                 (checkpoint_progress installed;
-                                 next_safe_with ctxt include_irrelevant
+                                 next_safe_with ctxt level include_irrelevant
                                    pop_goal config installed)
                             | CommitLimit limited =>
                                 raise SafeRappLimitReached limited
@@ -492,8 +487,8 @@ fun next_safe_with ctxt include_irrelevant pop_goal
             end
         end
 
-fun next_safe_including_irrelevant ctxt {max_depth, rules} tree =
-  next_safe_with ctxt true aesopTree.pop_goal_including_irrelevant
+fun next_safe_including_irrelevant ctxt level {max_depth, rules} tree =
+  next_safe_with ctxt level true aesopTree.pop_goal_including_irrelevant
     {max_rapps = NONE, max_depth = max_depth, rules = rules,
      budget = NONE, safe_cache = empty_safe_scan_cache (),
      checkpoint_ready = fn _ => fn _ => (),
@@ -502,8 +497,9 @@ fun next_safe_including_irrelevant ctxt {max_depth, rules} tree =
 
 fun safe_saturate_in ctxt config tree =
   let
+    val level = traceUtil.level_of aesopData.tracer ctxt
     fun saturate current =
-      case next_safe_including_irrelevant ctxt config current of
+      case next_safe_including_irrelevant ctxt level config current of
           QueueEmpty saturated => SafeSaturated saturated
         | ReadyForUnsafe {tree = remaining, ...} =>
             saturate remaining
@@ -668,13 +664,13 @@ fun unsafe_applications ctxt budget (cache : scan_cache) goal rule =
 fun stored_application data =
   [data_with_phase data (aesopRule.RUnsafe postponed_percent)]
 
-fun install_alternatives ctxt budget id data tree =
+fun install_alternatives level budget id data tree =
   let
     fun install (application, current) =
       let
         val _ = charge budget searchBudget.Application
         val result = aesopTree.install_rapp id application current
-        val _ = trace_install ctxt application result
+        val _ = trace_install level application result
       in
         #tree result
       end
@@ -697,11 +693,11 @@ datatype bounded_safe_outcome =
     BoundedSafe of next_outcome
   | BoundedSafeRappLimit of tree
 
-fun bounded_safe_phase ctxt budget safe_cache
+fun bounded_safe_phase ctxt level budget safe_cache
       checkpoint_ready checkpoint_progress
       max_rapps max_depth rules tree =
   BoundedSafe
-    (next_safe_with ctxt false aesopTree.pop_goal
+    (next_safe_with ctxt level false aesopTree.pop_goal
       {max_depth = max_depth, max_rapps = SOME max_rapps,
        rules = rules, budget = budget,
        safe_cache = safe_cache,
@@ -710,7 +706,7 @@ fun bounded_safe_phase ctxt budget safe_cache
   handle SafeRappLimitReached limited =>
     BoundedSafeRappLimit limited
 
-fun unsafe_phase ctxt budget cache {max_rapps, ...} id tree =
+fun unsafe_phase ctxt level budget cache {max_rapps, ...} id tree =
   let val goal = aesopTree.goal tree id
   in
     case choose_unsafe goal of
@@ -728,7 +724,7 @@ fun unsafe_phase ctxt budget cache {max_rapps, ...} id tree =
                      unsafe_applications ctxt budget cache goal rule)
             val needed = length offered
             val _ =
-              trace ctxt 2
+              traceUtil.trace level 2
                 (fn () =>
                   "unsafe rule " ^ name ^ " produced " ^
                   Int.toString needed ^ " rapp(s)")
@@ -745,14 +741,14 @@ fun unsafe_phase ctxt budget cache {max_rapps, ...} id tree =
             val _ =
               if not skipped then ()
               else
-                trace ctxt 2
+                traceUtil.trace level 2
                   (fn () =>
                     "unsafe rule " ^ name ^ " skipped: its " ^
                     Int.toString needed ^ " rapp(s) exceed the limit of " ^
                     Int.toString max_rapps)
             val applications = if skipped then [] else offered
             val extended =
-              install_alternatives ctxt budget id applications tree
+              install_alternatives level budget id applications tree
             val installed =
               aesopTree.set_search_state id
                 {safe_done = #safe_done (aesopTree.goal extended id),
@@ -770,12 +766,12 @@ fun unsafe_phase ctxt budget cache {max_rapps, ...} id tree =
           end
   end
 
-fun safe_completion ctxt budget {max_depth, rules} tree =
+fun safe_completion ctxt level budget {max_depth, rules} tree =
   let
     val safe_cache = empty_safe_scan_cache ()
     fun complete current =
       case
-        next_safe_with ctxt true aesopTree.pop_goal_including_irrelevant
+        next_safe_with ctxt level true aesopTree.pop_goal_including_irrelevant
           {max_depth = max_depth, max_rapps = NONE,
            rules = rules, budget = budget,
            safe_cache = safe_cache,
@@ -800,19 +796,19 @@ fun reason_string SearchExhausted = "search exhausted"
 
 (* The frontier is a whole second search, so do not force the thunk unless
    the trace that consumes it will actually print. *)
-fun report_failure ctxt reason frontier =
-  if not (traced ctxt 1) then ()
+fun report_failure level reason frontier =
+  if not (traceUtil.enabled level 1) then ()
   else
     let
       val safe_goals = frontier ()
     in
-      trace ctxt 1
+      traceUtil.trace level 1
         (fn () =>
           reason_string reason ^ "; " ^
           Int.toString (length safe_goals) ^ " safe goal(s)");
       List.app
         (fn (id, cgoal) =>
-          trace ctxt 1
+          traceUtil.trace level 1
             (fn () =>
               "safe goal " ^ Int.toString id ^ ": " ^
               cgoal_string cgoal))
@@ -852,6 +848,7 @@ fun search_core_with ctxt budget
     raise ERR "search" "max_depth must not be negative"
   else
     let
+      val level = traceUtil.level_of aesopData.tracer ctxt
       (* [initial], not [tree]: the report is deliberately the safe-only
          frontier of the original goal, unpolluted by unsafe rapps and
          exhausted branches. *)
@@ -859,7 +856,7 @@ fun search_core_with ctxt budget
         let
           fun frontier () =
             safe_frontier
-              (safe_completion ctxt budget
+              (safe_completion ctxt level budget
                  {max_depth = max_depth, rules = rules}
                  initial)
           (* A bounded invocation must account for the failure report's
@@ -871,7 +868,7 @@ fun search_core_with ctxt budget
               | SOME _ =>
                   let val cached = frontier ()
                   in fn () => cached end
-          val _ = report_failure ctxt reason safe_goals
+          val _ = report_failure level reason safe_goals
         in
           SearchFailed
             {tree = tree, safe_goals = safe_goals, reason = reason}
@@ -897,7 +894,7 @@ fun search_core_with ctxt budget
           #state (aesopTree.goal tree (aesopTree.root tree)) =
           aesopTree.Proved
         then
-          (trace ctxt 1
+          (traceUtil.trace level 1
              (fn () =>
                "search proved the root with " ^
                Int.toString (aesopTree.rapp_count tree) ^
@@ -905,7 +902,7 @@ fun search_core_with ctxt budget
            SearchProved tree)
         else
           case
-            bounded_safe_phase ctxt budget safe_cache
+            bounded_safe_phase ctxt level budget safe_cache
               (fn id => fn ready =>
                 save limits (aesopTree.enqueue_goal id ready))
               (save limits)
@@ -922,7 +919,7 @@ fun search_core_with ctxt budget
                 then loop limits exhausted
                 else failed (exhausted_reason limits) exhausted
             | BoundedSafe (DepthLimit {goal, tree = limited}) =>
-                (trace ctxt 2
+                (traceUtil.trace level 2
                    (fn () =>
                      "depth limit stopped goal " ^
                      Int.toString goal);
@@ -931,7 +928,7 @@ fun search_core_with ctxt budget
             | BoundedSafe
                 (NormalisationLimit
                   {goal, tree = limited, iterations, rule}) =>
-                (trace ctxt 2
+                (traceUtil.trace level 2
                    (fn () =>
                      "normalisation limit stopped goal " ^
                      Int.toString goal ^ " after " ^
@@ -946,7 +943,8 @@ fun search_core_with ctxt budget
                   val _ =
                     save limits (aesopTree.enqueue_goal goal ready)
                 in
-                  case unsafe_phase ctxt budget cache config goal ready of
+                  case unsafe_phase ctxt level budget cache config goal
+                         ready of
                       UnsafeContinue next => loop limits next
                     | UnsafeRappSkipped next =>
                         loop
@@ -1013,6 +1011,7 @@ fun resume_budget_session
        SOME outcome => ResumedFinished outcome
      | NONE =>
          let
+           val level = traceUtil.level_of aesopData.tracer context
            val current_generation =
              aesopRule.registry_generation ()
            val _ =
@@ -1027,7 +1026,7 @@ fun resume_budget_session
                    rapp_limited = false};
                 #scans cache := [];
                 #scans safe_cache := [];
-                trace context 2
+                traceUtil.trace level 2
                   (fn () =>
                     "registered tactic rules changed; " ^
                     "restarting budgeted search"))

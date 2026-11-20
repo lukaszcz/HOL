@@ -5,5 +5,5 @@ sig
   val aesop_ss_of : Context.t -> simpExtLib.simpset
   val aesop_ss : unit -> simpExtLib.simpset
   (* aesop.trace, the search's trace level *)
-  val trace : HOLFlags.flag
+  val tracer : traceUtil.tracer
 end
