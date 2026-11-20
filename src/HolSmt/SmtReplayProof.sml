@@ -11069,10 +11069,9 @@ struct
     in {budget=budget, policies=policies, identifiers=identifiers,
        binders=binders, atom=atom, app=app, capture=capture, bounded=bounded,
        name_binders=name_binders, head=head, binary=binary, forall=forall,
-       exists=exists, subst=subst, tneg=tneg,
-       typed_equality=typed_equality, quantify=quantify,
-       boolean=boolean, combine=combine, equality=equality,
-       implication=implication, balanced=balanced,
+       exists=exists, subst=subst,
+       typed_equality=typed_equality, boolean=boolean, combine=combine,
+       equality=equality, implication=implication, balanced=balanced,
        original_permutative=original_permutative,
        recorder=recorder, play=play} end
   end
@@ -11282,85 +11281,85 @@ struct
      a condition (the canonical path logs it). *)
   fun sce_execute_action {guard,emit,before_assume} action theorem=
     case action of SCEClauseNative(SRSpec arg)=>
-         let val term=emit arg
-         in sce_guarded guard(fn()=>
-           SmtReplayRuleObservation.SPEC term theorem)end
-       | SCEClauseNative(SRConjunct left)=>
-         sce_guarded guard(fn()=>if left then
-           SmtReplayRuleObservation.CONJUNCT1 theorem else
-           SmtReplayRuleObservation.CONJUNCT2 theorem)
-       | SCEClauseNative SRCondition=>
-           let val condition= #1
-                 (boolSyntax.dest_imp(Thm.concl theorem))
-               val _=before_assume theorem condition
-               val premise=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME condition)
-           in sce_guarded guard(fn()=>
-             SmtReplayRuleObservation.MP theorem premise)end
-       | SCEClauseTruth=>sce_guarded guard(fn()=>Drule.EQT_ELIM theorem)
-       | SCEClauseAnteConj=>
-           let val(ant,_)=boolSyntax.dest_imp_only
-                 (Thm.concl theorem)
-               val(a,b)=boolSyntax.dest_conj ant
-               val pa=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME a)
-               val pb=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME b)
-               val both=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.CONJ pa pb)
-               val body=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.MP theorem both)
-               val right=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.DISCH b body)
-           in sce_guarded guard(fn()=>
-             SmtReplayRuleObservation.DISCH a right)end
-       | SCEClauseAnteDisj left=>
-           let val(ant,_)=boolSyntax.dest_imp_only
-                 (Thm.concl theorem)
-               val(a,b)=boolSyntax.dest_disj ant
-               val selected=if left then a else b
-               val assumption=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME selected)
-               val either=sce_guarded guard(fn()=>if left then
-                 SmtReplayRuleObservation.DISJ1 assumption b
-                 else SmtReplayRuleObservation.DISJ2 a assumption)
-               val body=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.MP theorem either)
-           in sce_guarded guard(fn()=>
-             SmtReplayRuleObservation.DISCH selected body)end
-       | SCEClauseSymmetry=>sce_guarded guard(fn()=>
-           SmtReplayRuleObservation.SYM theorem)
-       | SCEClauseConditionForall argument=>
-           let val(ant,_)=boolSyntax.dest_imp_only
-                 (Thm.concl theorem)
-               val variable=emit argument
-               val quantified=sce_guarded guard(fn()=>
-                 boolSyntax.mk_forall(variable,ant))
-               val assumption=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME quantified)
-               val condition=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.SPEC variable assumption)
-               val result=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.MP theorem condition)
-           in sce_guarded guard(fn()=>
-             SmtReplayRuleObservation.DISCH quantified result)end
-       | SCEClauseAnteExists argument=>
-           let val(ant,_)=boolSyntax.dest_imp_only
-                 (Thm.concl theorem)
-               val(v,body)=boolSyntax.dest_exists ant
-               val witness=emit argument
-               val instance=sce_guarded guard(fn()=>Term.subst
-                 [{redex=v,residue=witness}]body)
-               val assumption=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.ASSUME instance)
-               val existential=sce_guarded guard(fn()=>
-                 Thm.EXISTS(ant,witness)assumption)
-               val result=sce_guarded guard(fn()=>
-                 SmtReplayRuleObservation.MP theorem existential)
-           in sce_guarded guard(fn()=>
-             SmtReplayRuleObservation.DISCH instance result)end
-       | SCEClauseNotIntro=>sce_guarded guard(fn()=>
-           Thm.NOT_INTRO theorem)
+      let val term=emit arg
+      in sce_guarded guard(fn()=>
+        SmtReplayRuleObservation.SPEC term theorem)end
+    | SCEClauseNative(SRConjunct left)=>
+      sce_guarded guard(fn()=>if left then
+        SmtReplayRuleObservation.CONJUNCT1 theorem else
+        SmtReplayRuleObservation.CONJUNCT2 theorem)
+    | SCEClauseNative SRCondition=>
+        let val condition= #1
+              (boolSyntax.dest_imp(Thm.concl theorem))
+            val _=before_assume theorem condition
+            val premise=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME condition)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.MP theorem premise)end
+    | SCEClauseTruth=>sce_guarded guard(fn()=>Drule.EQT_ELIM theorem)
+    | SCEClauseAnteConj=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(a,b)=boolSyntax.dest_conj ant
+            val pa=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME a)
+            val pb=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME b)
+            val both=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.CONJ pa pb)
+            val body=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem both)
+            val right=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.DISCH b body)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH a right)end
+    | SCEClauseAnteDisj left=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(a,b)=boolSyntax.dest_disj ant
+            val selected=if left then a else b
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME selected)
+            val either=sce_guarded guard(fn()=>if left then
+              SmtReplayRuleObservation.DISJ1 assumption b
+              else SmtReplayRuleObservation.DISJ2 a assumption)
+            val body=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem either)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH selected body)end
+    | SCEClauseSymmetry=>sce_guarded guard(fn()=>
+        SmtReplayRuleObservation.SYM theorem)
+    | SCEClauseConditionForall argument=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val variable=emit argument
+            val quantified=sce_guarded guard(fn()=>
+              boolSyntax.mk_forall(variable,ant))
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME quantified)
+            val condition=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.SPEC variable assumption)
+            val result=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem condition)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH quantified result)end
+    | SCEClauseAnteExists argument=>
+        let val(ant,_)=boolSyntax.dest_imp_only
+              (Thm.concl theorem)
+            val(v,body)=boolSyntax.dest_exists ant
+            val witness=emit argument
+            val instance=sce_guarded guard(fn()=>Term.subst
+              [{redex=v,residue=witness}]body)
+            val assumption=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.ASSUME instance)
+            val existential=sce_guarded guard(fn()=>
+              Thm.EXISTS(ant,witness)assumption)
+            val result=sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.MP theorem existential)
+        in sce_guarded guard(fn()=>
+          SmtReplayRuleObservation.DISCH instance result)end
+    | SCEClauseNotIntro=>sce_guarded guard(fn()=>
+        Thm.NOT_INTRO theorem)
   (* The execution shared by the plain rule and the exists-argument clause.
      The plain rule completes its policies here and refuses any external
      vocabulary; the argument clause completed them in its ready phase,
