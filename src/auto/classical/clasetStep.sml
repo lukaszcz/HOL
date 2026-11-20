@@ -2145,7 +2145,7 @@ fun first_result sequence =
       NONE => NONE
     | SOME (result, _) => SOME result
 
-fun safe_steps_at_full_with charge step cs node pos =
+fun safe_steps_at_with charge step collect cs node pos initial =
   let
     val initial_count = length (clasetGoal.goals node)
 
@@ -2156,74 +2156,67 @@ fun safe_steps_at_full_with charge step cs node pos =
          | SOME result =>
              (charge searchBudget.Application; SOME result))
 
-    fun repeat transitions current =
-      if length (clasetGoal.goals current) < initial_count then
-        (List.rev transitions, current)
-      else
-        case next current of
-            NONE => (List.rev transitions, current)
-          | SOME (record, next) =>
-              repeat ((pos, record, next) :: transitions) next
+    fun repeat (record, current) acc =
+      let val collected = collect ((pos, record, current), acc)
+      in
+        if length (clasetGoal.goals current) < initial_count then
+          (collected, current)
+        else
+          case next current of
+              NONE => (collected, current)
+            | SOME result => repeat result collected
+      end
   in
     case next node of
         NONE => NONE
-      | SOME (record, next) =>
-          SOME (repeat [(pos, record, next)] next)
+      | SOME result => SOME (repeat result initial)
   end
 
-fun safe_steps_at_full_in ctxt cs node pos =
-  safe_steps_at_full_with (fn _ => ())
-    (safe_step_in ctxt) cs node pos
+fun keep_last ((_, record, next), _) = SOME (record, next)
 
-fun safe_steps_at_full_in_with charge ctxt cs node pos =
-  safe_steps_at_full_with charge (safe_step_in ctxt) cs node pos
-
-fun safe_steps_at_with steps cs node pos =
-  Option.map
-    (fn (transitions, next) =>
-        let val (_, record, _) = List.last transitions
-        in (record, next)
-        end)
-    (steps cs node pos)
-
-fun safe_steps_at_in ctxt cs node pos =
-  safe_steps_at_with (safe_steps_at_full_in ctxt) cs node pos
-
-fun safe_saturation_with steps cs node =
+fun safe_saturation_with steps cs node initial =
   let
-    fun first_goal current =
+    fun first_goal current acc =
       let
         val count = length (clasetGoal.goals current)
         fun inspect pos =
           if pos > count then NONE
           else
-            case steps cs current pos of
+            case steps cs current pos acc of
                 NONE => inspect (pos + 1)
               | result => result
       in
         inspect 1
       end
 
-    fun saturate transitions current =
-      case first_goal current of
-          NONE => List.rev transitions
-        | SOME (more, next) =>
-            saturate (List.revAppend (more, transitions)) next
+    fun saturate current acc =
+      case first_goal current acc of
+          NONE => acc
+        | SOME (collected, next) => saturate next collected
   in
-    saturate [] node
+    saturate node initial
   end
 
-fun safe_saturation_in ctxt cs node =
-  safe_saturation_with (safe_steps_at_full_in ctxt) cs node
+fun fold_safe_saturation charge ctxt cs node collect initial =
+  safe_saturation_with
+    (safe_steps_at_with charge (safe_step_in ctxt) collect)
+    cs node initial
 
 fun safe_saturation_in_with charge ctxt cs node =
-  safe_saturation_with
-    (safe_steps_at_full_in_with charge ctxt) cs node
+  List.rev (fold_safe_saturation charge ctxt cs node
+    op:: [])
+
+fun safe_saturation_in ctxt cs node =
+  safe_saturation_in_with (fn _ => ()) ctxt cs node
+
+fun safe_steps_at_in ctxt cs node pos =
+  Option.mapPartial #1
+    (safe_steps_at_with (fn _ => ()) (safe_step_in ctxt) keep_last
+      cs node pos NONE)
 
 fun safe_saturate_all_in ctxt cs node =
-  case List.rev (safe_saturation_in ctxt cs node) of
-      [] => NONE
-    | (_, record, next) :: _ => SOME (record, next)
+  fold_safe_saturation (fn _ => ()) ctxt cs node
+    keep_last NONE
 
 (* The unknowns the node's goals still stand on.  A metavariable the store
    has bound since is no longer one of them, and one reachable only through

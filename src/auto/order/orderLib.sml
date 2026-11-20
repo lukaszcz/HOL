@@ -9,20 +9,16 @@ val ERR = mk_HOL_ERR "orderLib"
    the initial goal uses a concrete relation.  Match the theorem-backed
    invocation view at each relation head actually present in the goal.
    The matcher keeps support and genuinely fixed parameters rigid. *)
-fun relation_of term =
-  case Lib.total dest_comb term of
-      SOME (left, _) =>
-        (case Lib.total dest_comb left of
-             SOME (relation, _) => SOME relation
-           | NONE => NONE)
-    | NONE => NONE
+fun relation_of (_, term) =
+  if is_comb term then
+    let val left = rator term
+    in if is_comb left then SOME (rator left) else NONE
+    end
+  else NONE
 
 fun relation_sites terms =
   let
-    val candidates =
-      List.concat
-        (map (List.mapPartial relation_of o find_terms (fn _ => true))
-          terms)
+    val candidates = List.concat (map (gen_find_terms relation_of) terms)
   in
     listUtil.distinct_by Term.compare I candidates
   end

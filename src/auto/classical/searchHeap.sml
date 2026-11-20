@@ -1,9 +1,8 @@
 (* The frontier heap of the BEST_FIRST driver.
 
    The leftist min-heap itself is mlibHeap.  This structure adds
-   delete_all_min, which BEST_FIRST needs in order to expand every
-   equal-cost minimum together (Pure/search.ML lines 180--199), and so
-   retains the comparator that mlibHeap does not expose. *)
+   operations on equal minima and retains the comparator that mlibHeap
+   does not expose. *)
 structure searchHeap :> searchHeap =
 struct
 
@@ -21,25 +20,33 @@ struct
     in (value, Heap (compare, remaining)) end
 
   (* Raises Empty on an empty heap. *)
-  fun delete_all_min (Heap (compare, heap)) =
+  fun fold_minima collect initial (Heap (compare, heap)) =
     let
       val (first, rest) = mlibHeap.remove heap
 
       (* Stop at the first different minimum without merging its children. *)
       fun take values heap =
-        if mlibHeap.is_empty heap then (List.rev values, heap)
-        else if compare (mlibHeap.top heap, first) <> EQUAL then
-          (List.rev values, heap)
+        if mlibHeap.is_empty heap orelse
+           compare (mlibHeap.top heap, first) <> EQUAL then
+          (values, Heap (compare, heap))
         else
           let
             val (next, remaining) = mlibHeap.remove heap
           in
-            take (next :: values) remaining
+            take (collect (next, values)) remaining
           end
 
-      val (values, remaining) = take [first] rest
+      val (values, remaining) = take initial rest
     in
-      (values, Heap (compare, remaining))
+      (first, values, remaining)
     end
+
+  fun delete_all_min heap =
+    let val (first, reversed, remaining) = fold_minima op:: [] heap
+    in (first :: List.rev reversed, remaining) end
+
+  fun delete_min_class heap =
+    let val (first, (), remaining) = fold_minima (fn _ => ()) () heap
+    in (first, remaining) end
 
 end

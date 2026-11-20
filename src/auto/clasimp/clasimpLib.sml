@@ -1410,9 +1410,28 @@ fun converse_sources caller_charge patterns sources =
     List.foldl (fn (source,found) => converse source found) no_sources sources
   end
 
-fun compatible_supplied_source ((name,theorem),(old_name,old_theorem)) =
-  name = old_name andalso aconv (concl theorem) (concl old_theorem)
-  andalso HOLset.equal (hypset theorem,hypset old_theorem)
+fun compatible_supplied_source (source,(old_name,old_theorem)) =
+  let val (name,theorem) = simpLib.source_rewrite source
+  in
+    name = old_name andalso
+    (Portable.pointer_eq (theorem,old_theorem) orelse
+     (aconv (concl theorem) (concl old_theorem) andalso
+      HOLset.equal (hypset theorem,hypset old_theorem)))
+  end
+
+(* Derivation can invoke callers, which may themselves use the cache. *)
+fun store_supplied_memo memo scanned previous matches entry =
+  let
+    val current = !memo
+    val others =
+      if Option.isSome previous orelse
+         not (Portable.pointer_eq (current,scanned)) then
+        List.filter (not o matches) current
+      else current
+    val kept = List.take (others,Int.min (255,length others))
+  in
+    memo := entry::kept
+  end
 
 datatype supplied_converse_binding = SuppliedConverseBinding of
   {rules : supplied_rule_binding,ambient : simpLib.simpset,
@@ -1480,9 +1499,11 @@ fun make_supplied_converse_cache () =
               Portable.pointer_eq (#theorem entry,theorem) andalso
               HOLset.equal (#positions entry,initial_positions) andalso
               ListPair.allEq compatible_supplied_source
-                (map simpLib.source_rewrite sources,#sources entry)
+                (sources,#sources entry)
+            val scanned = !memo
+            val previous = List.find matches scanned
           in
-            case Option.mapPartial #converses (List.find matches (!memo)) of
+            case Option.mapPartial #converses previous of
                 SOME (suspended,units) =>
                   (replay_normalization charge units;
                    memoized := !memoized + 1; suspended)
@@ -1496,10 +1517,8 @@ fun make_supplied_converse_cache () =
                        positions=initial_positions,
                        sources=map simpLib.source_rewrite sources,entries=NONE,
                        converses=SOME (suspended,!charged-start)}
-                    val previous = List.filter (not o matches) (!memo)
-                    val kept = List.take
-                      (previous,Int.min (255,length previous))
-                    val _ = memo := entry::kept
+                    val _ =
+                      store_supplied_memo memo scanned previous matches entry
                     val _ = derived := !derived + 1
                   in suspended end
           end
@@ -1589,11 +1608,7 @@ fun make_supplied_view_cache_core () =
       Portable.pointer_eq (#theorem entry,theorem) andalso
       HOLset.equal (#positions entry,positions) andalso
       ListPair.allEq compatible_supplied_source
-        (map simpLib.source_rewrite sources,#sources entry)
-    fun store matches entry =
-      let val previous = List.filter (not o matches) (!memo)
-          val kept = List.take (previous,Int.min (255,length previous))
-      in memo := entry::kept end
+        (sources,#sources entry)
     fun rebind (source,old : lhs_view_entry) : lhs_view_entry =
       {origin=source,source=simpLib.source_rewrite source,
        view= #view old,rejection= #rejection old,footprint= #footprint old,
@@ -1622,7 +1637,8 @@ fun make_supplied_view_cache_core () =
           let
             val matches = matching (#generation table) initial_positions
               theorem sources
-            val previous = List.find matches (!memo)
+            val scanned = !memo
+            val previous = List.find matches scanned
           in
             case Option.mapPartial #converses previous of
                 SOME (suspended,units) =>
@@ -1639,7 +1655,8 @@ fun make_supplied_view_cache_core () =
                        sources=map simpLib.source_rewrite sources,
                        entries=Option.mapPartial #entries previous,
                        converses=SOME (suspended,!charged-start)}
-                    val _ = store matches entry
+                    val _ =
+                      store_supplied_memo memo scanned previous matches entry
                   in suspended end
           end
         val suspended = HOLset.addList (no_sources,case prior of
@@ -1665,7 +1682,8 @@ fun make_supplied_view_cache_core () =
           let
             val matches = matching (#generation working) positions
               theorem sources
-            val previous = List.find matches (!memo)
+            val scanned = !memo
+            val previous = List.find matches scanned
           in
             case Option.mapPartial #entries previous of
                 SOME old_entries =>
@@ -1686,7 +1704,8 @@ fun make_supplied_view_cache_core () =
                        sources=map simpLib.source_rewrite sources,
                        entries=SOME entries,
                        converses=Option.mapPartial #converses previous}
-                    val _ = store matches entry
+                    val _ =
+                      store_supplied_memo memo scanned previous matches entry
                     val _ = derived := !derived + 1
                   in entries end
           end

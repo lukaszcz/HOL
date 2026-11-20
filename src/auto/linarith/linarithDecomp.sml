@@ -77,27 +77,8 @@ fun injection_arg tm =
                    | NONE => SOME arg
                else NONE)
 
-(* Every destructor lookup is "find the term's carrier, then try that
-   instance's operator"; the optional ones answer NONE for a carrier
-   that has no such operator at all. *)
-fun dest_mandatory select tm =
-  case instance_of tm of
-      NONE => NONE
-    | SOME instance => Lib.total (select (#dest instance)) tm
-
-fun dest_optional select tm =
-  case instance_of tm of
-      NONE => NONE
-    | SOME instance =>
-        (case select (#dest instance) of
-             NONE => NONE
-           | SOME dest => Lib.total dest tm)
-
-fun dest_mult tm = dest_mandatory #dest_mult tm
-fun dest_lit tm = dest_mandatory #dest_lit tm
-fun dest_div tm = dest_optional #dest_div tm
-fun dest_neg tm = dest_optional #dest_neg tm
-fun dest_suc tm = dest_optional #dest_suc tm
+fun dest_optional dest tm =
+  Option.mapPartial (fn destroy => Lib.total destroy tm) dest
 
 fun try_product operator left right =
   Lib.total (fn () => mk_binary operator left right) ()
@@ -118,6 +99,14 @@ fun restore_factor_type original atom =
 (* Products are normalized to right-associated form while their literal
    factors are accumulated in the Arbrat multiplier. *)
 fun demult (tm, multiplier) =
+  case instance_of tm of
+      NONE => demult_atom (tm, multiplier)
+    | SOME instance => demult_with (#dest instance) (tm, multiplier)
+and demult_atom (tm, multiplier) =
+  case injection_arg tm of
+      SOME arg => demult (arg, multiplier)
+    | NONE => (SOME tm, multiplier)
+and demult_with dest (tm, multiplier) =
   let
     fun give_up () = (SOME tm,multiplier)
     fun rotate operator left1 left2 right =
@@ -131,11 +120,13 @@ fun demult (tm, multiplier) =
             try_product operator restored_left restored_right
         | _ => NONE
   in
-    case dest_mult tm of
+    case Lib.total (#dest_mult dest) tm of
         SOME (left,right) =>
           let val (operator,_,_) = binary_parts tm
           in
-            case dest_mult left of
+            case Option.mapPartial
+                   (fn instance => Lib.total (#dest_mult (#dest instance)) left)
+                   (instance_of left) of
                 SOME (left1,left2) =>
                   (case rotate operator left1 left2 right of
                        SOME rotated => demult (rotated,multiplier)
@@ -162,7 +153,7 @@ fun demult (tm, multiplier) =
                   end
           end
       | NONE =>
-          case dest_div tm of
+          case dest_optional (#dest_div dest) tm of
               SOME (numerator,denominator) =>
                 (case demult (denominator,rat_one) of
                      (NONE,divisor) =>
@@ -178,16 +169,13 @@ fun demult (tm, multiplier) =
                          end
                    | (SOME _,_) => give_up ())
             | NONE =>
-                case dest_neg tm of
+                case dest_optional (#dest_neg dest) tm of
                     SOME arg => demult (arg,Arbrat.negate multiplier)
                   | NONE =>
-                      case dest_lit tm of
+                      case Lib.total (#dest_lit dest) tm of
                           SOME literal =>
                             (NONE,Arbrat.* (multiplier,literal))
-                        | NONE =>
-                            case injection_arg tm of
-                                SOME arg => demult (arg,multiplier)
-                              | NONE => give_up ()
+                        | NONE => demult_atom (tm, multiplier)
   end
 
 fun add_atom atom coefficient
@@ -232,33 +220,29 @@ fun poly_acc (tm, multiplier, polynomial) =
                   (left, multiplier,
                    poly_acc (right, multiplier, polynomial))
             | NONE =>
-                (case #dest_minus dest of
-                     SOME dest_minus =>
-                       (case Lib.total dest_minus tm of
-                            SOME (left, right) =>
-                              poly_acc
-                                (left, multiplier,
-                                 poly_acc
-                                   (right, Arbrat.negate multiplier,
-                                    polynomial))
-                          | NONE => poly_other (tm, multiplier, polynomial))
-                   | NONE => poly_other (tm, multiplier, polynomial))
+                (case dest_optional (#dest_minus dest) tm of
+                     SOME (left, right) =>
+                       poly_acc
+                         (left, multiplier,
+                          poly_acc
+                            (right, Arbrat.negate multiplier, polynomial))
+                   | NONE => poly_other dest (tm, multiplier, polynomial))
         end
-and poly_other (tm, multiplier, polynomial) =
-  case dest_suc tm of
+and poly_other dest (tm, multiplier, polynomial) =
+  case dest_optional (#dest_suc dest) tm of
       SOME arg =>
         poly_acc
           (arg, multiplier,
            add_constant multiplier rat_one polynomial)
-    | NONE => poly_non_suc (tm, multiplier, polynomial)
-and poly_non_suc (tm, multiplier, polynomial) =
-  case dest_neg tm of
+    | NONE => poly_non_suc dest (tm, multiplier, polynomial)
+and poly_non_suc dest (tm, multiplier, polynomial) =
+  case dest_optional (#dest_neg dest) tm of
       SOME arg => poly_acc (arg, Arbrat.negate multiplier, polynomial)
     | NONE =>
-        (case dest_lit tm of
+        (case Lib.total (#dest_lit dest) tm of
              SOME literal => add_constant multiplier literal polynomial
            | NONE =>
-               (* One arm for both, because demult re-dispatches on the
+               (* One arm for both, because demult_with re-dispatches on the
                   term itself: what is asked here is only whether it has
                   a product or a quotient to take apart, and the answer
                   decides nothing beyond that.  The aconv self-check is
@@ -268,11 +252,12 @@ and poly_non_suc (tm, multiplier, polynomial) =
                   recursion rather than about the operator, so it is
                   written once.  The order is unchanged: orelse asks
                   about division only for a term that is no product. *)
-               if Option.isSome (dest_mult tm) orelse
-                  Option.isSome (dest_div tm)
+               if Option.isSome (Lib.total (#dest_mult dest) tm) orelse
+                  Option.isSome (dest_optional (#dest_div dest) tm)
                then
                  let
-                   val (atom, coefficient) = demult (tm, multiplier)
+                   val (atom, coefficient) =
+                     demult_with dest (tm, multiplier)
                  in
                    case atom of
                        SOME atom' =>

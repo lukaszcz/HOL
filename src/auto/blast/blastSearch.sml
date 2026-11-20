@@ -169,12 +169,16 @@ fun deleteToken function token assumptions =
     remove assumptions
   end
 
-fun lookupToken function token assumptions =
-  case List.find (fn (current, _) => current = token) assumptions of
-      SOME entry => entry
-    | NONE =>
-        provenanceError function
-          "an assumption token is absent from the branch model"
+fun moveTokenLast function token assumptions =
+  let
+    fun move [] =
+          provenanceError function
+            "an assumption token is absent from the branch model"
+      | move ((entry as (current, _)) :: rest) =
+          if current = token then rest @ [entry] else entry :: move rest
+  in
+    move assumptions
+  end
 
 fun projectPair (formula, md) = (trackedTerm formula, md)
 
@@ -402,13 +406,7 @@ fun childAssumptions function rule duplicate formula assumptions =
               provenanceError function
                 "an elimination rule selected a goal formula"
           | SOME token =>
-              if duplicate then
-                let
-                  val retained = lookupToken function token assumptions
-                  val remaining = deleteToken function token assumptions
-                in
-                  remaining @ [retained]
-                end
+              if duplicate then moveTokenLast function token assumptions
               else deleteToken function token assumptions
   in
     fn introduced => List.revAppend (introduced, inherited)
@@ -801,8 +799,12 @@ fun equalTrackedSubstWith checkpoint equal function
   let
     val (side, old, replacement) =
       destEqWith checkpoint equal (trackedTerm formula)
-    val equality = trackedPosition function formula assumptions
-    val token = valOf (trackedToken formula)
+    val token =
+      case trackedToken formula of
+          SOME token => token
+        | NONE =>
+            provenanceError function
+              "an assumption formula has no provenance token"
     val subst = substAtomicWith checkpoint (old, replacement)
     (* The model mirrors work already polled while traversing the search
        queues.  Keep this bounded positional bookkeeping pure so provenance
@@ -846,14 +848,21 @@ fun equalTrackedSubstWith checkpoint equal function
         else
           (true :: mask, (#1 entry, result) :: changed, unchanged)
       end
-    val remaining = deleteToken function token assumptions
+    val equality = ref 0
+    fun subEntries _ [] =
+          provenanceError function
+            "an assumption token is absent from the branch model"
+      | subEntries position ((entry as (current, _)) :: rest) =
+          if current = token then
+            (equality := position; List.foldr subEntry ([], [], []) rest)
+          else subEntry (entry, subEntries (position + 1) rest)
     val (changed_mask, changed_assumptions, unchanged_assumptions) =
-      List.foldr subEntry ([], [], []) remaining
+      subEntries 1 assumptions
     val (changed, lits') = List.foldr subLit ([], []) lits
     val (changed', pairs') = List.foldr subFrame (changed, []) pairs
     val _ = checkpoint ()
   in
-    (equality, changed_mask, side,
+    (!equality, changed_mask, side,
      {pairs = (changed', []) :: pairs', lits = lits', vars = vars,
       lim = lim,
       assumptions = changed_assumptions @ unchanged_assumptions})

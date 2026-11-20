@@ -63,9 +63,9 @@ fun safe_saturate cs goal ctxt =
     val initial =
       {node = clasetGoal.from_goal goal,
        validation = initial_validation}
-    val transitions =
-      clasetStep.safe_saturation_in ctxt cs (#node initial)
-    val final = List.foldl accept_safe_transition initial transitions
+    val final =
+      clasetStep.fold_safe_saturation (fn _ => ()) ctxt cs (#node initial)
+        accept_safe_transition initial
     val goals = rendered_goals (#node final)
   in
     if boolSyntax.goals_eq goals [goal] then seq.empty
@@ -151,26 +151,23 @@ fun expand_settled_first step cs node =
 
 fun expand_first step cs node =
   let
-    fun first pos =
-      if pos > length (clasetGoal.goals node) then seq.empty
-      else
-        seq.delay
-          (fn () =>
-            case seq.cases (expand_at step cs pos node) of
-                NONE => first (pos + 1)
-              | SOME (result, rest) => seq.cons result rest)
+    fun first _ [] = seq.empty
+      | first pos (_ :: goals) =
+          seq.delay
+            (fn () =>
+              case seq.cases (expand_at step cs pos node) of
+                  NONE => first (pos + 1) goals
+                | SOME (result, rest) => seq.cons result rest)
   in
-    first 1
+    first 1 (clasetGoal.goals node)
   end
 
 (* Isabelle's safe_depth_tac saturates the complete selected state before
    depth search.  Keeping the resulting goals visible to DEPTH_SOLVE also
    lets its D25 commitment test run between safely generated siblings. *)
 fun safe_saturate_node_in_with charge ctxt cs initial =
-  case List.rev
-         (clasetStep.safe_saturation_in_with charge ctxt cs initial) of
-      [] => initial
-    | (_, _, final) :: _ => final
+  clasetStep.fold_safe_saturation charge ctxt cs initial
+    (fn ((_, _, next), _) => next) initial
 
 fun safe_saturate_node_in ctxt cs initial =
   safe_saturate_node_in_with (fn _ => ()) ctxt cs initial

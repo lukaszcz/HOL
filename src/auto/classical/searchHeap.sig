@@ -8,5 +8,6 @@ sig
   val is_empty : 'a heap -> bool
   val delete_min : 'a heap -> 'a * 'a heap
   val delete_all_min : 'a heap -> 'a list * 'a heap
+  val delete_min_class : 'a heap -> 'a * 'a heap
 
 end

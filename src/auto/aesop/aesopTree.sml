@@ -409,13 +409,6 @@ fun copy_support_path tree original copy =
           else NONE
         end
 
-fun copy_supports tree original =
-  List.mapPartial
-    (fn copy =>
-      Option.map (fn path => (copy, path))
-        (copy_support_path tree original copy))
-    (List.rev (reverse_copy_goals tree original))
-
 fun independently_proved tree id =
   let val current = goal tree id
   in
@@ -436,18 +429,20 @@ fun add_support_path [] required = SOME required
 
 fun select_copy_supports tree goals initial_required =
   let
-    fun choose [] _ = NONE
-      | choose ((_, path) :: rest) (goals, required) =
-          (case add_support_path path required of
+    fun choose _ [] _ = NONE
+      | choose original (copy :: rest) (goals, required) =
+          (case Option.mapPartial (fn path => add_support_path path required)
+                  (copy_support_path tree original copy) of
                SOME required' =>
                  (case support goals required' of
                       SOME result => SOME result
-                    | NONE => choose rest (goals, required))
-             | NONE => choose rest (goals, required))
+                    | NONE => choose original rest (goals, required))
+             | NONE => choose original rest (goals, required))
     and support [] required = SOME required
       | support (id :: rest) required =
           if independently_proved tree id then support rest required
-          else choose (copy_supports tree id) (rest, required)
+          else
+            choose id (List.rev (reverse_copy_goals tree id)) (rest, required)
   in
     support goals initial_required
   end
@@ -520,33 +515,37 @@ fun derive_goal tree (current : goal) =
 fun refresh_once (tree as Tree (fields as {goals, rapps, clusters, ...})) =
   let
     val changed = ref false
-    fun refresh_state state old rebuild current =
-      if state = old then current
-      else (changed := true; rebuild state current)
+    (* A single local update usually changes only a few states per sweep.
+       Fold the snapshot and share the unchanged parts of each map. *)
+    fun refresh_state id state old rebuild current table =
+      if state = old then table
+      else
+        (changed := true;
+         Redblackmap.insert (table, id, rebuild state current))
     fun rebuild (new_goals, new_rapps, new_clusters) =
       Tree
         (upd_tree fields (Fld #goals new_goals) (Fld #rapps new_rapps)
            (Fld #clusters new_clusters) $$)
     val clusters' =
-      Redblackmap.map
-        (fn (_, current : cluster) =>
-          refresh_state (derive_cluster tree current) (#state current)
-            cluster_with_state current)
-        clusters
+      Redblackmap.foldl
+        (fn (id, current : cluster, table) =>
+          refresh_state id (derive_cluster tree current) (#state current)
+            cluster_with_state current table)
+        clusters clusters
     val with_clusters = rebuild (goals, rapps, clusters')
     val rapps' =
-      Redblackmap.map
-        (fn (_, current : rapp) =>
-          refresh_state (derive_rapp with_clusters current) (#state current)
-            rapp_with_state current)
-        rapps
+      Redblackmap.foldl
+        (fn (id, current : rapp, table) =>
+          refresh_state id (derive_rapp with_clusters current) (#state current)
+            rapp_with_state current table)
+        rapps rapps
     val with_rapps = rebuild (goals, rapps', clusters')
     val goals' =
-      Redblackmap.map
-        (fn (_, current : goal) =>
-          refresh_state (derive_goal with_rapps current) (#state current)
-            goal_with_state current)
-        goals
+      Redblackmap.foldl
+        (fn (id, current : goal, table) =>
+          refresh_state id (derive_goal with_rapps current) (#state current)
+            goal_with_state current table)
+        goals goals
   in
     if !changed then SOME (rebuild (goals', rapps', clusters'))
     else NONE

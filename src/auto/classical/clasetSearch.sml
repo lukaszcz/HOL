@@ -383,9 +383,9 @@ fun frontier_search {driver, compare, remove_minimum, limit}
     seq.delay start
   end
 
-fun best_minimum heap =
-  let val (minima, remaining) = searchHeap.delete_all_min heap
-  in (hd minima, remaining) end
+(* Equal minima represent the same search state, so expand the first of
+   them and discard its duplicates. *)
+val best_minimum = searchHeap.delete_min_class
 
 fun best_first limit =
   frontier_search

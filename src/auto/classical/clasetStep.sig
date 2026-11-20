@@ -43,6 +43,11 @@ sig
     (unit -> unit) -> Context.t -> clasetLib.claset -> step
   val slow_step_in : Context.t -> clasetLib.claset -> step
 
+  (* Fold each transition of a complete safe fixed point in replay order. *)
+  val fold_safe_saturation :
+    (searchBudget.kind -> unit) -> Context.t -> clasetLib.claset -> node ->
+    ((goalpos * step_record * node) * 'a -> 'a) -> 'a -> 'a
+
   (* Every transition in a complete safe fixed point, in replay order. *)
   val safe_saturation_in :
     Context.t -> clasetLib.claset -> node ->

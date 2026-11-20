@@ -160,12 +160,14 @@ fun recipe_name recipe =
     render recipe
   end
 
-fun recipe_has_tactic wanted (Invoke (tactic_id, _)) = wanted = tactic_id
-  | recipe_has_tactic wanted (Then (left, right)) =
-      recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
-  | recipe_has_tactic wanted (AllGoals (left, right)) =
-      recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
-  | recipe_has_tactic wanted (Repeat inner) = recipe_has_tactic wanted inner
+fun recipe_uses predicate (Invoke (tactic_id, _)) = predicate tactic_id
+  | recipe_uses predicate (Then (left, right)) =
+      recipe_uses predicate left orelse recipe_uses predicate right
+  | recipe_uses predicate (AllGoals (left, right)) =
+      recipe_uses predicate left orelse recipe_uses predicate right
+  | recipe_uses predicate (Repeat inner) = recipe_uses predicate inner
+
+fun recipe_has_tactic wanted = recipe_uses (equal wanted)
 
 fun linarith_stats_text () =
   let
@@ -567,22 +569,21 @@ fun prepare_statement_comparison goal =
       in
         boolSyntax.strip_imp_only body
       end
-    fun readings term =
+    (* Keep premise groups shared across the conjuncts and check them in
+       outer-to-inner order only if the conclusion matches. *)
+    fun reading_exists matches inherited term =
       let
         val (premises, conclusion) = parts term
-        val here =
-          case total boolSyntax.dest_conj conclusion of
-              SOME (left, right) =>
-                map (fn (rest, c) => (premises @ rest, c))
-                  (readings left @ readings right)
-            | NONE => [(premises, conclusion)]
-        val beyond =
-          if not (List.null premises) andalso boolSyntax.is_forall conclusion
-          then
-            map (fn (rest, c) => (premises @ rest, c)) (readings conclusion)
-          else []
+        val inherited =
+          if null premises then inherited else premises :: inherited
       in
-        here @ beyond
+        (case total boolSyntax.dest_conj conclusion of
+             SOME (left, right) =>
+               reading_exists matches inherited left orelse
+               reading_exists matches inherited right
+           | NONE => matches (inherited, conclusion)) orelse
+        (not (null premises) andalso boolSyntax.is_forall conclusion andalso
+         reading_exists matches inherited conclusion)
       end
     val (goal_premises, goal_body) = parts goal
     val whole = prepare_stripped goal
@@ -595,23 +596,26 @@ fun prepare_statement_comparison goal =
     fn statement =>
       let
         val stripped = strip_and_prepare statement
+        fun all_covered [] = true
+          | all_covered (premises :: earlier) =
+              all_covered earlier andalso List.all covered premises
         fun matches (premises, term) =
           (* A reading that kept the whole citation already failed the
              whole-goal comparison. Use exact identity since stripping a
              quantifier retains its binder name. *)
           if Portable.pointer_eq (term, statement) then
             same_stripped stripped conclusion andalso
-            List.all covered premises
+            all_covered premises
           else
             let val left = strip_and_prepare term
             in
               same_stripped left whole orelse
               (same_stripped left conclusion andalso
-               List.all covered premises)
+               all_covered premises)
             end
       in
         same_stripped stripped whole orelse
-        List.exists matches (readings statement)
+        reading_exists matches [] statement
       end
   end
 
@@ -1797,8 +1801,20 @@ fun run_goal_with_timing {now, prepare} budget recipe
   handle Portable.Interrupt => raise Portable.Interrupt
        | exn => FAILED (Feedback.exn_to_string exn)
 
-val run_goal =
-  run_goal_with_timing {now = Time.now, prepare = fn build => build ()}
+fun uses_simpset Safe = false
+  | uses_simpset Clarify = false
+  | uses_simpset Metis = false
+  | uses_simpset Linarith = false
+  | uses_simpset _ = true
+
+fun run_goal budget recipe =
+  let
+    val prepare =
+      if recipe_uses uses_simpset recipe then fn build => build ()
+      else fn _ => simpLib.empty_ss
+  in
+    run_goal_with_timing {now = Time.now, prepare = prepare} budget recipe
+  end
 
 fun id_set ids = HOLset.fromList String.compare ids
 
