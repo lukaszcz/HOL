@@ -4676,8 +4676,8 @@ fun aesop_sw_safe_closed ctxt =
               ([], aesop_sw_goal) ctxt))
   handle Feedback.HOL_ERR _ => false
 
-fun has_split_named n =
-  List.exists (String.isSuffix n o #1) (splitLib.named_split_thms ())
+fun has_split_named ctxt n =
+  List.exists (String.isSuffix n o #1) (splitLib.named_split_thms_of ctxt)
 
 val _ = declare_aesop_sw_split "aesop_sw_split"
 val aesop_sw_with_split = Context.snapshot ()
@@ -4687,7 +4687,7 @@ val _ =
   check
     ("aesop uses a [split] rule declared in the context it runs in",
      fn () =>
-       not (has_split_named "aesop_sw_split") andalso
+       not (has_split_named (Context.snapshot ()) "aesop_sw_split") andalso
        aesop_sw_closed aesop_sw_with_split)
 
 val aesop_sw_without_split = Context.snapshot ()
@@ -4697,7 +4697,7 @@ val _ =
   check
     ("aesop ignores a [split] rule declared only in the global context",
      fn () =>
-       has_split_named "aesop_sw_split_again" andalso
+       has_split_named (Context.snapshot ()) "aesop_sw_split_again" andalso
        not (aesop_sw_closed aesop_sw_without_split))
 
 val _ =
