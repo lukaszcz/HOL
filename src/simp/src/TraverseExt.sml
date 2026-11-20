@@ -1,5 +1,4 @@
-(* Extended traversal: TraverseCore's engine over the extended reducer type.
-   There is no reverse reducer/traversal adapter. *)
+(* TraverseCore's engine over the extended reducer type. *)
 structure TraverseExt :> TraverseExt =
 struct
 open HolKernel Drule Conv Abbrev;
@@ -198,7 +197,7 @@ fun GEN_TRAVERSE policy root_only xdata thms =
 
 (* A context-free entry point E takes the context when the conversion is
    applied to a term; E_IN takes it explicitly. *)
-val at_application = TraverseCore.at_application
+val at_application = Traverse.at_application
 
 fun XTRAVERSE_IN ctxt xdata thms =
   GEN_TRAVERSE ParentFirst false xdata thms ctxt

@@ -352,35 +352,46 @@ fun cmap_of_split_rules rules =
 fun cmap_of_rules thms = cmap_of_split_rules (map analyse_rule thms)
 
 (* Paths are in [Conv.PATH_CONV] notation: "l" rator, "r" rand, "a" body. *)
+datatype path_step = Body | Argument of int * int
+
 type binder_info =
   {var : term,
-   body_type : hol_type,
-   body_path : string,
+   body : term,
+   body_path : path_step list,
    depth : int}
 
 type split_pack =
   {rule : split_rule,
-   enter_path : string,
+   body_path : path_step list,
    redex : term,
    binders : int,
-   path : int list}
+   depth : int,
+   visit : int}
 
-fun candidates want_asm cmap head =
-  let
-    val head_type = type_of head
-    fun add (({head=key_head,asm} : split_key, rules), acc) =
-      if asm = want_asm andalso same_const key_head head andalso
-         can (Type.match_type (type_of key_head)) head_type
-      then rules @ acc
-      else acc
-  in
-    List.foldr add [] (Symtab.lookup_list cmap (head_key head))
-  end
+fun fold_candidates want_asm cmap head collect packs =
+  case Symtab.lookup_list cmap (head_key head) of
+      [] => packs
+    | entries =>
+        let
+          val head_type = type_of head
+          fun add (({head=key_head,asm} : split_key, rules), packs) =
+            if asm = want_asm andalso same_const key_head head andalso
+               can (Type.match_type (type_of key_head)) head_type
+            then foldl collect packs rules
+            else packs
+        in
+          foldl add packs entries
+        end
 
 (* Reach argument [i] of an [n]-ary application: strip the later arguments
    with rators, then take the rand. *)
 fun prefix_path n i =
   StringCvt.padLeft #"l" (n - i - 1) "" ^ "r"
+
+fun enter_path steps =
+  let fun encode Body = "a"
+        | encode (Argument (arity,i)) = prefix_path arity i
+  in String.concat (List.rev (List.map encode steps)) end
 
 fun matching (rule : split_rule) redex =
   can (match_term (#pattern rule)) redex
@@ -389,89 +400,84 @@ fun scan want_asm cmap tm =
   let
     val root_type = type_of tm
 
-    (* [scan_path] and [binders] are carried innermost-first so that
-       descending is a cons rather than an append; both are only ever
-       consumed here, where the cost is paid once per pack. *)
-    fun mk_pack scan_path enter_path binders node rule =
+    (* Keep the path to the innermost binder referenced by the redex.
+       Encode it only when trying to apply a rule. *)
+    fun mk_pack depth (previous : split_pack list) binders node head args
+                arity rule =
       let
         val n = #arity rule
-        val (head, args) = strip_comb node
       in
-        if length args < n then NONE
+        if arity < n then NONE
         else
           let
-            val redex = list_mk_comb (head, List.take (args, n))
-            val refs =
-              List.filter (fn {var,...} => free_in var redex) binders
-            val path = List.rev scan_path
+            val redex =
+              if arity = n then node
+              else list_mk_comb (head, List.take (args, n))
+            fun matched binder_depth body_path =
+              let
+                val visit =
+                  case previous of [] => 0 | last :: _ => #visit last + 1
+              in
+                SOME {rule=rule, body_path=body_path, redex=redex,
+                      binders=binder_depth, depth=depth, visit=visit}
+              end
           in
             if not (matching rule redex) then NONE
             else
-              case refs of
-                  [] =>
-                    if root_type = bool then
-                      SOME {rule=rule, enter_path="", redex=redex,
-                            binders=0, path=path}
-                    else NONE
-                | ({body_type,body_path,depth,...} : binder_info) :: _ =>
-                    if body_type = bool then
-                      SOME {rule=rule, enter_path=body_path,
-                            redex=redex, binders=depth, path=path}
+              case List.find (fn {var,...} => free_in var redex) binders of
+                  NONE => if root_type = bool then matched 0 [] else NONE
+                | SOME {body,body_path,depth=binder_depth,...} =>
+                    if type_of body = bool then
+                      matched binder_depth body_path
                     else NONE
           end
       end
 
-    (* [packs] accumulates in reverse, so that a node neither appends its
-       own packs to those of its arguments nor the arguments' to each
-       other; the traversal order is restored by one reversal at the end.
-       The order matters: [first_success] tries the packs in the order
-       [sort] leaves them in, and [sort] settles a [pack_le] tie out of
-       the order it received the two packs in. *)
-    fun walk scan_path enter_path binders node packs =
+    (* At equal depth, preorder visits argument paths in lexicographic
+       order. Rules at the same node keep the same visit index. Restore
+       the input order to sort so ties are resolved as before. *)
+    fun walk depth steps (binders : binder_info list) node packs =
       if is_abs node then
         let
           val (var, body) = dest_abs node
-          val body_path = enter_path ^ "a"
-          val info = {var=var, body_type=type_of body,
-                      body_path=body_path, depth=length binders + 1}
+          val body_path = Body :: steps
+          val binder_depth =
+            case binders of [] => 1 | {depth,...} :: _ => depth + 1
+          val info =
+            {var=var, body=body, body_path=body_path, depth=binder_depth}
         in
-          walk (0 :: scan_path) body_path (info :: binders) body packs
+          walk (depth + 1) body_path (info :: binders) body packs
         end
       else
         let
           val (head, args) = strip_comb node
           val arity = length args
-          fun collect (rule, packs) =
-            case mk_pack scan_path enter_path binders node rule of
-                SOME pack => pack :: packs
-              | NONE => packs
+          fun collect (rule, acc) =
+            case mk_pack depth packs binders node head args arity rule of
+                SOME pack => pack :: acc
+              | NONE => acc
           val here =
             if is_const head then
-              foldl collect packs (candidates want_asm cmap head)
+              fold_candidates want_asm cmap head collect packs
             else packs
           fun descend (arg, (i, packs)) =
             let
-              val arg_path = enter_path ^ prefix_path arity i
+              val arg_path = Argument (arity,i) :: steps
             in
-              (i + 1, walk (i :: scan_path) arg_path binders arg packs)
+              (i + 1, walk (depth + 1) arg_path binders arg packs)
             end
         in
           #2 (foldl descend (0, here) args)
         end
   in
-    List.rev (walk [] "" [] tm [])
+    List.rev (walk 0 [] [] tm [])
   end
-
-fun path_le paths = Lib.list_compare Int.compare paths <> GREATER
 
 fun pack_le (p1 : split_pack) (p2 : split_pack) =
-  let
-    val (n1, n2) = (length (#path p1), length (#path p2))
-  in
-    #binders p1 < #binders p2 orelse
-    (#binders p1 = #binders p2 andalso
-     (n1 < n2 orelse (n1 = n2 andalso path_le (#path p1, #path p2))))
-  end
+  #binders p1 < #binders p2 orelse
+  (#binders p1 = #binders p2 andalso
+   (#depth p1 < #depth p2 orelse
+    (#depth p1 = #depth p2 andalso #visit p1 <= #visit p2)))
 
 fun fresh_parts th =
   let
@@ -502,18 +508,18 @@ fun instantiate (rule : split_rule) target body =
     result
   end
 
-fun apply_pack ({rule,enter_path,redex,...} : split_pack) =
-  PATH_CONV enter_path (instantiate rule redex)
+fun apply_pack ({rule,body_path,redex,...} : split_pack) =
+  PATH_CONV (enter_path body_path) (instantiate rule redex)
 
-(* [tryfind] retries on any non-Interrupt exception, so it covers both a
-   failed instantiation and a pack that turns out to rewrite nothing. *)
+(* [tryfind] retries on any non-Interrupt exception from applying a pack. *)
 fun first_success packs tm =
   Lib.with_exn (Lib.tryfind (fn pack => apply_pack pack tm)) packs
                (ERR "SPLIT_CONV" "no applicable split rule")
 
 fun split_conv cmap tm =
   let
-    val packs = sort pack_le (scan false cmap tm)
+    val packs = if Symtab.is_empty cmap then []
+                else sort pack_le (scan false cmap tm)
     (* Isabelle tries only the first sorted pack.  Trying later packs
        when instantiation fails avoids one rejected rule shadowing an
        otherwise applicable rule, while retaining one split per call. *)
@@ -522,12 +528,6 @@ fun split_conv cmap tm =
   end
 
 fun SPLIT_CONV thms = split_conv (cmap_of_rules thms)
-
-fun contains_head heads tm =
-  can (find_term
-        (fn subtm =>
-            is_const subtm andalso
-            List.exists (fn head => same_const head subtm) heads)) tm
 
 fun clean_asm_eq th =
   let
@@ -559,6 +559,17 @@ fun split_asm_tac cmap =
       List.mapPartial
         (fn ({head,asm}, _) => if asm then SOME head else NONE)
         (List.concat (map #2 (Symtab.dest cmap)))
+    fun indexed_head head =
+      List.exists
+        (fn ({head=key_head,asm}, _) => asm andalso same_const key_head head)
+        (Symtab.lookup_list cmap (head_key head))
+    (* A short list avoids constructing a key string at each constant. *)
+    val has_head =
+      if length heads <= 8 then
+        fn head => List.exists (fn key_head => same_const key_head head) heads
+      else indexed_head
+    fun contains_head tm =
+      can (find_term (fn subtm => is_const subtm andalso has_head subtm)) tm
 
     (* [contains_head] sees only the head constant, so an assumption it
        admits may still yield no pack -- a partial application, or a rule
@@ -567,12 +578,11 @@ fun split_asm_tac cmap =
        tactic; committing to the first assumption merely mentioning a key
        would hide a genuinely splittable one behind it.  The head test
        still keeps the [asm_eq] scan off the assumptions that cannot
-       split, so the assumptions walked twice are only those that named a
-       key and then declined. *)
+       split, so only assumptions that mention a key are walked twice. *)
     fun first_split [] =
           raise ERR "SPLIT_ASM_TAC" "no assumption contains a split key"
       | first_split (asm :: rest) =
-          if contains_head heads asm then
+          if contains_head asm then
             case Lib.total (asm_eq cmap) asm of
                 SOME eq => (asm, eq)
               | NONE => first_split rest
@@ -580,7 +590,7 @@ fun split_asm_tac cmap =
 
     fun tac (asms, goal) =
       let
-        val (asm, eq) = first_split asms
+        val (asm, eq) = first_split (if null heads then [] else asms)
         val cases = EQ_MP eq (ASSUME asm)
       in
         PRED_ASSUM (aconv asm) (K (STRIP_ASSUME_TAC cases)) (asms, goal)

@@ -142,4 +142,8 @@ sig
       than in the one current when the conversion is applied. *)
    val TRAVERSE_IN : Context.t -> traverse_data -> thm list -> conv
 
+   (* at_application f is f given the context current when the result is
+      applied, rather than when it is built. *)
+   val at_application : (Context.t -> 'a -> 'b) -> 'a -> 'b
+
 end (* sig *)

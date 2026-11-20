@@ -1,6 +1,6 @@
 (* =====================================================================
  * FILE          : TraverseCore.sml
- * DESCRIPTION   : The traversal engine shared by Traverse and TraverseExt
+ * DESCRIPTION   : The traversal engine for the extended entry points
  *
  * AUTHOR        : Donald Syme
  *                 Based loosely on original HOL rewriting by
@@ -226,12 +226,6 @@ fun FIRSTCQC_CONV [] t = failwith "no conversion worked"
    FIRST_CONV, and not FIRSTCQC_CONV above because weakening
    congruences should probably all get a bite at the cherry. *)
 
-fun mapfilter2 f (h1::t1) (h2::t2) =
-      let val X = mapfilter2 f t1 t2
-      in f h1 h2::X handle Interrupt => raise Interrupt | _ => X
-      end
-  | mapfilter2 f _ _ = [];
-
 (* A function argument written as [\x. f x] names the same head as [f].
    Contracting it before visiting the body keeps that head available to a
    parent rewrite unless its application requires the abstraction. *)
@@ -393,12 +387,14 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
          apply reducer {solver=ctxt_solver, conv=ctxt_conv, context=context,
                         ctxt=cctxt, stack=stack, relation=reducer_relation} tm
          before dec lim_r)
+      fun first_reducer (reducer::reducers) (context::contexts) tm =
+            (apply_reducer reducer context tm
+             handle HOL_ERR _ => first_reducer reducers contexts tm)
+        | first_reducer _ _ tm = NO_CONV tm
       fun high_priority tm =
-          (check lim_r;
-           FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
+          (check lim_r; first_reducer rewriters contexts1 tm)
       fun low_priority tm =
-          (check lim_r ;
-           FIRST_CONV (mapfilter2 apply_reducer dprocs contexts2) tm)
+          (check lim_r; first_reducer dprocs contexts2 tm)
       fun depther (thms,relation) =
           ((if plain then () else check_abort ());
            trav_with_rel' relation stack (add_context' (context,thms)))
@@ -499,10 +495,6 @@ fun TRAVERSE_WITH_CONTEXT {check_abort,observer,policy,root_only} t
         policy=policy, root_only=root_only}
        t [] context' cctxt tm
    end;
-
-(* Snapshots the context when the result is applied to an argument; f is
-   partially applied by the caller, so its precomputation is shared. *)
-fun at_application f = fn x => f (Context.snapshot ()) x
 
 fun TRAVERSE t thms =
    let val context' = add_context false t (initial_context t,thms)

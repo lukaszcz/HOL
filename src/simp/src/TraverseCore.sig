@@ -1,6 +1,6 @@
 (* =====================================================================
  * FILE          : TraverseCore.sig
- * DESCRIPTION   : The traversal engine shared by Traverse and TraverseExt.
+ * DESCRIPTION   : The traversal engine for the extended entry points.
  *                 It is polymorphic in the reducer type: a client supplies
  *                 each reducer's initial context, its context collector and
  *                 how to apply it.
@@ -49,10 +49,6 @@ sig
      apply : 'r -> apply_args -> conv,
      subgoaler : subgoaler option,
      solvers : ssolver list}
-
-  (* at_application f is f given the context current when the result is
-     applied, rather than when it is built. *)
-  val at_application : (Context.t -> 'a -> 'b) -> 'a -> 'b
 
   (* Collect context once and return a reusable conversion; congruence
      procedures are built eagerly for each traversal context. *)
