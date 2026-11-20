@@ -16,7 +16,7 @@ Returns Aesop's simplifier default for a given context.
 
 ### Failure
 
-Never fails.
+As for [`aesop_ss`](#aesopData.aesop_ss).
 
 ### See also
 

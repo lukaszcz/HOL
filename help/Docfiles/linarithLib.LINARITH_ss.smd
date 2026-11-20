@@ -51,5 +51,5 @@ QED
 [`linarithLib.LINARITH_ext_ss`](#linarithLib.LINARITH_ext_ss),
 [`linarithLib.LINARITH_ext_ss_with`](#linarithLib.LINARITH_ext_ss_with),
 [`linarithLib.LINARITH_TAC`](#linarithLib.LINARITH_TAC),
-[`simpLib.++`](#simpLib.++),
+[`simpLib.++`](#simpLib..KAL),
 [`simpLib.SSFRAG`](#simpLib.SSFRAG)

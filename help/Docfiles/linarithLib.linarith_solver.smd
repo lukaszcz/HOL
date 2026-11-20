@@ -11,16 +11,21 @@ Provides the named unsafe simplifier solver `"lin_arith"`.
 
 The solver proves arithmetic side conditions from the simplifier's
 `context_thms` and the [global `[arith]` facts](#linarithData.arith), by
-the same direct forward arithmetic as
+the same direct forward arithmetic, and the same cache (reset by
+`linarithLib.clear_linarith_caches ()`), as
 [`LINARITH_ss`](#linarithLib.LINARITH_ss). A proposition outside linear
 arithmetic is proved only when the context, together with the `[arith]`
 facts, is arithmetically contradictory; a context with no arithmetic in
 it is declined, whatever facts are declared.
 
-The solver is already installed in the clasimp and Aesop simpsets. It
-can be added to another simpset with `simpExtLib.add_unsafe_solver`,
-suppressed for one invocation with `simpExtLib.ExclX "solver:lin_arith"`,
-or removed with `simpExtLib.remove_solver "lin_arith"`.
+Solvers of this name, built with
+[`linarith_solver_with_facts`](#linarithLib.linarith_solver_with_facts)
+over the context's `[arith]` facts, are installed in the clasimp and
+Aesop simpsets. One can be suppressed for one invocation with
+[`simpExtLib.ExclX "solver:lin_arith"`](#simpExtLib.ExclX) or removed
+with [`simpExtLib.remove_solver "lin_arith"`](#simpExtLib.remove_solver).
+This solver can be added to another simpset with
+[`simpExtLib.add_unsafe_solver`](#simpExtLib.add_unsafe_solver).
 
 ### Failure
 
