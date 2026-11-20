@@ -22882,6 +22882,29 @@ in
     "a rewrite under a binder differing by *, - or negation was not closed")
 end
 
+(* Z3 moves the terms of a non-strict order across it, writing a + 2 <= b
+   as a + -1 * b <= -2, also in a definition's body under a quantifier;
+   the canonical pass closes such a rewrite without arithmetic proof. *)
+fun z3_difference_canon_leq_success () =
+let
+  fun closes source =
+    let val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+    in
+      check_oracle_tags "difference canonicalisation" theorem;
+      boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal
+        (boolSyntax.rhs (Thm.concl theorem))
+    end
+in
+  assert (List.all closes
+      [``(a + 2 <= b:int) <=> (a + -1 * b <= -2)``,
+       ``(a + 2 <= b:real) <=> (a + -1 * b <= -2)``,
+       ``(!b0 b1:int. 0 <= b0 /\ b0 + 2 <= b1) <=>
+         (!b0 b1:int. 0 <= b0 /\ b0 + -1 * b1 <= -2)``],
+    "a non-strict order with terms moved across it was not closed")
+end
+
 (* Types of at most 64 nodes compare directly, larger ones through the
    memo; both give one antisymmetric order that is EQUAL on equal Types. *)
 fun replay_type_order_small_and_large_agree_success () =
@@ -40272,6 +40295,8 @@ let
       replay_canon_skips_passes_without_triggers_success),
     ("z3_secondary_canon_triggers_under_binders_success",
       z3_secondary_canon_triggers_under_binders_success),
+    ("z3_difference_canon_leq_success",
+      z3_difference_canon_leq_success),
     ("replay_type_order_small_and_large_agree_success",
       replay_type_order_small_and_large_agree_success),
     ("cpc_binder_cong_lifts_through_negation_success",
