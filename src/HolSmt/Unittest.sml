@@ -2654,7 +2654,14 @@ let
   val ord_c = ``ORD c = 65``
   val ((ord_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
     ([ord_c], ``ORD c + 1 = 66``)
+  (* every assumption the transfer made is stripped, not only the newest *)
+  val ((strip_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([``(m:num) < 5``, ``(n:num) < 3 /\ (k:num) < 2``,
+      ``?j:num. j < m``], ``m + n + k < 10``)
 in
+  assert (not (List.exists (fn a => boolSyntax.is_conj a orelse
+                                    boolSyntax.is_exists a) strip_asl),
+    "num transfer left a transferred assumption unstripped");
   assert (List.all (fn a => Lib.op_mem Term.aconv a asl) [held, f_def],
     "num transfer changed an assumption that mentions no num");
   assert (not (Lib.op_mem Term.aconv ord_c ord_asl),

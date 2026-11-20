@@ -8784,11 +8784,17 @@ in
     open Tactic Tactical
     val (num_asms, held) =
       List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
-    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made *)
-    fun STRIP_TRANSFERRED_TAC (asl, w) =
-      MAP_EVERY (fn _ => POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
-        (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
-        (asl, w)
+    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made, each
+       once; the held assumptions go back as they were *)
+    val STRIP_TRANSFERRED_TAC =
+      POP_ASSUM_LIST (fn thms =>
+        let
+          val (kept, transferred) = List.partition
+            (fn th => Lib.op_mem Term.aconv (Thm.concl th) held) thms
+        in
+          MAP_EVERY ASSUME_TAC (List.rev kept) THEN
+          MAP_EVERY NO_SPLIT_STRIP_ASSUME_TAC (List.rev transferred)
+        end)
   in
     if goal_mentions_num_or_int_literal g andalso
        not (goal_entangles_num_and_word g)
