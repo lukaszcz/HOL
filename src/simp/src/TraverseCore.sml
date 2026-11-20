@@ -1,6 +1,6 @@
 (* =====================================================================
  * FILE          : TraverseCore.sml
- * DESCRIPTION   : The traversal engine shared by Traverse and TraverseExt
+ * DESCRIPTION   : The traversal engine for the extended entry points
  *
  * AUTHOR        : Donald Syme
  *                 Based loosely on original HOL rewriting by
@@ -88,6 +88,24 @@ fun initial_context ({rewriters,dprocs,travrules=TRAVRULES tsdata,relation,
  *
  * ---------------------------------------------------------------------*)
 
+(* Congruence factories can observe the order of [free_varsl]. Its
+   rightmost nonempty list keeps its order; earlier lists prepend new
+   variables, in reverse order. Use a set for membership on long lists. *)
+fun context_freevars hyps =
+  if length hyps < 64 then free_varsl hyps
+  else
+    let
+      fun insert (v, acc as (seen,vars)) =
+        if HOLset.member (seen,v) then acc
+        else (HOLset.add (seen,v),v::vars)
+      fun collect (tm, (seen,[])) =
+            let val vars = free_vars tm
+            in (HOLset.addList (seen,vars),vars) end
+        | collect (tm,acc) = List.foldl insert acc (free_vars tm)
+    in
+      #2 (List.foldr collect (empty_varset,[]) hyps)
+    end
+
 fun add_context collect_thms
       ({rewriters,dprocs,addcontext,...} : 'r traversal) = let
   val rewrite_collectors' = map addcontext rewriters
@@ -98,7 +116,7 @@ fun add_context collect_thms
   in
     if null thms then context
     else let
-        val more_freevars = free_varsl (flatten (map hyp thms))
+        val more_freevars = context_freevars (flatten (map hyp thms))
         val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
         fun mk_privcontext maker privcontext = maker (privcontext,thms)
         val newcontexts1 =
@@ -223,12 +241,6 @@ fun FIRSTCQC_CONV [] t = failwith "no conversion worked"
    If this was to change, then the code probably should still use
    FIRST_CONV, and not FIRSTCQC_CONV above because weakening
    congruences should probably all get a bite at the cherry. *)
-
-fun mapfilter2 f (h1::t1) (h2::t2) =
-      let val X = mapfilter2 f t1 t2
-      in f h1 h2::X handle Interrupt => raise Interrupt | _ => X
-      end
-  | mapfilter2 f _ _ = [];
 
 (* A function argument written as [\x. f x] names the same head as [f].
    Contracting it before visiting the body keeps that head available to a
@@ -390,12 +402,14 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
          apply reducer {solver=ctxt_solver, conv=ctxt_conv, context=context,
                         stack=stack, relation=reducer_relation} tm
          before dec lim_r)
+      fun first_reducer (reducer::reducers) (context::contexts) tm =
+            (apply_reducer reducer context tm
+             handle HOL_ERR _ => first_reducer reducers contexts tm)
+        | first_reducer _ _ tm = NO_CONV tm
       fun high_priority tm =
-          (check lim_r;
-           FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
+          (check lim_r; first_reducer rewriters contexts1 tm)
       fun low_priority tm =
-          (check lim_r ;
-           FIRST_CONV (mapfilter2 apply_reducer dprocs contexts2) tm)
+          (check lim_r; first_reducer dprocs contexts2 tm)
       fun depther (thms,relation) =
           ((if plain then () else check_abort ());
            trav_with_rel' relation stack (add_context' (context,thms)))

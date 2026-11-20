@@ -2573,6 +2573,14 @@ val _ = let
      ``(b ==> P (x:'a) /\ Q (if c then u else v)) /\
        (~b ==> P y /\ Q (if c then u else v))``)
 
+  val (if_vars, if_eq) = strip_forall (concl if_split)
+  val reflexive_split = GENL if_vars (REFL (lhs if_eq))
+  val _ = convtest
+    ("splitter: later rule wins a tie at the same occurrence",
+     SPLIT_CONV [if_split, reflexive_split],
+     ``P (if b then x:'a else y) : bool``,
+     ``P (if b then x:'a else y) : bool``)
+
   val generic_k_split =
     GEN_ALL (REFL ``P (K (x:'a) (y:'b)) : bool``)
   val bool_k_split =
@@ -2640,6 +2648,23 @@ val _ = let
           then OK()
           else die "SPLIT_ASM_TAC produced incorrect conditional cases"
       | _ => die "SPLIT_ASM_TAC produced the wrong number of cases"
+
+  val _ = tprint "splitter: assumption-only SPLIT_TAC leaves goal intact"
+  val _ =
+    case valid (SPLIT_TAC [if_asm_split]) asm_goal of
+        [(_, left_concl), (_, right_concl)] =>
+          if aconv left_concl (snd asm_goal) andalso
+             aconv right_concl (snd asm_goal)
+          then OK()
+          else die "assumption-only SPLIT_TAC changed the conclusion"
+      | _ => die "assumption-only SPLIT_TAC did not split the assumption"
+
+  val _ = shouldfail
+    {testfn=fn () => ignore (SPLIT_CONV [if_asm_split, TRUTH]),
+     printresult=K "unexpected conversion construction",
+     printarg=K "splitter: validates all rules before returning a conversion",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    ()
 
   val double_neg_goal =
     ([``~~R (if b then x:'a else y) : bool``], ``G:bool``)
