@@ -11,7 +11,7 @@ Provides `linarith_solver` with an explicit list of `[arith]` facts.
 
 `linarith_solver_with_facts facts` is the solver
 [`linarith_solver`](#linarithLib.linarith_solver) whose facts are exactly
-`facts`, used verbatim: the global `[arith]` set is not read, whatever
+`facts`: the global `[arith]` set is not read, whatever
 it holds.
 
 ### Failure

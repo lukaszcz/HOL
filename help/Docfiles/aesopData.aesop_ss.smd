@@ -7,20 +7,24 @@ aesopData.aesop_ss : unit -> simpExtLib.simpset
 
 ------------------------------------------------------------------------
 
-Returns Aesop's simplifier default.
+Returns Aesop's simplifier default for the ambient context.
 
-The base is `srw_ss ()`, lifted into the extension engine with
-`simpExtLib.lift_simpset`; it is not the split-enabled `clasimp_ss ()`.
-Derivation weakens conditional congruence, installs ETA matching, fixes
-conditional depth at 40, and replaces both solver lists with Aesop's
-selected safe and unsafe solvers. The additive `[aesop_simp]` rewrites are
-then installed. Splitting remains the search engine's responsibility.
+The simpset is `srw_ss ()`, lifted into the extension engine by
+`simpExtLib.lift_simpset`, with weakened conditional congruence, ETA
+matching, conditional depth 40, the clasimp safe solver, and the
+unsafe solver `linarith_solver_with_facts` over the context's
+[`[arith]`](#linarithData.arith) facts. The context's `[aesop_simp]`
+rewrites are added. Unlike `clasimp_ss ()` it does no splitting; that is
+left to the search. Scope temporary changes to it with
+`BasicProvers.with_simpset_updates`.
 
-The result follows `Context.restore`. Scope temporary changes to the base
-with `BasicProvers.with_simpset_updates`.
+### Failure
+
+Never fails.
 
 ### See also
 
 [`aesopData.aesop_ss_of`](#aesopData.aesop_ss_of),
+[`linarithLib.linarith_solver_with_facts`](#linarithLib.linarith_solver_with_facts),
 [`aesopLib.AESOP_TAC`](#aesopLib.AESOP_TAC),
 [`aesopLib.CS_AESOP_TAC`](#aesopLib.CS_AESOP_TAC)

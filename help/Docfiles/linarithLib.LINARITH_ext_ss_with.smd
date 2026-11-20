@@ -11,7 +11,7 @@ Provides `LINARITH_ext_ss` with an explicit list of `[arith]` facts.
 
 `LINARITH_ext_ss_with facts` is the fragment of
 [`LINARITH_ext_ss`](#linarithLib.LINARITH_ext_ss) whose facts are exactly
-`facts`, used verbatim: the global `[arith]` set is not read, whatever
+`facts`: the global `[arith]` set is not read, whatever
 it holds.
 
 ### Failure

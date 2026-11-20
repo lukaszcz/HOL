@@ -3,25 +3,19 @@
 
 ``` hol4
 linarithLib.LINARITH_ext_ss : simpExtLib.ssfrag
-linarithLib.LINARITH_ext_ss_budgeted :
-  Context.t -> searchBudget.budget -> simpExtLib.ssfrag
 ```
 
 ------------------------------------------------------------------------
 
-Provides the explicitly tracked linear-arithmetic fragment.
+Provides the extension-engine version of `LINARITH_ss`.
 
-These fragments lift the same ordinary reducer closures used by
-`LINARITH_ss` and `LINARITH_ss_budgeted`. Choose the extension fragment
-before installation into an extension simpset; ordinary `LINARITH_ss`
-and ordinary reducer/destructor clients remain ordinary. Do not promote
-an already compiled ordinary set.
+The fragment behaves as [`LINARITH_ss`](#linarithLib.LINARITH_ss), including
+reading the global `[arith]` facts, but is for adding to a `simpExtLib`
+simpset.
 
 ### Failure
 
-As for [`LINARITH_ss`](#linarithLib.LINARITH_ss), except that the reducer
-of `LINARITH_ext_ss_budgeted` raises `searchBudget.LimitReached` when its
-budget is exhausted.
+As for [`LINARITH_ss`](#linarithLib.LINARITH_ss).
 
 ### Example
 
