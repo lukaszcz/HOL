@@ -5,6 +5,10 @@ open HolKernel
 
 type polynomial = (term * Arbrat.rat) list * Arbrat.rat
 
+type atoms =
+  {coefficients : Arbrat.rat ref Termtab.table,
+   newest : (term * Arbrat.rat ref) list}
+
 val rat_zero = Arbrat.zero
 val rat_one = Arbrat.one
 
@@ -186,23 +190,28 @@ fun demult (tm, multiplier) =
                               | NONE => give_up ()
   end
 
-fun add_atom atom coefficient (atoms, constant) =
-  let
-    fun add [] =
-          if coefficient = rat_zero then [] else [(atom, coefficient)]
-      | add ((item as (old_atom, old_coefficient)) :: rest) =
-          if Term.aconv old_atom atom then
-            let
-              val coefficient' =
-                Arbrat.+ (old_coefficient, coefficient)
-            in
-              if coefficient' = rat_zero then rest
-              else (old_atom, coefficient') :: rest
-            end
-          else item :: add rest
-  in
-    (add atoms, constant)
-  end
+fun add_atom atom coefficient
+      (atoms as {coefficients, newest} : atoms, constant) =
+  if coefficient = rat_zero then (atoms, constant)
+  else
+    case Termtab.lookup coefficients atom of
+        NONE =>
+          let
+            val cell = ref coefficient
+          in
+            ({coefficients = Termtab.update (atom, cell) coefficients,
+              newest = (atom, cell) :: newest}, constant)
+          end
+      | SOME cell =>
+          let
+            val sum = Arbrat.+ (!cell, coefficient)
+            val _ = cell := sum
+          in
+            if sum = rat_zero then
+              ({coefficients = Termtab.delete atom coefficients,
+                newest = newest}, constant)
+            else (atoms, constant)
+          end
 
 fun add_constant multiplier literal (atoms, constant) =
   (atoms, Arbrat.+ (constant, Arbrat.* (multiplier, literal)))
@@ -279,7 +288,23 @@ and poly_non_suc (tm, multiplier, polynomial) =
                       SOME arg => poly_acc (arg, multiplier, polynomial)
                     | NONE => add_atom tm multiplier polynomial))
 
-fun poly tm = poly_acc (tm, rat_one, ([], rat_zero))
+fun poly tm : polynomial =
+  let
+    val empty = {coefficients = Termtab.empty, newest = []}
+    val ({newest, ...}, constant) =
+      poly_acc (tm, rat_one, (empty, rat_zero))
+    (* Each insertion keeps its original term and its own coefficient
+       cell. Canceled cells stay zero even if the atom is reinserted. *)
+    fun collect ((atom, cell), result) =
+      let
+        val coefficient = !cell
+      in
+        if coefficient = rat_zero then result
+        else (atom, coefficient) :: result
+      end
+  in
+    (List.foldl collect [] newest, constant)
+  end
 
 fun relation tm =
   case Lib.total boolSyntax.dest_eq tm of

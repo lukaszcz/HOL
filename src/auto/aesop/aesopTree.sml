@@ -381,9 +381,6 @@ fun cluster_with_state state
       ({id, parent, goals, ...} : cluster) : cluster =
   {id = id, parent = parent, goals = goals, state = state}
 
-fun same_states left right =
-  ListPair.allEq (fn (x, y) => x = y) (left, right)
-
 (* A copy is useful to its original only through the proved applications
    connecting it to the application that emitted the original.  The latter
    application is excluded: its state is what the copy helps derive.  Each
@@ -492,79 +489,67 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
    the copy's branch may still be under search. *)
 fun derive_goal tree (current : goal) =
   let
-    val states = map (#state o rapp tree) (child_rapps tree (#id current))
-    val supported_copy =
-      not (null (copy_supports tree (#id current)))
-    val norm_proved =
-      case #norm current of NormProved _ => true | _ => false
+    val id = #id current
     val exhausted =
       is_normalised current andalso #safe_done current andalso
       null (#unsafe_cursor current) andalso null (#postponed current)
+    fun scan [] all_stuck =
+          if List.exists
+               (Option.isSome o copy_support_path tree id)
+               (copy_goals tree id)
+          then Proved
+          else if all_stuck then Stuck
+          else Unknown
+      | scan (rid :: rest) all_stuck =
+          case #state (rapp tree rid) of
+              Proved => Proved
+            | Stuck => scan rest all_stuck
+            | Unknown => scan rest false
   in
-    if norm_proved orelse
-       List.exists (fn state => state = Proved) states orelse
-       supported_copy
-    then Proved
-    else if exhausted andalso
-            List.all (fn state => state = Stuck) states
-    then Stuck
-    else Unknown
+    case #norm current of
+        NormProved _ => Proved
+      | _ => scan (child_rapps tree id) exhausted
   end
 
 fun refresh_once (tree as Tree (fields as {goals, rapps, clusters, ...})) =
   let
+    val changed = ref false
+    fun refresh_state state old rebuild current =
+      if state = old then current
+      else (changed := true; rebuild state current)
     fun rebuild (new_goals, new_rapps, new_clusters) =
       Tree
         (upd_tree fields (Fld #goals new_goals) (Fld #rapps new_rapps)
            (Fld #clusters new_clusters) $$)
     val clusters' =
       Redblackmap.map
-        (fn (_, current) =>
-          cluster_with_state (derive_cluster tree current) current)
+        (fn (_, current : cluster) =>
+          refresh_state (derive_cluster tree current) (#state current)
+            cluster_with_state current)
         clusters
     val with_clusters = rebuild (goals, rapps, clusters')
     val rapps' =
       Redblackmap.map
-        (fn (_, current) =>
-          rapp_with_state (derive_rapp with_clusters current) current)
+        (fn (_, current : rapp) =>
+          refresh_state (derive_rapp with_clusters current) (#state current)
+            rapp_with_state current)
         rapps
     val with_rapps = rebuild (goals, rapps', clusters')
     val goals' =
       Redblackmap.map
-        (fn (_, current) =>
-          goal_with_state (derive_goal with_rapps current) current)
+        (fn (_, current : goal) =>
+          refresh_state (derive_goal with_rapps current) (#state current)
+            goal_with_state current)
         goals
   in
-    rebuild (goals', rapps', clusters')
+    if !changed then SOME (rebuild (goals', rapps', clusters'))
+    else NONE
   end
 
-fun node_states tree =
-  (map #state (goals tree),
-   map #state (rapps tree),
-   map #state (clusters tree))
-
-fun states_equal
-      ((left_goals, left_rapps, left_clusters),
-       (right_goals, right_rapps, right_clusters)) =
-  same_states left_goals right_goals andalso
-  same_states left_rapps right_rapps andalso
-  same_states left_clusters right_clusters
-
-(* The states of the input are already known to every round but the first,
-   so the fixpoint carries them instead of recomputing them. *)
 fun refresh tree =
-  let
-    fun iterate (states, current) =
-      let
-        val next = refresh_once current
-        val next_states = node_states next
-      in
-        if states_equal (states, next_states) then next
-        else iterate (next_states, next)
-      end
-  in
-    iterate (node_states tree, tree)
-  end
+  case refresh_once tree of
+      NONE => tree
+    | SOME next => refresh next
 
 fun has_copies (Tree {index, ...}) =
   Redblackmap.numItems (#copy_children index) <> 0
@@ -741,19 +726,22 @@ fun phase_probability aesopRule.RSafe = 100
   | phase_probability (aesopRule.RNorm _) =
       raise ERR "install_rapp" "normalisation does not create rapp nodes"
 
+(* A rule application installs fresh goals with ids greater than its
+   parent goal's id.  The same check also prevents ancestry cycles. *)
+fun checked_ancestor id ancestor =
+  if ancestor < id then ancestor
+  else raise ERR "ancestry" "non-decreasing goal ids in ancestry"
+
 fun ancestry tree start =
   let
-    fun walk seen id =
-      if Lib.mem id seen then
-        raise ERR "ancestry" "cycle in goal ancestry"
-      else
-        case #parent (goal tree id) of
-            NONE => []
-          | SOME parent =>
-              (id, parent) ::
-              walk (id :: seen) (#parent (rapp tree parent))
+    fun walk id =
+      case #parent (goal tree id) of
+          NONE => []
+        | SOME parent =>
+            (id, parent) ::
+            walk (checked_ancestor id (#parent (rapp tree parent)))
   in
-    walk [] start
+    walk start
   end
 
 fun original_goal tree start =
@@ -778,9 +766,9 @@ fun take_through_rapp wanted [] = []
          else take_through_rapp wanted rest)
       end
 
-fun copying_sources tree parent_id assigned child_specs =
+fun copying_sources_on_path tree parent_id relevant_assigned
+      dropped_candidates =
   let
-    val parent = goal tree parent_id
     val path = ancestry tree parent_id
     val ancestor_created =
       List.foldl
@@ -788,24 +776,11 @@ fun copying_sources tree parent_id assigned child_specs =
           dependencies_union
             dependencies (#created (rapp tree rid)))
         (empty_dependencies ()) path
-    val child_dependencies =
-      List.foldl
-        (fn ((_, deps, _, _), dependencies) =>
-          dependencies_union dependencies deps)
-        (empty_dependencies ()) child_specs
-    val relevant_assigned =
-      dependencies_intersection assigned (#deps parent)
     (* HOL types are inhabited, so a dropped metavariable needs no
        synthesis goal.  It still drives copying exactly like an
        assignment. *)
     val dropped =
-      #deps parent
-      |> (fn dependencies =>
-            dependencies_difference dependencies relevant_assigned)
-      |> (fn dependencies =>
-            dependencies_difference dependencies child_dependencies)
-      |> (fn dependencies =>
-            dependencies_intersection dependencies ancestor_created)
+      dependencies_intersection dropped_candidates ancestor_created
     val copying =
       dependencies_union relevant_assigned dropped
     val not_created =
@@ -852,6 +827,28 @@ fun copying_sources tree parent_id assigned child_specs =
         (List.concat (map sibling_sources bounded_path))
   in
     List.rev reversed_sources
+  end
+
+fun copying_sources tree parent_id assigned child_specs =
+  let
+    val parent = goal tree parent_id
+    val relevant_assigned =
+      dependencies_intersection assigned (#deps parent)
+    val child_dependencies =
+      List.foldl
+        (fn ((_, deps, _, _), dependencies) =>
+          dependencies_union dependencies deps)
+        (empty_dependencies ()) child_specs
+    val dropped_candidates =
+      dependencies_difference
+        (dependencies_difference (#deps parent) relevant_assigned)
+        child_dependencies
+  in
+    if dependencies_empty relevant_assigned andalso
+       dependencies_empty dropped_candidates then []
+    else
+      copying_sources_on_path tree parent_id relevant_assigned
+        dropped_candidates
   end
 
 fun install_rapp parent_id
@@ -1072,25 +1069,21 @@ fun nonterminal state = state = Unknown
 
 fun goal_irrelevant tree id =
   let
-    fun goal_path seen gid =
-      if Lib.mem gid seen then
-        raise ERR "goal_irrelevant" "cycle in goal ancestry"
-      else
-        let val current = goal tree gid
-        in
-          not (nonterminal (#state current)) orelse
-          (case #parent current of
-               NONE => false
-             | SOME parent => rapp_path (gid :: seen) parent)
-        end
-    and rapp_path seen rid =
-      let val current = rapp tree rid
+    fun goal_path gid =
+      let val current = goal tree gid
       in
         not (nonterminal (#state current)) orelse
-        goal_path seen (#parent current)
+        (case #parent current of
+             NONE => false
+           | SOME rid =>
+               let val application = rapp tree rid
+               in
+                 not (nonterminal (#state application)) orelse
+                 goal_path (checked_ancestor gid (#parent application))
+               end)
       end
   in
-    goal_path [] id
+    goal_path id
   end
 
 fun rapp_irrelevant tree id =

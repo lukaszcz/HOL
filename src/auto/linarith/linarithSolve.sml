@@ -109,12 +109,10 @@ fun add_ineq_with work (Lineq (k1, ty1, coeffs1, just1))
            (coeffs1, coeffs2),
          Added (just1, just2))
 
-fun elim_var_with work v
-      (ineq1 as Lineq (_, ty1, coeffs1, _))
-                   (ineq2 as Lineq (_, ty2, coeffs2, _)) =
+fun elim_var_with work
+      (ineq1 as Lineq (_, ty1, _, _), c1)
+      (ineq2 as Lineq (_, ty2, _, _), c2) =
   let
-    val c1 = List.nth (coeffs1, v)
-    val c2 = List.nth (coeffs2, v)
     val m = Arbint.lcm (Arbint.abs c1, Arbint.abs c2)
     val m1 = Arbint.div (m, Arbint.abs c1)
     val m2 = Arbint.div (m, Arbint.abs c2)
@@ -145,48 +143,41 @@ fun is_contradictory (Lineq (k, ty, _, _)) =
     | Lt => Arbint.>= (k, zero)
 
 (* The equation pivot is a coefficient of least magnitude among the
-   nonzero entries of the equations; ties (only ever c against ~c) go
-   to the one met first in row-then-column order.  The single pass
-   carries the position, so the rule holds by construction: searching
-   the rows again for the winning coefficient's value would have to
-   answer what a row holding its negation means, and would need a
-   handler for a value that cannot have gone missing.
+   nonzero entries of the equations; ties go to the one met first in
+   row-then-column order.  A unit coefficient
+   wins immediately in the unmetered scan.
 
    NONE means no equation has a nonzero coefficient.  elim reaches
    this only with nontrivial rows, so that is exactly "no equations",
    and the caller's inequality branch is what NONE asks for. *)
-fun pivot_equation_with work rows =
+fun pivot_equation_with (work : work) rows =
   let
-    fun in_row _ [] best = best
-      | in_row j (c :: cs) best =
+    exception UnitPivot of int * int * Arbint.int
+    fun in_row _ _ [] best = best
+      | in_row i j (c :: cs) best =
           let
             val _ = candidate work
             val magnitude = Arbint.abs c
+            val _ =
+              if not (#metered work) andalso ai_one magnitude then
+                raise UnitPivot (i, j, c)
+              else ()
             val best' =
               if ai_zero c then best
               else
                 case best of
-                    NONE => SOME (j, magnitude)
-                  | SOME (_, m) =>
-                      if Arbint.< (magnitude, m) then SOME (j, magnitude)
+                    NONE => SOME (i, j, c, magnitude)
+                  | SOME (_, _, _, m) =>
+                      if Arbint.< (magnitude, m) then
+                        SOME (i, j, c, magnitude)
                       else best
           in
-            in_row (j + 1) cs best'
+            in_row i (j + 1) cs best'
           end
     fun over_rows _ [] best = best
       | over_rows i (Lineq (_, _, coeffs, _) :: rest) best =
-          let
-            val _ = candidate work
-            val best' =
-              case (in_row 0 coeffs NONE, best) of
-                  (NONE, _) => best
-                | (SOME (j, magnitude), NONE) => SOME (i, j, magnitude)
-                | (SOME (j, magnitude), SOME (_, _, m)) =>
-                    if Arbint.< (magnitude, m) then SOME (i, j, magnitude)
-                    else best
-          in
-            over_rows (i + 1) rest best'
-          end
+          (candidate work;
+           over_rows (i + 1) rest (in_row i 0 coeffs best))
     (* Splitting the pivot row out by index leaves the other equations
        in their original order, as Lib.pluck did. *)
     fun split _ [] _ = NONE
@@ -194,10 +185,30 @@ fun pivot_equation_with work rows =
           SOME (row, List.revAppend (prefix, rest))
       | split i (row :: rest) prefix =
           (candidate work; split (i - 1) rest (row :: prefix))
-    fun located (i, j, _) =
-      Option.map (fn (row, others) => (j, row, others)) (split i rows [])
+    fun located (i, j, c, _) =
+      Option.map (fn (row, others) => (j, (row, c), others))
+        (split i rows [])
   in
-    Option.mapPartial located (over_rows 0 rows NONE)
+    Option.mapPartial located
+      (over_rows 0 rows NONE
+       handle UnitPivot (i, j, c) => SOME (i, j, c, one))
+  end
+
+(* Keep each dependent row's coefficient for the sign partition and
+   for every elimination pair that uses that row. *)
+fun partition_pivot_with work v rows =
+  let
+    fun split (row as Lineq (_, _, cs, _), (independent, dependent)) =
+      let
+        val _ = candidate work
+        val c = List.nth (cs, v)
+      in
+        if ai_zero c then (row :: independent, dependent)
+        else (independent, (row, c) :: dependent)
+      end
+    val (independent, dependent) = List.foldl split ([], []) rows
+  in
+    (List.rev independent, List.rev dependent)
   end
 
 (* One pass tallies the sign counts of every column; the pivot is the
@@ -250,10 +261,10 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
            | order => order)
     | order => order
 
-fun eliminate_pairs (work : work) v independent pos neg =
+fun eliminate_pairs (work : work) independent pos neg =
   let
     fun derive p n =
-      (application work; elim_var_with work v p n)
+      (application work; elim_var_with work p n)
 
     fun keep (row, acc as (seen, rev_rows)) =
       let val key = row_key row
@@ -311,14 +322,11 @@ fun elim_with work ineqs =
             SOME (v, eq, other_eqs) =>
               let
                 val (independent, dependent) =
-                  List.partition
-                    (fn Lineq (_, _, cs, _) =>
-                      (candidate work; ai_zero (List.nth (cs, v))))
-                    (other_eqs @ noneqs)
+                  partition_pivot_with work v (other_eqs @ noneqs)
                 val others =
                   List.map
                     (fn row =>
-                      (application work; elim_var_with work v eq row))
+                      (application work; elim_var_with work eq row))
                     dependent @ independent
               in
                 trace work (fn () => "equation pivot " ^ Int.toString v);
@@ -336,20 +344,16 @@ fun elim_with work ineqs =
                   | SOME (_, v) =>
                       let
                         val (independent, dependent) =
-                          List.partition
-                            (fn Lineq (_, _, cs, _) =>
-                              (candidate work;
-                               ai_zero (List.nth (cs, v)))) ineqs
+                          partition_pivot_with work v ineqs
                         val (pos, neg) =
                           List.partition
-                            (fn Lineq (_, _, cs, _) =>
-                              (candidate work;
-                               ai_pos (List.nth (cs, v)))) dependent
+                            (fn (_, c) => (candidate work; ai_pos c))
+                            dependent
                       in
                         trace work
                           (fn () => "inequality pivot " ^ Int.toString v);
                         elim_with work
-                          (eliminate_pairs work v independent pos neg)
+                          (eliminate_pairs work independent pos neg)
                       end
               end
       end

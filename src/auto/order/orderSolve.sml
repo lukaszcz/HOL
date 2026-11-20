@@ -216,25 +216,14 @@ fun close work (context : orderData.context) (edges, equalities) =
     one
   end
 
-fun graph work context facts =
-  let
-    val (edges, equalities, distinctions) =
-      expand work context facts
-  in
-    case #max_nodes work of
-        SOME maximum =>
-          if within_node_limit maximum edges
-          then SOME (edges, equalities, distinctions)
-          else NONE
-      | NONE => SOME (edges, equalities, distinctions)
-  end
+fun bounded_graph (work : work) (parts as (edges, _, _)) =
+  case #max_nodes work of
+      SOME maximum =>
+        if within_node_limit maximum edges then SOME parts else NONE
+    | NONE => SOME parts
 
-fun refute_with work context facts =
-  case graph work context facts of
-      NONE => NONE
-    | SOME (edges, equalities, distinctions) =>
-        search work
-          (close work context (edges, equalities)) distinctions
+fun refute_graph work context (edges, equalities, distinctions) =
+  search work (close work context (edges, equalities)) distinctions
 
 (* Proving a literal outright is the other half of the procedure.  A
    refutation reads the negated goal as a literal, and a relational atom
@@ -303,7 +292,7 @@ fun attempt work context theorems term =
     val supplied = facts_of_all work context theorems
     fun carry theorem = EQ_MP (SYM equation) theorem
   in
-    case graph work context supplied of
+    case bounded_graph work (expand work context supplied) of
         NONE => NONE
       | SOME parts =>
           (case Option.mapPartial (prove_literal work context parts)
@@ -318,9 +307,30 @@ fun attempt work context theorems term =
                        | NONE => (mk_neg target, fn r => CCONTR target r)
                    val negated =
                      facts_of work context (ASSUME assumption)
+                   val refutation_graph =
+                     case #max_nodes work of
+                         (* Keep the order of charges in the metered path. *)
+                         NONE =>
+                           bounded_graph work
+                             (expand work context (negated @ supplied))
+                       | SOME _ =>
+                           let
+                             val (edges, equalities, distinctions) = parts
+                             val (extra_edges, extra_equalities,
+                                  extra_distinctions) =
+                               expand work context negated
+                             val extended =
+                               (extra_edges @ edges,
+                                extra_equalities @ equalities,
+                                extra_distinctions @ distinctions)
+                           in
+                             if null extra_edges then SOME extended
+                             else bounded_graph work extended
+                           end
                  in
                    Option.map (carry o restore)
-                     (refute_with work context (negated @ supplied))
+                     (Option.mapPartial (refute_graph work context)
+                        refutation_graph)
                  end)
   end
 

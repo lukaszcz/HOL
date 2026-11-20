@@ -426,10 +426,17 @@ fun set_definitional_context theorems =
        (HOLset.empty String.compare, List.mapPartial defined_head theorems))
 
 fun mentions_definition term =
-  List.exists
-    (fn constant =>
-      HOLset.member (!definitional_heads, #1 (Term.dest_const constant)))
-    (find_terms Term.is_const term)
+  let
+    val heads = !definitional_heads
+    fun mentions current =
+      case Term.dest_term current of
+          CONST {Name, ...} => HOLset.member (heads, Name)
+        | COMB (rator, rand) => mentions rator orelse mentions rand
+        | LAMB (_, body) => mentions body
+        | _ => false
+  in
+    mentions term
+  end
 
 (* Bounded rather than exhaustive: one pass strips one wrapper, and a
    wrapper over a wrapper needs as many passes as it has layers.  A

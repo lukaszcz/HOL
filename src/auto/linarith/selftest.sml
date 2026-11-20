@@ -107,6 +107,40 @@ val _ =
 
 val _ =
   check
+    ("num cancellation preserves unmatched copies of repeated summands",
+     fn () =>
+       let
+         val num_w = Term.mk_var ("linarith_num_w", numSyntax.num)
+         (* The carrier's expression conversion combines repeated
+            summands. Keep them separate to test multiset cancellation. *)
+         val normalize =
+           linarithCancel.mk_norm_conv
+             {ac =
+                {dest_less = numSyntax.dest_less,
+                 dest_leq = numSyntax.dest_leq,
+                 strip_plus = numSyntax.strip_plus,
+                 mk_plus = numSyntax.mk_plus,
+                 assoc = arithmeticTheory.ADD_ASSOC,
+                 comm = arithmeticTheory.ADD_COMM,
+                 rid = arithmeticTheory.ADD_0,
+                 ac_fallback = SOME numSimps.ADDR_CANON_CONV},
+              ty = numSyntax.num,
+              leq_cancel = arithmeticTheory.LE_ADD_LCANCEL,
+              less_cancel = arithmeticTheory.LT_ADD_LCANCEL,
+              eq_cancel = arithmeticTheory.EQ_ADD_LCANCEL,
+              expression_conv = Conv.ALL_CONV,
+              reduce_conv = Conv.ALL_CONV,
+              refl_thms = []}
+         val left = num_plus num_x (num_plus num_y (num_plus num_x num_z))
+         val right = num_plus num_y (num_plus num_x (num_plus num_y num_w))
+         val theorem = normalize (num_leq left right)
+         val expected = num_leq (num_plus num_x num_z) (num_plus num_y num_w)
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl theorem)) expected
+       end)
+
+val _ =
+  check
     ("num norm_conv decides a ground relation",
      fn () =>
        Term.aconv
@@ -369,6 +403,25 @@ val _ =
             SOME (Decomp {lhs, lhs_const, ...}) =>
               null lhs andalso lhs_const = Arbrat.zero
           | NONE => false))
+
+val _ =
+  check
+    ("an atom that cancels and reappears takes a new column position",
+     fn () =>
+       let
+         val plus = mk_binary synth_plus
+         val lhs =
+           plus synth_x
+             (plus synth_y
+                (plus synth_x (Term.mk_comb (synth_neg, synth_x))))
+       in
+         case linarithDecomp.decomp (mk_binary synth_leq lhs synth_zero) of
+             SOME (Decomp {lhs = [(first, a), (second, b)], ...}) =>
+               Term.aconv first synth_y andalso
+               Term.aconv second synth_x andalso
+               a = Arbrat.one andalso b = Arbrat.one
+           | _ => false
+       end)
 
 val _ =
   linarithData.register_instance (make_decomp_instance NONE)

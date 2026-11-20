@@ -245,10 +245,16 @@ val _ =
          val beta = (Abs ("x", Bound 0) $ Fvar "a") $ Fvar "b"
          val eta = Abs ("x", Fvar "f" $ Bound 0)
          val no_eta = Abs ("x", Bound 0 $ Bound 0)
+         val nested = Fvar "f" $ Abs ("y", Bound 0)
+         val nested_eta = Abs ("x", nested $ Bound 0)
+         val nested_no_eta =
+           Abs ("x", (Fvar "f" $ Abs ("y", Bound 1)) $ Bound 0)
        in
          aconv (wkNorm beta, Fvar "a" $ Fvar "b") andalso
          aconv (wkNorm eta, Fvar "f") andalso
-         aconv (wkNorm no_eta, no_eta)
+         aconv (wkNorm no_eta, no_eta) andalso
+         aconv (wkNorm nested_eta, nested) andalso
+         aconv (wkNorm nested_no_eta, nested_no_eta)
        end)
 
 val _ =

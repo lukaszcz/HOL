@@ -2475,6 +2475,45 @@ val _ =
 
 val _ =
   test
+    ("indexed safe closure preserves alpha-equivalent assumption order",
+     fn () =>
+       let
+         val x = mk_var ("closure_x", Type.ind)
+         val y = mk_var ("closure_y", Type.ind)
+         fun all v =
+           boolSyntax.mk_forall
+             (v, boolSyntax.mk_conj (mk_comb (phase1_p, v), phase1_pa))
+         val ax = all x
+         val ay = all y
+         val negatives =
+           [ax, boolSyntax.mk_neg ay, ay, boolSyntax.mk_neg ax]
+         val implications =
+           [ax, boolSyntax.mk_imp (ay, phase1_qa), ay,
+            boolSyntax.mk_imp (ax, phase1_qa)]
+         fun positions select assumptions =
+           let
+             val goal = (assumptions, phase1_ra)
+             val steps = seq.take 5 (safe_step cascade_cs
+               (clasetGoal.from_goal goal, 1))
+           in
+             if length steps = 4 andalso List.all (valid_step goal) steps then
+               List.mapPartial (select o clasetStep.kind_of o #1) steps
+             else []
+           end
+         fun contradiction (clasetStep.Contradiction positions) =
+               SOME positions
+           | contradiction _ = NONE
+         fun mp (clasetStep.ModusPonens {implication, antecedent}) =
+               SOME (implication, antecedent)
+           | mp _ = NONE
+         val expected = [(2, 1), (2, 3), (4, 1), (4, 3)]
+       in
+         positions contradiction negatives = expected andalso
+         positions mp implications = expected
+       end)
+
+val _ =
+  test
     ("safe cascade slot 3 applies a safe zero-premise rule",
      fn () =>
        step_gives cascade_cs ([], boolSyntax.T)

@@ -29,26 +29,54 @@ type norm_spec = {
   refl_thms : thm list
 }
 
-fun remove_aconv tm items =
-  Option.map #2 (Lib.total (Lib.pluck (Term.aconv tm)) items)
-
-(* The whole common multiset in one pass, as (common, left rest, right
-   rest).  Each left occurrence consumes one right occurrence, so a
-   summand repeated on both sides cancels the right number of times, and
-   every list keeps the order it had on its own side. *)
-fun common_summands left right =
-  let
-    fun scan [] common rest_l rest_r =
-          (List.rev common, List.rev rest_l, rest_r)
-      | scan (item :: items) common rest_l rest_r =
-          case remove_aconv item rest_r of
-              SOME rest_r' => scan items (item :: common) rest_l rest_r'
-            | NONE => scan items common (item :: rest_l) rest_r
-  in
-    case scan left [] [] right of
-        ([], _, _) => NONE
-      | split => SOME split
-  end
+(* Each left occurrence consumes one right occurrence. Walk the original
+   right list to remove its first consumed occurrences, so each remainder
+   keeps its original terms in order. *)
+fun common_summands [item] right =
+      Option.map (fn (_, rest) => ([item], [], rest))
+        (Lib.total (Lib.pluck (Term.aconv item)) right)
+  | common_summands left [item] =
+      Option.map (fn (matched, rest) => ([matched], rest, []))
+        (Lib.total (Lib.pluck (Term.aconv item)) left)
+  | common_summands left right =
+      let
+        fun count (item, counts) =
+          let
+            val available = Option.getOpt (Termtab.lookup counts item, 0)
+          in
+            Termtab.update (item, available + 1) counts
+          end
+        fun consume (item, (counts, common, rest)) =
+          let
+            val available = Option.getOpt (Termtab.lookup counts item, 0)
+          in
+            if available > 0 then
+              (Termtab.update (item, available - 1) counts,
+               item :: common, rest)
+            else (counts, common, item :: rest)
+          end
+        val right_counts = List.foldl count Termtab.empty right
+        val (counts, common, rest_left) =
+          List.foldl consume (right_counts, [], []) left
+        fun keep_unused (item, (counts, rest)) =
+          let
+            val available = Option.getOpt (Termtab.lookup counts item, 0)
+          in
+            if available > 0 then
+              (Termtab.update (item, available - 1) counts, item :: rest)
+            else (counts, rest)
+          end
+      in
+        case common of
+            [] => NONE
+          | _ =>
+              let
+                val (_, rest_right) =
+                  List.foldr keep_unused (counts, []) right
+              in
+                SOME (List.rev common, List.rev rest_left, rest_right)
+              end
+      end
 
 (* Only ever asked for a non-empty list of summands; an emptied side is
    handled by the identity theorem instead. *)

@@ -206,6 +206,27 @@ fun assumption_results (node, pos) =
         map result (List.filter closes (numbered asl))
       end)
 
+fun normalized_assumptions store asl =
+  Portable.mapi
+    (fn index => fn asm => (index + 1, asm, normalize_term store asm)) asl
+
+fun assumption_lookup positioned (_ :: _ :: _) =
+      let
+        val index =
+          List.foldr
+            (fn ((pos, asm, normalized), table) =>
+              Termtab.cons_list (normalized, (pos, asm)) table)
+            Termtab.empty positioned
+      in
+        Termtab.lookup_list index
+      end
+  | assumption_lookup positioned _ =
+      fn term =>
+        List.mapPartial
+          (fn (pos, asm, normalized) =>
+            if aconv normalized term then SOME (pos, asm) else NONE)
+          positioned
+
 fun contradiction_results (node, pos) =
   list_seq
     (fn () =>
@@ -213,51 +234,47 @@ fun contradiction_results (node, pos) =
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
         val normalized_w = normalize_term store w
-        val positioned = numbered asl
+        val positioned = normalized_assumptions store asl
+        val negatives =
+          List.filter (fn (_, _, normalized) => is_neg normalized)
+            positioned
+        val lookup = assumption_lookup positioned negatives
 
-        fun negatives [] = []
-          | negatives ((neg_pos, neg_tm) :: rest) =
+        fun results [] = []
+          | results ((neg_pos, neg_tm, normalized_neg) :: rest) =
             let
-              val normalized_neg = normalize_term store neg_tm
-            in
-              if is_neg normalized_neg then
+              val positive = dest_neg normalized_neg
+              val normalized_positive = normalize_term store positive
+              fun make (pos_pos, pos_tm) =
                 let
-                  val positive = dest_neg normalized_neg
-                  val normalized_positive = normalize_term store positive
-                  fun matches (_, tm) =
-                    aconv (normalize_term store tm) normalized_positive
-                  fun make (pos_pos, pos_tm) =
-                    let
-                      fun validation [] =
-                            let
-                              val nthm = assumption_thm neg_tm normalized_neg
-                              val pthm = assumption_thm pos_tm positive
-                              val false_thm = MP (NOT_ELIM nthm) pthm
-                            in
-                              Drule.CONTR normalized_w false_thm
-                            end
-                        | validation _ =
-                            raise mk_HOL_ERR "clasetStep"
-                              "contradiction_results"
-                              "contradiction validation has children"
-                    in
-                      Direct
-                        {kind = Contradiction (neg_pos, pos_pos),
-                         consumed = SOME neg_pos, created = no_created,
-                         eigenvariables = [], result = ([], validation),
-                         children = SOME [],
-                         action =
-                           clasetReplay.contradiction_action
-                             (neg_pos, pos_pos),
-                         closed = [], store = store}
-                    end
+                  fun validation [] =
+                        let
+                          val nthm = assumption_thm neg_tm normalized_neg
+                          val pthm = assumption_thm pos_tm positive
+                          val false_thm = MP (NOT_ELIM nthm) pthm
+                        in
+                          Drule.CONTR normalized_w false_thm
+                        end
+                    | validation _ =
+                        raise mk_HOL_ERR "clasetStep"
+                          "contradiction_results"
+                          "contradiction validation has children"
                 in
-                  map make (List.filter matches positioned) @ negatives rest
+                  Direct
+                    {kind = Contradiction (neg_pos, pos_pos),
+                     consumed = SOME neg_pos, created = no_created,
+                     eigenvariables = [], result = ([], validation),
+                     children = SOME [],
+                     action =
+                       clasetReplay.contradiction_action
+                         (neg_pos, pos_pos),
+                     closed = [], store = store}
                 end
-              else negatives rest
+            in
+              map make (lookup normalized_positive) @ results rest
             end
       in
-        negatives positioned
+        results negatives
       end)
 
 fun assume_or_contradiction input =
@@ -270,31 +287,32 @@ fun mp_results (node, pos) =
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
         val normalized_w = normalize_term store w
-        val positioned = numbered asl
+        val positioned = normalized_assumptions store asl
         val {params, ...} = clasetGoal.goal_at node pos
+        val implications =
+          List.mapPartial
+            (fn (imp_pos, imp_tm, normalized_imp) =>
+              Option.map
+                (fn sides => (imp_pos, imp_tm, normalized_imp, sides))
+                (total dest_imp_only normalized_imp))
+            positioned
+        val lookup = assumption_lookup positioned implications
 
-        fun implications [] = []
-          | implications ((imp_pos, imp_tm) :: rest) =
+        fun results [] = []
+          | results
+              ((imp_pos, imp_tm, normalized_imp, (antecedent, consequent))
+               :: rest) =
               let
-                val normalized_imp = normalize_term store imp_tm
-              in
-                case total dest_imp_only normalized_imp of
-                    NONE => implications rest
-                  | SOME (antecedent, consequent) =>
+                val normalized_antecedent = normalize_term store antecedent
+                fun make_matches [] = []
+                  | make_matches matches =
                       let
-                        val normalized_antecedent =
-                          normalize_term store antecedent
-                        fun matches (_, tm) =
-                          aconv (normalize_term store tm)
-                            normalized_antecedent
+                        val child_asl = consequent :: delete_nth asl imp_pos
+                        val child = (child_asl, normalized_w)
+                        val child_cgoal =
+                          {params = params, asl = child_asl, w = normalized_w}
                         fun make (ante_pos, ante_tm) =
                           let
-                            val child_asl =
-                              consequent :: delete_nth asl imp_pos
-                            val child_w = normalized_w
-                            val child = (child_asl, child_w)
-                            val child_cgoal =
-                              {params = params, asl = child_asl, w = child_w}
                             fun validation [child_thm] =
                                   let
                                     val ithm =
@@ -331,12 +349,13 @@ fun mp_results (node, pos) =
                                closed = [NONE], store = store}
                           end
                       in
-                        map make (List.filter matches positioned) @
-                        implications rest
+                        map make matches
                       end
+              in
+                make_matches (lookup normalized_antecedent) @ results rest
               end
       in
-        implications positioned
+        results implications
       end)
 
 fun eq_mp_results input =

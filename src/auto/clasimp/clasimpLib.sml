@@ -2330,12 +2330,23 @@ local
 in
   fun permutation_instances theorems (assumptions, conclusion) =
     let
+      val redex_cache = ref (Redblackmap.mkDict Term.compare)
+      fun goal_redexes head =
+        case Redblackmap.peek (!redex_cache, head) of
+            SOME found => found
+          | NONE =>
+              let
+                val found = redexes head (conclusion :: assumptions)
+              in
+                redex_cache := Redblackmap.insert (!redex_cache, head, found);
+                found
+              end
       fun instances theorem =
         case permutative_equation theorem of
             NONE => []
           | SOME (specialised, head) =>
               List.mapPartial (instance theorems specialised)
-                (redexes head (conclusion :: assumptions))
+                (goal_redexes head)
     in
       List.concat (map instances theorems)
     end
@@ -3146,40 +3157,40 @@ fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
       in
         normal_form ctxt policy without_self
       end
-    fun add ((spec, (_, theorem)), current) =
+    fun add ((spec, (_, theorem)), added) =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate
         val derived = Conv.CONV_RULE (conversion theorem) theorem
-        val original_info = clasetRules.ext_info spec theorem
-        val derived_info = clasetRules.ext_info spec derived
-        val role_preserved =
-          clasetRules.safe_class_of spec original_info =
-          clasetRules.safe_class_of spec derived_info
-        val support_preserved =
+        fun role_preserved () =
+          clasetRules.safe_class_of spec (clasetRules.ext_info spec theorem) =
+          clasetRules.safe_class_of spec (clasetRules.ext_info spec derived)
+        fun support_preserved () =
           List.all
             (fn assumption => boolSyntax.tmem assumption (hyp theorem))
             (hyp derived)
       in
         if aconv (concl derived) (concl theorem) orelse
            aconv (concl derived) boolSyntax.T orelse
-           not role_preserved orelse
-           not support_preserved then current
+           not (role_preserved ()) orelse
+           not (support_preserved ()) then added
         else
           let
+            val current = Option.getOpt (added, cs)
             val name =
               clasetLib.fresh_rule_name
                 {prefix = "__clasimp_transport_", from = 0}
                 current
           in
             searchBudget.charge budget searchBudget.Application;
-            clasetLib.add_derived_rule spec (name, derived) current
-            handle HOL_ERR _ => current
+            (* The fresh name makes admission independent of whether an
+               earlier declaration has the same conclusion. *)
+            SOME (clasetLib.add_derived_rule spec (name, derived) current)
           end
       end
-      handle HOL_ERR _ => current
-           | Conv.UNCHANGED => current
+      handle HOL_ERR _ => added
+           | Conv.UNCHANGED => added
   in
-    List.foldl add cs rules
+    List.foldl add NONE rules
   end
 
 val transport_claset_rules = transport_claset_rules_with
@@ -3303,12 +3314,10 @@ fun with_claset_transport_from transport budget policy ss candidates cs build
             | _ => [goal]
         val relevant =
           transport_candidates budget ss sites candidates
-        val extended =
-          transport ctxt budget policy ss relevant cs
       in
-        if length (clasetLib.rules_of extended) =
-           length (clasetLib.rules_of cs) then initial_result ()
-        else
+        case transport ctxt budget policy ss relevant cs of
+          NONE => initial_result ()
+        | SOME extended =>
           let
             val result =
               SOME (build extended goal ctxt)

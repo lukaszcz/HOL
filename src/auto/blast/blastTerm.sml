@@ -377,6 +377,14 @@ struct
       normalize term
     end
 
+  (* The eta test only needs the variable bound outside this term. *)
+  fun mentions_binder depth (Bound i) = i = depth
+    | mentions_binder depth (Abs (_, body)) =
+        mentions_binder (depth + 1) body
+    | mentions_binder depth (f $ x) =
+        mentions_binder depth f orelse mentions_binder depth x
+    | mentions_binder _ _ = false
+
   fun wkNormAux term =
     case term of
         Var v =>
@@ -390,7 +398,7 @@ struct
       | Abs (name, body) =>
           (case wkNormAux body of
                nb as (f $ x) =>
-                 if List.exists (fn i => i = 0) (loose_bnos f)
+                 if mentions_binder 0 f
                     orelse not (aconv (wkNorm x, Bound 0))
                  then Abs (name, nb)
                  else wkNorm (incr_boundvars ~1 f)

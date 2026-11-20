@@ -302,9 +302,10 @@ fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
     case distinctness_contribution tyi of
         SOME source => add_distinct_source key source cs
       | NONE =>
-          CS {decls = decls, wrappers = wrappers, index = index,
-              distinct = Redblackmap.filteri
-                (fn (key', _) => key <> key') distinct}
+          if Redblackmap.inDomain (distinct, key) then
+            CS {decls = decls, wrappers = wrappers, index = index,
+                distinct = #1 (Redblackmap.remove (distinct, key))}
+          else cs
   end
 
 (* elts: the TypeBase entries caught up against. *)
@@ -754,7 +755,7 @@ fun update_decls (ADD addition) decls =
              end)
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
-fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
+fun rebuild_claset decls wrappers distinct =
   CS {decls = decls, wrappers = wrappers, distinct = distinct,
       index =
         List.foldl (fn (decl, index) => add_decl decl index)
@@ -768,13 +769,22 @@ fun apply_add_batch (ADD addition, cs) =
   | apply_add_batch (RM _, _) =
       raise Fail "batch_apply: unexpected removal in ADD-only batch"
 
-fun batch_apply deltas (cs as CS {decls, ...}) =
+fun batch_apply deltas (cs as CS {decls, wrappers, distinct, ...}) =
   if List.exists is_removal deltas then
-    rebuild_claset
-      (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas)
-      (List.foldl
-        (fn (RM name, acc) => remove_rule name acc | (_, acc) => acc)
-        cs deltas)
+    let
+      fun update (delta, (decls, removed)) =
+        (update_decls delta decls,
+         case delta of
+             RM name => HOLset.add (removed, name)
+           | ADD _ => removed)
+      val (decls', removed) =
+        List.foldl update (decls, HOLset.empty String.compare) deltas
+      val distinct' = Redblackmap.filter
+        (fn {source, ...} => not (HOLset.member (removed, #name source)))
+        distinct
+    in
+      rebuild_claset decls' wrappers distinct'
+    end
   else
     List.foldl apply_add_batch cs deltas
 
@@ -1739,19 +1749,17 @@ fun goal_variables goal_terms =
    List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
      [] goal_terms)
 
-fun goal_type_instances_with charge get_goal_variables matching_pairs fact =
+fun polymorphic_instances_with charge get_goal_variables matching_pairs fact
+      original_types =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
-    val original_body = Thm.concl fact
-    val _ = charge searchBudget.Normalization
     val specialized =
       Drule.SPECL (map (Term.genvar o Term.type_of) quantified) fact
     val body = Thm.concl specialized
     val (goal_variables, goal_type_variables) = get_goal_variables ()
     val fact_variables =
       Term.free_varsl (Thm.concl fact :: Thm.hyp fact)
-    val alien =
-      Lib.set_diff (type_vars_in_term original_body) goal_type_variables
+    val alien = Lib.set_diff original_types goal_type_variables
     val support_types =
       List.foldl
         (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
@@ -1848,6 +1856,14 @@ fun goal_type_instances_with charge get_goal_variables matching_pairs fact =
         else instances
       end
   end
+
+fun goal_type_instances_with charge get_goal_variables matching_pairs fact =
+  (charge searchBudget.Normalization;
+   case type_vars_in_term (Thm.concl fact) of
+       [] => [fact]
+     | original_types =>
+         polymorphic_instances_with charge get_goal_variables matching_pairs
+           fact original_types)
 
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
    back-to-front to leave them in declaration order.  Order is observable:
