@@ -508,12 +508,16 @@ fun weaken_cond_congruence ss =
 
 val cond_depth = 40
 
-(* The unsafe side-condition solver added here reaches this simpset only:
-   the simplifier offers unsafe solvers to every traversal regardless of
-   the safe solvers, so a simpset with a normalisation phase to protect
-   (aesop) names the decision procedures it wants rather than inheriting
-   from here. *)
-fun derive_clasimp_ss ss facts =
+(* The clasimp simpset in two layers.  [clasimp_core] is everything that
+   does not depend on the [arith] facts of a context, and is derived once
+   for an srw_ss.  [clasimp_with_facts] adds the linear-arithmetic layer,
+   which is all the facts change, so a new fact list costs a fragment and
+   a solver rather than a derivation, and the LHS views, which are derived
+   from the core, are shared between fact lists (see [view_base]).  The
+   linear-arithmetic fragment is added last: the one fragment after it in
+   the original order, [ARITH_AC_ss], has no decision procedure, so the
+   decision procedures are in the same order either way. *)
+fun clasimp_core ss =
   ss
   |> weaken_cond_congruence
   |> simpLib.set_cond_depth cond_depth
@@ -586,6 +590,26 @@ fun derive_clasimp_ss ss facts =
      rewriting has left standing, and the side condition of a conditional
      rewrite, which is simplified with this same simpset. *)
   |> (fn ss' => simpLib.++ (ss', orderLib.ORDER_ext_ss))
+  (* The other half of the arithmetic layer.  HOL4's own arithmetic
+     simproc fragment normalises a linear term as well as deciding an
+     atom -- [std_ss ++ numSimps.ARITH_DP_ss] answers [LENGTH l - 1 - n]
+     with [LENGTH l - (n + 1)] -- and the reducer of the facts layer only
+     decides.  So two spellings of one term never met here: this simpset
+     folds the repeated subtraction to [LENGTH l - (1 + n)] and leaves it
+     beside [LENGTH l - (n + 1)].  [ARITH_AC_ss] is that normalisation on
+     its own, and it is num only; the int and real instances have no AC
+     fragment to point at, which is a limit of this line and not of the
+     argument for it. *)
+  |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag numSimps.ARITH_AC_ss))
+  |> simpLib.set_safe_solvers [safe_solver]
+  |> simpLib.set_subgoaler witness_subgoaler
+
+(* The unsafe side-condition solver added here reaches this simpset only:
+   the simplifier offers unsafe solvers to every traversal regardless of
+   the safe solvers, so a simpset with a normalisation phase to protect
+   (aesop) names the decision procedures it wants rather than inheriting
+   from here. *)
+fun clasimp_with_facts core facts =
   (* Isabelle decides an arithmetic atom wherever the traversal meets
      one.  [Fields.thy]'s [fast_arith_nat] and [Int.thy]'s [fast_arith]
      are simprocs on [m < n], [m <= n] and [m = n], and the comment on
@@ -596,22 +620,9 @@ fun derive_clasimp_ss ss facts =
      fast_nat_arith_simproc anyway".  The layer carried only that half,
      so an unfolded interval left a linear fact about num -- an atom in
      the goal rather than the condition of a rewrite -- standing. *)
-  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ext_ss_with facts))
-  (* The other half of that layer.  HOL4's own arithmetic simproc
-     fragment normalises a linear term as well as deciding an atom --
-     [std_ss ++ numSimps.ARITH_DP_ss] answers [LENGTH l - 1 - n] with
-     [LENGTH l - (n + 1)] -- and the reducer above only decides.  So two
-     spellings of one term never met here: this simpset folds the
-     repeated subtraction to [LENGTH l - (1 + n)] and leaves it beside
-     [LENGTH l - (n + 1)].  [ARITH_AC_ss] is that normalisation on its
-     own, and it is num only; the int and real instances have no AC
-     fragment to point at, which is a limit of this line and not of the
-     argument for it. *)
-  |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag numSimps.ARITH_AC_ss))
-  |> simpLib.set_safe_solvers [safe_solver]
+  simpLib.++ (core, linarithLib.LINARITH_ext_ss_with facts)
   |> simpLib.add_unsafe_solver
        (linarithLib.linarith_solver_with_facts facts)
-  |> simpLib.set_subgoaler witness_subgoaler
 
 (* Generic abstraction arguments are keyed by constant identity and arity. *)
 type abstraction_position = KernelSig.kernelid * int
@@ -812,14 +823,27 @@ fun same_bottom_up_key ((a, b), (a', b')) =
    was derived for, and a view table is reused as the predecessor of
    another simpset's, which may carry other facts.  An invocation runs
    them on its goal with its own context.  Stripping them rebuilds the
-   simpset, so it is done once for each simpset derived from. *)
+   simpset, so it is done once for each simpset derived from.
+
+   A derivation is given the simpset it derives from, the view base, and
+   a table records it: whether a table is stale for a simpset is a
+   question about their bases, not about the simpsets themselves, which
+   differ in the linear-arithmetic layer alone when they carry other
+   [arith] facts.  A clasimp-derived value supplies its core, which is
+   that simpset without the layer; any other simpset's base is the strip.
+   The base is delayed, so that a cache hit forces neither. *)
+type view_base = simpLib.simpset Susp.susp
+
 val view_derivation_simpset =
   memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
     (fn ss =>
        remove_present_frags [linarithLib.linarith_fragment_name] ss
        |> simpLib.remove_solver linarithLib.linarith_solver_name)
 
-fun prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
+fun stripped_view_base ss : view_base =
+  Susp.delay (fn () => view_derivation_simpset ss)
+
+fun prepare_lhs_view_derivation_with_positions ctxt caller_charge base
       positions =
   let
     exception DerivationLimit
@@ -844,7 +868,7 @@ fun prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
     val policy = position_policy charge positions
     val prepared =
       simpLib.prepare_child_first_observed_in ctxt remember policy
-        (view_derivation_simpset ss)
+        base
     fun candidate theorem =
       let
         val specialised = Drule.SPEC_ALL theorem
@@ -922,7 +946,8 @@ fun prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
   in one end
 
 fun prepare_lhs_view_derivation ctxt caller_charge ss =
-  prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
+  prepare_lhs_view_derivation_with_positions ctxt caller_charge
+    (view_derivation_simpset ss)
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
 fun derive_lhs_view_entries caller_charge ss =
@@ -931,7 +956,8 @@ fun derive_lhs_view_entries caller_charge ss =
 
 fun derive_lhs_view_entries_with_positions caller_charge ss positions =
   map (prepare_lhs_view_derivation_with_positions (Context.snapshot ())
-        caller_charge ss (HOLset.addList (no_positions,positions)))
+        caller_charge (view_derivation_simpset ss)
+        (HOLset.addList (no_positions,positions)))
       (simpLib.rewrite_source_handles ss)
 
 fun derive_lhs_views charge ss =
@@ -965,7 +991,7 @@ type source_set = simpLib.rewrite_source HOLset.set
 type source_index = (simpLib.rewrite_source,lhs_view_entry) Binarymap.dict
 type dependency_index = (KernelSig.kernelid,source_set) Binarymap.dict
 datatype lhs_view_table = LHSViewTable of
-  {simpset : simpLib.simpset, key : bottom_up_key,
+  {simpset : simpLib.simpset, base : view_base, key : bottom_up_key,
    sources : simpLib.rewrite_source list, entries : lhs_view_entry list,
    index : source_index,
    heads : dependency_index,
@@ -1024,7 +1050,7 @@ fun table_has_key key (LHSViewTable data) =
   same_bottom_up_key (#key data,key)
 
 (* Opaque reducers can change answers when their primed context changes. *)
-fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
+fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
       positions =
   let
     val declared = bottom_up_key_of ctxt
@@ -1066,7 +1092,8 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
           NONE => (Binarymap.mkDict source_compare,NONE,true)
         | SOME (LHSViewTable old) =>
             let
-              val context = simpLib.rewrite_context_changes (#simpset old,ss)
+              val context = simpLib.rewrite_context_changes
+                (Susp.force (#base old),Susp.force base)
               (* Append-mostly inventories share their unchanged suffix. *)
               fun additions remaining added =
                 if Portable.pointer_eq (remaining,#sources old) then
@@ -1105,8 +1132,8 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
     val derive =
       if null pending then NONE
       else SOME
-        (prepare_lhs_view_derivation_with_positions ctxt charge ss
-           positions)
+        (prepare_lhs_view_derivation_with_positions ctxt charge
+           (Susp.force base) positions)
     fun obtain source =
       if stale source then valOf derive source
       else
@@ -1129,7 +1156,7 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
     val _ = view_generation := !view_generation + 1
   in
     LHSViewTable
-      {simpset=ss,key=declared,sources=sources,
+      {simpset=ss,base=base,key=declared,sources=sources,
        entries=entries,index=index,heads=heads,
        rewrite_patterns=rewrite_patterns,
        positions=positions,generation= !view_generation,
@@ -1139,8 +1166,8 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
        plain=Susp.delay (fn () => strip_decisions ss)}
   end
 
-fun update_lhs_view_table ctxt caller_charge previous ss =
-  update_lhs_view_table_with_positions ctxt caller_charge previous ss
+fun update_lhs_view_table ctxt caller_charge previous base ss =
+  update_lhs_view_table_with_positions ctxt caller_charge previous base ss
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
 (* Bounded memoization is independent of when callers request a table.  A
@@ -1149,15 +1176,16 @@ fun update_lhs_view_table ctxt caller_charge previous ss =
 fun make_lhs_view_cache_in caller_charge =
   let
     val tables = ref ([] : lhs_view_table list)
-    fun simpset (LHSViewTable data) = #simpset data
-    fun previous key ss sources =
+    fun base_of (LHSViewTable data) = Susp.force (#base data)
+    fun previous key base ss sources =
       let
         val candidates = List.filter (table_has_key key) (!tables)
         (* Several tables can share the same native inventory while their
            conversions or decision procedures differ. Break that tie by
            actual context changes before choosing a predecessor. *)
         fun context_rank table =
-          let val changes = simpLib.rewrite_context_changes (simpset table,ss)
+          let val changes = simpLib.rewrite_context_changes
+                (base_of table,Susp.force base)
           in
             (if #rebuild changes then 1 else 0,
              (if #context_sensitive changes then 1 else 0,
@@ -1195,17 +1223,19 @@ fun make_lhs_view_cache_in caller_charge =
         case suffix sources of SOME table => SOME table
           | NONE => #1 (List.foldl score (NONE,~1) candidates)
       end
-    fun get ctxt ss =
+    fun get ctxt base ss =
       let val key = bottom_up_key_of ctxt
       in
         case List.find
-          (fn table => Portable.pointer_eq (simpset table,ss) andalso
-                       table_has_key key table) (!tables) of
+          (fn LHSViewTable data =>
+             Portable.pointer_eq (#simpset data,ss) andalso
+             table_has_key key (LHSViewTable data)) (!tables) of
             SOME table => table
           | NONE =>
               let
                 val table = update_lhs_view_table ctxt caller_charge
-                  (previous key ss (simpLib.rewrite_source_handles ss)) ss
+                  (previous key base ss (simpLib.rewrite_source_handles ss))
+                  base ss
                 val kept = List.take (!tables,Int.min (7,length (!tables)))
               in tables := table::kept; table end
       end
@@ -1213,7 +1243,7 @@ fun make_lhs_view_cache_in caller_charge =
 
 fun make_lhs_view_cache caller_charge =
   let val get = make_lhs_view_cache_in caller_charge
-  in fn ss => get (Context.snapshot ()) ss end
+  in fn ss => get (Context.snapshot ()) (stripped_view_base ss) ss end
 
 fun marker_skip theorem =
   Option.isSome (clasetLib.marker_of theorem) orelse
@@ -1535,8 +1565,16 @@ fun make_supplied_view_cache_core () =
                     #positions table
                   else positions_of_sources
                     (#1 (simpLib.rewrite_sources ss []))
+                (* The table's own simpset, or its suspension, which a
+                   prepared simpset is by the check in bind: the base
+                   is suspended in step. *)
+                val base =
+                  if Portable.pointer_eq (ss,#simpset table) then #base table
+                  else Susp.delay (fn () =>
+                    simpLib.suspend_rewrite_sources
+                      (HOLset.listItems suspended) (Susp.force (#base table)))
                 val next = update_lhs_view_table_with_positions ctxt
-                  (fn () => ()) (SOME ambient) ss
+                  (fn () => ()) (SOME ambient) base ss
                   (HOLset.union (positions,supplied))
                 val kept = List.take
                   (!adjusted,Int.min (7,length (!adjusted)))
@@ -1620,7 +1658,7 @@ fun make_supplied_view_cache_core () =
                 "ambient table has another abstraction policy"
         val derive = Susp.delay (fn () =>
           prepare_lhs_view_derivation_with_positions ctxt charge
-            (#simpset working) positions)
+            (Susp.force (#base working)) positions)
         val derived = ref 0
         val memoized = ref 0
         fun one (theorem,sources) =
@@ -1761,7 +1799,7 @@ fun make_working_simpset_cache_in caller_charge =
   let
     val tables = make_lhs_view_cache_in caller_charge
     val states = ref ([] : working_simpset list)
-    fun get ctxt ss =
+    fun get ctxt base ss =
       let val key = bottom_up_key_of ctxt
       in
         case List.find
@@ -1771,7 +1809,7 @@ fun make_working_simpset_cache_in caller_charge =
             SOME state => state
           | NONE =>
               let
-                val table = Susp.delay (fn () => tables ctxt ss)
+                val table = Susp.delay (fn () => tables ctxt base ss)
                 val full = Susp.delay (fn () =>
                   let val LHSViewTable data = Susp.force table
                   in Susp.force (#full data) end)
@@ -1788,7 +1826,7 @@ fun make_working_simpset_cache_in caller_charge =
 
 fun make_working_simpset_cache caller_charge =
   let val get = make_working_simpset_cache_in caller_charge
-  in fn ss => get (Context.snapshot ()) ss end
+  in fn ss => get (Context.snapshot ()) (stripped_view_base ss) ss end
 
 val cached_working_simpset = make_working_simpset_cache_in (fn () => ())
 
@@ -1805,34 +1843,42 @@ fun working_simpset_for (SuppliedViewBinding {table,...}) =
    lifted into the extension engine.  The bounded identity/source memo
    above retains completed tables across changes; the derived value owns
    the lazy working state of the declarations it was last asked for, and
-   the bounded cache above serves every other request. *)
-fun owned_working_simpset ss =
+   the bounded cache above serves every other request.  The state is for
+   the simpset ss, whose LHS views derive from base. *)
+fun owned_working_simpset base ss =
   let
     val state = memoUtil.keyed_memo
       (fn (key, _) => fn (key', _) => same_bottom_up_key (key, key'))
-      (fn (_, ctxt) => cached_working_simpset ctxt ss)
+      (fn (_, ctxt) => cached_working_simpset ctxt base ss)
   in fn ctxt => state (bottom_up_key_of ctxt, ctxt) end
 
-(* The derived value is a function of the context's [arith] facts.  The
-   srw_ss state keys the stored memo through the derived-value mechanism;
-   the facts, compared by pointer, key a single-entry memo inside it: one
-   derivation per (srw_ss, facts) pair while the pair stays the same, and
-   a different fact list replaces it. *)
-fun derive_clasimp_value ss facts =
-  let val full = derive_clasimp_ss ss facts
+(* The derived value is a function of the srw_ss and of the context's
+   [arith] facts.  The srw_ss state keys the stored memo through the
+   derived-value mechanism.  Inside it, the core is derived once, when
+   first needed, and each fact list builds only the facts layer on it.
+   The lists, compared by pointer, key a memo of the four most recent, so
+   going back to an earlier fact list answers the value it had, working
+   state and LHS views included: one derivation per (srw_ss, facts) pair
+   for as long as a window alternates among a few lists.  The core is the
+   simpset the views of every layer derive from. *)
+fun derive_clasimp_value core facts =
+  let val full = clasimp_with_facts (Susp.force core) facts
   in {full = full,
       positions = positions_of_sources
         (#1 (simpLib.rewrite_sources full [])),
-      working = owned_working_simpset full}
+      working = owned_working_simpset core full}
   end
 
 val {get = _, get_of = clasimp_derived_of} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
-       memoUtil.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
-         (derive_clasimp_value (simpExtLib.lift_simpset ss)))
+       memoUtil.bounded_memo 4 (Lib.list_eq (Lib.curry Portable.pointer_eq))
+         (derive_clasimp_value
+            (Susp.delay (fn () => clasimp_core (simpExtLib.lift_simpset ss)))))
     (fn _ => {full = simpLib.empty_ss, positions = no_positions,
-              working = owned_working_simpset simpLib.empty_ss})
+              working = owned_working_simpset
+                          (Susp.delay (fn () => simpLib.empty_ss))
+                          simpLib.empty_ss})
 
 val selected_default = ref (NONE : working_simpset option)
 
@@ -1857,8 +1903,8 @@ fun working_simpset_in ctxt ss =
         if Portable.pointer_eq (ss,working_original state) andalso
            same_bottom_up_key (working_key state,bottom_up_key_of ctxt)
         then state
-        else cached_working_simpset ctxt ss
-    | NONE => cached_working_simpset ctxt ss
+        else cached_working_simpset ctxt (stripped_view_base ss) ss
+    | NONE => cached_working_simpset ctxt (stripped_view_base ss) ss
 
 fun working_simpset_of ss = working_simpset_in (Context.snapshot ()) ss
 
