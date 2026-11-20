@@ -75,13 +75,12 @@ type queue_entry = {goal : gid, prio : real, insertion : int}
 
 (* The parent links of goals and rapps, inverted, plus the copy links of
    goals inverted alongside them: [copy_children] sends an original goal to
-   the copies of it installed elsewhere in the tree.  All three maps list
-   their entries in creation order, which is ascending id order because
-   [install_rapp] is the only place either kind of child, or a copy, ever
-   appears.  Inverting the copy links matters for cost, not just
-   convenience: [derive_goal] reads them on every node of every refresh
-   round, and scanning the goal table for [copy_of] there would make each
-   round quadratic in trees that routinely reach hundreds of goals. *)
+   the copies of it installed elsewhere in the tree. Rule applications
+   and copies are prepended as they arrive. Readers choosing a witness
+   recover ascending id order. Goal children are inserted in that order.
+   [derive_goal] reads the inverted copy links during every refresh round.
+   Scanning the goal table for [copy_of] there would make each round
+   quadratic in trees that routinely reach hundreds of goals. *)
 type parent_index =
   {rapp_children : (gid, rid list) Redblackmap.dict,
    goal_children : (rid, gid list) Redblackmap.dict,
@@ -165,15 +164,21 @@ fun dependencies_of store ({params, asl, w} : cgoal) =
     {terms = terms, types = types}
   end
 
+fun sets_overlap (left, right) =
+  let
+    val (smaller, larger) =
+      if HOLset.numItems left <= HOLset.numItems right then (left, right)
+      else (right, left)
+  in
+    Option.isSome
+      (HOLset.find (fn item => HOLset.member (larger, item)) smaller)
+  end
+
 fun dependencies_overlap
       ({terms = left_terms, types = left_types} : dependencies)
       ({terms = right_terms, types = right_types} : dependencies) =
-  not
-    (HOLset.isEmpty
-       (HOLset.intersection (left_terms, right_terms))) orelse
-  not
-    (HOLset.isEmpty
-       (HOLset.intersection (left_types, right_types)))
+  sets_overlap (left_terms, right_terms) orelse
+  sets_overlap (left_types, right_types)
 
 fun dependencies_union
       ({terms = left_terms, types = left_types} : dependencies)
@@ -246,25 +251,23 @@ fun index_lookup table key =
       NONE => []
     | SOME entries => entries
 
-(* [copy] is fresh and larger than every copy already recorded against
-   [original], so appending keeps the copies in id order too. *)
 fun index_copy ((original, copy), table) =
   Redblackmap.insert
-    (table, original, index_lookup table original @ [copy])
+    (table, original, copy :: index_lookup table original)
 
-(* [rid] is fresh and larger than every rapp already recorded under
-   [parent], so appending keeps the sibling list in id order. *)
 fun index_install {parent, rid, children, copies}
       ({rapp_children, goal_children, copy_children} : parent_index)
       : parent_index =
   {rapp_children =
      Redblackmap.insert
-       (rapp_children, parent, index_lookup rapp_children parent @ [rid]),
+       (rapp_children, parent, rid :: index_lookup rapp_children parent),
    goal_children = Redblackmap.insert (goal_children, rid, children),
    copy_children = List.foldl index_copy copy_children copies}
 
-fun child_rapps (Tree {index, ...}) parent =
+fun reverse_child_rapps (Tree {index, ...}) parent =
   index_lookup (#rapp_children index) parent
+
+fun child_rapps tree parent = List.rev (reverse_child_rapps tree parent)
 
 fun rapp_goals (Tree {index, ...}) parent =
   index_lookup (#goal_children index) parent
@@ -272,7 +275,7 @@ fun rapp_goals (Tree {index, ...}) parent =
 (* The copies of [original] installed anywhere in the tree.  [install_rapp]
    canonicalises the key through [original_goal], so a copy never keys
    copies of its own and this relation is one level deep. *)
-fun copy_goals (Tree {index, ...}) original =
+fun reverse_copy_goals (Tree {index, ...}) original =
   index_lookup (#copy_children index) original
 
 fun active_cgoal ({cgoal, norm, ...} : goal) =
@@ -414,7 +417,7 @@ fun copy_supports tree original =
     (fn copy =>
       Option.map (fn path => (copy, path))
         (copy_support_path tree original copy))
-    (copy_goals tree original)
+    (List.rev (reverse_copy_goals tree original))
 
 fun independently_proved tree id =
   let val current = goal tree id
@@ -424,7 +427,7 @@ fun independently_proved tree id =
       | _ =>
           List.exists
             (fn rid => #state (rapp tree rid) = Proved)
-            (child_rapps tree id)
+            (reverse_child_rapps tree id)
   end
 
 fun add_support_path [] required = SOME required
@@ -496,7 +499,7 @@ fun derive_goal tree (current : goal) =
     fun scan [] all_stuck =
           if List.exists
                (Option.isSome o copy_support_path tree id)
-               (copy_goals tree id)
+               (reverse_copy_goals tree id)
           then Proved
           else if all_stuck then Stuck
           else Unknown
@@ -508,7 +511,7 @@ fun derive_goal tree (current : goal) =
   in
     case #norm current of
         NormProved _ => Proved
-      | _ => scan (child_rapps tree id) exhausted
+      | _ => scan (reverse_child_rapps tree id) exhausted
   end
 
 fun refresh_once (tree as Tree (fields as {goals, rapps, clusters, ...})) =
@@ -687,31 +690,39 @@ fun assigned_between parent_store child_store =
      types = HOLset.fromList Type.compare types}
   end
 
-fun components tree ids =
+fun components children =
   let
-    fun overlaps selected candidate =
-      List.exists
-        (fn member =>
-          dependencies_overlap
-            (#deps (goal tree member)) (#deps (goal tree candidate)))
-        selected
-
-    fun close selected remaining =
+    (* Every remaining goal missed the earlier layers. Compare it only
+       with the dependencies of the layer just added. *)
+    fun close selected frontier remaining =
       let
         val (added, untouched) =
-          Lib.partition (overlaps selected) remaining
+          Lib.partition
+            (fn (child : goal) => dependencies_overlap frontier (#deps child))
+            remaining
       in
-        if null added then (selected, untouched)
-        else close (selected @ added) untouched
+        if null added then (List.rev selected, untouched)
+        else
+          let
+            fun collect ((child : goal), (selected, combined)) =
+              (child :: selected, dependencies_union combined (#deps child))
+            val (selected', frontier') =
+              List.foldl collect (selected, empty_dependencies ()) added
+          in
+            close selected' frontier' untouched
+          end
       end
 
     fun partition [] groups = List.rev groups
-      | partition (first :: rest) groups =
-          let val (group, remaining) = close [first] rest
-          in partition remaining (group :: groups)
-          end
+      | partition ((child : goal) :: rest) groups =
+          if dependencies_empty (#deps child) then
+            partition rest ([child] :: groups)
+          else
+            let val (group, remaining) = close [child] (#deps child) rest
+            in partition remaining (group :: groups)
+            end
   in
-    partition ids []
+    partition children []
   end
 
 fun goal_with_cluster cluster_id (goal : goal) : goal =
@@ -897,7 +908,7 @@ fun install_rapp parent_id
     val all_specs = child_specs @ copy_specs
 
     fun make_child
-          ((cgoal, deps, copy_of, forwarded), (id, entries, ids)) =
+          ((cgoal, deps, copy_of, forwarded), (id, children)) =
       let
         val child : goal =
           {id = id, cgoal = cgoal, store = child_store,
@@ -908,42 +919,33 @@ fun install_rapp parent_id
            unsafe_cursor = [], postponed = [],
            forwarded = forwarded, state = Unknown}
       in
-        (id + 1, (id, child) :: entries, id :: ids)
+        (id + 1, child :: children)
       end
 
-    val (next_gid', child_entries, reversed_child_ids) =
-      List.foldl make_child (next_gid, [], []) all_specs
-    val child_ids = List.rev reversed_child_ids
-    val ordered_children = List.rev child_entries
+    val (next_gid', reversed_children) =
+      List.foldl make_child (next_gid, []) all_specs
+    val ordered_children = List.rev reversed_children
+    val child_ids = map #id ordered_children
     (* The copy links this application adds, for the inverted index.  This
        is the only place a copy is ever created, so the index needs no
        other maintenance. *)
     val copy_links =
       List.mapPartial
-        (fn (id, {copy_of, ...} : goal) =>
+        (fn ({id, copy_of, ...} : goal) =>
           Option.map (fn source => (source, id)) copy_of)
         ordered_children
-    val goals_with_children =
-      Redblackmap.insertList (goals, ordered_children)
-    (* The rapp itself is installed below, so [provisional] keeps the old
-       index: it exists only to group the new goals by dependency
-       overlap, which reads the goal table alone. *)
-    val provisional =
-      Tree
-        (upd_tree fields (Fld #goals goals_with_children)
-           (Fld #next_gid next_gid') $$)
-    val groups = components provisional child_ids
+    val groups = components ordered_children
 
     fun make_cluster
           (members, (id, cluster_entries, goal_map, ids)) =
       let
         val current : cluster =
-          {id = id, parent = rid, goals = members, state = Unknown}
+          {id = id, parent = rid, goals = map #id members, state = Unknown}
         val goal_map' =
           List.foldl
-            (fn (gid, map) =>
+            (fn (child, map) =>
               Redblackmap.insert
-                (map, gid, goal_with_cluster id (goal provisional gid)))
+                (map, #id child, goal_with_cluster id child))
             goal_map members
       in
         (id + 1, (id, current) :: cluster_entries, goal_map',
@@ -953,7 +955,7 @@ fun install_rapp parent_id
     val (next_cid', cluster_entries, clustered_goals,
          reversed_cluster_ids) =
       List.foldl make_cluster
-        (next_cid, [], goals_with_children, []) groups
+        (next_cid, [], goals, []) groups
     val cluster_ids = List.rev reversed_cluster_ids
     val current_rapp : rapp =
       {id = rid, parent = parent_id, rule = rule,

@@ -211,7 +211,8 @@ fun norm_ty store ty =
               else mk_thy_type {Thy = Thy, Tyop = Tyop, Args = args}
             end
   in
-    recurse ty
+    if Redblackmap.numItems (#ty_bindings store) = 0 then ty
+    else recurse ty
   end
 
 val norm_type = norm_ty
@@ -253,7 +254,8 @@ fun inst_types store tm =
                | SOME (redex, residue) =>
                    SOME {redex = redex, residue = norm_ty store residue})
   in
-    Term.inst (List.mapPartial binding (type_vars_in_term tm)) tm
+    if Redblackmap.numItems (#ty_bindings store) = 0 then tm
+    else Term.inst (List.mapPartial binding (type_vars_in_term tm)) tm
   end
 
 fun walk_with store instantiate tm =
@@ -437,29 +439,21 @@ fun ordinary_expansion normalize store =
 fun ordinary_expander function_name normalize store =
   dependency_expander function_name (ordinary_expansion normalize store)
 
-fun instantiate store tm =
-  let
-    val {substitution, ...} =
-      ordinary_expander "instantiate" (fn tm => tm) store
-    val (instantiated, expanded) = substitution tm
-  in
-    Term.subst expanded instantiated
-  end
+fun instantiate_with function_name store tm =
+  if Redblackmap.numItems (#tm_bindings store) = 0 then inst_types store tm
+  else
+    let
+      val {substitution, ...} =
+        ordinary_expander function_name Lib.I store
+      val (instantiated, expanded) = substitution tm
+    in
+      Term.subst expanded instantiated
+    end
 
-fun normalize_with function_name expansion normalization tm =
-  let
-    val {substitution, ...} =
-      dependency_expander function_name expansion
-    val (instantiated, expanded) = substitution tm
-  in
-    beta_eta_normalize normalization
-      (#substitute expansion expanded instantiated)
-  end
+val instantiate = instantiate_with "instantiate"
 
 fun norm store tm =
-  normalize_with "norm"
-    (ordinary_expansion (fn tm => tm) store)
-    ordinary_normalization tm
+  beta_eta_normalize ordinary_normalization (instantiate_with "norm" store tm)
 
 fun insert_meta store (m, metas) =
   case meta_name m of
@@ -469,9 +463,11 @@ fun insert_meta store (m, metas) =
   | NONE => metas
 
 fun metas_of store tm =
-  Redblackmap.listItems (List.foldl (insert_meta store)
-    (Redblackmap.mkDict string_compare) (free_vars (norm store tm)))
-  |> map #2
+  if Redblackmap.numItems (#metas store) = 0 then []
+  else
+    Redblackmap.listItems (List.foldl (insert_meta store)
+      (Redblackmap.mkDict string_compare) (free_vars (norm store tm)))
+    |> map #2
 
 fun same_var left right = aconv left right
 

@@ -737,6 +737,23 @@ val _ =
 
 val _ =
   test
+    ("normalization still reduces and instantiates without term bindings",
+     fn () =>
+       let
+         val (tymeta, store) = clasetMeta.new_tymeta clasetMeta.empty
+         val typed = Term.mk_var ("unbound_term", tymeta)
+         val store' = the_store (clasetMeta.bind_ty (tymeta, bool_ty) store)
+         val x = Term.mk_var ("unbound_term", bool_ty)
+         val f = Term.mk_var ("eta_f", bool_ty --> bool_ty)
+         val eta = Term.mk_abs (x, Term.mk_comb (f, x))
+       in
+         Term.aconv (clasetMeta.instantiate store' typed) x andalso
+         Term.aconv (clasetMeta.norm store' typed) x andalso
+         Term.aconv (clasetMeta.norm clasetMeta.empty eta) f
+       end)
+
+val _ =
+  test
     ("term expansion instantiates dependency types capture-safely",
      fn () =>
        let

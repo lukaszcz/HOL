@@ -1113,10 +1113,13 @@ val table : (string * (unit -> resolution)) list =
    translated "source_zip_append2"),
 ]
 
+(* Insert from right to left so the first entry wins on duplicate names. *)
+val builders =
+  List.foldr (fn (entry, index) => Symtab.update entry index)
+    Symtab.empty table
+
 fun lookup citation =
-  case List.find (fn (name, _) => name = citation) table of
-      SOME (_, build) => SOME (build ())
-    | NONE => NONE
+  Option.map (fn build => build ()) (Symtab.lookup builders citation)
 
 fun resolve citation =
   case lookup citation of

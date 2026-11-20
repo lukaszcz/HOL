@@ -34,18 +34,19 @@ fun distinct_theorems theorems =
     (Lib.pair_compare (Term.compare, Lib.list_compare Term.compare))
     (fn theorem => (Thm.concl theorem, Thm.hyp theorem)) theorems
 
-fun order_fact_views_with charge goal theorems =
+(* Antisymmetry can close an equality whose conclusion contains no
+   relation application. Concrete edges in the context then supply
+   the carrier. *)
+fun concrete_relation_sites theorems =
+  List.filter (null o type_vars_in_term)
+    (relation_sites (map Thm.concl theorems))
+
+fun order_fact_views_with _ _ _ [] = []
+  | order_fact_views_with charge get_sites goal theorems =
   let
     val environment =
       clasetFacts.create_with_charge charge goal theorems
-    (* Antisymmetry can close an equality whose conclusion contains no
-       relation application.  Concrete edges in the context then supply
-       the carrier; a schematic citation alone does not. *)
-    val sites =
-      relation_sites (#2 goal :: #1 goal) @
-      List.filter
-        (null o type_vars_in_term)
-        (relation_sites (map Thm.concl theorems))
+    val sites = get_sites ()
     fun views entry =
       let
         val schematic = #theorem (clasetFacts.schematic_view entry)
@@ -73,8 +74,10 @@ fun order_fact_views_with charge goal theorems =
       (List.concat (map views (clasetFacts.facts environment)))
   end
 
-fun order_fact_views goal theorems =
-  order_fact_views_with (fn _ => ()) goal theorems
+fun order_fact_views (goal as (asl, w)) theorems =
+  order_fact_views_with (fn _ => ())
+    (fn () => relation_sites (w :: asl) @ concrete_relation_sites theorems)
+    goal theorems
 
 (* The goal's own assumptions are the context: an order arrives as a
    premise, so a tactic that ignored them would decide nothing.  The
@@ -126,6 +129,7 @@ fun make_order_reducer budget =
     exception CTXT of
       {theorems : thm list,
        contexts : orderData.context list,
+       concrete_sites : term list Portable.HOLSusp.susp,
        sites :
          (term * (thm list * orderData.context list)) list ref}
     fun get_context e = (raise e) handle CTXT value => value
@@ -145,12 +149,18 @@ fun make_order_reducer budget =
            passes, and rewriting each of those with the order
            definitions to find nothing is the cost this avoids. *)
         CTXT {theorems = theorems, contexts = contexts,
+              concrete_sites =
+                Portable.HOLSusp.delay (fn () =>
+                  concrete_relation_sites theorems),
               sites = ref []}
       end
     fun apply args tm =
       let
-        val {theorems, contexts, sites} =
+        val {theorems, contexts, concrete_sites, sites} =
           get_context (#context args)
+        fun concrete () = Portable.HOLSusp.force concrete_sites
+        fun not_literal () =
+          raise ERR "ORDER_DP" "not a literal of an order in the context"
         fun equality_domain term =
           case Lib.total dest_eq term of
               SOME (left, _) => SOME (type_of left)
@@ -175,21 +185,14 @@ fun make_order_reducer budget =
                          Lib.can (Type.match_type pattern) domain
                        end)
                      contexts
-                then
-                  List.filter
-                    (null o type_vars_in_term)
-                    (relation_sites (map Thm.concl theorems))
+                then concrete ()
                 else []
-        fun matching_site [] = NONE
-          | matching_site (site :: rest) =
-              if List.exists
-                   (fn context =>
-                     Lib.can
-                       (Term.match_term (#relation context)) site)
-                   contexts
-              then SOME site
-              else matching_site rest
-        fun at_atom () =
+        fun matching_site site =
+          List.exists
+            (fn context =>
+              Lib.can (Term.match_term (#relation context)) site)
+            contexts
+        fun at_atom atom_sites =
           case List.find (fn (key, _) => aconv key tm) (!sites) of
               SOME (_, result) => result
             | NONE =>
@@ -199,7 +202,8 @@ fun make_order_reducer budget =
                         NONE => (fn _ => ())
                       | SOME owned => searchBudget.charge owned
                   val views =
-                    order_fact_views_with charge ([], tm) theorems
+                    order_fact_views_with charge
+                      (fn () => atom_sites @ concrete ()) ([], tm) theorems
                   val result = (views, contexts_of views)
                   val previous = !sites
                 in
@@ -209,26 +213,23 @@ fun make_order_reducer budget =
                   result
                 end
       in
-        if List.exists (fn c => orderData.is_literal c tm) contexts then
+        if null contexts then not_literal ()
+        else if List.exists (fn c => orderData.is_literal c tm) contexts then
           EQT_INTRO (prove contexts theorems tm)
         else
-          case
-            matching_site
-              (relation_sites [tm] @ context_site_for_equality ())
-          of
-              NONE =>
-                raise ERR "ORDER_DP"
-                  "not a literal of an order in the context"
-            | SOME _ =>
-                let
-                  val (views, derived) = at_atom ()
-                in
-                  if List.exists
-                       (fn c => orderData.is_literal c tm) derived
-                  then EQT_INTRO (prove derived views tm)
-                  else raise ERR "ORDER_DP"
-                         "not a literal of an order in the context"
-                end
+          let val atom_sites = relation_sites [tm]
+          in
+            if List.exists matching_site atom_sites orelse
+               List.exists matching_site (context_site_for_equality ())
+            then
+              let val (views, derived) = at_atom atom_sites
+              in
+                if List.exists (fn c => orderData.is_literal c tm) derived
+                then EQT_INTRO (prove derived views tm)
+                else not_literal ()
+              end
+            else not_literal ()
+          end
       end
   in
     Traverse.REDUCER
@@ -236,7 +237,9 @@ fun make_order_reducer budget =
        addcontext = addcontext,
        apply = apply,
        initial =
-         CTXT {theorems = [], contexts = [], sites = ref []}}
+         CTXT {theorems = [], contexts = [],
+               concrete_sites = Portable.HOLSusp.delay (fn () => []),
+               sites = ref []}}
   end
 
 fun order_ss reducer =

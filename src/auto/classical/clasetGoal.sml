@@ -19,7 +19,7 @@ datatype node =
   Node of {goals : cgoal list,
            store : store,
            replay : replay_script,
-           size : int,
+           size : int option ref,
            level : int,
            paths : int list list,
            marks : binding_marks,
@@ -125,7 +125,7 @@ fun make_node goals store replay level paths marks avoids =
       val store' = register_params goals store
     in
       Node {goals = goals, store = store', replay = replay,
-            size = goals_size store' goals, level = level, paths = paths,
+            size = ref NONE, level = level, paths = paths,
             marks = marks, avoids = avoids, rendering = ref NONE,
             renders = ref [], spellings = ref []}
     end
@@ -168,7 +168,16 @@ fun replay_length node = clasetReplay.length (replay node)
 fun level (Node {level, ...}) = level
 fun goal_paths (Node {paths, ...}) = paths
 fun binding_marks (Node {marks, ...}) = marks
-fun size (Node {size, ...}) = size
+fun size (Node {size, goals, store, ...}) =
+  case !size of
+      SOME cached => cached
+    | NONE =>
+        let
+          val computed = goals_size store goals
+          val _ = size := SOME computed
+        in
+          computed
+        end
 fun avoids (Node {avoids, ...}) = avoids
 
 fun fresh_eigen node bound =

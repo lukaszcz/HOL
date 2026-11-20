@@ -1639,24 +1639,45 @@ fun maximal_type_joins_with charge substitutions =
                   val _ =
                     List.app (fn i => connect i (i + 1))
                       (List.tabulate (count, fn i => i))
+                  (* The connection loop visits each vertex's neighbors in
+                     increasing order, so each list is already descending.
+                     Store only edges, with binary search within each row. *)
+                  val rows = Vector.tabulate (count,
+                    fn i => Vector.fromList (Array.sub (neighbors, i)))
                   fun adjacent i j =
-                    (charge searchBudget.Candidate;
-                     Lib.mem j (Array.sub (neighbors, i)))
+                    let
+                      val _ = charge searchBudget.Candidate
+                      val row = Vector.sub (rows, i)
+                      fun find low high =
+                        if low >= high then false
+                        else
+                          let val mid = low + (high - low) div 2 in
+                            case Int.compare (j, Vector.sub (row, mid)) of
+                                LESS => find (mid + 1) high
+                              | EQUAL => true
+                              | GREATER => find low mid
+                          end
+                    in find 0 (Vector.length row) end
                   fun intersect i candidates =
                     List.filter (adjacent i) candidates
+                  fun score i pending =
+                    List.foldl
+                      (fn (j, size) => if adjacent i j then size + 1
+                                      else size)
+                      0 pending
                   fun pivot pending excluded =
                     case pending @ excluded of
                         [] => NONE
                       | first :: rest =>
                           SOME (#1
                             (List.foldl
-                               (fn (i, (best, score)) =>
-                                 let val size = length (intersect i pending)
+                               (fn (i, (best, best_score)) =>
+                                 let val size = score i pending
                                  in
-                                   if size > score then (i, size)
-                                   else (best, score)
+                                   if size > best_score then (i, size)
+                                   else (best, best_score)
                                  end)
-                               (first, length (intersect first pending))
+                               (first, score first pending)
                                rest))
                   val found = ref []
                   fun visit chosen pending excluded =
