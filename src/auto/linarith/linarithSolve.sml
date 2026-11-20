@@ -496,28 +496,37 @@ fun swap_less (Decomp {lhs, lhs_const, rhs, rhs_const,
 (* Unlike upstream's neqE-list ordering, each premise is discriminated by
    the discreteness its own decomposition carries
    (fast_lin_arith.ML:574-629). *)
+fun fold_neq_pass_with work discrete_only visit state items =
+  let
+    fun pass reversed state [] = visit (List.rev reversed) state
+      | pass reversed state ((item as (tm, decoded)) :: rest) =
+          (candidate work;
+           case decoded of
+               SOME decomp =>
+                 if is_neq decomp andalso
+                    (not discrete_only orelse is_discrete decomp)
+                 then
+                   (application work;
+                    case pass reversed state
+                           (rest @ [(tm, SOME (less_decomp decomp))]) of
+                        NONE => NONE
+                      | SOME next =>
+                          (application work;
+                           pass reversed next
+                             (rest @ [(tm, SOME (swap_less decomp))])))
+                 else pass (item :: reversed) state rest
+             | NONE => pass (item :: reversed) state rest)
+  in
+    pass [] state items
+  end
+
 fun elim_neq_with work items =
   let
-    fun pass _ [] = [[]]
-      | pass discrete_only ((item as (tm, NONE)) :: rest) =
-          (candidate work;
-           List.map (fn xs => item :: xs) (pass discrete_only rest))
-      | pass discrete_only
-          ((item as (tm, SOME decomp)) :: rest) =
-          (candidate work;
-           if is_neq decomp andalso
-             (not discrete_only orelse is_discrete decomp)
-          then
-            (application work;
-             pass discrete_only
-               (rest @ [(tm, SOME (less_decomp decomp))]) @
-             (application work;
-              pass discrete_only
-                (rest @ [(tm, SOME (swap_less decomp))])))
-          else
-            List.map (fn xs => item :: xs) (pass discrete_only rest))
+    fun cases discrete_only items =
+      List.rev (valOf (fold_neq_pass_with work discrete_only
+        (fn one => fn reversed => SOME (one :: reversed)) [] items))
   in
-    List.concat (List.map (pass false) (pass true items))
+    List.concat (List.map (cases false) (cases true items))
   end
 
 fun ignore_neq_with work (tm, NONE) =
@@ -563,31 +572,56 @@ fun atoms_of_decomps_with work decomps =
 fun atoms_of_decomps decomps =
   atoms_of_decomps_with (free_work traceUtil.silent) decomps
 
-fun refutes_with work is_nonnegative systems =
+fun refute_system_with work is_nonnegative items justs =
+  let
+    val atoms =
+      atoms_of_decomps_with work
+        (List.map (fn (item, _) => (candidate work; item)) items)
+    val index = atom_index_with work atoms
+    val nonnegative =
+      List.mapPartial
+        (fn item =>
+          (candidate work;
+           mknonneg is_nonnegative (#width index) item))
+        (Lib.enumerate 0 atoms)
+    val ineqs = List.map (mklineq_with work index) items @ nonnegative
+  in
+    Option.map (fn just => just :: justs) (elim_with work ineqs)
+  end
+
+fun refutes_with (work : work) is_nonnegative
+      {split_neq, neq_count, neq_limit} items =
   let
     fun refute [] justs = SOME (List.rev justs)
-      | refute (items :: rest) justs =
-          let
-            val atoms =
-              atoms_of_decomps_with work
-                (List.map
-                  (fn (item, _) => (candidate work; item)) items)
-            val index = atom_index_with work atoms
-            val nonnegative =
-              List.mapPartial
-                (fn item =>
-                  (candidate work;
-                   mknonneg is_nonnegative (#width index) item))
-                (Lib.enumerate 0 atoms)
-            val ineqs =
-              List.map (mklineq_with work index) items @ nonnegative
-          in
-            case elim_with work ineqs of
-                SOME just => refute rest (just :: justs)
-              | NONE => NONE
-          end
+      | refute (system :: rest) justs =
+          case refute_system_with work is_nonnegative system justs of
+              SOME next => refute rest next
+            | NONE => NONE
+    fun visit one =
+      refute_system_with work is_nonnegative (number_hyps_with work one)
   in
-    refute systems []
+    if split_neq andalso not (#metered work) andalso neq_count = 0 then
+      Option.map List.rev (visit items [])
+    else if split_neq andalso not (#metered work) then
+      (* Replay expects all dense branches of each discrete branch in
+         order. Stop generating systems as soon as one fails to refute. *)
+      Option.map List.rev
+        (fold_neq_pass_with work true
+          (fn one => fn justs =>
+            fold_neq_pass_with work false visit justs one) [] items)
+    else
+      let
+        val systems = split_items_with work split_neq items
+        val _ =
+          if split_neq then ()
+          else trace work
+                 (fn () =>
+                    "neq_limit exceeded (current value is " ^
+                    Int.toString neq_limit ^
+                    "); ignoring disequalities")
+      in
+        refute systems []
+      end
   end
 
 fun negate tm =
@@ -611,16 +645,10 @@ fun prove_decomposed_with work
             | neq (_, NONE) = (candidate work; false)
           val neq_count = List.length (List.filter neq items)
           val split_neq = neq_count <= neq_limit
-          val systems = split_items_with work split_neq items
-          val _ =
-            if split_neq then ()
-            else trace work
-                   (fn () =>
-                      "neq_limit exceeded (current value is " ^
-                      Int.toString neq_limit ^
-                      "); ignoring disequalities")
         in
-          (split_neq, refutes_with work is_nonnegative systems)
+          (split_neq,
+           refutes_with work is_nonnegative {split_neq, neq_count, neq_limit}
+             items)
         end
 
 fun prove_decomposed level config decompose is_nonnegative hypotheses

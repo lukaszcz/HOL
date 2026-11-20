@@ -534,9 +534,10 @@ fun prepare_statement_comparison goal =
                   (readings left @ readings right)
             | NONE => [(premises, strip_truth_equivalence conclusion)]
         val beyond =
-          if List.null premises then []
-          else
+          if not (List.null premises) andalso boolSyntax.is_forall conclusion
+          then
             map (fn (rest, c) => (premises @ rest, c)) (readings conclusion)
+          else []
       in
         here @ beyond
       end
@@ -1739,18 +1740,23 @@ fun run_goal budget recipe (entry : corpus_goal) =
   handle Portable.Interrupt => raise Portable.Interrupt
        | exn => FAILED (Feedback.exn_to_string exn)
 
-fun duplicate strings =
-  List.exists
-    (fn string => length (List.filter (equal string) strings) > 1)
-    strings
+fun id_set ids = HOLset.fromList String.compare ids
 
-fun duplicate_goal_pairs ([] : corpus_goal list) = []
-  | duplicate_goal_pairs ((goal : corpus_goal) :: rest) =
-      map (fn (other : corpus_goal) => (#id goal, #id other))
-        (List.filter
-          (fn (other : corpus_goal) =>
-            Term.aconv (#goal goal) (#goal other)) rest) @
-      duplicate_goal_pairs rest
+fun duplicate_goal_pairs (goals : corpus_goal list) =
+  let
+    (* Index goals to the right, keeping both sides of each pair in the
+       same order as in the corpus for diagnostics. *)
+    fun add ({id,goal,...} : corpus_goal, (index,pairs)) =
+      let
+        val later = Option.getOpt (Redblackmap.peek (index,goal), [])
+        val pairs = List.foldr (fn (other,rest) => (id,other) :: rest)
+                      pairs later
+      in
+        (Redblackmap.insert (index,goal,id :: later),pairs)
+      end
+  in
+    #2 (List.foldr add (Redblackmap.mkDict Term.compare,[]) goals)
+  end
 
 fun is_translation ({cause = TranslationGap, ...} : shortfall) = true
   | is_translation _ = false
@@ -1759,11 +1765,12 @@ fun validate_corpus {family, goals, shortfalls} =
   let
     val goal_ids = map #id goals
     val shortfall_ids = map #id shortfalls
+    val goal_set = id_set goal_ids
     val duplicate_pairs = duplicate_goal_pairs goals
     val circular =
       List.filter
         (not o null o direct_recipe_arguments) goals
-    fun is_goal id = List.exists (equal id) goal_ids
+    fun is_goal id = HOLset.member (goal_set,id)
     val unknown =
       List.filter
         (fn (item as {id, ...} : shortfall) =>
@@ -1777,7 +1784,7 @@ fun validate_corpus {family, goals, shortfalls} =
         (fn ({id, date, note, ...} : shortfall) =>
           id <> "" andalso date <> "" andalso note <> "") shortfalls
   in
-    if duplicate goal_ids then
+    if HOLset.numItems goal_set <> length goal_ids then
       raise ERR "validate_corpus" (family ^ ": duplicate corpus goal id")
     else if not (null duplicate_pairs) then
       raise ERR "validate_corpus"
@@ -1789,7 +1796,7 @@ fun validate_corpus {family, goals, shortfalls} =
       raise ERR "validate_corpus"
         (family ^ ": recipes supply their measured theorem: " ^
          String.concatWith ", " (map #id circular))
-    else if duplicate shortfall_ids then
+    else if HOLset.numItems (id_set shortfall_ids) <> length shortfall_ids then
       raise ERR "validate_corpus" (family ^ ": duplicate shortfall id")
     else if not valid_entries then
       raise ERR "validate_corpus"
@@ -1806,32 +1813,32 @@ fun validate_corpus {family, goals, shortfalls} =
       ()
   end
 
-fun assert_accounting {family, goals, shortfalls, gated} =
+fun assert_validated_accounting {family, goals, shortfalls, gated} =
   let
     val goal_ids = map #id goals
     val gated_ids = map #1 gated
+    val goal_set = id_set goal_ids
+    val gated_set = id_set gated_ids
     val missing_runs =
       List.filter
-        (fn id => not (List.exists (equal id) gated_ids)) goal_ids
+        (fn id => not (HOLset.member (gated_set,id))) goal_ids
     val extra_runs =
       List.filter
-        (fn id => not (List.exists (equal id) goal_ids)) gated_ids
+        (fn id => not (HOLset.member (goal_set,id))) gated_ids
     val solved =
       map #1 (List.filter (outcome_solved o #2) gated)
+    val shortfall_set =
+      id_set (map #id (List.filter (not o is_translation) shortfalls))
     val expected =
       List.filter
-        (fn id => not (List.exists (equal id)
-          (map #id (List.filter (not o is_translation) shortfalls))))
-        goal_ids
-    fun same_set left right =
-      length left = length right andalso
-      List.all (fn id => List.exists (equal id) right) left
-    val _ = validate_corpus
-      {family = family, goals = goals, shortfalls = shortfalls}
+        (fn id => not (HOLset.member (shortfall_set,id))) goal_ids
+    val expected_set = id_set expected
   in
     if not (null missing_runs) orelse not (null extra_runs) then
       raise ERR "assert_accounting" (family ^ ": gated result id drift")
-    else if not (same_set solved expected) then
+    else if length solved <> length expected orelse
+            not (List.all (fn id => HOLset.member (expected_set,id)) solved)
+    then
       raise ERR "assert_accounting"
         (family ^ ": solved/shortfall drift; solved = [" ^
          String.concatWith ", " solved ^ "], expected = [" ^
@@ -1842,6 +1849,10 @@ fun assert_accounting {family, goals, shortfalls, gated} =
     else
       ()
   end
+
+fun assert_accounting (args as {family, goals, shortfalls, ...}) =
+  (validate_corpus {family = family, goals = goals, shortfalls = shortfalls};
+   assert_validated_accounting args)
 
 fun selected level ({representative, ...} : corpus_goal) =
   level >= 2 orelse representative
@@ -1886,11 +1897,11 @@ fun environment_restriction () =
 fun run_family {family, goals, shortfalls, budget, battery, level} =
   let
     val selected_goals = List.filter (selected level) goals
-    val selected_ids = map #id selected_goals
+    val selected_ids = id_set (map #id selected_goals)
     val selected_shortfalls =
       List.filter
         (fn ({id, cause, ...} : shortfall) =>
-          List.exists (equal id) selected_ids orelse
+          HOLset.member (selected_ids,id) orelse
           (level >= 2 andalso cause = TranslationGap)) shortfalls
     val _ = validate_corpus
       {family = family, goals = selected_goals,
@@ -1994,7 +2005,7 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
     val gated = map (fn (id, result, _) => (id, result)) measured
     val work_done = map (fn (id, _, work) => (id, work)) measured
     val _ =
-      assert_accounting
+      assert_validated_accounting
         {family = family, goals = selected_goals,
          shortfalls = selected_shortfalls, gated = gated}
     fun run_battery goal tactic_id =

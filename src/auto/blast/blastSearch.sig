@@ -145,6 +145,12 @@ sig
     Context.t -> claset -> int -> goal -> (proof -> 'a) ->
     {result : 'a option, statistics : statistics}
 
+  (* For reconstruction: the continuation receives the script, depth and
+     branch counts of the proof, with an empty trace field. *)
+  val searchGoalForReplay :
+    Context.t -> claset -> int -> goal -> (proof -> 'a) ->
+    {result : 'a option, statistics : statistics}
+
   (* Cooperative fixed-depth search.  stop is polled while translating and
      collecting variables from the initial goal, at every prv entry, and
      between recursive items in normalization, premise construction, gamma

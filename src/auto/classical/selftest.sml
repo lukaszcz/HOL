@@ -1579,6 +1579,29 @@ val _ =
 
 val _ =
   test
+    ("eigenvariable names avoid removed goals even at a different type",
+     fn () =>
+       let
+         val historical = Term.mk_var ("old_goal_variable", bool_ty)
+         val candidate =
+           Term.mk_var ("old_goal_variable", bool_ty --> bool_ty)
+         val node0 = clasetGoal.from_goal ([], goal_p)
+         val store = clasetGoal.store node0
+         val node1 = clasetGoal.replace_goal node0
+           {pos = 1, children = [{params = [], asl = [], w = historical}],
+            store = store}
+         val node2 = clasetGoal.replace_goal node1
+           {pos = 1, children = [{params = [], asl = [], w = goal_p}],
+            store = store}
+         val node3 = clasetGoal.set_store store node2
+         val (fresh, _) = clasetGoal.fresh_eigen node3 candidate
+       in
+         Term.aconv fresh (Term.variant [historical] candidate)
+         andalso not (Term.aconv fresh candidate)
+       end)
+
+val _ =
+  test
     ("elim alternatives delete one positional assumption from every child",
      fn () =>
        let

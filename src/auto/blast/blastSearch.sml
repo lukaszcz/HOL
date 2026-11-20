@@ -564,26 +564,34 @@ fun dropWith checkpoint (0, values) = values
   | dropWith checkpoint (n, _ :: values) =
       (checkpoint (); dropWith checkpoint (n - 1, values))
 
-fun prunePlanWith checkpoint clashes
+fun pruneChoicesWith checkpoint clashes project
       {branches, next_vars, trail_mark, trail, choices} =
-  if branches = 1 then choices
+  if branches = 1 then (choices, 0)
   else
     let
-      fun scan (last, _, _, []) = last
-        | scan (last, mark, current, (oldmark, oldbrs) :: older) =
-            (checkpoint ();
-             if oldbrs < branches then last
-             else if oldbrs > branches then
-               scan (last, mark, current, older)
-             else if clashes next_vars (mark - oldmark, current) then
-               last
-             else
-               scan (older, oldmark,
-                     dropWith checkpoint (mark - oldmark, current),
-                     older))
+      (* Newer choices from other branches are only discarded when a
+         choice for this branch can be discarded too. *)
+      fun scan (last, _, _, _, []) = last
+        | scan (last, visited, mark, current, choice :: older) =
+            let
+              val _ = checkpoint ()
+              val (oldmark, oldbrs) = project choice
+            in
+              if oldbrs < branches then last
+              else if oldbrs > branches then
+                scan (last, visited + 1, mark, current, older)
+              else if clashes next_vars (mark - oldmark, current) then
+                last
+              else
+                scan ((older, visited + 1), visited + 1, oldmark,
+                      dropWith checkpoint (mark - oldmark, current), older)
+            end
     in
-      scan (choices, trail_mark, trail, choices)
+      scan ((choices, 0), 0, trail_mark, trail, choices)
     end
+
+fun prunePlanWith checkpoint clashes arguments =
+  #1 (pruneChoicesWith checkpoint clashes Lib.I arguments)
 
 (* Pure projection of prune, exported so its clash/no-clash boundary can be
    regression-tested without manufacturing exception values. *)
@@ -613,8 +621,21 @@ fun pruneWith checkpoint clashes state pruned
       dropWith checkpoint (removed, choices)
     end
 
-fun prune state pruned arguments =
-  pruneWith (fn () => ()) clashVar state pruned arguments
+fun prune state pruned (branches, next_vars, choices) =
+  if branches = 1 then choices
+  else
+    let
+      val (remaining, removed) =
+        pruneChoicesWith (fn () => ()) clashVar choiceMark
+          {branches = branches,
+           next_vars = next_vars,
+           trail_mark = trailSize state,
+           trail = trailVars state,
+           choices = choices}
+    in
+      pruned := !pruned + removed;
+      remaining
+    end
 
 fun pruneMeasured checkpoint state pruned arguments =
   pruneWith checkpoint (clashVarMeasured checkpoint) state pruned
@@ -994,7 +1015,7 @@ val zero_phase_statistics : phase_statistics =
 
 datatype interruption_cleanup = Restore | AbandonOwned
 
-fun runGoal trace_level resumable cleanup_policy instrumentation
+fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
     claset depth goal cont =
   let
     exception INTERRUPTED
@@ -1308,6 +1329,9 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
            | STOP_EXCEPTION exn => (cleanupRun exn; raise exn)
            | exn => (cleanupRun exn; raise exn)
 
+    fun remember branches history =
+      if keep_history then branches :: history else history
+
     fun proofOf (tacs, trace) =
       {script = rev tacs,
        trace = map projectBranches (rev trace),
@@ -1559,7 +1583,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                              (pruned := before_prune;
                               raise searchBudget.LimitReached work));
                           closed := !closed + 1;
-                          prv (tacs', brs0 :: trace, choices'', brs)
+                          prv (tacs', remember brs0 trace, choices'', brs)
                         end
                       else if limit < 0 then
                         (rollbackAt mark; raise NEWBRANCHES)
@@ -1572,7 +1596,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                         in
                           noteRuleInference limit;
                           created := !created + count - 1;
-                          prv (tacs', brs0 :: trace, choices', children)
+                          prv (tacs', remember brs0 trace, choices', children)
                         end
                     end
 
@@ -1605,7 +1629,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                 in
                   if contraposing then
                     prv
-                      (DeferGoal :: tacs, brs0 :: trace, choices,
+                      (DeferGoal :: tacs, remember brs0 trace, choices,
                        contraposedBranch mark
                          {lits = lits, levels = (safe, unsafe) :: pairs,
                           restore = restore, vars = vars, lim = lim,
@@ -1654,7 +1678,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                                   | _ => NONE)
                                 (fn () =>
                                   prv
-                                    (step :: tacs, brs0 :: trace,
+                                    (step :: tacs, remember brs0 trace,
                                      choices', brs))
                             end
                     end
@@ -1705,7 +1729,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                           (HypSubst
                              {equality = equality, changed = changed,
                               side = side} :: tacs,
-                           brs0 :: trace, choices,
+                           remember brs0 trace, choices,
                            substituted :: brs)
                       end)
 
@@ -1713,7 +1737,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                 case unsafeRulesFor vars (trackedTerm formula) of
                     [] =>
                       prv
-                        (tacs, brs0 :: trace, choices,
+                        (tacs, remember brs0 trace, choices,
                          {pairs = (safe, unsafe) :: pairs,
                           lits = addTrackedLitAt mark (formula, lits),
                           vars = vars, lim = lim,
@@ -1735,7 +1759,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                         prv
                           ((if goal_formula then DeferGoal :: tacs
                             else tacs),
-                           brs0 :: trace, choices,
+                           remember brs0 trace, choices,
                            {pairs =
                               (safe,
                                appendUnsafeAt mark unsafe
@@ -1837,14 +1861,14 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                         if null prems then closed := !closed + 1
                         else created := !created + count - 1;
                         prv
-                          (step :: tacs, brs0 :: trace,
+                          (step :: tacs, remember brs0 trace,
                            Choice (mark, branches, PRV) :: choices,
                            children)
                       end
                 in
                   if contraposing then
                     prv
-                      (DeferGoal :: tacs, brs0 :: trace, choices,
+                      (DeferGoal :: tacs, remember brs0 trace, choices,
                        contraposedBranch mark
                          {lits = lits, levels = [],
                           restore = fn _ => [([], (formula, md) :: unsafe)],
@@ -1872,7 +1896,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                   (fn NEWBRANCHES =>
                         SOME (fn () =>
                           prv
-                            (tacs, brs0 :: trace, choices,
+                            (tacs, remember brs0 trace, choices,
                              {pairs = [([], unsafe)],
                               lits = formula :: lits,
                               vars = vars, lim = lim,
@@ -1951,7 +1975,8 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
 (* Every entry point runs at the blast.trace level of the context
    given. *)
 fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
-  case runGoal (traceUtil.level_of blastRule.tracer ctxt) false AbandonOwned
+  case runGoal (traceUtil.level_of blastRule.tracer ctxt)
+         {keep_history = true, resumable = false} AbandonOwned
          (On {debug = debug, stop = stop, budget = NONE})
          claset depth goal cont of
       RunDone report => report
@@ -1960,7 +1985,8 @@ fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
 fun searchGoalBudgeted ctxt budget claset depth goal cont =
   let
     val report =
-      runGoal (traceUtil.level_of blastRule.tracer ctxt) false Restore
+      runGoal (traceUtil.level_of blastRule.tracer ctxt)
+        {keep_history = true, resumable = false} Restore
         (On {debug = false, stop = fn () => false,
              budget = SOME budget}) claset depth goal cont
   in
@@ -1999,7 +2025,7 @@ fun searchGoalResumable ctxt budget claset depth goal cont =
              resume = once (fn () => convert (resume ()))}
     fun start () =
       convert
-        (runGoal trace_level true Restore
+        (runGoal trace_level {keep_history = true, resumable = true} Restore
            (On {debug = false, stop = fn () => false,
                 budget = SOME budget}) claset depth goal cont)
       handle searchBudget.LimitReached (kind, usage) =>
@@ -2010,10 +2036,11 @@ fun searchGoalResumable ctxt budget claset depth goal cont =
     start ()
   end
 
-fun searchGoalWithStats ctxt claset depth goal cont =
+fun search_with_stats keep_history ctxt claset depth goal cont =
   let
     val report =
-      runGoal (traceUtil.level_of blastRule.tracer ctxt) false Restore Stats
+      runGoal (traceUtil.level_of blastRule.tracer ctxt)
+        {keep_history = keep_history, resumable = false} Restore Stats
         claset depth goal cont
   in
     case report of
@@ -2023,8 +2050,11 @@ fun searchGoalWithStats ctxt claset depth goal cont =
       | RunYielded _ => raise Fail "statistics tableau yielded"
   end
 
-(* The production entry point keeps the statistics: the inference and
-   resource-cost counters are what the shared work meter reports. *)
+fun searchGoalWithStats ctxt = search_with_stats true ctxt
+
+fun searchGoalForReplay ctxt = search_with_stats false ctxt
+
+(* Keep the inference and resource-cost counters for the shared work meter. *)
 fun searchGoal ctxt claset depth goal cont =
   #result (searchGoalWithStats ctxt claset depth goal cont)
 

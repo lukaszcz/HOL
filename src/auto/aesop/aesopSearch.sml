@@ -883,9 +883,17 @@ fun search_core_with ctxt budget
         else SearchExhausted
 
       fun save {depth_limited, rapp_limited} tree =
-        checkpoint :=
-          {tree = tree, depth_limited = depth_limited,
-           rapp_limited = rapp_limited}
+        case budget of
+            NONE => ()
+          | SOME _ =>
+              checkpoint :=
+                {tree = tree, depth_limited = depth_limited,
+                 rapp_limited = rapp_limited}
+
+      fun save_queued limits id tree =
+        case budget of
+            NONE => ()
+          | SOME _ => save limits (aesopTree.enqueue_goal id tree)
 
       fun loop (limits as {depth_limited, rapp_limited}) tree =
         let val _ = save limits tree
@@ -903,8 +911,7 @@ fun search_core_with ctxt budget
         else
           case
             bounded_safe_phase ctxt level budget safe_cache
-              (fn id => fn ready =>
-                save limits (aesopTree.enqueue_goal id ready))
+              (save_queued limits)
               (save limits)
               max_rapps max_depth rules tree
           of
@@ -940,8 +947,7 @@ fun search_core_with ctxt budget
                 let
                   (* The ready goal has been popped.  A suspended scan
                      resumes from this same goal/rule generation. *)
-                  val _ =
-                    save limits (aesopTree.enqueue_goal goal ready)
+                  val _ = save_queued limits goal ready
                 in
                   case unsafe_phase ctxt level budget cache config goal
                          ready of

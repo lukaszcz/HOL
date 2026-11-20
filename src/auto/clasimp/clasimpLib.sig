@@ -248,8 +248,8 @@ sig
      applied, and read as a membership meets none of them.  It asks this
      of the equation it is given: a caller whose own pass reaches
      equations below the goal's conclusion asks it of each of those.
-     Applied to the simpset alone it collects the compiled heads once,
-     including installed views and respecting removals and filters.
+     The closure collects the compiled heads when an equation needs
+     them, including installed views and respecting removals and filters.
      Exported for the same reason as [states_a_reading] below. *)
   val reads_as_membership : simpExtLib.simpset -> term -> bool
 

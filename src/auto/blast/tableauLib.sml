@@ -138,24 +138,17 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
     fun search NONE = NONE
       | search (SOME depth) =
           let
-            val result =
+            val report =
+              blastSearch.searchGoalForReplay ctxt cs depth goal accept
+            val _ =
               case summary of
-                  NONE =>
-                    blastSearch.searchGoal ctxt cs depth goal accept
-                | SOME statistics =>
-                    let
-                      val report =
-                        blastSearch.searchGoalWithStats ctxt
-                          cs depth goal accept
-                      val _ =
-                        add_statistics statistics (#statistics report)
-                    in
-                      #result report
-                    end
+                  NONE => ()
+                | SOME statistics => add_statistics statistics
+                    (#statistics report)
           in
-            case result of
+            case #result report of
                 NONE => search (next_depth depth)
-              | SOME _ => result
+              | result => result
           end
 
     val result = search initial_depth

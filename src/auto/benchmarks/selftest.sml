@@ -92,12 +92,6 @@ val failed_goal : benchLib.corpus_goal =
    excl = [],
    provenance = provenance, representative = true}
 
-val duplicate_solved_goal : benchLib.corpus_goal =
-  {id = "unit-solved-duplicate", goal = boolSyntax.mk_eq (p, p),
-   source_method = "simp", recipe = benchLib.Invoke (benchLib.Simp, []),
-   excl = [],
-   provenance = provenance, representative = true}
-
 val failed_shortfall : benchLib.shortfall =
   {id = "unit-failed", cause = benchLib.UnderIteration,
    date = "2026-08-10", note = "unit-test accounting sentinel"}
@@ -255,14 +249,25 @@ val _ =
 
 val _ =
   check
-    ("benchmark accounting rejects aconv corpus duplicates",
+    ("benchmark accounting reports all aconv pairs in corpus order",
      fn () =>
-       raises
-         (fn () =>
-           benchLib.assert_accounting
-             {family = "unit-aconv",
-              goals = [solved_goal, duplicate_solved_goal],
-              shortfalls = [], gated = []}))
+       let
+         fun entry id variable body : benchLib.corpus_goal =
+           {id = id, goal = boolSyntax.mk_forall (variable, body),
+            source_method = "simp",
+            recipe = benchLib.Invoke (benchLib.Simp, []), excl = [],
+            provenance = provenance, representative = true}
+         val r = mk_var ("bench_unit_r", bool)
+         val goals =
+           [entry "a" p p, entry "b" p (boolSyntax.mk_neg p),
+            entry "c" q q, entry "d" q (boolSyntax.mk_neg q), entry "e" r r]
+       in
+         raises_with ["aconv corpus goals: a=c, a=e, b=d, c=e"]
+           (fn () =>
+             benchLib.assert_accounting
+               {family = "unit-aconv", goals = goals, shortfalls = [],
+                gated = []})
+       end)
 
 val analogue = Drule.SPECL [p, q] boolTheory.OR_INTRO_THM1
 val analogue_spec =
@@ -544,6 +549,26 @@ val _ =
        raw_recipe_rejected
          "unit-raw-implication"
          "unit$conjunction_commute_under_assumption" implication_recipe)
+
+val _ =
+  check
+    ("statement comparison reaches quantified conjuncts with their premises",
+     fn () =>
+       let
+         val z = mk_var ("bench_nested_z", numSyntax.num)
+         val inner = boolSyntax.mk_eq (z, numSyntax.zero_tm)
+         val leaf = boolSyntax.mk_eq (numSyntax.mk_suc z, z)
+         val quantified =
+           boolSyntax.mk_forall (z, boolSyntax.mk_imp (inner,leaf))
+         fun nest 0 = boolSyntax.mk_imp (p,quantified)
+           | nest n =
+               boolSyntax.mk_imp (p, boolSyntax.mk_conj (q, nest (n - 1)))
+         val citation = ASSUME (nest 12)
+         val measured = boolSyntax.mk_imp (p, boolSyntax.mk_imp (inner,leaf))
+       in
+         benchLib.theorem_is_goal measured citation andalso
+         not (benchLib.theorem_is_goal (boolSyntax.mk_imp (p,leaf)) citation)
+       end)
 
 val _ =
   check

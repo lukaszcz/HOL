@@ -778,7 +778,7 @@ fun take_through_rapp wanted [] = []
          else take_through_rapp wanted rest)
       end
 
-fun copying_sources tree parent_id assigned child_store child_cgoals =
+fun copying_sources tree parent_id assigned child_specs =
   let
     val parent = goal tree parent_id
     val path = ancestry tree parent_id
@@ -790,10 +790,9 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
         (empty_dependencies ()) path
     val child_dependencies =
       List.foldl
-        (fn (cgoal, dependencies) =>
-          dependencies_union
-            dependencies (dependencies_of child_store cgoal))
-        (empty_dependencies ()) child_cgoals
+        (fn ((_, deps, _, _), dependencies) =>
+          dependencies_union dependencies deps)
+        (empty_dependencies ()) child_specs
     val relevant_assigned =
       dependencies_intersection assigned (#deps parent)
     (* HOL types are inhabited, so a dropped metavariable needs no
@@ -875,23 +874,25 @@ fun install_rapp parent_id
     val child_cgoals = clasetGoal.goals node
     val assigned =
       assigned_between (active_store parent) child_store
-    val copy_sources =
-      if dependencies_empty (#deps parent) then []
-      else copying_sources tree parent_id assigned child_store child_cgoals
     val child_specs =
       map
         (fn cgoal =>
-          (cgoal, NONE,
+          (cgoal, dependencies_of child_store cgoal, NONE,
            case forwarded of
                NONE => #forwarded parent
              | SOME hypothesis => hypothesis :: #forwarded parent))
         child_cgoals
+    val copy_sources =
+      if dependencies_empty (#deps parent) then []
+      else copying_sources tree parent_id assigned child_specs
     val copy_specs =
       map
         (fn source =>
-          let val source_goal = goal tree source
+          let
+            val source_goal = goal tree source
+            val cgoal = cgoal_under child_store (#cgoal source_goal)
           in
-            (cgoal_under child_store (#cgoal source_goal),
+            (cgoal, dependencies_of child_store cgoal,
              SOME (original_goal tree source),
              #forwarded source_goal)
           end)
@@ -899,12 +900,12 @@ fun install_rapp parent_id
     val all_specs = child_specs @ copy_specs
 
     fun make_child
-          ((cgoal, copy_of, forwarded), (id, entries, ids)) =
+          ((cgoal, deps, copy_of, forwarded), (id, entries, ids)) =
       let
         val child : goal =
           {id = id, cgoal = cgoal, store = child_store,
            level = clasetGoal.level node, prio = child_priority,
-           deps = dependencies_of child_store cgoal, copy_of = copy_of,
+           deps = deps, copy_of = copy_of,
            parent = SOME rid, cluster = root_cluster,
            norm = Unnormalised, safe_done = false,
            unsafe_cursor = [], postponed = [],

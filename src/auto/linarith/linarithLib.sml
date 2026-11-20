@@ -459,27 +459,26 @@ fun connected_split_goal (assumptions, conclusion) =
       listUtil.distinct_by Term.compare I (decomp_atoms assumption)
     val entries = map (fn assumption => (assumption, atoms assumption))
       assumptions
-    fun occurrence_count atom =
-      List.foldl
-        (fn ((_, entry_atoms), count) =>
-           if boolSyntax.tmem atom entry_atoms then count + 1
-           else count)
-        0 entries
+    fun occurrence_count counts atom =
+      Option.getOpt (Termtab.lookup counts atom, 0)
+    fun count_atom (atom, counts) =
+      Termtab.update (atom, occurrence_count counts atom + 1) counts
+    val counts =
+      List.foldl (fn ((_, atoms), counts) => List.foldl count_atom counts atoms)
+        Termtab.empty entries
     fun score (_, entry_atoms) =
       List.foldl
         (fn (atom, total) =>
-           Int.max (0, occurrence_count atom - 1) + total)
+           occurrence_count counts atom - 1 + total)
         0 entry_atoms
-    val scored = map (fn entry => (score entry, entry)) entries
-    fun insert item [] = [item]
-      | insert (item as (item_score, _))
-          ((first as (first_score, _)) :: rest) =
-          if item_score >= first_score then item :: first :: rest
-          else first :: insert item rest
-    val ordered = List.foldr (fn (item, result) => insert item result)
-      [] scored
+    val scored =
+      map (fn (i, entry) => (score entry, i, #1 entry))
+        (Lib.enumerate 0 entries)
+    fun compare ((s1, i1, _), (s2, i2, _)) =
+      case Int.compare (s2, s1) of EQUAL => Int.compare (i1, i2) | ord => ord
+    val ordered = Listsort.sort compare scored
   in
-    (map (fn (_, (assumption, _)) => assumption) ordered, conclusion)
+    (map #3 ordered, conclusion)
   end
 
 (* A conditional is opaque to the decomposition: until the condition is
@@ -927,31 +926,34 @@ fun split_on_demand_with work function config split_tac =
           SOME tactic => tactic goal ctxt
         | NONE => branch hint spent goal ctxt)
     and branch hint (spent as {splits, augmentations, processed}) goal ctxt =
-      case Lib.total (disj_elim_tac_with work config)
-             (connected_split_goal goal) of
-          SOME split =>
-            (note_search DisjunctionSplit;
-             expand node hint spent split ctxt)
-        | NONE =>
-            (case (candidate work;
-                   Lib.total
-                     (fn split_goal => split_tac split_goal ctxt))
-                    (connected_split_goal goal) of
-                 SOME split =>
-                   if splits >= limit then limit_exceeded work function limit
-                   else
-                     let
-                       val continue =
-                         if has_successor_split ctxt split then open_node
-                         else node
-                     in
-                       note_search OperatorSplit;
-                       expand continue hint
-                         {splits = splits + 1,
-                          augmentations = augmentations,
-                          processed = processed} split ctxt
-                     end
-               | NONE => augment hint spent goal ctxt)
+      let
+        val ordered_goal = connected_split_goal goal
+      in
+        case Lib.total (disj_elim_tac_with work config) ordered_goal of
+            SOME split =>
+              (note_search DisjunctionSplit;
+               expand node hint spent split ctxt)
+          | NONE =>
+              (case (candidate work;
+                     Lib.total
+                       (fn split_goal => split_tac split_goal ctxt))
+                      ordered_goal of
+                   SOME split =>
+                     if splits >= limit then limit_exceeded work function limit
+                     else
+                       let
+                         val continue =
+                           if has_successor_split ctxt split then open_node
+                           else node
+                       in
+                         note_search OperatorSplit;
+                         expand continue hint
+                           {splits = splits + 1,
+                            augmentations = augmentations,
+                            processed = processed} split ctxt
+                       end
+                 | NONE => augment hint spent goal ctxt)
+      end
     and augment hint {splits, augmentations, processed}
                 (goal as (assumptions, _)) ctxt =
       let

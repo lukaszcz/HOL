@@ -23,7 +23,7 @@ datatype node =
            level : int,
            paths : int list list,
            marks : binding_marks,
-           avoids : term list,
+           avoids : term HOLset.set,
            rendering : term option ref,
            (* A rendering and its lookup spellings are pure functions of
               the node's goals and store, and every rule query of an
@@ -79,7 +79,9 @@ val empty_mark = {terms = [], types = []}
 fun fresh_marks goals = map (fn _ => empty_mark) goals
 
 fun cgoal_terms ({params, asl, w} : cgoal) = params @ (w :: asl)
-fun goal_frees goals = free_varsl (List.concat (map cgoal_terms goals))
+
+fun avoid_goals goals avoids =
+  Term.FVL (List.concat (map cgoal_terms goals)) avoids
 
 fun register_eigens [] store = SOME store
   | register_eigens (param :: rest) store =
@@ -97,15 +99,21 @@ fun register_params goals store =
           "a goal parameter is not a fresh variable"
 
 fun register_fresh bound avoids store =
-  let val fresh = variant avoids bound
+  let
+    fun attempt names =
+      let
+        val fresh = variant names bound
+      in
+        if clasetMeta.is_meta fresh then
+          raise mk_HOL_ERR "clasetGoal" "register_fresh"
+            "a binder uses the reserved metavariable prefix"
+        else
+          case clasetMeta.register_eigen fresh store of
+              SOME store' => (fresh, store')
+            | NONE => attempt (fresh :: names)
+      end
   in
-    if clasetMeta.is_meta fresh then
-      raise mk_HOL_ERR "clasetGoal" "register_fresh"
-        "a binder uses the reserved metavariable prefix"
-    else
-      case clasetMeta.register_eigen fresh store of
-          SOME store' => (fresh, store')
-        | NONE => register_fresh bound (fresh :: avoids) store
+    attempt (HOLset.listItems avoids)
   end
 
 fun make_node goals store replay level paths marks avoids =
@@ -115,11 +123,10 @@ fun make_node goals store replay level paths marks avoids =
   else
     let
       val store' = register_params goals store
-      val avoids' = free_varsl (avoids @ goal_frees goals)
     in
       Node {goals = goals, store = store', replay = replay,
             size = goals_size store' goals, level = level, paths = paths,
-            marks = marks, avoids = avoids', rendering = ref NONE,
+            marks = marks, avoids = avoids, rendering = ref NONE,
             renders = ref [], spellings = ref []}
     end
 
@@ -144,12 +151,13 @@ fun from_goal (asl, w) =
   let val cgoals = [{params = [], asl = map reduced asl, w = reduced w}]
   in
     make_node cgoals clasetMeta.empty (clasetReplay.empty 1) 0
-      (root_paths cgoals) (fresh_marks cgoals) (goal_frees cgoals)
+      (root_paths cgoals) (fresh_marks cgoals)
+      (avoid_goals cgoals Term.empty_tmset)
   end
 
 fun create {goals, store, level} =
   make_node goals store (clasetReplay.empty (length goals)) level
-    (root_paths goals) (fresh_marks goals) (goal_frees goals)
+    (root_paths goals) (fresh_marks goals) (avoid_goals goals Term.empty_tmset)
 
 fun goals (Node {goals, ...}) = goals
 fun child_count parent child =
@@ -251,7 +259,7 @@ fun replace_goal node {pos, children, store = store'} =
       (List.tabulate (length children, fn _ => inherited_mark))
   in
     make_node goals' store' (replay node) (level node) paths' marks'
-      (avoids node)
+      (avoid_goals children (avoids node))
   end
 
 fun cons_assumption asm ({params, asl, w} : cgoal) =
@@ -272,15 +280,14 @@ fun children_from initial_avoids
         NONE => parent
       | SOME pos => delete_assumption pos parent
     val normalized = map (norm_term store) premises
-    val initial_avoids =
-      free_varsl (initial_avoids @ cgoal_terms parent @ normalized)
+    val initial_avoids = Term.FVL normalized initial_avoids
 
     fun freshen_bound (bound, (avoids, subst, params, current_store)) =
       let
         val (fresh, next_store) =
           register_fresh bound avoids current_store
       in
-        (fresh :: avoids,
+        (HOLset.add (avoids, fresh),
          {redex = bound, residue = fresh} :: subst,
          params @ [fresh], next_store)
       end
@@ -319,15 +326,14 @@ fun exact_blast_children node {pos, premises, prefixes, consumed} =
           NONE => parent
         | SOME assumption => delete_assumption assumption parent
     val normalized = map (norm_term (store node)) premises
-    val initial_avoids =
-      free_varsl (avoids node @ cgoal_terms parent @ normalized)
+    val initial_avoids = Term.FVL normalized (avoids node)
 
     fun freshen_bound (bound, (avoids, fresh, current_store)) =
       let
         val (variable, next_store) =
           register_fresh bound avoids current_store
       in
-        (variable :: avoids, fresh @ [variable], next_store)
+        (HOLset.add (avoids, variable), fresh @ [variable], next_store)
       end
 
     fun make_child
@@ -499,8 +505,10 @@ fun unrender node pos (result as (new_goals, validation)) =
 
     val lifted = lift_children node pos new_goals
     val output_params = List.concat (map #2 lifted)
+    val known_variables = avoids node
     val globally_fresh =
-      List.all (fn variable => not (tmem variable (avoids node)))
+      List.all
+        (fn variable => not (HOLset.member (known_variables, variable)))
         output_params
   in
     if not known_markers orelse not globally_fresh then NONE

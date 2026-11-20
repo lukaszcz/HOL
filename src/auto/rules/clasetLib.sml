@@ -1524,6 +1524,53 @@ fun matchable_subterms_with charge eligible term =
     map keyed (find_terms headed term)
   end
 
+fun matching_pairs_with charge goal_terms patterns =
+  let
+    val sites =
+      List.concat
+        (map (matchable_subterms_with charge (fn _ => true)) goal_terms)
+  in
+    List.concat
+      (map
+        (fn (pattern_head, pattern) =>
+          List.mapPartial
+            (fn (site_head, site) =>
+              if (charge searchBudget.Candidate; pattern_head = site_head)
+              then SOME (pattern, site)
+              else NONE)
+            sites)
+        patterns)
+  end
+
+fun matching_pairs_indexed goal_terms =
+  let
+    (* Prepend from the right to preserve the original order within a head. *)
+    val sites =
+      Portable.HOLSusp.delay
+        (fn () =>
+          List.foldr
+            (fn ((head, site), index) =>
+              Redblackmap.insertWith
+                (fn (later, earlier) => earlier @ later)
+                (index, head, [site]))
+            (Redblackmap.mkDict String.compare)
+            (List.concat
+              (map (matchable_subterms_with (fn _ => ()) (fn _ => true))
+                 goal_terms)))
+  in
+    fn [] => []
+     | patterns =>
+         let val index = Portable.HOLSusp.force sites
+         in
+           List.concat
+             (map
+               (fn (head, pattern) =>
+                 map (fn site => (pattern, site))
+                   (Option.getOpt (Redblackmap.peek (index, head), [])))
+               patterns)
+         end
+  end
+
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
 fun maximal_type_joins_with charge substitutions =
   case substitutions of
@@ -1687,7 +1734,12 @@ fun maximal_type_joins_with charge substitutions =
    classification, and loose type variables are freshened apart from
    the goal before matching.  Thus neither binder nor type-variable
    spelling determines which instances are offered. *)
-fun goal_type_instances_with charge (assumptions, target) fact =
+fun goal_variables goal_terms =
+  (Term.FVL goal_terms Term.empty_tmset,
+   List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
+     [] goal_terms)
+
+fun goal_type_instances_with charge get_goal_variables matching_pairs fact =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
     val original_body = Thm.concl fact
@@ -1695,13 +1747,9 @@ fun goal_type_instances_with charge (assumptions, target) fact =
     val specialized =
       Drule.SPECL (map (Term.genvar o Term.type_of) quantified) fact
     val body = Thm.concl specialized
-    val goal_terms = target :: assumptions
-    val goal_variables = Term.free_varsl goal_terms
+    val (goal_variables, goal_type_variables) = get_goal_variables ()
     val fact_variables =
       Term.free_varsl (Thm.concl fact :: Thm.hyp fact)
-    val goal_type_variables =
-      List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
-        [] goal_terms
     val alien =
       Lib.set_diff (type_vars_in_term original_body) goal_type_variables
     val support_types =
@@ -1711,7 +1759,7 @@ fun goal_type_instances_with charge (assumptions, target) fact =
     val fixed =
       List.foldl
         (fn (variable, seen) =>
-          if Lib.op_mem aconv variable goal_variables then
+          if HOLset.member (goal_variables, variable) then
             Lib.union (Type.type_vars (Term.type_of variable)) seen
           else
             seen)
@@ -1752,10 +1800,6 @@ fun goal_type_instances_with charge (assumptions, target) fact =
             (fn sub => List.all (fn v => Lib.op_mem aconv v schematic)
                          (free_vars sub))
             match_body
-        val sites =
-          List.concat
-            (map (matchable_subterms_with charge (fn _ => true))
-               goal_terms)
         fun instance_of (pattern, site) =
           (charge searchBudget.Candidate;
            case Lib.total (Term.match_term pattern) site of
@@ -1777,20 +1821,8 @@ fun goal_type_instances_with charge (assumptions, target) fact =
                   then SOME proper
                   else NONE
                 end)
-        val substitutions =
-          List.mapPartial instance_of
-            (List.concat
-              (map
-                (fn (pattern_head, pattern) =>
-                  List.mapPartial
-                    (fn (site_head, site) =>
-                      if (charge searchBudget.Candidate;
-                          pattern_head = site_head) then
-                        SOME (pattern, site)
-                      else
-                        NONE)
-                    sites)
-                patterns))
+        val substitutions = List.mapPartial instance_of
+          (matching_pairs patterns)
         fun add_instance (types, kept) =
           let
             val _ = charge searchBudget.Normalization
@@ -1823,14 +1855,26 @@ fun goal_type_instances_with charge (assumptions, target) fact =
    assumptions, and what FIRST_ASSUM and friends see in the residue.
    The marker check stays where the tactic is built; the instances a
    fact is inserted at are the goal's, so they are taken when it runs. *)
-fun insert_facts_tac_with charge facts =
+fun insert_facts_tac_with budget facts =
   (check_aesop_markers "INSERT_FACTS_TAC" facts;
-   fn goal =>
+   fn goal as (assumptions, target) =>
      let
+       val terms = target :: assumptions
+       val variables = Portable.HOLSusp.delay (fn () => goal_variables terms)
+       fun get_goal_variables () = Portable.HOLSusp.force variables
+       val (charge, matching_pairs) =
+         case budget of
+             NONE => (fn _ => (), matching_pairs_indexed terms)
+           | SOME owned =>
+               let val charge = searchBudget.charge owned
+               in (charge, matching_pairs_with charge terms) end
        val instances =
          List.rev
            (List.concat
-             (map (goal_type_instances_with charge goal) facts))
+             (map
+               (goal_type_instances_with charge get_goal_variables
+                 matching_pairs)
+               facts))
        fun assume fact inner ctxt =
          (charge searchBudget.Application;
           Tactic.ASSUME_TAC fact inner ctxt)
@@ -1839,10 +1883,10 @@ fun insert_facts_tac_with charge facts =
      end)
 
 fun INSERT_FACTS_TAC facts =
-  insert_facts_tac_with (fn _ => ()) facts
+  insert_facts_tac_with NONE facts
 
 fun INSERT_FACTS_TAC_BUDGETED budget facts =
-  insert_facts_tac_with (searchBudget.charge budget) facts
+  insert_facts_tac_with (SOME budget) facts
 
 (* A supplied fact that is an implication is declared to the invocation
    claset and left out of the assumptions.  Isabelle's [using] chains a

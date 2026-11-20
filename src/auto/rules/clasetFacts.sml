@@ -20,9 +20,10 @@ type view =
   {source_id : int, source : thm, theorem : thm,
    support : term list}
 
-fun create_with_charge charge (assumptions, target) theorems =
+fun create_with_charge _ _ [] = []
+  | create_with_charge charge (assumptions, target) theorems =
   let
-    val goal_variables = Term.free_varsl (target :: assumptions)
+    val goal_variables = Term.FVL (target :: assumptions) Term.empty_tmset
 
     fun prepare (id, original) =
       let
@@ -31,9 +32,7 @@ fun create_with_charge charge (assumptions, target) theorems =
         val supported = Term.free_varsl hypotheses
         val genuine = Term.free_vars (Thm.concl original)
         val shared =
-          List.filter
-            (fn variable =>
-              Lib.op_mem Term.aconv variable goal_variables)
+          List.filter (fn variable => HOLset.member (goal_variables, variable))
             genuine
         val fixed_terms = Lib.op_union Term.aconv supported shared
         val support_types =

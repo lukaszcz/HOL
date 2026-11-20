@@ -2087,9 +2087,7 @@ val membership_extensionality =
    left-hand side is a membership at that head: [MEM x l] is
    [x IN set l], [IN_IMAGE] and [IN_INTER] are the same shape, and
    [NOT_IN_EMPTY] is that shape negated.  The heads so collected are what
-   the invocation states on the membership and nothing else is; the scan
-   runs once where the tactic is built rather than once per equation the
-   traversal reaches. *)
+   the invocation states on the membership and nothing else is. *)
 (* Fragment declarations omit aliases and may include rules the compiler
    discarded. Read the same active inventory the simplifier was given. *)
 fun effective_rewrites ss = map #2 (#1 (simpLib.rewrite_sources ss []))
@@ -2128,7 +2126,13 @@ fun membership_heads_of rewrites =
       (List.concat (map readings rewrites))
   end
 
-fun membership_heads ss = membership_heads_of (effective_rewrites ss)
+fun extensional_inventory ss =
+  let
+    val rewrites = Susp.delay (fn () => effective_rewrites ss)
+    val heads = Susp.delay (fn () => membership_heads_of (Susp.force rewrites))
+  in
+    {rewrites=rewrites,heads=heads}
+  end
 
 (* Which of the two readings an equation is given is decided by its
    sides.  A side headed by a constant HOL4 states facts about on the
@@ -2148,7 +2152,8 @@ fun membership_reading heads term =
       Lib.total (Term.dest_thy_const o fst o boolSyntax.strip_comb) side
     fun stated_on_membership side =
       case head_constant side of
-          SOME {Thy, Name, ...} => Binaryset.member (heads, (Thy, Name))
+          SOME {Thy, Name, ...} =>
+            Binaryset.member (Susp.force heads, (Thy, Name))
         | NONE => false
     fun both_sides (left, right) =
       snd (Type.dom_rng (Term.type_of left)) = Type.bool andalso
@@ -2164,10 +2169,10 @@ fun extensional_rule heads term =
 (* Whether the engine's default takes an equation as a membership, for a
    method built from HOL4's simplifier directly -- the parity corpus
    builds its recipes that way -- to make the same decision about its own
-   set-equality pass.  Applied to the simpset alone it collects the heads
-   once, so a caller asking it of each equation its own pass reaches pays
-   the scan once rather than once per equation. *)
-fun reads_as_membership ss = membership_reading (membership_heads ss)
+   set-equality pass.  The closure collects the heads once, when an
+   equation first needs them. *)
+fun reads_as_membership ss =
+  membership_reading (#heads (extensional_inventory ss))
 
 (* An equation between two functions is decided pointwise.  The source
    states its laws at the function level -- [f ^^ 0 = id],
@@ -2208,11 +2213,11 @@ fun pointwise_with charge heads goal =
    take it at all: Isabelle's [ext] is an introduction rule and not a
    safe one, and a safe step that rewrote every function equation would
    change what SAFE_TAC leaves. *)
-fun with_extensionality_with charge ss simplify =
+fun with_extensionality_with charge heads simplify =
   let
     val pointwise_then =
       Tactical.THEN
-        (pointwise_with charge (membership_heads ss),
+        (pointwise_with charge heads,
          Tactical.TRY simplify)
   in
     Tactical.THEN
@@ -2221,7 +2226,8 @@ fun with_extensionality_with charge ss simplify =
   end
 
 fun with_extensionality ss simplify =
-  with_extensionality_with (fn () => ()) ss simplify
+  with_extensionality_with (fn () => ())
+    (#heads (extensional_inventory ss)) simplify
 
 (* Isabelle reads an ordered rewrite by its schematic variables.  Stated
    with them a rule is permutative, and the simplifier applies it only in
@@ -2278,9 +2284,19 @@ local
     let
       val found =
         List.concat (map (find_terms (headed_by head)) terms)
-      fun occurrences term = length (List.filter (aconv term) found)
+      (* Keep the last representative of each alpha-equivalence class,
+         in the same order as the corresponding positions in [found]. *)
+      fun count (term, (counts, entries)) =
+        case Redblackmap.peek (counts, term) of
+            SOME n => (n := !n + 1; (counts, entries))
+          | NONE =>
+              let val n = ref 1
+              in (Redblackmap.insert (counts, term, n), (term, n) :: entries)
+              end
+      val (_, entries) =
+        List.foldr count (Redblackmap.mkDict Term.compare, []) found
     in
-      map (fn term => (term, occurrences term)) (Lib.op_mk_set aconv found)
+      map (fn (term, n) => (term, !n)) entries
     end
 
   fun discharge theorems matched =
@@ -3671,23 +3687,25 @@ fun read_by_a_rewrite rewrites term =
       rewrites
   end
 
-fun extensional_normalize ss =
+fun extensional_normalize {rewrites,heads} =
   let
-    val rewrites = effective_rewrites ss
-    val heads = membership_heads_of rewrites
+    val function_equation =
+      Lib.can (Type.dom_rng o Term.type_of o boolSyntax.lhs)
   in
     Tactical.CONV_TAC
       (Conv.CHANGED_CONV
          (fn term =>
-            if read_by_a_rewrite rewrites term then
+            if function_equation term andalso
+               read_by_a_rewrite (Susp.force rewrites) term then
               raise ERR "extensional_normalize"
                 "a rewrite of the invocation's takes the equation"
             else
               Conv.REWR_CONV (extensional_rule heads term) term))
   end
 
-fun extensional_normalize_with charge ss goal =
-  (charge (); extensional_normalize ss goal)
+fun extensional_normalize_with charge inventory =
+  let val normalize = extensional_normalize inventory
+  in fn goal => (charge (); normalize goal) end
 
 fun search_stages limit =
   let
@@ -3773,6 +3791,7 @@ fun auto_driver {blast, depth}
       staged_auto_search {blast = blast, depth = depth} cs search_cs
     val final_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC final_cs)
+    val inventory = extensional_inventory ss
 
     (* Isabelle repeatedly selects the first goal on which search succeeds.
        Both search legs solve their selected goal, and the repetition only
@@ -3781,8 +3800,8 @@ fun auto_driver {blast, depth}
        metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
     val script =
       Tactical.EVERY
-        [Tactical.TRY (extensional_normalize_with (#charge policy) ss),
-         with_extensionality_with (#charge policy) ss simplify,
+        [Tactical.TRY (extensional_normalize_with (#charge policy) inventory),
+         with_extensionality_with (#charge policy) (#heads inventory) simplify,
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -4066,12 +4085,13 @@ fun force_driver name budget
     val safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
     val search = force_search schedule budget add_simp cs
+    val inventory = extensional_inventory ss
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
-         Tactical.TRY (extensional_normalize_with (#charge policy) ss),
+         Tactical.TRY (extensional_normalize_with (#charge policy) inventory),
          simplify,
-         with_extensionality_with (#charge policy) ss simplify,
+         with_extensionality_with (#charge policy) (#heads inventory) simplify,
          Tactical.TRY safe,
          search]
   in
@@ -4093,11 +4113,12 @@ fun search_driver name engine
   let
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
+    val inventory = extensional_inventory ss
   in
     must_close name
       (Tactical.EVERY
          [Tactical.TRY clarify,
-          Tactical.TRY (extensional_normalize_with (#charge policy) ss),
+          Tactical.TRY (extensional_normalize_with (#charge policy) inventory),
           NTactical.DETERM
             (engine (add_simp cs))])
   end

@@ -71,93 +71,112 @@ fun expand work (context : orderData.context) facts =
      List.concat (List.map #3 parts))
   end
 
-fun nodes work edges =
+fun within_node_limit maximum edges =
   let
-    fun add (tm, seen) =
-      if Option.isSome
-           (search work
-             (fn known => if aconv tm known then SOME () else NONE)
-             seen)
-      then seen else tm :: seen
+    fun add tm (state as (count, seen)) =
+      if HOLset.member (seen, tm) then state
+      else (count + 1, HOLset.add (seen, tm))
+    fun scan (state as (count, _)) edges =
+      count <= maximum andalso
+      (case edges of
+           [] => true
+         | (e : edge) :: rest =>
+             scan (add (#target e) (add (#source e) state)) rest)
   in
-    List.foldl
-      (fn (e, seen) =>
-        (candidate work;
-         add (#target e, add (#source e, seen)))) [] edges
+    scan (0, HOLset.empty Term.compare) edges
   end
+
+datatype reachability =
+    ReachedList of (term * thm) list
+  | ReachedIndex of thm Termtab.table
+
+fun reached work (ReachedList reached_nodes) tm =
+      Option.map snd
+        (search work
+          (fn pair as (n, _) =>
+            if aconv n tm then SOME pair else NONE)
+          reached_nodes)
+  | reached _ (ReachedIndex table) tm = Termtab.lookup table tm
+
+fun settle target theorem (ReachedList reached_nodes) =
+      ReachedList ((target, theorem) :: reached_nodes)
+  | settle target theorem (ReachedIndex table) =
+      ReachedIndex (Termtab.update (target, theorem) table)
 
 (* Everything the source reaches, one theorem per node.  A node is
    settled the first time it is reached: the chain that reached it is a
    witness, and a second one would prove the same thing. *)
 fun reachable work transitive edges source =
-  let
-    fun known reached tm =
-      Option.map snd
-        (search work
-          (fn pair as (n, _) =>
-            if aconv n tm then SOME pair else NONE)
-          reached)
-  in
-    case transitive of
-        NONE =>
-          List.map (fn e => (#target e, #theorem e))
+  case transitive of
+      NONE =>
+        ReachedList
+          (List.map (fn e => (#target e, #theorem e))
             (List.filter
               (fn e => (candidate work; aconv (#source e) source))
-              edges)
-      | SOME transitive =>
-          let
-            val step = MATCH_MP order_weak_trans transitive
-            fun chain first second =
-              (application work;
-               MATCH_MP (MATCH_MP step first) second)
-            fun relax (e, (reached, changed)) =
-              (candidate work;
-               if aconv (#target e) source orelse
-                 Option.isSome (known reached (#target e))
-              then (reached, changed)
-              else if aconv (#source e) source then
-                ((#target e, #theorem e) :: reached, true)
-              else
-                (case known reached (#source e) of
-                     SOME theorem =>
-                       ((#target e, chain theorem (#theorem e)) :: reached,
-                        true)
-                   | NONE => (reached, changed))
-              )
-            (* A changing round settles a new target from the finite
-               edge list. *)
-            fun rounds reached =
-              let
-                val (reached', changed) =
-                  List.foldl relax (reached, false) edges
-              in
-                if changed then rounds reached' else reached'
-              end
-          in
-            rounds []
-          end
+              edges))
+    | SOME transitive =>
+        let
+          val step = MATCH_MP order_weak_trans transitive
+          (* Keep the same settlement and comparison order for metered
+             calls.  Ordinary calls can index by alpha-equivalence. *)
+          val empty =
+            case #max_nodes work of
+                NONE => ReachedList []
+              | SOME _ => ReachedIndex Termtab.empty
+          fun chain first second =
+            (application work;
+             MATCH_MP (MATCH_MP step first) second)
+          fun relax (e, (known, changed)) =
+            (candidate work;
+             if aconv (#target e) source orelse
+               Option.isSome (reached work known (#target e))
+             then (known, changed)
+             else if aconv (#source e) source then
+               (settle (#target e) (#theorem e) known, true)
+             else
+               (case reached work known (#source e) of
+                    SOME theorem =>
+                      (settle (#target e) (chain theorem (#theorem e)) known,
+                       true)
+                  | NONE => (known, changed)))
+          (* A changing round settles a new target from the finite
+             edge list. *)
+          fun rounds reached =
+            let
+              val (reached', changed) =
+                List.foldl relax (reached, false) edges
+            in
+              if changed then rounds reached' else reached'
+            end
+        in
+          rounds empty
+        end
+
+fun reach_from work transitive edges =
+  let
+    fun compute source = reachable work transitive edges source
+    (* Crossing can use two sources. Limit retained reachability tables
+       and keep each metered traversal observable. *)
+    val from =
+      case #max_nodes work of
+          NONE => compute
+        | SOME _ => memoUtil.bounded_memo 2 aconv compute
+  in
+    fn source => reached work (from source)
   end
 
-(* Everything a distinction needs: the two chains that meet on it, or an
-   equality already stated, or the two sides being the same term. *)
-fun reached work reached_nodes tm =
-  Option.map snd
-    (search work
-      (fn pair as (n, _) =>
-        if aconv n tm then SOME pair else NONE)
-      reached_nodes)
-
-fun crossing work (context : orderData.context) edges (x, y) =
+(* The two chains that meet on a distinction. *)
+fun crossing work (context : orderData.context) reach (x, y) =
   let
-    val {transitive, antisymmetric, ...} = #axioms context
+    val {antisymmetric, ...} = #axioms context
   in
     case antisymmetric of
         NONE => NONE
       | SOME antisymmetric =>
-          (case reached work (reachable work transitive edges x) y of
+          (case reach x y of
                NONE => NONE
              | SOME up =>
-                 (case reached work (reachable work transitive edges y) x of
+                 (case reach y x of
                       NONE => NONE
                     | SOME down =>
                         SOME
@@ -178,18 +197,23 @@ fun stated work equalities (x, y) =
        else NONE)
     equalities
 
-fun close work context (edges, equalities) (x, y, distinction) =
+fun close work (context : orderData.context) (edges, equalities) =
   let
-    fun contradiction equality =
-      (application work; MP (NOT_ELIM distinction) equality)
+    val reach = reach_from work (#transitive (#axioms context)) edges
+    fun one (x, y, distinction) =
+      let
+        fun contradiction equality =
+          (application work; MP (NOT_ELIM distinction) equality)
+      in
+        if aconv x y then SOME (contradiction (REFL x))
+        else
+          case stated work equalities (x, y) of
+              SOME equality => SOME (contradiction equality)
+            | NONE =>
+                Option.map contradiction (crossing work context reach (x, y))
+      end
   in
-    if aconv x y then SOME (contradiction (REFL x))
-    else
-      case stated work equalities (x, y) of
-          SOME equality => SOME (contradiction equality)
-        | NONE =>
-            Option.map contradiction
-              (crossing work context edges (x, y))
+    one
   end
 
 fun graph work context facts =
@@ -199,8 +223,9 @@ fun graph work context facts =
   in
     case #max_nodes work of
         SOME maximum =>
-          if List.length (nodes work edges) > maximum then NONE
-          else SOME (edges, equalities, distinctions)
+          if within_node_limit maximum edges
+          then SOME (edges, equalities, distinctions)
+          else NONE
       | NONE => SOME (edges, equalities, distinctions)
   end
 
@@ -220,16 +245,17 @@ fun prove_literal work context
       (edges, equalities, distinctions) target =
   let
     val {reflexive, transitive, ...} = #axioms (context : orderData.context)
+    val reach = reach_from work transitive edges
     fun weak (x, y) =
       if aconv x y then
         Option.map
           (fn r => MATCH_MP (MATCH_MP order_weak_of_equal r) (REFL x))
           reflexive
-      else reached work (reachable work transitive edges x) y
+      else reach x y
   in
     case target of
         orderData.Weak pair => weak pair
-      | orderData.Equal pair => crossing work context edges pair
+      | orderData.Equal pair => crossing work context reach pair
       | orderData.Strict (x, y) =>
           (case weak (x, y) of
                NONE => NONE

@@ -74,12 +74,17 @@ val axiom_names =
    "total", "trichotomous"]
 
 fun conjuncts_with meter theorem =
-  (normalization meter;
-   case Lib.total dest_conj (concl theorem) of
-       SOME _ =>
-         conjuncts_with meter (CONJUNCT1 theorem) @
-         conjuncts_with meter (CONJUNCT2 theorem)
-     | NONE => [theorem])
+  let
+    fun collect theorem reversed =
+      (normalization meter;
+       case Lib.total dest_conj (concl theorem) of
+           SOME _ =>
+             let val left = collect (CONJUNCT1 theorem) reversed
+             in collect (CONJUNCT2 theorem) left end
+         | NONE => theorem :: reversed)
+  in
+    List.rev (collect theorem [])
+  end
 
 (* One atomic axiom: the predicate's name and the relation it is about. *)
 fun dest_axiom theorem =
