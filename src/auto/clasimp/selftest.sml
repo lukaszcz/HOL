@@ -239,13 +239,15 @@ fun bound_input_controls_fixture () =
       (clasimpLib.asm_full_simp ss [markerLib.NoAsms])
     val safe = retained
       (clasimpLib.safe_asm_full_simp ss [markerLib.NoAsms])
-    val bound = clasimpLib.prepare_bound_simplification 0 I (fn () => ())
+    val bound = clasimpLib.prepare_bound_simplification
+        traceUtil.silent I (fn () => ())
       ss [markerLib.NoAsms]
     val raw = retained (clasimpLib.asm_full_simp_bound false bound [])
     val selected = retained (clasimpLib.asm_full_simp ss [ignored])
     val viewed = retained (clasimpLib.asm_full_simp_bound true bound [])
     val extra = retained (clasimpLib.asm_full_simp_bound false
-      (clasimpLib.prepare_bound_simplification 0 I (fn () => ()) ss [])
+      (clasimpLib.prepare_bound_simplification
+          traceUtil.silent I (fn () => ()) ss [])
       [markerLib.NoAsms])
     val selective_goal = ([proposition,``input_control_q``],
       ``input_control_g input_control_p input_control_q``)
@@ -2903,13 +2905,13 @@ fun auto_trace_messages ambient level goal =
   let
     val messages = ref ([] : string list)
     val ctxt =
-      HOLFlags.set_flagC (clasimpLib.trace_flag, level)
+      HOLFlags.set_flagC (traceUtil.flag clasimpLib.tracer, level)
         (Context.snapshot ())
     fun run () =
       SOME (#1 (SelfTestTactical.VALID (clasimpLib.AUTO_TAC []) goal ctxt))
       handle HOL_ERR _ => NONE
     val residues =
-      HOLFlags.with_flags [(clasimpLib.trace_flag, ambient)]
+      HOLFlags.with_flags [(traceUtil.flag clasimpLib.tracer, ambient)]
         (Lib.with_flag (Feedback.MESG_outstream,
            fn message => messages := message :: !messages)
            (Context.in_proof run)) ()
@@ -4151,7 +4153,8 @@ fun eta_rule_fixture body =
         val proper_rule = prove_local
           ``!P x. eta_c (\v:bool. P (~v)) x = P (~x)``
         fun bound_apply viewed arguments =
-          let val bound = clasimpLib.prepare_bound_simplification 0 I
+          let val bound = clasimpLib.prepare_bound_simplification
+              traceUtil.silent I
                 (fn () => ()) base arguments
           in checked (clasimpLib.asm_full_simp_bound viewed bound []) end
         fun controls () =
@@ -6193,7 +6196,8 @@ fun bound_pipeline_fixture () =
         val runtimes = ref 0
         fun charge () = charges := !charges + 1
         fun runtime ss = (runtimes := !runtimes + 1; ss)
-        fun state arguments = clasimpLib.prepare_bound_simplification 0
+        fun state arguments = clasimpLib.prepare_bound_simplification
+            traceUtil.silent
           runtime charge (ambient ()) arguments
         val target = ([],``bp_c (bp_h x) = bp_k x``)
         val direct_target = ([],``bp_i x = bp_o x``)
@@ -6224,7 +6228,8 @@ fun bound_pipeline_fixture () =
           source]
         val controlled = not (valid_closes
           (clasimpLib.asm_full_simp_bound true bound []) target)
-        val replacement = clasimpLib.prepare_bound_simplification 0 I charge
+        val replacement = clasimpLib.prepare_bound_simplification
+            traceUtil.silent I charge
           boolSimps.bool_ss [simpLib.SF (simpLib.name_ss
             "bound pipeline replacement" (simpLib.rewrites [reducer])),source]
         val fragment = valid_closes
@@ -6279,7 +6284,8 @@ fun bound_runtime_fixture () =
         fun runtime ss =
           (runtimes := !runtimes + 1;
            simpLib.++ (ss,simpLib.dproc_ss decision))
-        val bound = clasimpLib.prepare_bound_simplification 0 runtime
+        val bound = clasimpLib.prepare_bound_simplification
+            traceUtil.silent runtime
           (fn () => ()) simpLib.empty_ss [BoundedRewrites.Once sentinel]
         val prepared = !runtimes = 1 andalso !primed = 1 andalso !untagged
         val used = valid_closes
@@ -6473,7 +6479,8 @@ fun bound_driver_fixture () =
               {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
                filter=SOME (fn theorem =>
                  (compiles := !compiles + 1; [theorem]))})
-            val state = clasimpLib.prepare_bound_simplification 0 I
+            val state = clasimpLib.prepare_bound_simplification
+                traceUtil.silent I
               (fn () => ()) ambient [BoundedRewrites.Once original]
             val compiled = !compiles = 1
             val closed = (valid_closes
@@ -6539,7 +6546,8 @@ fun effective_reading_fixture () =
         val member = proof ``!x y. x IN er_old y <=> x IN er_rhs y``
         val set_reducer = proof ``!y. er_old y = er_new y``
         fun state ambient supplied =
-          clasimpLib.prepare_bound_simplification 0 I (fn () => ())
+          clasimpLib.prepare_bound_simplification
+              traceUtil.silent I (fn () => ())
             (simpLib.++ (pureSimps.pure_ss,simpLib.rewrites
               (boolTheory.REFL_CLAUSE :: ambient))) supplied
         val root = state [reducer,b] [reading]
@@ -6557,7 +6565,8 @@ fun effective_reading_fixture () =
           (simpLib.++ (pureSimps.pure_ss,simpLib.rewrites [set_reducer]),
            simpLib.rewrites_with_names
              [({Thy=Theory.current_theory (),Name="er_member"},member)])
-        val named_state = clasimpLib.prepare_bound_simplification 0 I
+        val named_state = clasimpLib.prepare_bound_simplification
+            traceUtil.silent I
           (fn () => ()) named []
         val named_views =
           clasimpLib.bound_simplification_simpset true named_state

@@ -19,19 +19,10 @@ fun prove (term, tactic) =
       ([], validation) => validation []
     | _ => raise ERR "prove" "load-time proof left goals"
 
-val {flag = trace_flag, ...} =
-    HOLFlags.create_trace ({group = "clasimp", name = "trace"},
-                           {initial = 0, max = 3})
-
-(* The tactics read the clasimp.trace level from their context and hand
-   it on: [trace verbosity level message] reports when [level] is at most
-   [verbosity]. *)
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
-
-fun trace verbosity level message =
-  if level <= verbosity then
-    Feedback.HOL_MESG ("Clasimp: " ^ message ())
-  else ()
+val tracer =
+  traceUtil.create
+    {group = "clasimp", max = 3,
+     emit = fn m => Feedback.HOL_MESG ("Clasimp: " ^ m)}
 
 val safe_solver =
   simpLib.mk_tactic_solver
@@ -1315,8 +1306,8 @@ fun add_supplied_views (SuppliedViewBinding {entries,suspended,...}) ss =
                                 (simpLib.rewrite_views views))
   end
 
-fun trace_suspended_converses verbosity sources = List.app
-  (fn source => trace verbosity 1 (fn () =>
+fun trace_suspended_converses level sources = List.app
+  (fn source => traceUtil.trace level 1 (fn () =>
     "suspending ambient converse " ^
     (case simpLib.source_rewrite source of
          (SOME {Thy,Name},_) => Thy ^ "." ^ Name
@@ -2026,22 +2017,22 @@ fun prepare_invocation_rules ss arguments =
        originals= #originals data,positions= #positions data}
   in (ambient,rules) end
 
-fun prepare_bound_rules ctxt verbosity runtime charge ambient rules =
+fun prepare_bound_rules ctxt level runtime charge ambient rules =
   let
     val early = bound_converses charge ambient rules
     val _ =
-      trace_suspended_converses verbosity (supplied_converse_suspended early)
+      trace_suspended_converses level (supplied_converse_suspended early)
     val working = working_simpset_in ctxt ambient
   in make_bound_simplification_in ctxt runtime
        (fn () => working_view_table working) early end
 
-fun prepare_bound_simplification_in ctxt verbosity runtime charge ss
+fun prepare_bound_simplification_in ctxt level runtime charge ss
       arguments =
   let val (ambient,rules) = prepare_invocation_rules ss arguments
-  in prepare_bound_rules ctxt verbosity runtime charge ambient rules end
+  in prepare_bound_rules ctxt level runtime charge ambient rules end
 
-fun prepare_bound_simplification verbosity runtime charge ss arguments =
-  prepare_bound_simplification_in (Context.snapshot ()) verbosity runtime
+fun prepare_bound_simplification level runtime charge ss arguments =
+  prepare_bound_simplification_in (Context.snapshot ()) level runtime
     charge ss arguments
 
 (* A generic callback can pass its simpset to a CS tactic and discard its
@@ -2345,7 +2336,7 @@ fun with_permutation_instances_controlled controls step simp_args =
            val _ =
              if null instances then ()
              else
-               trace (trace_level_of ctxt) 2
+               traceUtil.trace (traceUtil.level_of tracer ctxt) 2
                  (fn () =>
                     "permutation instances: " ^
                     String.concatWith ", "
@@ -2390,7 +2381,7 @@ fun standalone_simp safe ss arguments goal =
     markerLib.ABBRS_THEN (markerLib.LLABEL_RES_THEN
       (fn resolved => fn current => fn ctxt =>
         let val state = prepare_bound_simplification_in ctxt
-              (trace_level_of ctxt)
+              (traceUtil.level_of tracer ctxt)
               (budgeted_decisions ctxt budget) (charge_normalization budget)
               ss resolved
         in
@@ -3024,23 +3015,23 @@ fun declare_undetermined theorem cs =
 
 (* A fact the classical reasoner declines too stays a rewrite: it is then
    no worse off than it was, and the argument is not silently dropped. *)
-fun route_simp_argument verbosity (theorem, (cs, rewrites)) =
+fun route_simp_argument level (theorem, (cs, rewrites)) =
   if simp_argument_can_fire theorem then (cs, theorem :: rewrites)
   else
     case Lib.total (declare_undetermined theorem) cs of
         SOME extended =>
-          (trace verbosity 1
+          (traceUtil.trace level 1
              (fn () =>
                "no rewrite of " ^ Parse.thm_to_string theorem ^
                " can fire; declaring it as an unsafe destruction rule");
            (extended, rewrites))
       | NONE => (cs, theorem :: rewrites)
 
-fun invocation_declarations verbosity iff_prefix simp_rules iff_rules
+fun invocation_declarations level iff_prefix simp_rules iff_rules
       claset =
   let
     val (routed_claset, rewritable) =
-      List.foldr (route_simp_argument verbosity) (claset, []) simp_rules
+      List.foldr (route_simp_argument level) (claset, []) simp_rules
     val declarations =
       map
         (fn (index, rule) =>
@@ -3056,7 +3047,7 @@ fun extend_invocation
       {iff_prefix,simp_rules,iff_rules,claset,simpset,context} =
   let
     val (invocation_cs,rewritable,iff_rewrites) =
-      invocation_declarations (trace_level_of context) iff_prefix
+      invocation_declarations (traceUtil.level_of tracer context) iff_prefix
         simp_rules iff_rules claset
     val simp_ss =
       if null rewritable then simpset
@@ -3082,7 +3073,7 @@ fun extend_bound_invocation
        simpset=InvocationRewrites {ambient,supplied},context} =
   let
     val (cs,rewritable,iff_rewrites) =
-      invocation_declarations (trace_level_of context) iff_prefix
+      invocation_declarations (traceUtil.level_of tracer context) iff_prefix
         simp_rules iff_rules claset
   in
     (cs,InvocationRewrites
@@ -3372,7 +3363,7 @@ fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
                 let
                   val bound =
                     prepare_bound_simplification_in ctxt
-                      (trace_level_of ctxt) runtime
+                      (traceUtil.level_of tracer ctxt) runtime
                       (charge_normalization budget) ambient arguments
                 in body bound cs environment goal ctxt end)
               (controls @ map #theorem
@@ -3722,7 +3713,7 @@ fun staged_auto_search {blast, depth} tableau_cs classical_cs =
           else
             ", enable 'blast' trace level 2 for expansion statistics"
         val _ =
-          trace (trace_level_of ctxt) 1
+          traceUtil.trace (traceUtil.level_of tracer ctxt) 1
             (fn () =>
               engine ^ " search solved at stage " ^ Int.toString bound ^
               suffix)
@@ -3842,7 +3833,8 @@ fun CS_of_with allocate safe_only body cs ss goal ctxt =
                     val (ambient,rules) = callback_bound_rules ambient rules
                       controls goal ctxt
                     val state = prepare_bound_rules ctxt
-                      (trace_level_of ctxt) (budgeted_decisions ctxt budget)
+                      (traceUtil.level_of tracer ctxt)
+                      (budgeted_decisions ctxt budget)
                       (charge_normalization budget) ambient rules
                   in active := SOME (budget,state); (budget,state) end
           in bound_fact_views true consumer budget (run budget)
@@ -3899,7 +3891,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
   let
     val {best, tableau, depth, blast_depth, classical_depth} =
       schedule
-    val verbosity = trace_level_of ctxt
+    val level = traceUtil.level_of tracer ctxt
     val best_budget = searchBudget.child budget (slice_limits best)
     (* Atomic simplification retains its invocation policy and budget;
        yielding engines alone receive the resumable slice budgets. *)
@@ -3944,7 +3936,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
           | classicalLib.BudgetExhausted => forceScheduler.Exhausted
           | classicalLib.BudgetYielded {kind, ...} =>
               (limit kind;
-               trace verbosity 1
+               traceUtil.trace level 1
                  (fn () =>
                    "FORCE first-best resumes after a " ^
                    (case kind of
@@ -3988,7 +3980,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
                  forceScheduler.Exhausted)
             | blastSearch.BudgetYielded {kind, resume, ...} =>
                 (limit kind;
-                 trace verbosity 1
+                 traceUtil.trace level 1
                    (fn () =>
                      "FORCE tableau depth " ^
                      Int.toString blast_depth ^
@@ -4035,7 +4027,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
                      else forceScheduler.Yielded)
                 | classicalLib.DepthYielded {kind, ...} =>
                     (limit kind;
-                     trace verbosity 1
+                     traceUtil.trace level 1
                        (fn () =>
                          "FORCE classical depth " ^
                          Int.toString bound ^

@@ -3,9 +3,9 @@ signature clasimpLib =
 sig
   include Abbrev
 
-  (* clasimp.trace.  The tactics read its level from their context. *)
-  val trace_flag : HOLFlags.flag
-  val trace_level_of : Context.t -> int
+  (* clasimp.trace.  The tactics read its level from their context with
+     traceUtil.level_of. *)
+  val tracer : traceUtil.tracer
 
   (* The safe side-condition solver of the clasimp simpset.  It discharges
      only goals justified without witness instantiation or unsafe search,
@@ -217,8 +217,8 @@ sig
   (* The first argument is the clasimp.trace level at which binding
      reports the ambient converses it suspends. *)
   val prepare_bound_simplification :
-    int -> (simpExtLib.simpset -> simpExtLib.simpset) -> (unit -> unit) ->
-    simpExtLib.simpset -> thm list -> bound_simplification
+    traceUtil.level -> (simpExtLib.simpset -> simpExtLib.simpset) ->
+    (unit -> unit) -> simpExtLib.simpset -> thm list -> bound_simplification
   val add_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
     clasetLib.claset -> clasetLib.claset
   val add_safe_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
