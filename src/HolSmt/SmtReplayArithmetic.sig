@@ -11,6 +11,9 @@ sig
   val new_type_check : (unit -> unit) -> Type.hol_type -> unit
   (* Complete native obligation admission, including buried annotations. *)
   val new_term_check : {limit:int,observe:unit -> unit} -> Term.term -> unit
+  (* The same admission, for a check kept over many terms that share
+     subterms: admitted subterms are recorded and not walked again. *)
+  val new_shared_term_check : int -> Term.term -> unit
   val has_numeric_operand : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     {inputs:SmtReplayGraph.node list,observe:unit -> unit} -> bool
   (* The procedure receives complete, bounded operator syntax, with one typed

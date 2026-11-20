@@ -15,14 +15,42 @@ struct
         in saved := SOME pairs; pairs end
       fun bucket ty = if Type.is_vartype ty then 0 else
         KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty)) mod count
-      fun arguments [] [] = EQUAL
-        | arguments [] _ = LESS
-        | arguments _ [] = GREATER
-        | arguments (l::ls) (r::rs) =
-            (case compare (l,r) of EQUAL => arguments ls rs
+      fun arguments _ [] [] = EQUAL
+        | arguments _ [] _ = LESS
+        | arguments _ _ [] = GREATER
+        | arguments compare (l::ls) (r::rs) =
+            (case compare (l,r) of EQUAL => arguments compare ls rs
              | result => result)
-      and compare (left,right) =
+      fun nodewise compare (left,right) =
+        if Type.is_vartype left then
+          if Type.is_vartype right then String.compare
+            (Type.dest_vartype left,Type.dest_vartype right)
+          else LESS
+        else if Type.is_vartype right then GREATER
+        else case KernelSig.id_compare
+            (#Tyop (Type.dest_thy_typeid left),
+             #Tyop (Type.dest_thy_typeid right)) of
+            EQUAL => arguments compare (#2 (Type.dest_type left))
+              (#2 (Type.dest_type right))
+          | result => result
+      (* The memo's buckets are keyed by outer Tyop, so the many pairs of
+         word types one goal holds share a bucket and each lookup scans
+         them all. Small Types compare directly instead; the memo keeps
+         large shared Types from being unfolded. *)
+      fun small ty =
+        let
+          fun walk (_,~1) = ~1
+            | walk (ty,fuel) =
+                if fuel = 0 then ~1
+                else if Type.is_vartype ty then fuel-1
+                else List.foldl walk (fuel-1) (#2 (Type.dest_type ty))
+        in walk (ty,64) >= 0 end
+      fun direct (left,right) =
         if Portable.pointer_eq (left,right) then EQUAL
+        else nodewise direct (left,right)
+      fun compare (left,right) =
+        if Portable.pointer_eq (left,right) then EQUAL
+        else if small left andalso small right then direct (left,right)
         else
           let val index = (bucket left + bucket right) mod count
               val pairs = table () in
@@ -32,17 +60,7 @@ struct
               SOME (_,_,result) => result
             | NONE =>
                 let
-                  val result = if Type.is_vartype left then
-                      if Type.is_vartype right then String.compare
-                        (Type.dest_vartype left,Type.dest_vartype right)
-                      else LESS
-                    else if Type.is_vartype right then GREATER
-                    else case KernelSig.id_compare
-                        (#Tyop (Type.dest_thy_typeid left),
-                         #Tyop (Type.dest_thy_typeid right)) of
-                        EQUAL => arguments (#2 (Type.dest_type left))
-                          (#2 (Type.dest_type right))
-                      | result => result
+                  val result = nodewise compare (left,right)
                   val _ = Array.update (pairs,index,
                     (left,right,result) :: Array.sub (pairs,index))
                 in result end

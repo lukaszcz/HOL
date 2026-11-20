@@ -494,13 +494,21 @@ in
             SOME value =>
               wordsSyntax.mk_word (value, Arbnum.fromInt width)
           | NONE =>
-              (case List.rev bs of
-                 [] => raise ERR "mk_bbterm" "empty bit vector"
-               | high :: lower =>
-                   List.foldl
-                     (fn (bit, word) =>
-                       wordsSyntax.mk_word_concat (word, singleton bit))
-                     (singleton high) lower)
+              let
+                (* Balanced, so projecting one bit peels log2 width
+                   concatenations instead of up to width of them. *)
+                fun balanced [bit] = singleton bit
+                  | balanced bits =
+                      let
+                        val low = List.length bits div 2
+                      in
+                        wordsSyntax.mk_word_concat
+                          (balanced (List.drop (bits, low)),
+                           balanced (List.take (bits, low)))
+                      end
+              in
+                balanced bs
+              end
   in
     case word_from_bits bits of
       SOME word => word

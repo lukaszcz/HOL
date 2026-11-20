@@ -39,7 +39,8 @@ struct
      proof_schemas : proof_cache,
      frontier_programs : frontier_cache,
      proof_frontier_programs : frontier_cache,
-     schema_entries : int ref, local_law_reuse : bool,
+     schema_entries : int ref, local_schema_entries : int ref,
+     local_law_reuse : bool,
      sat_context : SmtSkeletonProve.sat_context,
      cache_generation : unit ref ref,
      cache_live_check : term -> bool,
@@ -94,6 +95,7 @@ struct
        index = fn term => (refresh_caches (); (!index) term),
        word_schemas = word_schemas, bit_schemas = bit_schemas,
        proof_schemas = proof_schemas, schema_entries = schema_entries,
+       local_schema_entries = schema_entries,
        frontier_programs = frontier_programs,
        proof_frontier_programs = proof_frontier_programs,
        local_law_reuse = local_law_reuse, sat_context = sat_context,
@@ -113,6 +115,7 @@ struct
      entries= #entries context,word_schemas= #word_schemas context,
      bit_schemas= #bit_schemas context,proof_schemas= #proof_schemas context,
      schema_entries= #schema_entries context,
+     local_schema_entries= #local_schema_entries context,
      frontier_programs= #proof_frontier_programs context,
      proof_frontier_programs= #proof_frontier_programs context,
      local_law_reuse= #local_law_reuse context,
@@ -1427,7 +1430,7 @@ struct
         else ref (Redblackmap.mkDict Term.compare)
       val frontier_callbacks = ref (Redblackmap.mkDict Term.compare)
       val frontier_entries = if canonical_frontiers then
-          #schema_entries context else ref 0
+          #local_schema_entries context else ref 0
       val frontier_generation = ref (!(#cache_generation context))
       val frontier_signature = ref (SmtSkeletonProve.cache_signature ())
       fun refresh_frontiers () =
@@ -1940,10 +1943,63 @@ struct
       else blastLib.BIT_BLAST_CONV term
     end
 
+  (* Inside with_shared_schemas, checked operator schemas proved by the
+     builtin word and bit conversions are shared by every normalization and
+     proof: the same wide operator schemas recur at every bit of a wide
+     operator and in each bit-blast step of one certificate, and re-proving
+     them doubled such replays.  A nested scope starts empty and the outer
+     one is restored on every exit; outside a scope nothing is shared.  Node
+     results stay per call: they depend on the node conversion. *)
+  val shared_schemas = ref (NONE : context option)
+
+  fun with_shared_schemas action input =
+    let
+      val outer = !shared_schemas
+      fun restore () = shared_schemas := outer
+    in
+      shared_schemas := SOME (new_context_with_local_laws true);
+      (action input before restore ())
+      handle error => (restore (); raise error)
+    end
+
+  fun clear_shared_schemas () =
+    case !shared_schemas of
+      NONE => ()
+    | SOME _ => shared_schemas := SOME (new_context_with_local_laws true)
+
+  (* The word and bit schemas, and their entry count, are the replay's;
+     everything else, the proof schemas and frontier programs with their
+     own count included, stays the call's. *)
+  fun schema_sharing_context (fresh : context) : context =
+    case !shared_schemas of
+      NONE => fresh
+    | SOME shared =>
+      let
+        fun refresh_caches () =
+          (#refresh_caches shared (); #refresh_caches fresh ())
+      in
+        {normalized = #normalized fresh, expanded = #expanded fresh,
+         proof_normalized = #proof_normalized fresh,
+         proof_expanded = #proof_expanded fresh,
+         index = #index fresh, entries = #entries fresh,
+         word_schemas = #word_schemas shared,
+         bit_schemas = #bit_schemas shared,
+         proof_schemas = #proof_schemas fresh,
+         frontier_programs = #frontier_programs fresh,
+         proof_frontier_programs = #proof_frontier_programs fresh,
+         schema_entries = #schema_entries shared,
+         local_schema_entries = #local_schema_entries fresh,
+         local_law_reuse = true, sat_context = #sat_context fresh,
+         cache_generation = #cache_generation fresh,
+         cache_live_check = #cache_live_check fresh,
+         refresh_caches = refresh_caches}
+      end
+
   (* Built-in operator laws are pure and reusable within this producer.
      Custom conversion probes above retain their uncached contract. *)
   fun normalize_with_metrics root =
-    normalize_using_in (new_context_with_local_laws true) false
+    normalize_using_in
+      (schema_sharing_context (new_context_with_local_laws true)) false
       (new_type_admission ())
       (guarded_conversions
         {word_conversion = builtin_word_conversion,
@@ -1954,8 +2010,8 @@ struct
      Preserve its existing local-binder and projection-first contract;
      graph word consumers retain the discovery recipe instead. *)
   fun normalize_with_node_conversion_and_metrics node_conversion root =
-    normalize_template_using_in (new_context ()) false (new_type_admission ())
-      false {callback_failed = ref false,
+    normalize_template_using_in (schema_sharing_context (new_context ()))
+      false (new_type_admission ()) false {callback_failed = ref false,
        word_conversion = builtin_word_conversion,
        bit_conversion = builtin_bit_conversion,
        node_conversion = fn _ => node_conversion} root
@@ -1968,7 +2024,7 @@ struct
     normalize_template_stopping_using_in
       (SOME (fn term => List.exists
         (fn source => Portable.pointer_eq (source, term)) sources))
-      (new_context ()) false (new_type_admission ())
+      (schema_sharing_context (new_context ())) false (new_type_admission ())
       false {callback_failed = ref false,
        word_conversion = builtin_word_conversion,
        bit_conversion = builtin_bit_conversion,
@@ -2010,7 +2066,8 @@ struct
         in table := Redblackmap.insert
           (!table,G.node_id node,(result,proof)) end
       val (plan,_) = discover_using_in false
-        (new_context_with_local_laws true) false (new_type_admission ())
+        (schema_sharing_context (new_context_with_local_laws true)) false
+        (new_type_admission ())
         (guarded_conversions
           {word_conversion=builtin_word_conversion,
            bit_conversion=builtin_bit_conversion,
@@ -2265,12 +2322,13 @@ struct
                       !(#cache_generation context) orelse
                       not (SmtSkeletonProve.cache_signature_matches
                         signature_witness) orelse
-                      !(#schema_entries context) >= maximum orelse
+                      !(#local_schema_entries context) >= maximum orelse
                       not (#cache_live_check context
                         (Thm.concl theorem)) then () else
                     (#proof_schemas context := Redblackmap.insert
                        (!(#proof_schemas context),template,theorem);
-                     #schema_entries context := !(#schema_entries context)+1)
+                     #local_schema_entries context :=
+                       !(#local_schema_entries context) + 1)
                 in theorem end
           val schema = C.checked_graph_schema graph scope
             {theorem=Drule.EQT_INTRO theorem,holes=List.map #2 (!holes),
@@ -2329,8 +2387,12 @@ struct
       val input = SmtResource.dag_nodes_up_to maximum target
       val _ = SmtResource.check_dag_size_for
         "Skeleton" "word-graph-input" input
-    in prove_using_in (new_context ()) node_conversion target end
+    in
+      prove_using_in (schema_sharing_context (new_context ()))
+        node_conversion target
+    end
 
-  fun prove target = prove_in (new_context ()) target
+  fun prove target =
+    prove_in (schema_sharing_context (new_context ())) target
 
 end

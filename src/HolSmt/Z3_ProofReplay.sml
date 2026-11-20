@@ -7040,12 +7040,74 @@ local
           handle MacroBudget message =>
             raise ERR "asserted_equality_substitution_prove" message
         end
-      fun prove_with expand rewrite_theorems =
+      (* Rewriting to a fixpoint.  With a variable or constant on every
+         left side and no abstraction on any right side, the equations the
+         cycle check below keeps rewrite to an end, so they are not
+         bounded.  An abstraction can bind a left side's variable, which
+         the cycle check does not see: the rewriter opens \x. x under
+         x = f (\x. x) and rewrites the opened x again and again.
+         Otherwise a rewrite can create
+         a redex in the term around it (x = y with f y = f x) or copy one
+         (a = b with f b = g (f a) (f a)), which no check of the equations
+         alone sees.
+         Such a direction fails after (4096 + target nodes) rewrites per
+         equation, counting the target's unfolded tree, and the other
+         direction is tried.  Each occurrence on an acyclic chain of
+         equations that copy nothing is rewritten at most once per
+         equation, so the bound never stops one.  The last attempts, the
+         equations as given, are always bounded. *)
+      val target_size = ref (NONE : int option)
+      fun target_nodes () =
+        case !target_size of
+          SOME nodes => nodes
+        | NONE =>
+            let val nodes = SmtResource.tree_nodes target
+            in target_size := SOME nodes; nodes end
+      exception Diverged
+      fun atomic theorem =
+        let val left = boolSyntax.lhs (Thm.concl theorem)
+        in Term.is_var left orelse Term.is_const left end
+      (* A right side too large to scan counts as binding. *)
+      fun binds theorem =
+        SmtResource.contains Term.is_abs (boolSyntax.rhs (Thm.concl theorem))
+        handle Feedback.HOL_ERR _ => true
+      fun substitute bounded rewrite_theorems =
+        let
+          fun max_rewrites () =
+            let
+              val equations = List.length rewrite_theorems
+              val per_equation =
+                SmtResource.saturated_add 4096 (target_nodes ())
+            in
+              if per_equation > SmtResource.max_metric div equations then
+                SmtResource.max_metric
+              else per_equation * equations
+            end
+          val rewrites = ref 0
+          fun counted maximum conversion term =
+            let val theorem = conversion term
+            in
+              rewrites := !rewrites + 1;
+              if !rewrites <= maximum then theorem else raise Diverged
+            end
+          val depth =
+            if not bounded andalso List.all atomic rewrite_theorems andalso
+               not (List.exists binds rewrite_theorems) then
+              Conv.TOP_DEPTH_CONV
+            else Conv.TOP_DEPTH_CONV o counted (max_rewrites ())
+        in
+          Rewrite.GEN_REWRITE_CONV depth
+            Rewrite.empty_rewrites rewrite_theorems target
+          handle Diverged =>
+            raise ERR "asserted_equality_substitution_prove"
+              "substitution did not terminate"
+        end
+      fun prove_with expand bounded rewrite_theorems =
         let
           val equality_step =
             if List.null rewrite_theorems then Thm.REFL target
-            else Conv.QCONV (Rewrite.PURE_REWRITE_CONV rewrite_theorems)
-              target
+            else substitute bounded rewrite_theorems
+              handle Conv.UNCHANGED => Thm.REFL target
           val equality_result = boolSyntax.rhs (Thm.concl equality_step)
           val macro_step =
             if expand then macro_conv equality_result
@@ -7170,29 +7232,86 @@ local
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
-      fun attempt expand rewrite_theorems =
-        prove_with expand rewrite_theorems
+      fun attempt_with expand bounded rewrite_theorems =
+        prove_with expand bounded rewrite_theorems
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
-      val oriented = equalities
-      val reversed = List.map Thm.SYM equalities
-      fun with_equalities expand =
-        SmtResource.or_else
-          (fn () => attempt expand oriented)
-          (fn () => attempt expand reversed)
+      (* Rewriting to a fixpoint never terminates with an equation whose
+         left side occurs in its own right side, directly
+         (x = (x && m) || (x && ~m)) or through other equations
+         (x = f y, y = g x).  Such an equation is used only in a direction
+         without that cycle.  The check over-approximates: the rewriter
+         fires only the first rule for a left side, and rewrites a compound
+         left side before the terms inside it (x = f x with f x = c).  So
+         when it drops an equation in a direction, the equations as given in
+         that direction are among the last attempts. *)
+      fun acyclic theorems =
+        let
+          val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
+          (* The left sides reached from one through right sides. *)
+          fun successors left =
+            let
+              val rights = List.mapPartial (fn (other, right) =>
+                if Term.aconv other left then SOME right else NONE) sides
+            in
+              List.filter (fn other => List.exists (Term.free_in other) rights)
+                (List.map #1 sides)
+            end
+          (* A search visits each left side once. *)
+          fun reaches target seen [] = false
+            | reaches target seen (left :: pending) =
+              Term.aconv left target orelse
+              (if List.exists (Term.aconv left) seen then
+                 reaches target seen pending
+               else reaches target (left :: seen) (successors left @ pending))
+          fun on_cycle (left, right) =
+            reaches left []
+              (List.filter (fn other => Term.free_in other right)
+                 (List.map #1 sides))
+        in
+          List.filter
+            (not o on_cycle o boolSyntax.dest_eq o Thm.concl) theorems
+        end
+      val oriented = acyclic equalities
+      val all_reversed = List.map Thm.SYM equalities
+      val reversed = acyclic all_reversed
+      fun dropped kept = List.length kept < List.length equalities
+      (* The equations left to right, each cyclic one right to left. *)
+      val cyclic = List.filter (fn theorem => not (List.exists
+          (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
+        equalities
+      fun attempts expand =
+        let val attempt = attempt_with expand false
+        in
+          (fn () => attempt oriented) ::
+          (if List.null cyclic then []
+           else
+             [fn () => attempt (acyclic (oriented @ List.map Thm.SYM cyclic))])
+          @ [fn () => attempt reversed]
+          @ (if dropped oriented then
+               [fn () => attempt_with expand true equalities]
+             else [])
+          @ (if dropped reversed then
+               [fn () => attempt_with expand true all_reversed]
+             else [])
+        end
+      (* Each attempt only adds a route: whatever else it raises, the next
+         one is tried.  A resource refusal ends the substitution. *)
+      fun first [] =
+            raise ERR "asserted_equality_substitution_prove" "no attempt"
+        | first [last] = last ()
+        | first (next :: rest) =
+            SmtResource.or_else next (fn () => first rest)
     in
       (* the equalities alone first, as without macros; then with the
          macros expanded, and with the macros alone, since rewriting with
          the equalities can hide a macro call *)
-      if List.null macros then with_equalities false
-      else if List.null equalities then attempt true []
+      if List.null macros then first (attempts false)
+      else if List.null equalities then attempt_with true false []
       else
-        SmtResource.or_else
-          (fn () => with_equalities false)
-          (fn () => SmtResource.or_else
-             (fn () => with_equalities true)
-             (fn () => attempt true []))
+        first (attempts false @ attempts true @
+               [fn () => attempt_with true false []])
     end
 
     fun z3_rewrite (state, t) =
@@ -8595,8 +8714,27 @@ local
             (SmtReplayCompactWord.prove_schema (#bitblast context)
                (#atomic_law context) (#word_law context))
             (#hole context) target (!substitutions) schema end end
+        (* This rung bit-blasts words over 32 bits whole, where the
+           skeleton route is cheaper, so there that route goes first. *)
+        val wide_word = SmtResource.contains (fn t =>
+            wordsSyntax.is_word_type (Term.type_of t) andalso
+            (Arbnum.> (wordsSyntax.size_of t, Arbnum.fromInt 32)
+             handle Feedback.HOL_ERR _ => false))
         fun old_word_schema target =
-          profile "th_lemma[bv](word-schema)" (schematic false) target
+          let fun schema () =
+                profile "th_lemma[bv](word-schema)" (schematic false) target
+          in if not (wide_word target) then schema () else
+            (* The skeleton's own time gates leave the step's budget to
+               the word schema. *)
+            case (profile "th_lemma[bv](wide-skeleton)"
+                    (skeleton_general_attempt state) target
+                  handle Feedback.HOL_ERR holerr =>
+                    if SmtResource.is_resource_gate holerr then
+                      SmtSkeletonDispatch.Declined
+                    else raise Feedback.HOL_ERR holerr) of
+              SmtSkeletonDispatch.Proved result =>
+                skeleton_general_success result
+            | SmtSkeletonDispatch.Declined => schema () end
         fun word_schema target =
           (profile "th_lemma[bv](compact-program-law)"
              conditional_schematic target

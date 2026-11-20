@@ -388,6 +388,32 @@ struct
          with_values (fn _ => fn _ => fn backend =>
            check backend (small backend) bs))) cases
       val _=OK ()
+      val _=tprint "Symbolic bbterm is the legacy concatenation"
+      val symbolic=List.map (fn name => Term.mk_var (name,Type.bool))
+        ["p","q","r","s","t"]
+      (* The first bit is the least significant; the split is balanced. *)
+      fun bit name=boolSyntax.mk_cond (Term.mk_var (name,Type.bool),
+        wordsSyntax.mk_word (Arbnum.one,Arbnum.one),
+        wordsSyntax.mk_word (Arbnum.zero,Arbnum.one))
+      val concat=wordsSyntax.mk_word_concat
+      val expected=concat (concat (concat (bit "t",bit "s"),bit "r"),
+        concat (bit "q",bit "p"))
+      val _=ensure "legacy bbterm is not the balanced concatenation"
+        (Term.aconv (SmtLib_Theories.mk_bbterm symbolic) expected)
+      fun shape backend interpret=
+        let val (_,dict)= #dictionaries (R.select backend limits
+              {logic="QF_BV",solver=SOME "cvc5"})
+            val parse=List.hd (Redblackmap.find (dict,"@bbterm"))
+            val values=List.map (B.source backend (B.root backend)) symbolic
+            val value=interpret (parse (B.root backend) "@bbterm" [] values)
+        in ensure "graph bbterm differs from the legacy concatenation"
+             (Term.aconv value (SmtLib_Theories.mk_bbterm symbolic))
+        end
+      val _=with_graph (fn graph => fn backend =>
+        shape backend (G.representative graph))
+      val _=with_values (fn _ => fn _ => fn backend =>
+        shape backend (small backend))
+      val _=OK ()
       val _=tprint "Constructor slices do not relax atomic graph leaves"
       val _=with_values (fn graph => fn context => fn backend =>
         let val term=numSyntax.mk_numeral (Arbnum.fromInt 5)

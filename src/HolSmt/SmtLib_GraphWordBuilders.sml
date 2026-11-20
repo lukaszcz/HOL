@@ -193,12 +193,19 @@ struct
               SOME value => B.literal backend frame
                 (wordsSyntax.mk_word (value, width_num))
             | NONE =>
-                (case List.rev bits of
-                   [] => raise legacy_ERR "mk_bbterm" "empty bit vector"
-                 | high :: lower => List.foldl
-                     (fn (bit, word) => word_binary
-                       wordsSyntax.mk_word_concat (word, singleton bit))
-                     (singleton high) lower)
+                let
+                  (* Balanced, as SmtLib_Theories.mk_bbterm builds it. *)
+                  fun balanced [] =
+                        raise legacy_ERR "mk_bbterm" "empty bit vector"
+                    | balanced [bit] = singleton bit
+                    | balanced bits =
+                        let val low = List.length bits div 2
+                        in
+                          word_binary wordsSyntax.mk_word_concat
+                            (balanced (List.drop (bits, low)),
+                             balanced (List.take (bits, low)))
+                        end
+                in balanced bits end
         in
           case recover 4 bits of
             SOME word => word

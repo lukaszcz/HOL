@@ -267,7 +267,11 @@ Bugs fixed
     that reduce a datatype redex and reorder the rest in one step, no
     longer case-splits large rewrite steps while normalizing their
     arithmetic, and skips its datatype and integer-product METIS steps
-    on targets over 1000 nodes.
+    on targets over 1000 nodes.  `Z3_TAC` no longer overflows the stack on
+    an asserted equation whose left side occurs in its own right side, such
+    as `x = (x && m) || (x && ~m)`.  `CVC_TAC` checks goals about commuting
+    function updates and set difference again, and checks some 256-bit word
+    goals with adders and masks that used to time out.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
