@@ -339,6 +339,10 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smt_macro_dep_f", ``:int -> int``)
+val _ = new_constant ("smt_macro_dep_g", ``:int -> int``)
+val _ = new_constant ("smt_macro_cyc_f", ``:int -> int``)
+val _ = new_constant ("smt_macro_cyc_g", ``:int -> int``)
 val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
@@ -2610,6 +2614,97 @@ in
   assert_not_contains "num bridge axiom retirement" "forall" text;
   assert_not_contains "num bridge axiom retirement" "Num" text;
   assert_not_contains "num bridge axiom retirement" "int_of_num" text
+end
+
+(* Integer literals are int_of_num applied to numerals, but they mention no
+   num the transfer has to handle: a goal whose only num is inside them
+   keeps its assumptions out of the num-to-int rewriting.  The transfer
+   still normalizes such a goal, splitting its antecedents. *)
+fun int_literal_mentions_no_num_success () =
+let
+  val f_def = ``!x:int. f x = x + 7``
+  fun mentions what expected goal =
+    assert (SmtLib.goal_mentions_num goal = expected,
+      what ^ (if expected then " was not" else " was") ^
+      " taken to mention num")
+  val bounded = ``!x:int. 0 <= x /\ x <= 2 ==> x < 3``
+  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([f_def], bounded)
+in
+  mentions "f 2 = 9" false ([f_def], ``(f:int->int) 2 = 9``);
+  mentions "f (-2) = 5" false ([f_def], ``(f:int->int) (-2) = 5``);
+  mentions "&n = 2" true ([], ``&(n:num) = (2:int)``);
+  mentions "&FACT 3 = 6" true ([], ``&(FACT 3) = (6:int)``);
+  assert (SmtLib.goal_mentions_num_or_int_literal ([], bounded),
+    "an integer literal was not counted for the transfer's normalization");
+  assert (List.length asl = 3 andalso Lib.op_mem Term.aconv f_def asl,
+    "num transfer did not split an integer-literal goal's antecedents")
+end
+
+(* The num-to-int transfer leaves the assumptions that mention no num as
+   they are, so a solver proof still names the ones it uses; this also holds
+   when one of them has a free variable named like a binder the transfer
+   strips from the conclusion. *)
+fun num_transfer_keeps_num_free_assumptions_success () =
+let
+  val held = ``(x:int) = 5``
+  val f_def = ``!y:int. f y = y + 7``
+  val goal = ([``(n:num) <= 1``, held, f_def], ``!x:int. x + &n <= x + 2``)
+  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC goal
+  val proof_goal = ([``(n:num) <= 1``, held], #2 goal)
+  val thm = Tactical.TAC_PROOF (proof_goal,
+    Tactical.THEN (SmtLib.NUM_TO_INT_TAC, intLib.ARITH_TAC))
+  (* a num the transfer has no rule for still makes an assumption num *)
+  val ord_c = ``ORD c = 65``
+  val ((ord_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([ord_c], ``ORD c + 1 = 66``)
+  (* every assumption the transfer made is stripped, not only the newest *)
+  val ((strip_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([``(m:num) < 5``, ``(n:num) < 3 /\ (k:num) < 2``,
+      ``?j:num. j < m``], ``m + n + k < 10``)
+  (* an existential's witness is fresh for the transferred assumptions
+     still to be stripped: here one has a free i of the witness's name, and
+     the proof uses it *)
+  fun witness_fresh asl =
+    Tactical.TAC_PROOF ((asl, ``0 <= &(n:num) + (5:int)``),
+      Tactical.THEN (SmtLib.NUM_TO_INT_TAC,
+        Tactical.THEN (Tactical.REPEAT (Tactical.POP_ASSUM Tactic.MP_TAC),
+                       intLib.ARITH_TAC)))
+  val exists_first =
+    witness_fresh [``?i:int. i = &(n:num) + 1``, ``(i:int) = &(n:num) + 5``]
+  val exists_last =
+    witness_fresh [``(i:int) = &(n:num) + 5``, ``?i:int. i = &(n:num) + 1``]
+in
+  List.app (fn (what, thm) =>
+      check_oracle_tags ("num transfer witness, " ^ what) thm)
+    [("existential first", exists_first), ("existential last", exists_last)];
+  assert (not (List.exists (fn a => boolSyntax.is_conj a orelse
+                                    boolSyntax.is_exists a) strip_asl),
+    "num transfer left a transferred assumption unstripped");
+  assert (List.all (fn a => Lib.op_mem Term.aconv a asl) [held, f_def],
+    "num transfer changed an assumption that mentions no num");
+  assert (not (Lib.op_mem Term.aconv ord_c ord_asl),
+    "num transfer held back an assumption over an unlisted num function");
+  (* every held assumption gets the encoding rewrites on its own: int_max
+     is unfolded in the second one too *)
+  List.app (fn tac =>
+    let
+      val ((max_asl, _), _) = SolverSpec.simplify tac
+        ([``q:bool``, ``int_max (x:int) y = x``], ``(y:int) <= x + 1``)
+    in
+      assert (List.length max_asl = 2 andalso
+          not (List.exists (Lib.can (HolKernel.find_term (fn t =>
+            Term.is_const t andalso
+            #Name (Term.dest_thy_const t) = "int_max"))) max_asl),
+        "preprocessing left int_max folded in a held assumption")
+    end)
+    [SmtLib.Z3_SIMP_TAC true, SmtLib.Z3_SIMP_TAC false];
+  assert_concl_alpha ("num transfer keeping assumptions", thm,
+    #2 proof_goal);
+  assert (List.all (fn h => Lib.op_mem Term.aconv h (#1 proof_goal))
+      (Thm.hyp thm),
+    "num transfer keeping assumptions introduced a hypothesis");
+  check_oracle_tags "num transfer keeping assumptions" thm
 end
 
 fun ceiling_builtin_encoding_success () =
@@ -12505,6 +12600,23 @@ in
   check_oracle_tags "CPC repeated guard elimination" theorem
 end
 
+(* cvc5's symm also flips a disequality, here one between a Skolem
+   (epsilon) term and 0, as it arises from an int goal without the num
+   transfer. *)
+fun cpc_symm_disequality_replay_success () =
+let
+  val skolem = ``@x:int. 0 < x``
+  val premise = Thm.ASSUME (boolSyntax.mk_neg
+    (boolSyntax.mk_eq (skolem, ``0:int``)))
+  val theorem = CPC_ProofReplay.replay_symm_for_test [premise]
+in
+  assert (Thm.concl theorem ~~
+      boolSyntax.mk_neg (boolSyntax.mk_eq (``0:int``, skolem)) andalso
+      HOLset.equal (Thm.hypset theorem, Thm.hypset premise),
+    "symm did not flip the disequality from its premise alone");
+  check_oracle_tags "cpc symm disequality" theorem
+end
+
 fun cpc_quant_var_elim_symmetric_guard_replay_success () =
 let
   val proof = parse_cpc_proof_string
@@ -19325,6 +19437,77 @@ in
        "(assert (and p))\n(exit)\n")))
 end
 
+fun z3_proof_parser_unary_plus_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val r = Term.mk_var ("r", realSyntax.real_ty)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: unary + proof did not parse to a rewrite"
+in
+  assert (Term.aconv
+    (rewrite_concl "((declare-fun x () Int)\n(proof (rewrite (= (+ x) x))))")
+    (boolSyntax.mk_eq (x, x)),
+    "unary (+ x) over Int did not parse as x");
+  assert (Term.aconv
+    (rewrite_concl "((declare-fun r () Real)\n(proof (rewrite (= (+ r) r))))")
+    (boolSyntax.mk_eq (r, r)),
+    "unary (+ r) over Real did not parse as r");
+  expect_hol_error_contains "unary + over Bool" "'+'"
+    (fn () => ignore (rewrite_concl
+      "((declare-fun p () Bool)\n(proof (rewrite (= (+ p) p))))"));
+  expect_hol_error_contains "unary + in a benchmark" "'+'"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_LIA)\n(declare-const x Int)\n" ^
+       "(assert (= (+ x) x))\n(exit)\n")))
+end
+
+fun z3_proof_parser_seq_and_select_success () =
+let
+  val s = Term.mk_var ("s", listSyntax.mk_list_type intSyntax.int_ty)
+  val i = intSyntax.zero_tm
+  val n = intSyntax.term_of_int (Arbint.fromInt 2)
+  val seven = intSyntax.term_of_int (Arbint.fromInt 7)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: proof did not parse to a rewrite"
+  fun reflexive tm = boolSyntax.mk_eq (tm, tm)
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val step = Term.list_mk_abs ([x, y], intSyntax.mk_plus (x, y))
+  fun holsmt_app name args =
+    list_mk_icomb (Term.prim_mk_const {Thy = "HolSmt", Name = name}, args)
+in
+  (* Z3 echoes seq.at and seq.extract as the constants the goal has. *)
+  assert (Term.aconv
+    (rewrite_concl ("((declare-fun s () (Seq Int))\n" ^
+       "(proof (rewrite (= (seq.at s 0) (seq.at s 0)))))"))
+    (reflexive (holsmt_app "smt_seq_at" [s, i])),
+    "seq.at did not parse as smt_seq_at");
+  assert (Term.aconv
+    (rewrite_concl ("((declare-fun s () (Seq Int))\n" ^
+       "(proof (rewrite (= (seq.extract s 0 2) (seq.extract s 0 2)))))"))
+    (reflexive (holsmt_app "smt_seq_extract" [s, i, n])),
+    "seq.extract did not parse as smt_seq_extract");
+  (* A two-argument lambda selected with both indices at once *)
+  assert (Term.aconv
+    (rewrite_concl ("((proof (rewrite (= " ^
+       "(select (lambda ((x Int) (y Int)) (+ x y)) 0 7) (+ 0 7)))))"))
+    (boolSyntax.mk_eq (Term.list_mk_comb (step, [i, seven]),
+       intSyntax.mk_plus (i, seven))),
+    "select with two indices did not parse as two applications");
+  expect_hol_error_contains "select with two indices in a benchmark"
+    "select arity mismatch"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_AUFLIA)\n" ^
+       "(declare-const a (Array Int (Array Int Int)))\n" ^
+       "(assert (= (select a 0 7) 0))\n(exit)\n")))
+end
+
 fun z3_asserted_membership_diagnostic () =
 let
   val rogue = ``p:bool``
@@ -19374,6 +19557,8 @@ let
         "regrouped assertion introduced a derived hypothesis");
       check_oracle_tags "regrouped asserted node" theorem
     end
+  fun sequence name args = boolSyntax.list_mk_icomb
+    (Term.prim_mk_const {Thy = "HolSmt", Name = name}, args)
   val aliases =
     [(``(x:int) <> y``, ``ALL_DISTINCT [x:int; y]``),
      (``(x:int) <> y``, ``ALL_DISTINCT [x:int; y] /\ T``),
@@ -19385,7 +19570,23 @@ let
       ``~(smtfp_from_ieee_bv (w2w (w2w (48w:word8):word16)) =
         (smtfp_bits 0w 3w 0w : (4,3) smtfp))``),
      (``(0w:word8) = w``,
-      ``(w2w (w2w (48w:word8):word4):word8) = w``)]
+      ``(w2w (w2w (48w:word8):word4):word8) = w``),
+     (* the Z3 set encoding: membership as select, INSERT and DELETE as
+        stores *)
+     (``~((7:int) IN COMPL {})``, ``~(COMPL {} (7:int))``),
+     (``~~((((7:int) INSERT zs) DIFF ((7:int) INSERT zt)) (7:int))``,
+      ``~~(((((7:int) =+ T) zs) DIFF (((7:int) =+ T) zt)) (7:int))``),
+     (``((zs:int set) DELETE (7:int)) (8:int)``,
+      ``(((7:int) =+ F) zs) (8:int)``),
+     (* seq.at and seq.extract written unfolded in the goal *)
+     (``(if (zi:int) < 0 \/ LENGTH (zl:int list) <= Num zi then []
+         else [EL (Num zi) zl]) = [7]``,
+      boolSyntax.mk_eq (sequence "smt_seq_at" [``zl:int list``, ``zi:int``],
+        ``[7:int]``)),
+     (``(if (zi:int) < 0 \/ (zn:int) <= 0 \/ LENGTH (zl:int list) <= Num zi
+         then [] else TAKE (Num zn) (DROP (Num zi) zl)) = [7]``,
+      boolSyntax.mk_eq (sequence "smt_seq_extract"
+        [``zl:int list``, ``zi:int``, ``zn:int``], ``[7:int]``))]
   fun check_encoding (source, target) =
     let
       val initial = Z3_Proof.empty_proof "4.15.3"
@@ -22672,6 +22873,29 @@ in
        ``(!x:int. P (x - 1):bool) <=> (!x:int. P (-1 + x))``,
        ``(!x:int. P (~x):bool) <=> (!x:int. P (-1 * x))``],
     "a rewrite under a binder differing by *, - or negation was not closed")
+end
+
+(* Z3 moves the terms of a non-strict order across it, writing a + 2 <= b
+   as a + -1 * b <= -2, also in a definition's body under a quantifier;
+   the canonical pass closes such a rewrite without arithmetic proof. *)
+fun z3_difference_canon_leq_success () =
+let
+  fun closes source =
+    let val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+    in
+      check_oracle_tags "difference canonicalisation" theorem;
+      boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal
+        (boolSyntax.rhs (Thm.concl theorem))
+    end
+in
+  assert (List.all closes
+      [``(a + 2 <= b:int) <=> (a + -1 * b <= -2)``,
+       ``(a + 2 <= b:real) <=> (a + -1 * b <= -2)``,
+       ``(!b0 b1:int. 0 <= b0 /\ b0 + 2 <= b1) <=>
+         (!b0 b1:int. 0 <= b0 /\ b0 + -1 * b1 <= -2)``],
+    "a non-strict order with terms moved across it was not closed")
 end
 
 (* Types of at most 64 nodes compare directly, larger ones through the
@@ -28153,6 +28377,130 @@ in
     "definition normalization did not use the arithmetic owner exactly once");
   assert (rejected,
     "non-proof-local equality was admitted as a checked definition")
+end
+
+(* Z3's macro finder expands an asserted definition inside a bare rewrite
+   step; the substitution takes it from the goal's assertions. *)
+fun z3_asserted_macro_substitution_success () =
+let
+  val macro = ``!x:int. macro_f x = x + 5``
+  val unused = ``!x:int. macro_k x = x:int``
+  val target = ``~((macro_f:int->int) 2 = 7) <=> ~(2 + -1 * -5 = 7:int)``
+  fun prove sources goal =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test sources goal
+  fun rejects sources goal =
+    (ignore (prove sources goal); false) handle Feedback.HOL_ERR _ => true
+  (* proves [goal] from exactly the [used] assertions, with no oracle *)
+  fun proves_from name sources used goal =
+    let val theorem = prove sources goal
+    in
+      assert (Thm.concl theorem ~~ goal andalso
+          List.length (Thm.hyp theorem) = List.length used andalso
+          List.all (fn h => List.exists (Term.aconv h) used)
+            (Thm.hyp theorem),
+        name ^ ": not proved from exactly the macros it expands");
+      check_oracle_tags name theorem
+    end
+  (* A reflexive assertion is skipped: rewriting with it never ends. *)
+  val reflexive = ``(macro_f:int->int) 3 = macro_f 3``
+  val dep_g = ``!x:int. smt_macro_dep_g x = x + 1``
+  val dep_f = ``!x:int. smt_macro_dep_f x = smt_macro_dep_g x``
+  val cyc_f =
+    ``!x:int. smt_macro_cyc_f x = smt_macro_cyc_g x + smt_macro_dep_g x``
+  val cyc_g = ``!x:int. smt_macro_cyc_g x = smt_macro_cyc_f x``
+  val macro_q = ``!x:int. macro_q x = (0 <= x /\ !y:int. y <= x \/ x < y)``
+  (* a definition conjoined with another fact *)
+  val conjoined = ``(!x:int. macro_f x = x + 5) /\ asserted_guard``
+  (* each call of a doubling macro calls the next one twice *)
+  val double = ``!x:int. macro_d x = x + x``
+  fun nest 0 = ``1:int``
+    | nest n = Term.mk_comb (``macro_d:int->int``, nest (n - 1))
+  val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
+    (Arbint.fromInt 1024))
+  (* one call of the doubling macro on a sum of 700 variables expands to
+     over 4096 syntax nodes *)
+  val wide = List.foldl intSyntax.mk_plus ``asserted_w0:int``
+    (List.tabulate (699, fn i =>
+       Term.mk_var ("asserted_w" ^ Int.toString (i + 1), intSyntax.int_ty)))
+  val wide_call = boolSyntax.mk_eq
+    (Term.mk_comb (``macro_d:int->int``, wide), intSyntax.mk_plus (wide, wide))
+  val equality = ``(asserted_x:int) = asserted_y``
+  (* a substituted constructor discards a branch full of macro calls *)
+  val sum_source = ``(asserted_s:int + bool) = INR T``
+  val sum_target =
+    ``OUTL (INR (sum_CASE (asserted_s:int + bool)
+         (\x:int. ^(nest 9) = x) (\b:bool. b)) : int + bool) =
+      OUTL (INR T : int + bool)``
+  val real_macro = ``!x:real. macro_rf x = x + 5``
+  val real_target =
+    ``((macro_rf:real->real) asserted_r = asserted_t) <=>
+      (5 + asserted_r = asserted_t)``
+  (* more explicit equalities than equality extraction takes *)
+  val many_equalities = List.tabulate (65, fn i => boolSyntax.mk_eq
+    (Term.mk_var ("asserted_e" ^ Int.toString i, intSyntax.int_ty),
+     intSyntax.term_of_int (Arbint.fromInt i)))
+in
+  proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
+  assert (rejects [macro]
+      ``~((macro_f:int->int) 2 = 7) <=> ~(2 + 6 = 7:int)``,
+    "macro expansion admitted an unequal residue");
+  assert (rejects [``!x:int. macro_r x = macro_r x + 0``]
+      ``(macro_r:int->int) 1 + 0 = macro_r 1``,
+    "a recursive equation was used as a macro");
+  assert (rejects [``!x:int. -x = x``] ``-(asserted_y:int) = asserted_y``,
+    "an equation for an SMT builtin was used as a macro");
+  (* APPEND is the solver's own seq.++, not a macro. *)
+  assert (rejects [``!xs ys:int list. APPEND xs ys = xs``]
+      ``APPEND [1:int] [2] = [1]``,
+    "an equation for a natively encoded operator was used as a macro");
+  (* Mutually inverse macros would rewrite each other forever. *)
+  assert (rejects [``!l:int list. TL l = FRONT l``,
+                   ``!l:int list. FRONT l = TL l``]
+      ``TL [1:int; 2] = FRONT [1; 2]``,
+    "macros that use each other were applied");
+  (* Only the cycle is left out; the macro it calls is still applied. *)
+  proves_from "macro called by a cycle" [cyc_f, cyc_g, dep_g] [dep_g]
+    ``~(smt_macro_dep_g 2 = 7) <=> ~(2 + 1 = 7:int)``;
+  (* A datatype constructor is the solver's own symbol, not a macro. *)
+  assert (rejects [``!x:int. SOME x = NONE``] ``SOME (1:int) = NONE``,
+    "an equation for a datatype constructor was used as a macro");
+  (* A macro is expanded before the ones its body uses, whatever the
+     order of the assertions. *)
+  proves_from "nested macros" [dep_g, dep_f] [dep_g, dep_f]
+    ``~(smt_macro_dep_f 2 = 7) <=> ~(2 + 1 = 7:int)``;
+  (* The expanded body is decided atom by atom under its connectives; the
+     quantified conjunct is never sent to integer arithmetic. *)
+  proves_from "conjoined macro" [conjoined] [conjoined] target;
+  proves_from "macros past the equality cap" (macro :: many_equalities)
+    [macro] target;
+  proves_from "equalities before macros" [double, sum_source] [sum_source]
+    sum_target;
+  proves_from "real macro" [real_macro] [real_macro] real_target;
+  (* Z3 mixes Int and Real: the macro's argument is an integer cast *)
+  proves_from "real macro on a cast" [real_macro] [real_macro]
+    ``((macro_rf:real->real) (real_of_int asserted_n) = asserted_t) <=>
+      (5 + real_of_int asserted_n = asserted_t)``;
+  proves_from "real macro on a cast alone" [real_macro] [real_macro]
+    ``(macro_rf:real->real) (real_of_int asserted_n) =
+      5 + real_of_int asserted_n``;
+  (* the equality alone closes it; the macro calls stay unexpanded *)
+  proves_from "reflexive before macros" [double, equality] [equality]
+    (boolSyntax.mk_eq
+      (Term.list_mk_comb (``macro_h:int->int->int``,
+         [nest 9, ``asserted_x:int``]),
+       Term.list_mk_comb (``macro_h:int->int->int``,
+         [nest 9, ``asserted_y:int``])));
+  assert ((ignore (prove [double] deep); false)
+      handle Feedback.HOL_ERR holerr => String.isSubstring
+        "exceeds 256 rewrites" (Feedback.message_of holerr),
+    "an exponential macro expansion was not bounded");
+  assert ((ignore (prove [double] wide_call); false)
+      handle Feedback.HOL_ERR holerr => String.isSubstring
+        "a macro expansion exceeds 4096" (Feedback.message_of holerr),
+    "an oversized macro expansion was not bounded");
+  proves_from "atom-wise macro body" [macro_q] [macro_q]
+    ``(macro_q:int->bool) asserted_a =
+      (asserted_a >= 0 /\ !y:int. y <= asserted_a \/ asserted_a < y)``
 end
 
 fun z3_asserted_equality_substitution_boundaries () =
@@ -39200,6 +39548,10 @@ let
       num_transfer_duplicate_assumptions_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
+    ("int_literal_mentions_no_num_success",
+      int_literal_mentions_no_num_success),
+    ("num_transfer_keeps_num_free_assumptions_success",
+      num_transfer_keeps_num_free_assumptions_success),
     ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
     ("literal_power_unfolding_success", literal_power_unfolding_success),
     ("symbolic_positive_power_transfer_success",
@@ -39506,6 +39858,8 @@ let
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",
       cpc_quant_var_elim_symmetric_guard_replay_success),
+    ("cpc_symm_disequality_replay_success",
+      cpc_symm_disequality_replay_success),
     ("cpc_bool_and_de_morgan_tail_replay_success",
       cpc_bool_and_de_morgan_tail_replay_success),
     ("cpc_bool_or_de_morgan_tail_replay_success",
@@ -39838,6 +40192,10 @@ let
       z3_proof_parser_normalizes_rule_alias_success),
     ("z3_proof_parser_unary_and_or_success",
       z3_proof_parser_unary_and_or_success),
+    ("z3_proof_parser_unary_plus_success",
+      z3_proof_parser_unary_plus_success),
+    ("z3_proof_parser_seq_and_select_success",
+      z3_proof_parser_seq_and_select_success),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",
@@ -39950,6 +40308,8 @@ let
       replay_canon_skips_passes_without_triggers_success),
     ("z3_secondary_canon_triggers_under_binders_success",
       z3_secondary_canon_triggers_under_binders_success),
+    ("z3_difference_canon_leq_success",
+      z3_difference_canon_leq_success),
     ("replay_type_order_small_and_large_agree_success",
       replay_type_order_small_and_large_agree_success),
     ("cpc_binder_cong_lifts_through_negation_success",
@@ -40087,6 +40447,8 @@ let
       z3_closed_definition_normalization_boundaries),
     ("z3_asserted_equality_substitution_boundaries",
       z3_asserted_equality_substitution_boundaries),
+    ("z3_asserted_macro_substitution_success",
+      z3_asserted_macro_substitution_success),
     ("z3_hyp_removal_beta_lookup_success",
       z3_hyp_removal_beta_lookup_success),
     ("z3_hyp_removal_eta_only_lookup_success",

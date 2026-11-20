@@ -2072,11 +2072,26 @@ local
       wordsLib.WORD_EVAL_CONV target
     else raise ERR "assertion_word_literal_conv" "not a literal word cast"
 
+  (* The Z3 set encoding writes membership as select and INSERT and DELETE
+     as stores, which parse back as application and update.  Always toward
+     that form: the reverse direction would match any Boolean
+     application. *)
+  val assertion_set_rewrites =
+    [pred_setTheory.SPECIFICATION, HolSmtTheory.z3_set_insert_update,
+     HolSmtTheory.z3_set_delete_update]
+
+  (* A goal can write seq.at and seq.extract over a list as the HolSmt
+     constants or as their unfolded definitions, which translate alike;
+     Z3's echo parses back as the constants.  Unfold both. *)
+  val assertion_sequence_rewrites =
+    [HolSmtTheory.smt_seq_at_def, HolSmtTheory.smt_seq_extract_def]
+
   fun assertion_encoding_conv target =
     Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
       (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
        List.map Conv.REWR_CONV
-         (wordsTheory.w2w_id :: assertion_unit_rewrites)))) target
+         (wordsTheory.w2w_id :: assertion_unit_rewrites @
+          assertion_set_rewrites @ assertion_sequence_rewrites)))) target
 
   fun z3_asserted (state : state, t) =
   let
@@ -6859,7 +6874,13 @@ local
                  "too many explicit equality components";
              [theorem])
         in
-          if boolSyntax.is_eq conclusion then fact theorem
+          (* A reflexive equation substitutes nothing, and rewriting with
+             it never terminates. *)
+          if boolSyntax.is_eq conclusion andalso
+             Term.aconv (boolSyntax.lhs conclusion)
+               (boolSyntax.rhs conclusion)
+          then []
+          else if boolSyntax.is_eq conclusion then fact theorem
           (* solve-eqs also eliminates an asserted Boolean variable or its
              negation, as the equation p = T or p = F. *)
           else if Term.is_var conclusion then fact (Drule.EQT_INTRO theorem)
@@ -6896,19 +6917,129 @@ local
       facts
     end
 
+  (* Z3's macro finder, which its auto-configuration turns on for quantified
+     problems mixing Int and Real, expands an asserted definition
+     !x1 ... xn. f x1 ... xn = t inside a bare rewrite step, without citing
+     the assertion.  A macro rule is such an assertion, or a conjunct of one,
+     whose arguments are its distinct bound variables, whose t is free only
+     in them, and whose head f is a symbol the translation leaves
+     uninterpreted and does not occur in t; datatype constructors are native
+     solver symbols, not macros.  Rules are grouped by head and applied one
+     head at a time, callers before the macros their bodies use, so one pass
+     expands nested macros; macros on a cycle of uses are left out, so rules
+     cannot loop, and the rest are kept.  Each comes from ASSUME of its
+     assertion, so only assertions whose rules fire become hypotheses. *)
+  fun asserted_macro_theorems assertions =
+    let
+      fun is_macro assertion =
+        let
+          val (vars, body) = boolSyntax.strip_forall assertion
+          val (lhs, rhs) = boolSyntax.dest_eq body
+          val (head, args) = boolSyntax.strip_comb lhs
+          fun is_head tm =
+            Term.aconv tm head orelse
+            (Term.is_const tm andalso Term.is_const head andalso
+             Term.same_const tm head)
+        in
+          not (List.null vars) andalso
+          List.length args = List.length vars andalso
+          List.all (fn arg => Lib.op_mem Term.aconv arg vars) args andalso
+          List.length (Lib.op_mk_set Term.aconv args) =
+            List.length args andalso
+          List.all (fn v => Lib.op_mem Term.aconv v args)
+            (Term.free_vars rhs) andalso
+          not (Lib.op_mem Term.aconv head vars) andalso
+          not (Lib.can (HolKernel.find_term is_head) rhs) andalso
+          SmtLib.outbound_collection_symbol head andalso
+          not (TypeBase.is_constructor head) andalso
+          not (Option.isSome (SmtLib.builtin_encoding lhs))
+        end
+        handle Feedback.HOL_ERR _ => false
+      fun parts th =
+        let val (lhs, rhs) = boolSyntax.dest_eq
+          (#2 (boolSyntax.strip_forall (Thm.concl th)))
+        in (#1 (boolSyntax.strip_comb lhs), rhs) end
+      val head_of = #1 o parts
+      fun group [] = []
+        | group (th :: ths) =
+            let
+              val head = head_of th
+              val (same, rest) = List.partition
+                (fn other => Term.aconv (head_of other) head) ths
+            in
+              (th :: same) :: group rest
+            end
+      fun uses group head =
+        List.exists (fn th => Lib.can (HolKernel.find_term (fn tm =>
+            Term.aconv tm head orelse
+            (Term.is_const tm andalso Term.is_const head andalso
+             Term.same_const tm head))) (#2 (parts th))) group
+      val rules = List.filter (is_macro o Thm.concl)
+        (List.concat (List.map (Drule.CONJUNCTS o Thm.ASSUME) assertions))
+      val groups = Vector.fromList (group rules)
+      val indices = List.tabulate (Vector.length groups, Lib.I)
+      fun calls (i, j) = i <> j andalso
+        uses (Vector.sub (groups, i)) (head_of (hd (Vector.sub (groups, j))))
+      val graph = List.foldl (fn (i, graph) =>
+        Int_Graph.new_node (i, ()) graph) Int_Graph.empty indices
+      val graph = List.foldl (fn (i, graph) =>
+          List.foldl (fn (j, graph) =>
+            if calls (i, j) then Int_Graph.add_edge (i, j) graph else graph)
+            graph indices)
+        graph indices
+    in
+      (* components come callers first *)
+      List.mapPartial (fn [i] => SOME (Vector.sub (groups, i)) | _ => NONE)
+        (Int_Graph.strong_conn graph)
+    end
+
   (* Substitution is the only use made of the assertions.  Most solve-eqs
      residues become reflexive immediately.  Integer min/max certificates use
      complementary < and <= conditionals; after substitution that narrowly
      admitted linear-conditional residue is sent to the existing arithmetic
      owner, with no assertion context.  A substituted constructor can leave
      a case/destructor redex; that residue goes to the existing datatype
-     owner, again with no assertion context. *)
+     owner, again with no assertion context.  An expanded macro leaves
+     linear integer arithmetic, which goes to the same arithmetic owner. *)
   fun asserted_equality_substitution_prove admit assertions target =
     let
+      val macros = asserted_macro_theorems assertions
+      (* Past its caps the equality extraction gives up; with macros, the
+         rewrite is still tried with the macros alone. *)
       val equalities = asserted_equality_theorems assertions
-      val _ = not (List.null equalities) orelse
+        handle Feedback.HOL_ERR holerr =>
+          if List.null macros then raise Feedback.HOL_ERR holerr else []
+      val _ = not (List.null equalities andalso List.null macros) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
+      (* A macro may use its argument several times, so nested calls can
+         expand exponentially: bound the rewrites, and the unfolded size of
+         each expansion before the rewriting walks into it. *)
+      val max_macro_rewrites = 256
+      val max_macro_nodes = 4096
+      exception MacroBudget of string
+      fun macro_conv tm =
+        let
+          val rewrites = ref 0
+          fun rewrite group tm =
+            let
+              val theorem = Conv.FIRST_CONV (List.map Conv.REWR_CONV group) tm
+              val expansion = boolSyntax.rhs (Thm.concl theorem)
+            in
+              rewrites := !rewrites + 1;
+              if !rewrites <= max_macro_rewrites then ()
+              else raise MacroBudget "macro expansion exceeds 256 rewrites";
+              if SmtResource.term_nodes_up_to max_macro_nodes expansion <=
+                 max_macro_nodes then theorem
+              else raise MacroBudget
+                "a macro expansion exceeds 4096 syntax nodes"
+            end
+        in
+          Conv.QCONV (Conv.EVERY_CONV (List.map
+            (Conv.QCONV o Conv.TOP_DEPTH_CONV o rewrite) macros)) tm
+          handle MacroBudget message =>
+            raise ERR "asserted_equality_substitution_prove" message
+        end
       (* Rewriting to a fixpoint.  With a variable or constant on every
          left side and no abstraction on any right side, the equations the
          cycle check below keeps rewrite to an end, so they are not
@@ -6971,56 +7102,141 @@ local
             raise ERR "asserted_equality_substitution_prove"
               "substitution did not terminate"
         end
-      fun prove_with bounded rewrite_theorems =
+      fun prove_with expand bounded rewrite_theorems =
         let
-          val substitution = substitute bounded rewrite_theorems
+          val equality_step =
+            if List.null rewrite_theorems then Thm.REFL target
+            else substitute bounded rewrite_theorems
+              handle Conv.UNCHANGED => Thm.REFL target
+          val equality_result = boolSyntax.rhs (Thm.concl equality_step)
+          val macro_step =
+            if expand then macro_conv equality_result
+            else Thm.REFL equality_result
+          val macro_fired =
+            not (Term.aconv (boolSyntax.lhs (Thm.concl macro_step))
+              (boolSyntax.rhs (Thm.concl macro_step)))
+          val substitution = Thm.TRANS equality_step macro_step
           val substituted = boolSyntax.rhs (Thm.concl substitution)
-          fun reflexive () =
-            let val (left, right) = boolSyntax.dest_eq substituted
+          val _ = not (Term.aconv target substituted) orelse
+            raise Conv.UNCHANGED
+          fun reflexive residue =
+            let val (left, right) = boolSyntax.dest_eq residue
             in
               if Term.aconv left right then Thm.ALPHA left right
               else raise ERR "asserted_equality_substitution_prove"
                 "substituted equality is not reflexive"
             end
-          fun integer_conditional () =
+          fun integer_conditional residue =
             let
               val conditionals = List.filter
-                (Lib.can boolSyntax.dest_cond) (Library.subterms substituted)
+                (Lib.can boolSyntax.dest_cond) (Library.subterms residue)
               fun add (conditional, unique) =
                 if List.exists (Term.aconv conditional) unique then unique
                 else conditional :: unique
               val unique = List.foldl add [] conditionals
-              val _ = SmtResource.term_nodes_up_to 4096 substituted <= 4096
+              val _ = SmtResource.term_nodes_up_to 4096 residue <= 4096
                 orelse raise ERR "asserted_equality_substitution_prove"
                   "integer conditional residue exceeds 4096 syntax nodes"
-              val _ = not (List.null unique) andalso
+              val _ = (macro_fired orelse not (List.null unique)) andalso
                   List.length unique <= 4 orelse
                 raise ERR "asserted_equality_substitution_prove"
                   "outside bounded integer min/max conditional family"
-              val _ = List.all
+              (* free_vars misses bound variables: a quantified residue
+                 would send Cooper into quantifier elimination *)
+              val _ = not (Library.has_quantifier residue) andalso List.all
                 (fn variable => Term.type_of variable = intSyntax.int_ty)
-                (Term.free_vars substituted) orelse
+                (Term.free_vars residue) orelse
                 raise ERR "asserted_equality_substitution_prove"
-                  "conditional residue has a non-integer variable"
+                  "conditional residue is quantified or has a non-integer \
+                  \variable"
             in
-              Tactical.TAC_PROOF (([], substituted),
+              Tactical.TAC_PROOF (([], residue),
                 Tactical.REPEAT Tactic.COND_CASES_TAC THEN
                 intLib.ARITH_TAC)
             end
-          val decision = reflexive ()
-            handle Feedback.HOL_ERR _ => integer_conditional ()
+          (* An expanded real macro leaves linear real arithmetic; its
+             arguments may be integer casts, which are atoms there. *)
+          fun real_macro residue =
+            let
+              fun arithmetic variable =
+                Term.type_of variable = realSyntax.real_ty orelse
+                Term.type_of variable = intSyntax.int_ty
+              val _ = macro_fired andalso
+                SmtResource.term_nodes_up_to 4096 residue <= 4096 andalso
+                not (Library.has_quantifier residue) andalso
+                List.all arithmetic (Term.free_vars residue) orelse
+                raise ERR "asserted_equality_substitution_prove"
+                  "not a bounded, unquantified real macro residue"
+            in
+              Tactical.TAC_PROOF (([], residue), RealField.REAL_ARITH_TAC)
+            end
+          fun decide residue = reflexive residue
+            handle Feedback.HOL_ERR _ => integer_conditional residue
+            handle Feedback.HOL_ERR _ => real_macro residue
             handle Feedback.HOL_ERR _ =>
-              SmtDatatypeProve.datatype_prove_with_admission admit
-                substituted
+              SmtDatatypeProve.datatype_prove_with_admission admit residue
+          fun boolean_equality tm =
+            let val (left, _) = boolSyntax.dest_eq tm
+            in Term.type_of left = Type.bool end
+            handle Feedback.HOL_ERR _ => false
+          fun connective tm =
+            boolSyntax.is_neg tm orelse boolSyntax.is_conj tm orelse
+            boolSyntax.is_disj tm orelse boolSyntax.is_imp_only tm orelse
+            boolean_equality tm
+          fun connectives residue =
+            let val (l, r) = boolSyntax.dest_eq residue
+            in connective l andalso connective r end
+          (* An expanded macro body differs from Z3's normal form atom by
+             atom under the same Boolean connectives; deciding each atom
+             alone keeps the arithmetic small. *)
+          fun split residue =
+            let
+              val (l, r) = boolSyntax.dest_eq residue
+              fun congruence () =
+                let
+                  val (left_head, left_args) = boolSyntax.strip_comb l
+                  val (right_head, right_args) = boolSyntax.strip_comb r
+                  val _ = Term.aconv left_head right_head andalso
+                    List.length left_args = List.length right_args orelse
+                    raise ERR "asserted_equality_substitution_prove"
+                      "connectives differ"
+                in
+                  List.foldl (fn ((left, right), theorem) =>
+                      Thm.MK_COMB (theorem,
+                        split (boolSyntax.mk_eq (left, right))))
+                    (Thm.REFL left_head) (ListPair.zip (left_args, right_args))
+                end
+              fun bridged side =
+                Conv.REWR_CONV boolTheory.IMP_DISJ_THM side
+            in
+              if Term.aconv l r then Thm.ALPHA l r
+              else if not (connectives residue) then decide residue
+              else if boolSyntax.is_imp_only l andalso
+                      boolSyntax.is_disj r then
+                let val bridge = bridged l
+                in Thm.TRANS bridge (split (boolSyntax.mk_eq
+                     (boolSyntax.rhs (Thm.concl bridge), r))) end
+              else if boolSyntax.is_disj l andalso
+                      boolSyntax.is_imp_only r then
+                let val bridge = bridged r
+                in Thm.TRANS (split (boolSyntax.mk_eq
+                     (l, boolSyntax.rhs (Thm.concl bridge)))) (Thm.SYM bridge)
+                end
+              else congruence ()
+            end
+          val decision =
+            if connectives substituted then
+              split substituted
+              handle Feedback.HOL_ERR _ => decide substituted
+            else decide substituted
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
-      fun attempt_with bounded rewrite_theorems =
-        prove_with bounded rewrite_theorems
+      fun attempt_with expand bounded rewrite_theorems =
+        prove_with expand bounded rewrite_theorems
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
-      val attempt = attempt_with false
       (* Rewriting to a fixpoint never terminates with an equation whose
          left side occurs in its own right side, directly
          (x = (x && m) || (x && ~m)) or through other equations
@@ -7065,16 +7281,21 @@ local
       val cyclic = List.filter (fn theorem => not (List.exists
           (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
         equalities
-      val attempts =
-        (fn () => attempt oriented) ::
-        (if List.null cyclic then []
-         else [fn () => attempt (acyclic (oriented @ List.map Thm.SYM cyclic))])
-        @ [fn () => attempt reversed]
-        @ (if dropped oriented then [fn () => attempt_with true equalities]
-           else [])
-        @ (if dropped reversed then
-             [fn () => attempt_with true all_reversed]
-           else [])
+      fun attempts expand =
+        let val attempt = attempt_with expand false
+        in
+          (fn () => attempt oriented) ::
+          (if List.null cyclic then []
+           else
+             [fn () => attempt (acyclic (oriented @ List.map Thm.SYM cyclic))])
+          @ [fn () => attempt reversed]
+          @ (if dropped oriented then
+               [fn () => attempt_with expand true equalities]
+             else [])
+          @ (if dropped reversed then
+               [fn () => attempt_with expand true all_reversed]
+             else [])
+        end
       (* Each attempt only adds a route: whatever else it raises, the next
          one is tried.  A resource refusal ends the substitution. *)
       fun first [] =
@@ -7083,7 +7304,14 @@ local
         | first (next :: rest) =
             SmtResource.or_else next (fn () => first rest)
     in
-      first attempts
+      (* the equalities alone first, as without macros; then with the
+         macros expanded, and with the macros alone, since rewriting with
+         the equalities can hide a macro call *)
+      if List.null macros then first (attempts false)
+      else if List.null equalities then attempt_with true false []
+      else
+        first (attempts false @ attempts true @
+               [fn () => attempt_with true false []])
     end
 
     fun z3_rewrite (state, t) =

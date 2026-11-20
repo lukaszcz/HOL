@@ -3325,7 +3325,7 @@ local
                metis_prove
                  [premise, smtstringTheory.reglan_equiv_sym] target
              end
-           else Thm.SYM premise
+           else Conv.CONV_RULE (Conv.RAND_CONV Conv.SYM_CONV) premise
        | NONE => Thm.SYM premise)
       handle Feedback.HOL_ERR _ =>
         let
@@ -22215,6 +22215,7 @@ in
   val resolution_word_graph_for_test = new_resolution_word_graph
   val quantified_boolean_equality_for_test = quantified_boolean_equality
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
+  val replay_symm_for_test = replay_symm
   val retain_producer_conclusion_for_test = retain_producer_conclusion
   val replay_cong_for_test = replay_cong
   val replay_nary_cong_for_test = replay_nary_cong

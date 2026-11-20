@@ -240,33 +240,15 @@ local
       SOME (_, range) => z3_result_type range
     | NONE => ty
 
+  (* The same HolSmt constants SmtLib_Theories reads seq.extract and
+     seq.at as, so a goal's own term and Z3's echo of it agree. *)
   fun seq_extract (s, i, n) =
     if is_z3_string s then smtstring_app "smtstr_substr" [s, i, n]
-    else
-      let
-        val invalid = boolSyntax.list_mk_disj [
-          intSyntax.mk_less (i, intSyntax.zero_tm),
-          intSyntax.mk_leq (n, intSyntax.zero_tm),
-          numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i)]
-      in
-        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
-          listSyntax.mk_take (intSyntax.mk_Num n,
-            listSyntax.mk_drop (intSyntax.mk_Num i, s)))
-      end
+    else holsmt_app "smt_seq_extract" [s, i, n]
 
   fun seq_at (s, i) =
     if is_z3_string s then smtstring_app "smtstr_at" [s, i]
-    else
-      let
-        val invalid = boolSyntax.mk_disj
-          (intSyntax.mk_less (i, intSyntax.zero_tm),
-           numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i))
-        val empty = listSyntax.mk_nil (listSyntax.eltype s)
-      in
-        boolSyntax.mk_cond (invalid, empty,
-          listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num i, s),
-            empty))
-      end
+    else holsmt_app "smt_seq_at" [s, i]
 
   fun z3_natural tm =
     numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
@@ -881,6 +863,24 @@ local
       (SmtLib_Theories.typed_unary Type.bool Lib.I)),
     ("or", SmtLib_Theories.K_zero_one
       (SmtLib_Theories.typed_unary Type.bool Lib.I)),
+    (* Likewise, Z3 proofs can write a sum of one term as a unary [+],
+       e.g. [(+ 2)] when arithmetic rewriting leaves one summand; it means
+       its argument. *)
+    ("+", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary intSyntax.int_ty Lib.I)),
+    ("+", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary realSyntax.real_ty Lib.I)),
+    (* Z3 represents a binary function, such as seq.foldl's step, as a
+       lambda over two indices, and its proofs select from it with both at
+       once, e.g. [(select f 0 7)].  SMT-LIB's select takes one index; this
+       means selecting with each index in turn. *)
+    ("select", SmtLib_Theories.K_zero_list (fn args =>
+      case args of
+        array :: index :: (indices as _ :: _) =>
+          List.foldl (fn (i, f) => SmtLib_Theories.typed_comb (f, i))
+            array (index :: indices)
+      | _ => SmtLib_Theories.decline "<z3_builtin_dict.select>"
+          "not a select with several indices")),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is

@@ -8742,13 +8742,33 @@ in
     List.exists num_meets_word
       (List.concat (List.map subterms (concl :: asms)))
 
-  fun goal_mentions_num (asms, concl) =
+  (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
+     numeral, which the solvers read as an integer constant: it needs no
+     transfer, so goal_mentions_num skips it.  It counts every other atom
+     whose type mentions num, also one the transfer has no rule for, such as
+     ORD.  goal_mentions_num_or_int_literal counts integer literals, as the
+     transfer's normalization of the goal still helps the solvers' proofs
+     replay, and only the atoms the transfer rewrites. *)
+  fun mentions_num skip_literals counts (asms, concl) =
   let
-    val atoms = Term.all_atomsl (concl :: asms) Term.empty_tmset
+    fun mentions [] = false
+      | mentions (tm :: tms) =
+          if skip_literals andalso intSyntax.is_int_literal tm then
+            mentions tms
+          else
+            case Term.dest_term tm of
+                Term.COMB (rator, rand) => mentions (rator :: rand :: tms)
+              | Term.LAMB (bvar, body) =>
+                  counts bvar orelse mentions (body :: tms)
+              | _ => counts tm orelse mentions tms
   in
-    HOLset.foldl (fn (atom, seen) => seen orelse atom_needs_num_transfer atom)
-      false atoms
+    mentions (concl :: asms)
   end
+
+  val goal_mentions_num =
+    mentions_num true (type_mentions_num o Term.type_of)
+  val goal_mentions_num_or_int_literal =
+    mentions_num false atom_needs_num_transfer
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
      skolemizes existentials but never case-splits, because preprocessing
@@ -8760,27 +8780,54 @@ in
         Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
                         Tactic.ASSUME_TAC th])
 
-  fun NO_SPLIT_STRIP_ASSUMS_TAC g =
-    Tactical.MAP_EVERY (fn _ => Tactical.POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
-      (#1 g) g
+  (* [tac] on the goal without the assumptions in [held], which come back
+     unchanged at the end of every subgoal's assumptions.  [tac] must not
+     introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
+     withheld assumption. *)
+  fun WITHHOLDING_TAC held (tac : Tactical.tactic) : Tactical.tactic =
+    fn (asl, w) =>
+      fn ctxt =>
+        let
+          val (withheld, kept) =
+            List.partition (fn a => Lib.op_mem Term.aconv a held) asl
+          val (goals, validation) = tac (kept, w) ctxt
+        in
+          (List.map (fn (asl', w') => (asl' @ withheld, w')) goals,
+           validation)
+        end
 
-  (* Runs the proved num-to-int transfer on the whole goal.  Assumptions are
-     first moved into the conclusion so free num variables anywhere in the
-     sequent are made explicit and get a non-negativity guard. *)
+  (* Runs the proved num-to-int transfer on the conclusion and the
+     assumptions that mention num.  These assumptions are first moved into
+     the conclusion so free num variables anywhere in them are made explicit
+     and get a non-negativity guard.  Assumptions that mention no num stay
+     as they are: the transfer's simplification doesn't rewrite with them,
+     so a solver proof still names those it uses. *)
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
+    val (num_asms, held) =
+      List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
+    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made, each
+       once, taken out of the others, which stay for the fresh names of
+       their witnesses *)
+    fun STRIP_TRANSFERRED_TAC (asl, w) =
+      MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
+        (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
+        (asl, w)
   in
-    if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
-      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq (#1 g)) THEN
+    if goal_mentions_num_or_int_literal g andalso
+       not (goal_entangles_num_and_word g)
+    then
+      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
           would case-split disjunctive assumptions into several subgoals. *)
-       simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
-         num_transfer_rewrites THEN
-       NO_SPLIT_STRIP_ASSUMS_TAC) g
+       WITHHOLDING_TAC held
+         (simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
+            num_transfer_rewrites) THEN
+       STRIP_TRANSFERRED_TAC) g
     else
       ALL_TAC g
   end
@@ -8843,7 +8890,6 @@ in
   fun CLEANUP_ASSUMPTIONS_TAC g =
   let
     open Tactic Tactical
-    val assumptions = #1 g
     val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
@@ -8866,9 +8912,9 @@ in
       else
         ASSUME_TAC thm
     end
-    val cleanup_one = POP_ASSUM cleanup
   in
-    MAP_EVERY (fn _ => cleanup_one) assumptions g
+    (* each assumption once, in its order *)
+    POP_ASSUM_LIST (MAP_EVERY cleanup o List.rev) g
   end
 
   fun has_set_complement tm =
@@ -9274,6 +9320,9 @@ in
     z3_assertion_roundtrip_conv
   val z3_assertion_roundtrip_conv_with_for_test =
     z3_assertion_roundtrip_conv_with
+
+  (* Z3 replay's macro rules skip definitions of SMT builtins. *)
+  val builtin_encoding = builtin_encoding
 
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding

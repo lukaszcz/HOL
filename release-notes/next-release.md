@@ -241,6 +241,13 @@ Bugs fixed
 -   HolSmt's natural-number preprocessing now tolerates duplicate assumptions,
     including assumptions made identical by numeral normalization.
 
+-   HolSmt's natural-number preprocessing no longer rewrites the goal with
+    assumptions that mention no natural number (an integer literal such as
+    `2 : int` doesn't count).  The solver now receives those assumptions,
+    and its proof can cite them.  `Z3_TAC` and `CVC_TAC` replay the proofs
+    this leads to, including goals that use asserted function definitions
+    and goals over sequences, sets and higher-order functions.
+
 -   HolSmt's oracles no longer return false theorems about word division by
     zero.  `word_div` and `word_quot` were translated to `bvudiv` and
     `bvsdiv`, which return all ones (or 1) at a zero divisor where HOL gives

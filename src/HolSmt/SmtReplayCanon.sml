@@ -672,31 +672,39 @@ struct
       raise ERR "arith_poly_norm_prove"
         "polynomial equality is neither integer nor real"
 
-  (* A strict order a < b becomes 0 < b - a, so that the polynomial
-     normalization below decides guards that differ by moving terms across
-     the relation.  The schema sees only the two operand holes, so the
-     proposal, which sees the node, leaves 0 < x alone. *)
-  val strict_difference_laws =
-    List.map Conv.GSYM [integerTheory.INT_SUB_LT, realTheory.REAL_SUB_LT]
+  (* An order a < b becomes 0 < b - a, and a <= b becomes 0 <= b - a, so
+     that the polynomial normalization below decides orders that differ by
+     moving terms across the relation (Z3 writes a + 2 <= b as
+     a + -1 * b <= -2).  The schema sees only the two operand holes, so the
+     proposal, which sees the node, leaves 0 < x and 0 <= x alone. *)
+  val difference_laws =
+    List.map Conv.GSYM
+      [integerTheory.INT_SUB_LT, realTheory.REAL_SUB_LT,
+       integerTheory.INT_SUB_LE, realTheory.REAL_SUB_LE]
 
-  fun strict_difference_proposal term =
+  fun difference_proposal term =
     let
-      val left = case Lib.total intSyntax.dest_less term of
-          SOME (left, _) => SOME (left, intSyntax.zero_tm)
-        | NONE => Option.map (fn (left, _) => (left, realSyntax.zero_tm))
-            (Lib.total realSyntax.dest_less term)
+      fun left_of dest zero =
+        Option.map (fn (left, _) => (left, zero)) (Lib.total dest term)
+      val left = List.foldl (fn ((dest, zero), found) =>
+          case found of SOME _ => found | NONE => left_of dest zero)
+        NONE
+        [(intSyntax.dest_less, intSyntax.zero_tm),
+         (intSyntax.dest_leq, intSyntax.zero_tm),
+         (realSyntax.dest_less, realSyntax.zero_tm),
+         (realSyntax.dest_leq, realSyntax.zero_tm)]
     in
       case left of
         SOME (left, zero) =>
           if Term.aconv left zero then NONE
           else SOME (Conv.FIRST_CONV
-            (List.map Conv.REWR_CONV strict_difference_laws))
+            (List.map Conv.REWR_CONV difference_laws))
       | NONE => NONE
     end
 
-  val z3_strict_difference_conv = compact_conversion_with_patterns
-    (List.concat (List.map schema_patterns strict_difference_laws))
-    true false strict_difference_proposal
+  val z3_difference_conv = compact_conversion_with_patterns
+    (List.concat (List.map schema_patterns difference_laws))
+    true false difference_proposal
 
   (* Ring normal form of each maximal arithmetic subterm, so that operands
      Z3 re-associated, reordered or re-spelled (-x for -1 * x, a - b for
@@ -795,7 +803,7 @@ struct
              realSyntax.is_leq (#1 (boolSyntax.dest_cond term)))
          then SOME z3_order_cond_polarity_conv else NONE),
      z3_cond_polarity_conv,
-     z3_strict_difference_conv,
+     z3_difference_conv,
      polynomial_components_conv,
      additive_canon_conv,
      z3_primary_rewrite_canon_conv]
@@ -806,7 +814,7 @@ struct
 
   (* Only a term one of the secondary passes below rewrites can change the
      difference normal form, also under a binder: an order or its dual
-     (the relation, strict-difference and ite-guard passes), a conditional
+     (the relation, difference and ite-guard passes), a conditional
      with a negated guard (the polarity pass) or an arithmetic node (the
      polynomial and additive passes).  The scan uses those passes' own
      recognisers and descends into binder bodies; a binder over the
