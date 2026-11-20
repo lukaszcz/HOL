@@ -531,8 +531,7 @@ fun new_frontier_session
                 let
                   val _ = admit searchBudget.Application
                   val _ = last_node_count := count + 1
-                  val _ =
-                    expansion_trace level driver (count + 1) current
+                  val _ = expansion_trace level driver (count + 1) current
                   val cursor =
                     seq.map (note_transition current) (expand current)
                 in

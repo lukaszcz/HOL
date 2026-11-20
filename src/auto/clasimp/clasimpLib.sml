@@ -2026,8 +2026,7 @@ fun prepare_bound_rules ctxt level runtime charge ambient rules =
   in make_bound_simplification_in ctxt runtime
        (fn () => working_view_table working) early end
 
-fun prepare_bound_simplification_in ctxt level runtime charge ss
-      arguments =
+fun prepare_bound_simplification_in ctxt level runtime charge ss arguments =
   let val (ambient,rules) = prepare_invocation_rules ss arguments
   in prepare_bound_rules ctxt level runtime charge ambient rules end
 
@@ -3027,8 +3026,7 @@ fun route_simp_argument level (theorem, (cs, rewrites)) =
            (extended, rewrites))
       | NONE => (cs, theorem :: rewrites)
 
-fun invocation_declarations level iff_prefix simp_rules iff_rules
-      claset =
+fun invocation_declarations level iff_prefix simp_rules iff_rules claset =
   let
     val (routed_claset, rewritable) =
       List.foldr (route_simp_argument level) (claset, []) simp_rules

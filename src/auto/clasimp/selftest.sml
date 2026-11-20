@@ -240,14 +240,13 @@ fun bound_input_controls_fixture () =
     val safe = retained
       (clasimpLib.safe_asm_full_simp ss [markerLib.NoAsms])
     val bound = clasimpLib.prepare_bound_simplification
-        traceUtil.silent I (fn () => ())
-      ss [markerLib.NoAsms]
+      traceUtil.silent I (fn () => ()) ss [markerLib.NoAsms]
     val raw = retained (clasimpLib.asm_full_simp_bound false bound [])
     val selected = retained (clasimpLib.asm_full_simp ss [ignored])
     val viewed = retained (clasimpLib.asm_full_simp_bound true bound [])
     val extra = retained (clasimpLib.asm_full_simp_bound false
       (clasimpLib.prepare_bound_simplification
-          traceUtil.silent I (fn () => ()) ss [])
+        traceUtil.silent I (fn () => ()) ss [])
       [markerLib.NoAsms])
     val selective_goal = ([proposition,``input_control_q``],
       ``input_control_g input_control_p input_control_q``)
@@ -4154,8 +4153,7 @@ fun eta_rule_fixture body =
           ``!P x. eta_c (\v:bool. P (~v)) x = P (~x)``
         fun bound_apply viewed arguments =
           let val bound = clasimpLib.prepare_bound_simplification
-              traceUtil.silent I
-                (fn () => ()) base arguments
+              traceUtil.silent I (fn () => ()) base arguments
           in checked (clasimpLib.asm_full_simp_bound viewed bound []) end
         fun controls () =
           let
@@ -6197,8 +6195,7 @@ fun bound_pipeline_fixture () =
         fun charge () = charges := !charges + 1
         fun runtime ss = (runtimes := !runtimes + 1; ss)
         fun state arguments = clasimpLib.prepare_bound_simplification
-            traceUtil.silent
-          runtime charge (ambient ()) arguments
+          traceUtil.silent runtime charge (ambient ()) arguments
         val target = ([],``bp_c (bp_h x) = bp_k x``)
         val direct_target = ([],``bp_i x = bp_o x``)
         val arguments = [simpLib.ExclSF "bound pipeline dummy",
@@ -6229,7 +6226,7 @@ fun bound_pipeline_fixture () =
         val controlled = not (valid_closes
           (clasimpLib.asm_full_simp_bound true bound []) target)
         val replacement = clasimpLib.prepare_bound_simplification
-            traceUtil.silent I charge
+          traceUtil.silent I charge
           boolSimps.bool_ss [simpLib.SF (simpLib.name_ss
             "bound pipeline replacement" (simpLib.rewrites [reducer])),source]
         val fragment = valid_closes
@@ -6285,8 +6282,8 @@ fun bound_runtime_fixture () =
           (runtimes := !runtimes + 1;
            simpLib.++ (ss,simpLib.dproc_ss decision))
         val bound = clasimpLib.prepare_bound_simplification
-            traceUtil.silent runtime
-          (fn () => ()) simpLib.empty_ss [BoundedRewrites.Once sentinel]
+          traceUtil.silent runtime (fn () => ()) simpLib.empty_ss
+          [BoundedRewrites.Once sentinel]
         val prepared = !runtimes = 1 andalso !primed = 1 andalso !untagged
         val used = valid_closes
           (clasimpLib.asm_full_simp_bound false bound []) ([],``br_goal``)
@@ -6480,8 +6477,8 @@ fun bound_driver_fixture () =
                filter=SOME (fn theorem =>
                  (compiles := !compiles + 1; [theorem]))})
             val state = clasimpLib.prepare_bound_simplification
-                traceUtil.silent I
-              (fn () => ()) ambient [BoundedRewrites.Once original]
+              traceUtil.silent I (fn () => ()) ambient
+              [BoundedRewrites.Once original]
             val compiled = !compiles = 1
             val closed = (valid_closes
               (driver true state cs) goal handle HOL_ERR _ => false)
@@ -6547,7 +6544,7 @@ fun effective_reading_fixture () =
         val set_reducer = proof ``!y. er_old y = er_new y``
         fun state ambient supplied =
           clasimpLib.prepare_bound_simplification
-              traceUtil.silent I (fn () => ())
+            traceUtil.silent I (fn () => ())
             (simpLib.++ (pureSimps.pure_ss,simpLib.rewrites
               (boolTheory.REFL_CLAUSE :: ambient))) supplied
         val root = state [reducer,b] [reading]
@@ -6566,8 +6563,7 @@ fun effective_reading_fixture () =
            simpLib.rewrites_with_names
              [({Thy=Theory.current_theory (),Name="er_member"},member)])
         val named_state = clasimpLib.prepare_bound_simplification
-            traceUtil.silent I
-          (fn () => ()) named []
+          traceUtil.silent I (fn () => ()) named []
         val named_views =
           clasimpLib.bound_simplification_simpset true named_state
         val removed = simpLib.remove_simps ["er_member"] named_views

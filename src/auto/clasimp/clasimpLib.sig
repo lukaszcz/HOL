@@ -214,8 +214,9 @@ sig
      Assumption controls recur over each pass's current context. Callers
      resolve goal-dependent abbreviations and label references first;
      the public standalone entry points perform that resolution. *)
-  (* The first argument is the clasimp.trace level at which binding
-     reports the ambient converses it suspends. *)
+  (* The first argument is the clasimp.trace level, read with
+     traceUtil.level_of tracer, at which binding reports the ambient
+     converses it suspends. *)
   val prepare_bound_simplification :
     traceUtil.level -> (simpExtLib.simpset -> simpExtLib.simpset) ->
     (unit -> unit) -> simpExtLib.simpset -> thm list -> bound_simplification

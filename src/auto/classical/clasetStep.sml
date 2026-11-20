@@ -635,8 +635,7 @@ fun minor_prefixes policy is_elim premises =
    The level is read only when a refusal is noted, off the cascade's
    path. *)
 fun skip_note ctxt () =
-  traceUtil.trace
-    (traceUtil.level_of clasetReplay.tracer ctxt) 1
+  traceUtil.trace (traceUtil.level_of clasetReplay.tracer ctxt) 1
     (fn () => "skipping safe rule with unfixed premise variables")
 
 fun no_note () = ()
