@@ -63,11 +63,8 @@ struct
   fun arithmetic_attempt arith_prove atom =
     let
       fun prove target =
-        SOME (arith_prove target)
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else NONE
+        SmtResource.or_else (fn () => SOME (arith_prove target))
+          (fn () => NONE)
     in
       case prove atom of
         SOME theorem =>

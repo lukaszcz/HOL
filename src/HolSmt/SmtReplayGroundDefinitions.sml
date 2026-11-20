@@ -537,11 +537,10 @@ struct
         (* Both actual endpoints and the expected source/T endpoints have
            already been admitted. The equality adds only a fixed wrapper.
            ALPHA checks syntax, never beta/eta or a semantic search. *)
-        let val expected = boolSyntax.mk_eq (source,boolSyntax.T)
-        in Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) expected) theorem end
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error else raise Declined
+        SmtResource.or_else (fn () =>
+          let val expected = boolSyntax.mk_eq (source,boolSyntax.T)
+          in Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) expected) theorem end)
+          (fn () => raise Declined)
       fun run root =
         let
           val _ = guard ()

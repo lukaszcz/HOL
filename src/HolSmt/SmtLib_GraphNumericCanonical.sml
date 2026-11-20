@@ -21,6 +21,20 @@ struct
           | visit (row::rest) =
               (W.spend_guard_policy work 1;action row;visit rest)
     in visit rows end
+  (* One begin for both owners. Everything the two entries share (the
+     Source/graph/scope projections and the retirement of the Work on any
+     failure) is here; each entry supplies only what differs: [prepare]
+     validates the catalogue (and, for the policy entry, captures the native
+     contract) before the Source projections, and [build] makes its owner,
+     after them, from what [prepare] returned. *)
+  fun begin_with prepare build work original check_type =
+    let val prepared = prepare work original
+        val sources = W.original_sources work
+        val graph = S.owning_graph sources
+        val scope = S.owning_scope sources
+    in build prepared {work = work,graph = graph,scope = scope,
+      sources = sources,original = original,check_type = check_type} end
+    handle primary => (W.close work;raise primary)
   datatype phase = Fresh | Prepared | Executed | Retired
   datatype owner = Owner of
     {work : W.portfolio,graph : G.graph,scope : G.scope,sources : S.sources,
@@ -95,17 +109,15 @@ struct
   fun tick (owner as Owner {work,...}) =
     (active owner;W.spend work 1)
   fun begin work original {check_type} =
-    let val _ = C.validate_for work original
-        val sources = W.original_sources work
-        val graph = S.owning_graph sources
-        val scope = S.owning_scope sources
-        val limits = W.semantic_limits work
-    in Owner {work = work,graph = graph,scope = scope,sources = sources,
-      original = original,phase = ref Fresh,symbols = Term.term_epoch (),
-      limits = limits,check_type = check_type,retained = ref [],
-      validation_depth = ref 0,validation_generation = ref 0,
-      validated = ref (~1),validated_retirement = ref (~1)} end
-    handle primary => (W.close work;raise primary)
+    begin_with C.validate_for
+      (fn () => fn {work,graph,scope,sources,original,check_type} =>
+        Owner {work = work,graph = graph,scope = scope,sources = sources,
+          original = original,phase = ref Fresh,symbols = Term.term_epoch (),
+          limits = W.semantic_limits work,check_type = check_type,
+          retained = ref [],validation_depth = ref 0,
+          validation_generation = ref 0,validated = ref (~1),
+          validated_retirement = ref (~1)})
+      work original check_type
 
   (* Types of FUTURE logical headers stay DATA until the complete quote.
      Actual original variable/constant types retain their declaration IDs. *)
@@ -118,7 +130,7 @@ struct
     | TermInstance of (syntax * syntax) list * proof
     | EqualModusPonens of proof * proof
     | ApplyFunction of syntax * proof | ApplyArgument of proof * syntax
-    | AbstractEquality of syntax * proof | ContractBeta of syntax
+    | ContractBeta of syntax
     | ChooseWitness of syntax * proof * proof
     | NegationEliminate of proof
     | SpecializeAll of syntax list * proof
@@ -467,12 +479,6 @@ struct
         (equality (Application (a,x)) (Application (b,x))) (hypotheses p)
         (ApplyArgument (p,x))
     | NONE => raise ERR "apply_argument" "private helper is not equality"
-  fun abstract owner v p =
-    case binary_view owner "min" "=" (statement p) of
-      SOME (a,b) => theorem
-        (equality (Abstraction (v,a)) (Abstraction (v,b))) (hypotheses p)
-        (AbstractEquality (v,p))
-    | NONE => raise ERR "abstract" "private helper is not equality"
   fun beta owner redex = case redex of
       Application (Abstraction (v,b),x) => theorem
         (equality redex (substitute owner v x b)) [] (ContractBeta redex)
@@ -497,7 +503,6 @@ struct
       NONE => [p]
     | SOME _ => flatten_conjunction owner (select owner true p) @
         flatten_conjunction owner (select owner false p)
-  fun conjunct_n owner n p = List.nth (flatten_conjunction owner p,n)
   fun primitive_conditions owner ants p = case ants of [] => p
     | [a] => discharge owner a p
     | a::rest =>
@@ -875,7 +880,7 @@ struct
     | Generalize (_,p) => [p] | TypeInstance (_,p) => [p]
     | TermInstance (_,p) => [p]
     | EqualModusPonens (a,b) => [a,b] | ApplyFunction (_,p) => [p]
-    | ApplyArgument (p,_) => [p] | AbstractEquality (_,p) => [p]
+    | ApplyArgument (p,_) => [p]
     | ContractBeta _ => []
     | ChooseWitness (_,a,b) => [a,b]
     | NegationEliminate p => [p]
@@ -973,8 +978,6 @@ struct
         Thm.AP_TERM (materialize owner f) (replay owner memo p))
     | ApplyArgument (p,x) => invoke owner (fn () =>
         Thm.AP_THM (replay owner memo p) (materialize owner x))
-    | AbstractEquality (v,p) => invoke owner (fn () =>
-        Thm.ABS (materialize owner v) (replay owner memo p))
     | ContractBeta redex => invoke owner (fn () =>
         Thm.BETA_CONV (materialize owner redex))
     | ChooseWitness (v,a,b) => invoke owner (fn () =>
@@ -1218,7 +1221,6 @@ struct
               | EqualModusPonens (a,b) => binary 6 a b
               | ApplyFunction (_,p) => unary 7 p
               | ApplyArgument (p,_) => unary 8 p
-              | AbstractEquality (_,p) => unary 9 p
               | ContractBeta _ => leaf 10
               | ChooseWitness (_,a,b) => binary 11 a b
               | NegationEliminate p => unary 12 p
@@ -1301,7 +1303,6 @@ struct
                 (fn (a,b) => (admit a;admit b)) bindings
             | ApplyFunction (f,_) => admit f
             | ApplyArgument (_,x) => admit x
-            | AbstractEquality (v,_) => admit v
             | ContractBeta redex => admit redex
             | ChooseWitness (v,_,_) => admit v
             | ExistsIntroduction (ant,v,_) => (admit ant;admit v)
@@ -1502,18 +1503,19 @@ struct
      native_events:= !native_events+1;
      W.spend_policy work 1;active policy_owner)
   fun begin_with_policy work original {check_type} =
-    let val _ = C.validate_with_policy_for work original
-        val native_contract=C.native_contract_for work original
-        val sources = W.original_sources work
-        val graph = S.owning_graph sources
-        val scope = S.owning_scope sources
-    in PolicyOwner {work = work,graph = graph,scope = scope,sources = sources,
-      original = original,phase = ref Fresh,symbols = Term.term_epoch (),
-      check_type = check_type,retained = ref [],
-      validation_depth = ref 0,validation_generation = ref 0,
-      validated = ref (~1),validated_retirement = ref (~1),
-      native_contract=native_contract,native_events=ref 0} end
-    handle primary => (W.close work;raise primary)
+    begin_with (fn work => fn original =>
+        (C.validate_with_policy_for work original;
+         C.native_contract_for work original))
+      (fn native_contract =>
+          fn {work,graph,scope,sources,original,check_type} =>
+        PolicyOwner {work = work,graph = graph,scope = scope,
+          sources = sources,original = original,phase = ref Fresh,
+          symbols = Term.term_epoch (),check_type = check_type,
+          retained = ref [],validation_depth = ref 0,
+          validation_generation = ref 0,validated = ref (~1),
+          validated_retirement = ref (~1),native_contract = native_contract,
+          native_events = ref 0})
+      work original check_type
 
   (* Types of FUTURE logical headers stay DATA until the complete quote.
      Actual original variable/constant types retain their declaration IDs. *)
@@ -1526,7 +1528,7 @@ struct
     | TermInstance of (syntax * syntax) list * proof
     | EqualModusPonens of proof * proof
     | ApplyFunction of syntax * proof | ApplyArgument of proof * syntax
-    | AbstractEquality of syntax * proof | ContractBeta of syntax
+    | ContractBeta of syntax
     | ChooseWitness of syntax * proof * proof
     | NegationEliminate of proof
     | SpecializeAll of syntax list * proof
@@ -1892,12 +1894,6 @@ struct
         (equality (Application (a,x)) (Application (b,x))) (hypotheses p)
         (ApplyArgument (p,x))
     | NONE => raise ERR "apply_argument" "private helper is not equality"
-  fun abstract policy_owner v p =
-    case binary_view policy_owner "min" "=" (statement p) of
-      SOME (a,b) => theorem
-        (equality (Abstraction (v,a)) (Abstraction (v,b))) (hypotheses p)
-        (AbstractEquality (v,p))
-    | NONE => raise ERR "abstract" "private helper is not equality"
   fun beta policy_owner redex = case redex of
       Application (Abstraction (v,b),x) => theorem
         (equality redex (substitute policy_owner v x b)) [] (ContractBeta
@@ -1924,8 +1920,6 @@ struct
       NONE => [p]
     | SOME _ => flatten_conjunction policy_owner (select policy_owner true p) @
         flatten_conjunction policy_owner (select policy_owner false p)
-  fun conjunct_n policy_owner n p = List.nth (flatten_conjunction policy_owner
-    p,n)
   fun primitive_conditions policy_owner ants p = case ants of [] => p
     | [a] => discharge policy_owner a p
     | a::rest =>
@@ -2337,7 +2331,7 @@ struct
     | Generalize (_,p) => [p] | TypeInstance (_,p) => [p]
     | TermInstance (_,p) => [p]
     | EqualModusPonens (a,b) => [a,b] | ApplyFunction (_,p) => [p]
-    | ApplyArgument (p,_) => [p] | AbstractEquality (_,p) => [p]
+    | ApplyArgument (p,_) => [p]
     | ContractBeta _ => []
     | ChooseWitness (_,a,b) => [a,b]
     | NegationEliminate p => [p]
@@ -2438,8 +2432,6 @@ struct
         Thm.AP_TERM (materialize policy_owner f) (replay policy_owner memo p))
     | ApplyArgument (p,x) => invoke policy_owner (fn () =>
         Thm.AP_THM (replay policy_owner memo p) (materialize policy_owner x))
-    | AbstractEquality (v,p) => invoke policy_owner (fn () =>
-        Thm.ABS (materialize policy_owner v) (replay policy_owner memo p))
     | ContractBeta redex => invoke policy_owner (fn () =>
         Thm.BETA_CONV (materialize policy_owner redex))
     | ChooseWitness (v,a,b) => invoke policy_owner (fn () =>
@@ -2549,7 +2541,6 @@ struct
                 (fn (a,b) => (admit a;admit b)) bindings
             | ApplyFunction (f,_) => admit f
             | ApplyArgument (_,x) => admit x
-            | AbstractEquality (v,_) => admit v
             | ContractBeta redex => admit redex
             | ChooseWitness (v,_,_) => admit v
             | ExistsIntroduction (ant,v,_) => (admit ant;admit v)

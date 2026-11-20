@@ -57,6 +57,7 @@ struct
      [\x. a x + b x].  Do not classify arbitrary Int-valued lambdas as bags:
      array and arithmetic lemmas use those too. *)
   fun is_int_count_lambda tm =
+    SmtResource.or_else (fn () =>
     Term.is_abs tm andalso
     let
       (* Recognition is not authority to open an unbounded native binder.
@@ -78,10 +79,7 @@ struct
       (case args of
          [left, right] => selected_at_x left andalso selected_at_x right
        | _ => false)
-    end
-    handle Feedback.HOL_ERR detail =>
-      if SmtResource.is_resource_gate detail then raise Feedback.HOL_ERR detail
-      else false
+    end) (fn () => false)
 
   fun has_bag_encoding t =
     mentions is_bag_constant t orelse mentions is_int_count_lambda t
@@ -1345,19 +1343,12 @@ struct
     fun bag_prove_with_arith_unbounded arith_prove t =
       if not (has_bag_encoding t) then unsupported t
       else
-        simp_prove t
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else pointwise_prove t
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else (admit t;arith_prove t)
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else unsupported t
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () =>
+        SmtResource.or_else (fn () => simp_prove t)
+          (fn () => pointwise_prove t))
+          (fn () => (admit t;arith_prove t)))
+          (fn () => unsupported t)
 
     fun bag_prove_with_arith arith_prove t =
       if not (has_bag_encoding t) then unsupported t

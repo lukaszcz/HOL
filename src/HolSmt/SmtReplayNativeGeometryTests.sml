@@ -642,6 +642,224 @@ struct
         in Exn.release outcome;Exn.release cleanup end)
     in () end
 
+  (* Both policy discovery entries, compared by relations computed within
+     one run: cap variants against the uncapped run, failure traces against
+     the successful trace, refusal order, sharing against an unshared tree,
+     and one entry against the other. Nothing here is pinned to values from
+     an earlier implementation. *)
+  datatype entry = Plain | SelectedEmpty | SelectedConj | SelectedNeg
+  datatype shape = Shared | Tree | ConjVars | OpaqueRoot
+  fun entry_name Plain = "plain" | entry_name SelectedEmpty = "sel-empty"
+    | entry_name SelectedConj = "sel-conj"
+    | entry_name SelectedNeg = "sel-neg"
+  fun shape_name Shared = "shared" | shape_name Tree = "tree"
+    | shape_name ConjVars = "conj-vars" | shape_name OpaqueRoot = "opaque-root"
+  type receipt = {scans:IntInf.int option,profiles:string list,
+                  view:string,foreign:string}
+  datatype outcome = Done of receipt | Refused of string
+  type discovery = {trace:int list,outcome:outcome}
+  fun shaped_graph shape action =
+    let
+      val g = G.new ()
+      val r = G.root_scope g
+      val x = Term.mk_var ("geometry_x",Type.bool)
+      val y = Term.mk_var ("geometry_y",Type.bool)
+      val z = Term.mk_var ("geometry_z",Type.bool)
+      fun opaque_equality shared =
+        let val left = Term.mk_abs (x,x)
+            val right = if shared then left else Term.mk_abs (x,x)
+        in boolSyntax.mk_eq (left,right) end
+      val beta = Term.mk_comb
+        (Term.mk_abs (z,boolSyntax.mk_neg z),boolSyntax.T)
+      val seed = case shape of
+          Shared => boolSyntax.mk_conj (beta,opaque_equality true)
+        | Tree => boolSyntax.mk_conj (beta,opaque_equality false)
+        | ConjVars => boolSyntax.mk_conj (x,y)
+        | OpaqueRoot => Term.mk_abs (x,x)
+      val source = G.import_with_policy g r RP.Uncapped seed
+      val outcome = Exn.capture (fn () => action (g,r,#node source)) ()
+      val cleanup = Exn.capture (G.close_scope g) r
+    in case outcome of Exn.Exn primary => raise primary
+      | Exn.Res value => (Exn.release cleanup;value) end
+  fun conj_heads g r = G.record_discovery_heads g r
+    {heads=[#node (G.import_with_policy g r RP.Uncapped
+       boolSyntax.conjunction)],maximum=32,step=fn () => ()}
+  (* A head that matches no constant of the inputs. *)
+  fun neg_heads g r = G.record_discovery_heads g r
+    {heads=[#node (G.import_with_policy g r RP.Uncapped
+       boolSyntax.negation)],maximum=32,step=fn () => ()}
+  fun empty_heads g r = G.record_discovery_heads g r
+    {heads=[],maximum=32,step=fn () => ()}
+  fun refusal action = (ignore (action ());NONE)
+    handle Feedback.HOL_ERR e => SOME (Feedback.message_of e)
+  fun render_profile g r p =
+    let val {node,raw,inc,ann,ty,type_bytes,types} =
+          G.opaque_profile_data_with_policy g r p
+        val heads = #heads (G.opaque_profile_heads_with_policy g r p)
+    in String.concatWith "," (List.map IntInf.toString
+         [IntInf.fromInt (G.node_id node),raw,inc,ann,ty,type_bytes,
+          IntInf.fromInt (length types)] @
+         List.map Parse.term_to_string heads) end
+  fun render_view NONE = "none"
+    | render_view (SOME ({node,original,bridge} : G.source)) =
+        Parse.term_to_string original ^ "|" ^ Parse.thm_to_string bridge ^
+        "|" ^ Int.toString (G.node_id node)
+  (* One discovery with an optional (possibly unrelated) heads receipt. *)
+  fun discovery_with g r node heads maximum scan_limit =
+    let
+      val trace = ref ([] : int list)
+      val base = #total (Count.thm_count ())
+      fun step () = trace := (#total (Count.thm_count ())-base) :: !trace
+      val args = {original=node,maximum=maximum,scan_limit=scan_limit,
+                  step=step}
+      val outcome = Exn.capture (fn () =>
+        case heads of
+          NONE =>
+            let val found = G.discover_partial_with_policy g r args
+                val data = G.partial_discovery_policy_data g r found
+            in {scans=SOME (#scans data),foreign="",
+                profiles=List.map (render_profile g r)
+                  (G.partial_profiles_with_policy g r found),
+                view=render_view (G.partial_view_with_policy g r found)} end
+        | SOME held =>
+            let val found = G.discover_selected_partial_with_policy g r
+                  {original=node,heads=held,maximum=maximum,
+                   scan_limit=scan_limit,step=step}
+                val data = G.selected_partial_data_with_policy g r held found
+                val other = empty_heads g r
+                val foreign = refusal (fn () =>
+                  G.selected_partial_data_with_policy g r other found)
+            in {scans=NONE,profiles=List.map (render_profile g r)
+                  (#profiles data),view=render_view (#view data),
+                foreign=Option.getOpt (foreign,"accepted foreign heads")}
+            end) ()
+    in {trace=List.rev (!trace),
+        outcome=case outcome of Exn.Res receipt => Done receipt
+          | Exn.Exn (Feedback.HOL_ERR e) => Refused (Feedback.message_of e)
+          | Exn.Exn other => raise other} : discovery end
+  fun discovery_run shape entry maximum scan_limit =
+    shaped_graph shape (fn (g,r,node) =>
+      let
+        val heads = case entry of Plain => NONE
+          | SelectedEmpty => SOME (empty_heads g r)
+          | SelectedConj => SOME (conj_heads g r)
+          | SelectedNeg => SOME (neg_heads g r)
+        val run = discovery_with g r node heads maximum scan_limit
+        (* A failed or completed run leaves the graph reusable. *)
+        val _ = G.discover_partial_with_policy g r
+          {original=node,maximum=RP.Uncapped,scan_limit=RP.Uncapped,
+           step=fn () => ()}
+      in run end)
+  (* Least scan cap that completes: the selected receipt does not expose
+     its scan total, so every entry is probed the same way. *)
+  fun least_scan_cap shape entry =
+    let fun ok n = case #outcome (discovery_run shape entry RP.Uncapped
+          (RP.AtMost n)) of Done _ => true | Refused _ => false
+        fun grow n = if ok n then n else grow (2*n)
+        fun search lo hi = if lo>=hi then lo else
+          let val mid = (lo+hi) div 2
+          in if ok mid then search lo mid else search (mid+1) hi end
+    in search (1:IntInf.int) (grow 1) end
+  fun completed label ({outcome=Done receipt,trace}:discovery) =
+        (receipt,trace)
+    | completed label _ = raise Fail (label ^ ": discovery refused")
+  fun discovery_budgets_and_prefixes () =
+    let
+      val wide = RP.AtMost (IntInf.pow (2,80))
+      fun budget_case shape entry =
+        let
+          val label = shape_name shape ^ "/" ^ entry_name entry
+          fun check what yes = require (label ^ ": " ^ what) yes
+          val base = discovery_run shape entry RP.Uncapped RP.Uncapped
+          val (receipt,trace) = completed label base
+          val needed = least_scan_cap shape entry
+          val _ = check "plain receipt scans differ from least cap"
+            (case #scans receipt of NONE => true
+              | SOME scans => scans=needed)
+          val _ = check "wide and exact caps changed the run"
+            (discovery_run shape entry wide wide=base andalso
+             discovery_run shape entry RP.Uncapped (RP.AtMost needed)=base)
+          val less = discovery_run shape entry RP.Uncapped
+            (RP.AtMost (needed-1))
+          val _ = check "one scan less did not refuse at the budget"
+            (#outcome less=Refused "discovery scan budget exhausted" andalso
+             #trace less=List.take (trace,length trace-1))
+          val nonpositive = [(RP.AtMost 0,RP.Uncapped),
+                             (RP.Uncapped,RP.AtMost 0)]
+          val _ = List.app (fn (max,scan) =>
+            check "nonpositive bound ran a callback or changed message"
+              (discovery_run shape entry max scan=
+                 {trace=[],outcome=Refused "nonpositive discovery bound"}))
+            nonpositive
+        in (receipt,needed) end
+      val results = List.map (fn shape => (shape,List.map
+        (fn entry => (entry,budget_case shape entry))
+        [Plain,SelectedEmpty,SelectedConj,SelectedNeg]))
+        [Shared,Tree,ConjVars,OpaqueRoot]
+      fun find shape entry = #2 (valOf (List.find (fn (e,_) => e=entry)
+        (#2 (valOf (List.find (fn (s,_) => s=shape) results)))))
+      (* The shared sub-DAG is visited once; the tree twice. *)
+      val _ = List.app (fn entry =>
+        require (entry_name entry ^ ": sharing did not reduce the scans")
+          (#2 (find Shared entry) < #2 (find Tree entry)))
+        [Plain,SelectedEmpty,SelectedConj,SelectedNeg]
+      (* Root changed by a beta redex: heads play no part in the result. *)
+      val _ = List.app (fn shape =>
+        let val (plain,_) = find shape Plain
+            val (selected,_) = find shape SelectedEmpty
+        in require (shape_name shape ^ ": entries disagree on a changed root")
+          (#view plain=(#view selected) andalso
+           #profiles plain=(#profiles selected) andalso
+           #view plain<>"none") end) [Shared,Tree]
+      (* Roots without a beta redex or quantifier. *)
+      fun summary shape entry =
+        let val (receipt,_) = find shape entry
+        in (length (#profiles receipt),#view receipt<>"none") end
+      fun expect shape entry expected = require
+        (shape_name shape ^ "/" ^ entry_name entry ^
+         ": unchanged-root profile/view result changed")
+        (summary shape entry=expected)
+      val _ = expect ConjVars Plain (0,false)
+      val _ = expect ConjVars SelectedEmpty (0,false)
+      val _ = expect ConjVars SelectedConj (0,true)
+      (* A head matching nothing leaves the result unchanged, but each
+         constant now pays a selection scan; unselected scans (and an empty
+         selection) have no rows to compare and pay none. *)
+      val _ = expect ConjVars SelectedNeg (0,false)
+      val _ = require "selection scan was not paid for an unmatched head"
+        (#2 (find ConjVars Plain) = #2 (find ConjVars SelectedEmpty) andalso
+         #2 (find ConjVars Plain) < #2 (find ConjVars SelectedNeg))
+      (* Only the selected scan retains the unchanged opaque root. *)
+      val _ = expect OpaqueRoot Plain (0,false)
+      val _ = expect OpaqueRoot SelectedEmpty (1,false)
+      val _ = expect OpaqueRoot SelectedConj (1,false)
+      val _ = expect OpaqueRoot SelectedNeg (1,false)
+    in () end
+
+  (* Selected-head validation precedes the nonpositive-bound refusal. *)
+  fun refusal_order () = shaped_graph Shared (fn (g,r,node) =>
+    let
+      val foreign_graph = G.new ()
+      val foreign_root = G.root_scope foreign_graph
+      val foreign = empty_heads foreign_graph foreign_root
+      val child = G.new_scope g r []
+      val retired = empty_heads g child
+      val _ = G.close_scope g child
+      val bad = [("foreign",foreign),("retired",retired)]
+      fun run held max scan = discovery_with g r node (SOME held) max scan
+      val bounds = [(RP.AtMost 0,RP.Uncapped),(RP.Uncapped,RP.AtMost 0)]
+      val outcome = Exn.capture (fn () => List.app (fn (name,held) =>
+        let val direct = refusal (fn () => G.validate_discovery_heads g r held)
+        in require (name ^ " heads were not refused by validation")
+             (isSome direct);
+           List.app (fn (max,scan) =>
+             require (name ^ " heads: bound refusal preceded validation")
+               (run held max scan=
+                  {trace=[],outcome=Refused (valOf direct)}))
+             ((RP.Uncapped,RP.Uncapped)::bounds) end) bad) ()
+      val cleanup = Exn.capture (G.close_scope foreign_graph) foreign_root
+    in Exn.release outcome;Exn.release cleanup end)
+
   fun run () =
     let
       val _=Count.counting_thms true
@@ -658,6 +876,10 @@ struct
            admitted_geometry;
          test "native geometry: original scan caps and callback counts"
            scan_boundaries;
+         test "native geometry: policy discovery budgets and prefixes"
+           discovery_budgets_and_prefixes;
+         test "native geometry: policy discovery refusal order"
+           refusal_order;
          test "native geometry: optional publication funding/Primary"
            optional_publication;
          test "native geometry: genuine cold/warm/alpha/exact count" exact;

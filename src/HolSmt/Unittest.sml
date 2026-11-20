@@ -19,6 +19,15 @@ fun die s =
 
 fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 
+(* The number of calls Profile recorded under a name, in a given results
+   list or in the current one. *)
+fun profile_count_in results name =
+  case List.find (fn (candidate, _) => candidate = name) results of
+    SOME (_, info) => #n info
+  | NONE => 0
+
+fun profile_count name = profile_count_in (Profile.results ()) name
+
 fun check_oracle_tags name thm =
   Library.check_oracle_tags "HolSmtLib" name thm
 
@@ -1687,11 +1696,6 @@ end
 
 fun remove_definitions_dependency_first_word_success () =
 let
-  fun calls name =
-    case List.find (fn (result_name, _) => result_name = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun variable_set variables =
     HOLset.addList (Term.empty_tmset, variables)
   fun theorem_with definitions = List.foldl
@@ -1711,7 +1715,7 @@ let
   val acyclic_theorem = remove [word, word2] acyclic
   val () = assert
     (List.null (Thm.hyp acyclic_theorem) andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)" = 0,
      "acyclic word definitions entered speculative identity proving")
 
@@ -1922,7 +1926,7 @@ let
        (Option.valOf
          (Z3_ProofReplay.prove_self_word_identity_for_test
            (self_identity, word, word, true))) ~~ self_identity andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)_OK" = 2,
      "reflexive self-dependent word identity was not discharged directly")
 
@@ -1938,7 +1942,7 @@ let
   val packed_theorem = remove [packed_word] [packed_identity]
   val () = assert
     (List.null (Thm.hyp packed_theorem) andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)_OK" = 1,
      "nontrivial packed/per-bit word identity was not checked")
 
@@ -12696,6 +12700,78 @@ in
     (fn () => ignore (SmtLib_Parser.apply_term adapted "char" [] []))
 end
 
+(* Classification of every registered handler, with and without a scope pop:
+   pop gives Scoped; resolution, CNF and factoring/reordering have their
+   own routes; the simple Boolean, equality and truth handlers give Simple;
+   every other handler is Bounded.  The arithmetic set is checked against
+   the handler names. *)
+structure CpcPlan = CPC_SharedReplayPlan
+structure CpcP = CPC_Proof
+fun cpc_typed_classification () =
+let
+  val simple_handlers =
+    [CpcP.HAndIntro, CpcP.HAndElim, CpcP.HNotNotElim, CpcP.HNotOrElim,
+     CpcP.HNotImpliesElim1, CpcP.HNotImpliesElim2, CpcP.HImpliesElim,
+     CpcP.HEquivElim1, CpcP.HEquivElim2, CpcP.HNotEquivElim1,
+     CpcP.HNotEquivElim2, CpcP.HIteElim1, CpcP.HIteElim2,
+     CpcP.HNotIteElim1, CpcP.HNotIteElim2, CpcP.HNotAnd, CpcP.HRefl,
+     CpcP.HSymm, CpcP.HTrans, CpcP.HCong, CpcP.HHoCong, CpcP.HEqResolve,
+     CpcP.HContra, CpcP.HBool, CpcP.HFalseIntro, CpcP.HFalseElim,
+     CpcP.HTrueIntro, CpcP.HTrueElim, CpcP.HProcessScope]
+  fun prefixed name = String.isPrefix "arith" name orelse
+    String.isPrefix "int_tight_" name
+  fun expected handler =
+    case handler of
+      CpcP.HResolution => CpcPlan.Resolved
+    | CpcP.HCnf => CpcPlan.Converted
+    | CpcP.HFactoring => CpcPlan.Aligned
+    | CpcP.HReordering => CpcPlan.Aligned
+    | _ => if List.exists (fn simple => simple = handler) simple_handlers
+           then CpcPlan.Simple else CpcPlan.Bounded
+  fun families handler =
+    List.length (List.filter (fn present => present)
+      [Option.isSome (CpcPlan.simple_boolean_of handler),
+       Option.isSome (CpcPlan.simple_equality_of handler),
+       Option.isSome (CpcPlan.truth_family_of handler)])
+  fun check (rule : CPC_Proof.proof_rule) =
+    let
+      val handler = #replay_handler rule
+      val name = CPC_Proof.handler_name handler
+    in
+      assert (CpcPlan.route_of {pop = true, handler = handler}
+          = CpcPlan.Scoped,
+        "a pop did not give Scoped for " ^ #name rule ^ " (" ^ name ^ ")");
+      assert (CpcPlan.route_of {pop = false, handler = handler}
+          = expected handler,
+        "route differs for " ^ #name rule ^ " (" ^ name ^ ")");
+      assert (families handler =
+          (if expected handler = CpcPlan.Simple then 1 else 0),
+        "simple families differ for " ^ name);
+      assert (CpcPlan.arithmetic_handler handler = prefixed name,
+        "arithmetic classification differs for " ^ name)
+    end
+  val rows = CPC_Proof.proof_rule_registry
+  fun count route = List.length (List.filter
+    (fn (rule : CPC_Proof.proof_rule) =>
+      CpcPlan.route_of {pop = false, handler = #replay_handler rule} = route)
+    rows)
+  fun unregistered name =
+    (assert (not (Option.isSome (CPC_Proof.lookup_rule "1.3.4" name)),
+       "forged handler name was accepted by registry lookup: " ^ name);
+     assert (String.isSubstring "unknown rule "
+       (CPC_Proof.registry_lookup_failure "1.3.4" name),
+       "forged handler name lacks the unknown-rule diagnostic: " ^ name))
+in
+  List.app check rows;
+  List.app (fn route => assert (count route > 0,
+      "no registry row takes a route class; the comparison is vacuous"))
+    [CpcPlan.Resolved, CpcPlan.Converted, CpcPlan.Aligned, CpcPlan.Simple,
+     CpcPlan.Bounded];
+  List.app unregistered ["xor_elim1", "xor_elim2", "not_xor_elim1",
+    "not_xor_elim2", "seq_rev_rev", "seq_at_elim", "str_contains_refl",
+    "str_substr_full_eq", "forged_unregistered_handler"]
+end
+
 fun cpc_d13_deindexed_operator_repros_success () =
 let
   val proof = parse_cpc_proof_string
@@ -13193,11 +13269,6 @@ fun cpc_skolem_cache_preflight_rejections () =
 if Library.no_fastpath () orelse
    not CPC_ProofReplay.theorem_cache_enabled_for_test then ()
 else let
-  fun profile_count name =
-    case List.find (fn (result_name, _) => result_name = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   val prefix =
     "((define @q () \
     \  (forall ((x Bool) (y Bool)) (or x y))) \
@@ -13270,6 +13341,59 @@ in
         contains expected (Feedback.message_of holerr),
       "process_scope did not report its negated leaf against the recorded " ^
       "result: " ^ Feedback.message_of holerr)
+end
+
+(* The plain and boundary process_scope entries share one scope
+   decomposition: same theorem, hypotheses and tags for one and for two
+   antecedents and for a False result, the boundary entry also reporting
+   its provenance. One
+   antecedent builds no conjunction constructor; two build one. *)
+fun cpc_process_scope_boundary_matches_plain () =
+let
+  val a = Term.mk_var ("scope_a", Type.bool)
+  val b = Term.mk_var ("scope_b", Type.bool)
+  val r = Term.mk_var ("scope_r", Type.bool)
+  fun leaf name = CPC_Proof.ApplicationProvenance (name, [])
+  val (pa, pb, pr, body) = (leaf "pa", leaf "pb", leaf "pr", leaf "body")
+  fun imp_prov (left, right) =
+    CPC_Proof.ApplicationProvenance ("=>", [left, right])
+  fun step theorem provenance =
+    {rule_name = "assume",
+     result = {thm = theorem,
+               located = {term = Thm.concl theorem, provenance = provenance},
+               clause = NONE}}
+  fun check_with r label antecedents incoming expected =
+    let
+      val premise = Thm.ASSUME
+        (List.foldr boolSyntax.mk_imp r antecedents)
+      val plain = CPC_ProofReplay.replay_process_scope_for_test [r] [premise]
+      val {theorem, provenance} =
+        CPC_ProofReplay.replay_process_scope_with_boundary_for_test
+          [{term = r, provenance = body}] [step premise incoming]
+    in
+      assert (Term.aconv (Thm.concl plain) (Thm.concl theorem) andalso
+              HOLset.isEmpty (HOLset.difference
+                (Thm.hypset plain, Thm.hypset theorem)) andalso
+              HOLset.isEmpty (HOLset.difference
+                (Thm.hypset theorem, Thm.hypset plain)) andalso
+              Tag.dest_tag (Thm.tag plain) = Tag.dest_tag (Thm.tag theorem),
+        label ^ ": plain and boundary theorems differ");
+      assert (provenance = expected,
+        label ^ ": unexpected boundary provenance")
+    end
+in
+  check_with boolSyntax.F "one antecedent, F result" [a]
+    (imp_prov (pa, pr)) (CPC_Proof.ApplicationProvenance ("not", [pa]));
+  check_with boolSyntax.F "two antecedents, F result" [a, b]
+    (imp_prov (pa, imp_prov (pb, pr)))
+    (CPC_Proof.ApplicationProvenance ("not",
+      [CPC_Proof.ConjunctionProvenance
+         (CPC_Proof.ProcessScopeConjunction, [pa, pb])]));
+  check_with r "one antecedent" [a] (imp_prov (pa, pr))
+    (imp_prov (pa, body));
+  check_with r "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
+    (imp_prov (CPC_Proof.ConjunctionProvenance
+                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body))
 end
 
 fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
@@ -13550,15 +13674,10 @@ let
           (boolSyntax.mk_select (pieces, predicate)),
         "star expansion did not retain the exact parser selector")
     end
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun registered name =
     case CPC_Proof.lookup_rule "1.3.4" name of
       SOME rule => #namespace rule = CPC_Proof.ProofRule andalso
-        #replay_handler rule = "string"
+        (#replay_handler rule) = CPC_Proof.HString
     | NONE => false
   fun distinct_terms terms = List.foldl
     (fn (term, result) =>
@@ -13747,7 +13866,7 @@ let
     case CPC_Proof.lookup_rule "1.3.4" name of
       SOME rule =>
         assert (#namespace rule = namespace andalso
-                #replay_handler rule = handler,
+                CPC_Proof.handler_name (#replay_handler rule) = handler,
           "CPC string registry metadata is wrong for " ^ name)
     | NONE => die ("FAIL: CPC string registry omitted " ^ name)
   fun check_rare name =
@@ -14153,7 +14272,7 @@ let
     case lookup_rule "1.3.4" (#name entry) of
       SOME rule => assert
         (#namespace rule = RareRewrite andalso
-         #replay_handler rule = "rare_inventory",
+         (#replay_handler rule) = CPC_Proof.HRareInventory,
          "TASK23 inventory registry metadata is wrong for " ^ #name entry)
     | NONE => die ("FAIL: TASK23 inventory omitted " ^ #name entry)
   fun replay label text =
@@ -14588,7 +14707,7 @@ let
       val _ = case lookup_rule "1.3.4" (#name entry) of
           SOME rule => assert
             (#namespace rule = RareRewrite andalso
-             #replay_handler rule = "rare_inventory",
+             (#replay_handler rule) = CPC_Proof.HRareInventory,
              "TASK24 generated registry metadata drifted for " ^ #name entry)
         | NONE => die ("FAIL: TASK24 registry omitted " ^ #name entry)
     in
@@ -16866,11 +16985,6 @@ end
 
 fun cpc_proof_replay_canonical_trans_terminal_success () =
 let
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun replay proof = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string proof)
   val proofs =
@@ -16907,10 +17021,6 @@ end
 
 fun cpc_proof_replay_bv_xor_rotation_general_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun proof width =
     parse_cpc_proof_string
       ("((declare-const a (_ BitVec " ^ width ^ ")) " ^
@@ -16931,17 +17041,13 @@ let
   val results = Profile.results ()
 in
   assert
-    (profile_count "CPC(rung:word/poly_norm_schematic_bvite_words)_OK"
-       results = 4,
+    (profile_count_in results
+       "CPC(rung:word/poly_norm_schematic_bvite_words)_OK" = 4,
      "CPC XOR rotation family did not consume the checked word route")
 end
 
 fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   val one = "(_ bv1 256)"
   fun ring_step a b =
     "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^
@@ -16972,11 +17078,11 @@ in
      check_oracle_tags "CPC word ring replay" theorem))
     (theorems, expected);
   assert
-    (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
-       results = 2,
+    (profile_count_in results
+       "CPC(rung:word/poly_norm_schematic_word_ring)_OK" = 2,
      "CPC word ring family did not use the algebraic route");
   assert
-    (profile_count "E0(word-graph-expand)" results = 0,
+    (profile_count_in results "E0(word-graph-expand)" = 0,
      "CPC word ring family expanded the word graph")
 end
 
@@ -16995,10 +17101,6 @@ end
 
 fun cpc_proof_replay_and_elim_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun route_count results = List.foldl
     (fn ((name, info), total) =>
       if String.isPrefix "CPC(and_elim:provenance/" name then
@@ -17023,10 +17125,10 @@ let
         let val route =
           "CPC(and_elim:provenance/" ^ source ^ ")"
         in
-          assert (profile_count route results = calls,
+          assert (profile_count_in results route = calls,
             label ^ " did not consume its exact provenance route " ^
             source ^ ": expected " ^ Int.toString calls ^ ", saw " ^
-            Int.toString (profile_count route results) ^ "; routes: " ^
+            Int.toString (profile_count_in results route) ^ "; routes: " ^
             route_summary results)
         end
       val calls = List.foldl (fn ((_, n), total) => n + total) 0 routes
@@ -17256,7 +17358,7 @@ let
     [("eq_resolve", 1), ("parsed", 1)]
     multiple_cong_text ``(q:bool) /\ r``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 2,
+    (profile_count "CPC(cong:exact/rewrite)" = 2,
     "multiple CONG case did not consume exactly two occurrence rewrites")
   val _ = assert_exact_hypotheses
     "CPC CONG multiple repeated-shape replacements"
@@ -17340,8 +17442,8 @@ let
     [("eq_resolve", 1)] forall_cong_text
     ``!x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/forall)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/forall)" = 1,
     "forall CONG did not consume exactly one FORALL_EQ occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive forall"
@@ -17387,8 +17489,8 @@ let
     [("eq_resolve", 1)] exists_cong_text
     ``?x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/exists)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/exists)" = 1,
     "exists CONG did not consume exactly one EXISTS_EQ occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive exists"
@@ -17447,8 +17549,8 @@ let
     lambda_cong_text
     ``(\x:bool. (x = u) /\ p /\ (q /\ r)) = (\x:bool. u)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/lambda)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/lambda)" = 1,
     "lambda CONG did not consume exactly one ABS occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive lambda"
@@ -17497,7 +17599,7 @@ let
     "eq_resolve" 1 canonical_cong_text
     ``r:bool``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1,
     "canonical CONG success did not consume its exact occurrence route")
   val _ = Profile.reset_all ()
   val _ = expect_hol_error_contains
@@ -17521,7 +17623,7 @@ let
   val _ = assert (route_count (Profile.results ()) = 0,
     "canonical CONG topology mismatch consumed an and_elim route")
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 0,
+    (profile_count "CPC(cong:exact/rewrite)" = 0,
     "canonical CONG topology mismatch consumed an exact occurrence route")
   val root_replacement_text =
     "((declare-const p Bool) (declare-const q Bool) \
@@ -17589,9 +17691,7 @@ let
        ``((p:bool) /\ q /\ r) = (~p /\ (q /\ r))``,
      "omitted canonical trans reconstructed the wrong exact endpoints")
   val _ = assert
-    (profile_count
-       "CPC(rung:canonical_trans/provenance-canonical)_OK"
-       (Profile.results ()) = 1,
+    (profile_count "CPC(rung:canonical_trans/provenance-canonical)_OK" = 1,
      "omitted canonical trans did not consume its provenance terminal")
   val _ = check_oracle_tags
     "CPC omitted canonical trans provenance terminal"
@@ -17894,11 +17994,6 @@ let
       }
     ]
   }
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   val _ = Profile.reset_all ()
   val real_div_reordering =
     CPC_ProofReplay.replay_root_for_test real_div_proof
@@ -18474,6 +18569,66 @@ in
   assert (observed = expected,
     "shared-DAG FP word bridge was not stopped by its step-time gate\n" ^
     "expected: " ^ expected ^ "\nobserved: " ^ observed)
+end
+
+(* A word-bridge target (at most 256 pointer-distinct nodes, so the
+   routing reaches the FP word bridge rather than the atom bridge) built
+   from independently built equal subterms, and from one physically shared
+   copy of them.  Each must enter the word bridge exactly once, so its
+   outer visited set and abstraction memo run on both shapes, and must give
+   the same checked theorem.  The bridge itself declines the target (its
+   left side is a conjunction, not an FP value equality), the contextual
+   rung fails, and the native rung (CPC(rung:trust/fp)) proves it; the
+   elapsed times are printed, not asserted. *)
+fun cpc_fp_word_bridge_memo_shapes () =
+let
+  val depth = 5
+  fun independent 0 = Term.mk_var ("fp_memo_leaf", Type.bool)
+    | independent n =
+        boolSyntax.mk_conj (independent (n - 1), independent (n - 1))
+  fun shared 0 term = term
+    | shared n term = shared (n - 1) (boolSyntax.mk_conj (term, term))
+  val atom = ``smtfp_is_nan (x : (3,5) smtfp)``
+  val wide = List.foldl
+    (fn (index, result) => boolSyntax.mk_conj
+      (Term.mk_var ("fp_memo_ctx_" ^ Int.toString index, Type.bool),
+       result))
+    boolSyntax.T (List.tabulate (4, Lib.I))
+  val encoding = boolSyntax.mk_eq
+    (``1w : word1``, SmtLib_Theories.mk_bbterm [atom])
+  fun check (label, left_context, right_context) =
+    let
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_conj (atom, left_context),
+         boolSyntax.mk_conj (encoding, right_context))
+      val name = "CPC word-bridge memo shape " ^ label
+      val nodes = SmtResource.dag_nodes_up_to 257 target
+      val _ = assert
+        (nodes <= 192,
+         name ^ " is not comfortably below the 256-node routing bound")
+      val _ = Profile.reset_all ()
+      val timer = Timer.startRealTimer ()
+      val theorem = CPC_ProofReplay.replay_trust_for_test target
+      val elapsed = Timer.checkRealTimer timer
+    in
+      print (name ^ ": " ^ Time.toString elapsed ^ " s\n");
+      assert (profile_count "CPC(rung:trust/fp-word-bridge)" = 1,
+        name ^ " did not enter the FP word bridge exactly once");
+      assert_no_hyps (name, theorem);
+      assert_concl_alpha (name, theorem, target);
+      check_oracle_tags name theorem;
+      nodes
+    end
+  val leaf = Term.mk_var ("fp_memo_leaf", Type.bool)
+  val one_copy = boolSyntax.mk_conj (wide, shared depth leaf)
+  val independent_nodes = check ("independent",
+    boolSyntax.mk_conj (wide, independent depth),
+    boolSyntax.mk_conj (wide, independent depth))
+  val shared_nodes = check ("shared", one_copy, one_copy)
+in
+  assert (independent_nodes > shared_nodes,
+    "the independent shape no longer has more pointer-distinct nodes " ^
+    "than the shared shape")
 end
 
 fun cpc_fp_forced_check_rejects_unproved_clause () =
@@ -20199,21 +20354,109 @@ fun profile_call_count name =
     SOME (_, info) => #n info
   | NONE => 0
 
-(* Z3 reduces a case of a constructor and reorders the rest in one rewrite:
-   the datatype simp alone and the congruence rungs alone each miss it. *)
-fun z3_rewrite_datatype_normalize_success () =
+(* The helper compares up to alpha: the assumption below differs from the
+   conversion's right side only in a bound variable name. *)
+fun smt_replay_canon_transport_hypothesis () =
 let
-  val target =
-    ``(f:bool -> bool)
-        (case SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p) of
-           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
-      f (p \/ 0 = z \/ y = x)``
+  val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val hyp = ``(\x:int. x) = (f:int->int)``
+  val assumption = ``(\w:int. w) = (f:int->int)``
+  val hyp_conv = Thm.REFL hyp
+  val hit = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME assumption)
+  val miss = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME ``(\w:int. w) = (g:int->int)``)
+in
+  assert (Hol_pp.term_to_string hyp <> Hol_pp.term_to_string assumption andalso
+      Term.aconv hyp assumption,
+    "transport test terms are not alpha-variants");
+  (case hit of
+     SOME th =>
+       assert (Term.aconv (Thm.concl th) hyp andalso
+           List.length (Thm.hyp th) = 1 andalso
+           Term.aconv (List.hd (Thm.hyp th)) assumption,
+         "transport hit did not prove the original hypothesis")
+   | NONE => die "FAIL: transport missed an alpha-equal assumption");
+  assert (not (Option.isSome miss), "transport accepted a different term")
+end
+
+(* The canonical rung itself discharges an equality that differs from the
+   context assumption only in orientation. *)
+fun cpc_canonical_rung_hypothesis_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val assumption = boolSyntax.mk_eq (x, y)
+  val hyp = boolSyntax.mk_eq (y, x)
+  val () = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([assumption], boolSyntax.F, Thm.ASSUME hyp)
+in
+  check_oracle_tags "CPC canonical rung hypothesis" theorem;
+  assert (Term.aconv (Thm.concl theorem) hyp andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset, [assumption])),
+    "CPC canonical rung: remaining hypotheses differ from expected");
+  assert (profile_call_count "CPC(canon:assumption-interface)" = 1 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:canonical_assumption)_OK" = 1,
+    "CPC canonical rung did not discharge the hypothesis")
+end
+
+(* An extra hypothesis that only a proof from the whole context discharges. *)
+fun cpc_context_proof_hypothesis_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val nonneg = intSyntax.mk_leq (intSyntax.zero_tm, x)
+  val hyp = boolSyntax.mk_eq
+    (boolSyntax.mk_cond (intSyntax.mk_less (x, intSyntax.zero_tm),
+       intSyntax.mk_negated x, x), x)
+  val () = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([nonneg], boolSyntax.F, Thm.ASSUME hyp)
+in
+  check_oracle_tags "CPC context-proof hypothesis" theorem;
+  assert (Term.aconv (Thm.concl theorem) hyp andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset,
+          [boolSyntax.mk_neg boolSyntax.F, nonneg])),
+    "CPC context proof: remaining hypotheses differ from expected: " ^
+      String.concatWith ", " (List.map Hol_pp.term_to_string
+        (Thm.hyp theorem)));
+  assert (profile_call_count "CPC(canon:assumption-interface)" = 0 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:canonical_assumption)_HOL_ERR" = 1 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:conditional_arith)_OK" = 1,
+    "CPC context proof was not discharged by the conditional_arith rung")
+end
+
+(* Z3 reduces a case of a constructor and reorders the rest in one rewrite:
+   the datatype simp alone and the congruence rungs alone each miss it.  The
+   left side has the redex and the right side only needs reordering. *)
+val datatype_normalize_target =
+  ``(f:bool -> bool)
+      (case SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p) of
+         SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+    f (p \/ 0 = z \/ y = x)``
+
+fun datatype_normalize_replay replay target =
+let
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert
     (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
   val _ = Profile.reset_all ()
-  val theorem = Z3_ProofReplay.replay_root_for_test
-    (Z3_Proof.update_proof_steps initial steps)
+in
+  replay (Z3_Proof.update_proof_steps initial steps)
+end
+
+val datatype_normalize_test_replay =
+  datatype_normalize_replay Z3_ProofReplay.replay_root_for_test
+
+fun z3_rewrite_datatype_normalize_success () =
+let
+  val target = datatype_normalize_target
+  val theorem = datatype_normalize_test_replay target
 in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its target");
@@ -20222,38 +20465,160 @@ in
     "Z3 datatype-normalize rewrite was proved by another rung")
 end
 
+(* The redex may be on either side: the same equation with its sides swapped
+   is proved by the same rung, and the helper hands back a normalization of
+   each side of the equation it is given. *)
+fun z3_rewrite_datatype_normalize_one_sided () =
+let
+  val (l, r) = boolSyntax.dest_eq datatype_normalize_target
+  val target = boolSyntax.mk_eq (r, l)
+  val theorem = datatype_normalize_test_replay target
+  val (l_thm, r_thm) =
+    case SmtDatatypeProve.normalize_equation_with_admission
+           (SmtDatatypeProve.default_admission ()) target of
+      SmtDatatypeProve.Normalized sides => sides
+    | _ => die "FAIL: a redex on the right side was not normalized"
+in
+  assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
+    "Z3 datatype-normalize rewrite did not prove its swapped target");
+  check_oracle_tags "Z3 datatype-normalize swapped rewrite" theorem;
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+    "Z3 datatype-normalize swapped rewrite was proved by another rung");
+  assert (boolSyntax.lhs (Thm.concl l_thm) ~~ r andalso
+          boolSyntax.lhs (Thm.concl r_thm) ~~ l,
+    "the side normalizations are not of the equation's sides");
+  assert (not (boolSyntax.rhs (Thm.concl r_thm) ~~ l) andalso
+          List.null (Thm.hyp l_thm) andalso List.null (Thm.hyp r_thm),
+    "the side with the redex was not normalized")
+end
+
+(* The rung ran and raised its decline (so it did not succeed), and the
+   replay then fell through to the next rung, equality-congruence. *)
+fun assert_21a_declined what =
+  (assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+     "Z3 datatype-normalize was not reached");
+   assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+     "Z3 datatype-normalize accepted " ^ what);
+   assert (profile_call_count "rewrite(22)(equality-congruence)" > 0,
+     "the replay did not fall through to the rung after datatype-normalize"))
+
+(* A target without a datatype redex is declined by the helper as
+   [NoRedex], and the rung then falls through to the later rungs. *)
+fun z3_rewrite_datatype_normalize_declines () =
+let
+  val targets = [
+    ``(f:smt_tri -> bool) (SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p)) <=>
+      f (SmtTriC (p \/ 0 = z \/ y = x))``,
+    ``(f:bool -> bool) ((x:int) = y \/ (z:int) = 0 \/ p) <=>
+      f (p \/ 0 = z \/ y = x)``]
+  val admit = SmtDatatypeProve.default_admission ()
+  fun decline target =
+    (case SmtDatatypeProve.normalize_equation_with_admission admit target of
+       SmtDatatypeProve.NoRedex => ()
+     | _ => die "FAIL: a target without a datatype redex was not declined";
+     ignore (datatype_normalize_test_replay target)
+       handle Feedback.HOL_ERR _ => ();
+     assert_21a_declined "a target without a datatype redex")
+in
+  List.app decline targets
+end
+
+(* The helper's [NoRewrites] decline: a small term-size limit admits the
+   target but leaves no admitted datatype fact for its types, so the helper
+   declines it and the rung falls through to the later rungs.  The target is
+   admitted at this limit, so the rung's decline is the helper's and not a
+   refusal at its first step.  The target is no theorem, so the replay fails
+   after the rung; the final checks show that the rung was reached, did not
+   succeed, and that the replay went on to the next rung. *)
+fun z3_rewrite_datatype_normalize_no_rewrites () =
+let
+  val target = ``(b:bool) = c``
+  fun admission () = SmtReplayArithmetic.new_term_check
+    {limit = 5, observe = fn () => ()}
+  val _ = admission () target
+  val _ =
+    case SmtDatatypeProve.normalize_equation_with_admission
+           (admission ()) target of
+      SmtDatatypeProve.NoRewrites => ()
+    | _ => die "FAIL: a target without admitted datatype facts was not \
+               \declined as NoRewrites"
+  val _ =
+    ignore (datatype_normalize_replay
+      (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+        (admission ()) []) target)
+    handle Feedback.HOL_ERR _ => ()
+in
+  assert_21a_declined "a target without datatype facts"
+end
+
 (* Rung 21a normalizes in the checked rewrite traversal: here the exported
    INT_INJ would turn &a = &c into a = c, which this admission refuses. *)
-fun z3_rewrite_datatype_normalize_admission () =
+val datatype_normalize_admission_target =
+  ``(f:bool -> bool)
+      (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
+         SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+    f (p \/ 0 = z \/ ((&c):int) = &a)``
+
+(* An admission that refuses the INT_INJ result with [refusal ()] and counts
+   the refusals. *)
+fun datatype_normalize_refusing refusal =
 let
-  val target =
-    ``(f:bool -> bool)
-        (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
-           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
-      f (p \/ 0 = z \/ ((&c):int) = &a)``
   val refused = [``(a:num) = c``, ``(c:num) = a``]
   val base = SmtDatatypeProve.default_admission ()
   val refusals = ref 0
   fun admit tm =
     if Lib.can (HolKernel.find_term
          (fn t => List.exists (Term.aconv t) refused)) tm
-    then (refusals := !refusals + 1;
-          raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
+    then (refusals := !refusals + 1; refusal ())
     else base tm
-  val initial = Z3_Proof.empty_proof "4.15.3"
-  val steps = Redblackmap.insert
-    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
-  val _ = Profile.reset_all ()
+in (admit, refusals) end
+
+fun z3_rewrite_datatype_normalize_admission () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) = datatype_normalize_refusing (fn () =>
+    raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
   val _ =
-    ignore (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
-      admit [] (Z3_Proof.update_proof_steps initial steps))
+    ignore (datatype_normalize_replay
+      (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+        admit []) target)
     handle Feedback.HOL_ERR _ => ()
 in
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
-    "Z3 datatype-normalize was not reached");
   assert (!refusals > 0, "the admission never saw the INT_INJ result");
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
-    "Z3 datatype-normalize ran an exported rewrite its admission refuses")
+  assert_21a_declined "an exported rewrite its admission refuses"
+end
+
+(* A refusal raised inside a local rewrite reaches the helper's caller as
+   the very same error, and a real interrupt there is not caught. *)
+fun z3_rewrite_datatype_normalize_refusal_propagates () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) = datatype_normalize_refusing (fn () =>
+    raise Feedback.mk_HOL_ERR "Unittest" "refusal" "local rewrite refused")
+  val _ =
+    (ignore (SmtDatatypeProve.normalize_equation_with_admission admit target);
+     die "FAIL: the helper hid a refusal inside a local rewrite")
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_structure_of holerr = "Unittest" andalso
+              Feedback.top_function_of holerr = "refusal" andalso
+              Feedback.message_of holerr = "local rewrite refused",
+        "the helper changed a refusal inside a local rewrite")
+in
+  assert (!refusals > 0, "the admission never saw the INT_INJ result")
+end
+
+fun z3_rewrite_datatype_normalize_interrupt_propagates () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) =
+    datatype_normalize_refusing (fn () => raise Interrupt)
+  val interrupted =
+    (ignore (SmtDatatypeProve.normalize_equation_with_admission admit target);
+     false)
+    handle Interrupt => true
+in
+  assert (interrupted, "the helper did not propagate a real interrupt");
+  assert (!refusals > 0, "the admission never saw the INT_INJ result")
 end
 
 fun shared_fastpath_budget_contract () =
@@ -20795,13 +21160,94 @@ in
     "basic BV branch lost the resource marker");
   assert (Feedback.message_of basic_propagated = diagnostic,
     "basic BV branch changed the resource diagnostic");
-  List.app check_handler
-    [("skeleton recursive handler",
-       Z3_ProofReplay.skeleton_recursive_rewrite_for_test),
-     ("equality recursive handler",
-       Z3_ProofReplay.equality_recursive_rewrite_for_test),
-     ("abstraction recursive handler",
-       Z3_ProofReplay.abstraction_recursive_rewrite_for_test)]
+  check_handler
+    ("recursive handler", Z3_ProofReplay.recursive_rewrite_outer_for_test)
+end
+
+fun cpc_next_fp_contract () =
+let
+  datatype outcome = Value of int | Raised of exn
+  fun run f = Value (f ()) handle e => Raised e
+  fun gate_error label =
+    (SmtResource.check_term_size_for "BitVector" label
+       (SmtResource.max_bv_replay_term_nodes + 1);
+     die "FAIL: next_fp test gate did not fire")
+    handle Feedback.HOL_ERR holerr => holerr
+  val first_gate = gate_error "next-fp-first"
+  val second_gate = gate_error "next-fp-second"
+  val ordinary =
+    (raise Feedback.mk_HOL_ERR "Unittest" "next_fp" "ordinary")
+    handle Feedback.HOL_ERR holerr => holerr
+  val declined = SmtFpGraph.Declined "next_fp test"
+  (* Run next_fp with the given prover and continuation behaviours and
+     report the outcome with the continuation's call count. *)
+  fun trial first second =
+    let
+      val calls = ref 0
+      val outcome =
+        run (fn () =>
+          CPC_ProofReplay.next_fp_for_test first
+            (fn () => (calls := !calls + 1; second ())))
+    in (outcome, !calls) end
+  fun value v () = v
+  fun fail e () = raise e
+  fun expect_value label (outcome, calls) expected expected_calls =
+    (case outcome of
+       Value v =>
+         assert (v = expected, label ^ " returned the wrong value")
+     | Raised _ => die ("FAIL: " ^ label ^ " raised");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+  fun expect_holerr label (outcome, calls) expected expected_calls =
+    (case outcome of
+       Raised (Feedback.HOL_ERR holerr) =>
+         assert (Feedback.message_of holerr = Feedback.message_of expected
+                 andalso SmtResource.is_resource_gate holerr =
+                         SmtResource.is_resource_gate expected,
+           label ^ " raised a different HOL_ERR")
+     | _ => die ("FAIL: " ^ label ^ " did not raise the expected HOL_ERR");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+  fun expect_exn label (outcome, calls) matches expected_calls =
+    (case outcome of
+       Raised e =>
+         assert (matches e, label ^ " raised the wrong exception")
+     | Value _ => die ("FAIL: " ^ label ^ " returned a value");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+in
+  assert (SmtResource.is_resource_gate first_gate andalso
+          SmtResource.is_resource_gate second_gate andalso
+          not (SmtResource.is_resource_gate ordinary) andalso
+          Feedback.message_of first_gate <> Feedback.message_of second_gate,
+    "next_fp test fixtures are not distinct gates and an ordinary error");
+  expect_value "success" (trial (value 1) (value 2)) 1 0;
+  expect_value "ordinary error"
+    (trial (fail (Feedback.HOL_ERR ordinary)) (value 2)) 2 1;
+  expect_value "declined" (trial (fail declined) (value 2)) 2 1;
+  expect_value "gate then success"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (value 2)) 2 1;
+  expect_holerr "gate then ordinary error"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Feedback.HOL_ERR ordinary)))
+    first_gate 1;
+  expect_holerr "gate then another gate"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Feedback.HOL_ERR second_gate)))
+    first_gate 1;
+  expect_exn "gate then Interrupt"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (fail Interrupt))
+    (fn Interrupt => true | _ => false) 1;
+  expect_exn "gate then timeout"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Timeout.TIMEOUT Time.zeroTime)))
+    (fn Timeout.TIMEOUT _ => true | _ => false) 1;
+  expect_exn "gate then Declined"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (fail declined))
+    (fn SmtFpGraph.Declined _ => true | _ => false) 1;
+  expect_exn "Interrupt in prover"
+    (trial (fail Interrupt) (value 2))
+    (fn Interrupt => true | _ => false) 0
 end
 
 fun z3_bv_width12_dense_literal_exact_lhs_normalization () =
@@ -30454,11 +30900,11 @@ let
     handle Feedback.HOL_ERR holerr => holerr
   val fallback_called = ref false
   val propagated =
-    ((ignore (Z3_ProofReplay.hypothesis_char_next_route_for_test
-        (fn () => raise Feedback.HOL_ERR gate)
-        (fn () =>
-          (fallback_called := true;
-           Thm.ASSUME boolSyntax.T)));
+    ((ignore (Z3_ProofReplay.hypothesis_theorem_with_for_test
+        (fn _ => false) (fn _ => true)
+        (fn _ => raise Feedback.HOL_ERR gate)
+        (fn term => (fallback_called := true; Thm.ASSUME term))
+        boolSyntax.T);
       NONE)
      handle Feedback.HOL_ERR holerr => SOME holerr)
 in
@@ -30725,14 +31171,6 @@ end
 fun z3_string_th_lemma_gate_hoist_success () =
 let
   val maximum = SmtResource.max_skeleton_replay_dag_nodes
-  val expected = SmtResource.dag_size_diagnostic_with_limit
-    "String" "task21-route-probe" maximum (maximum + 1)
-  val gate =
-    (SmtResource.check_dag_size_with_limit
-       "String" "task21-route-probe" maximum (maximum + 1);
-     die "FAIL: TASK21 route probe did not gate")
-    handle Feedback.HOL_ERR holerr => holerr
-  val ordinary_ERR = Feedback.mk_HOL_ERR "Task21RouteProbe"
   fun check_gate label expected run fallback_called =
     let
       val propagated =
@@ -30749,18 +31187,12 @@ let
            assert (not (!fallback_called),
              label ^ " entered a later route after the resource gate"))
     end
-  val primary_fallback = ref false
-  val () = check_gate "String primary route" expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
-      (fn () => raise Feedback.HOL_ERR gate)
-      (fn () => primary_fallback := true))) primary_fallback
-  val final_fallback = ref false
-  val () = check_gate "String contextual route" expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
-      (fn () => raise ordinary_ERR "primary" "ordinary route decline")
-      (fn () => Z3_ProofReplay.string_th_lemma_next_route_for_test
-        (fn () => raise Feedback.HOL_ERR gate)
-        (fn () => final_fallback := true)))) final_fallback
+  val () = check_gate "DAG size check"
+    (SmtResource.dag_size_diagnostic_with_limit
+       "String" "task21-route-probe" maximum (maximum + 1))
+    (fn () => SmtResource.check_dag_size_with_limit
+       "String" "task21-route-probe" maximum (maximum + 1))
+    (ref false)
   fun char_bit index character =
     ``char_bit ^(numSyntax.mk_numeral (Arbnum.fromInt index))
         (w2n ^character)``
@@ -30815,7 +31247,7 @@ let
   val char_admission_fallback = ref false
   val () = check_gate "Character family admission"
     char_admission_expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+    (fn () => ignore (SmtResource.or_else
       (fn () => ignore
         (SmtStringProve.char_word_expansion_domain oversized_shared))
       (fn () => char_admission_fallback := true)))
@@ -30823,7 +31255,7 @@ let
   val no_match_fallback = ref false
   val () = check_gate "Character no-match admission"
     char_admission_expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+    (fn () => ignore (SmtResource.or_else
       (fn () => ignore
         (SmtStringProve.char_word_expansion_domain oversized_no_match))
       (fn () => no_match_fallback := true)))
@@ -38382,6 +38814,152 @@ in
   List.app check (unpreprocessed_solvers ())
 end
 
+fun smt_pointer_table () =
+let
+  fun check name b = if b then () else die ("FAIL: pointer table " ^ name)
+  val moduli = ref ([] : int list)
+  fun spy modulus _ = (moduli := modulus :: !moduli; 0)
+  fun constant modulus term = (ignore term; ignore modulus; 0)
+  fun fresh index = Term.mk_var ("pt" ^ Int.toString index, Type.bool)
+  fun buckets_seen () = List.foldl Int.max 0 (!moduli)
+  (* Moduli in call order with consecutive repeats removed. *)
+  fun distinct_moduli () =
+    List.rev (List.foldl (fn (m, acc) => case acc of
+      m' :: _ => if m = m' then acc else m :: acc
+    | [] => [m]) [] (List.rev (!moduli)))
+  (* mark: first visit true, repeat false; equal but distinct terms differ *)
+  val set = SmtPointerTable.new
+    {hint = SmtReplayImport.pointer_bucket 3, initial = 17, ceiling = 8191}
+  val x = fresh 0
+  val x' = fresh 0
+  val _ = check "distinct equal terms" (Term.aconv x x' andalso
+    not (Portable.pointer_eq (x, x')))
+  val _ = check "mark first" (SmtPointerTable.mark set x)
+  val _ = check "mark repeat" (not (SmtPointerTable.mark set x))
+  val _ = check "equal term is a new key" (SmtPointerTable.mark set x')
+  val _ = check "equal term repeat" (not (SmtPointerTable.mark set x'))
+  val _ = check "size" (SmtPointerTable.size set = 2)
+  (* collisions: every key in one bucket still resolves by pointer *)
+  val tbl : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = constant, initial = 4, ceiling = 4}
+  val keys = List.tabulate (20, fresh)
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert tbl k i)
+    (ListPair.zip (List.tabulate (20, fn i => i), keys))
+  val _ = check "collisions" (List.all (fn (i, k) =>
+    SmtPointerTable.lookup tbl k = SOME i)
+    (ListPair.zip (List.tabulate (20, fn i => i), keys)))
+  val _ = check "collision miss" (SmtPointerTable.lookup tbl (fresh 0) = NONE)
+  (* growth past 2 * size keeps every key and honours the ceiling *)
+  val grow : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 100}
+  val many = List.tabulate (300, fresh)
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert grow k i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many))
+  val _ = check "growth rule" (distinct_moduli () = [5, 11, 23, 47, 95, 100])
+  val _ = check "grown within ceiling" (buckets_seen () <= 100)
+  val _ = check "growth keeps keys" (List.all (fn (i, k) =>
+    SmtPointerTable.lookup grow k = SOME i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many)))
+  val _ = check "ceiling reached" (buckets_seen () = 100)
+  val _ = moduli := []
+  val first : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 100}
+  val _ = List.app (fn k => SmtPointerTable.insert first k 0)
+    (List.take (many, 10))
+  val _ = check "no growth at 2 * size entries" (distinct_moduli () = [5])
+  val _ = SmtPointerTable.insert first (List.nth (many, 10)) 0
+  val _ = check "growth on the 11th insert" (distinct_moduli () = [5, 11])
+  val _ = moduli := []
+  val capped : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 5}
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert capped k i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many))
+  val _ = check "ceiling stops growth" (List.all (fn m => m = 5) (!moduli))
+  (* newest first for a repeated key, across growth *)
+  val newest : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = constant, initial = 3, ceiling = 1000}
+  val key = fresh 1000
+  val _ = SmtPointerTable.insert newest key 1
+  val _ = List.app (fn k => SmtPointerTable.insert newest k 0) many
+  val _ = SmtPointerTable.insert newest key 2
+  val _ = check "newest before growth" (SmtPointerTable.lookup newest key
+    = SOME 2)
+  val _ = List.app (fn k => SmtPointerTable.insert newest k 0) many
+  val _ = check "newest across growth" (SmtPointerTable.lookup newest key
+    = SOME 2)
+  val repeated : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = SmtReplayImport.pointer_bucket 2, initial = 3, ceiling = 8191}
+  val _ = List.app (fn n => SmtPointerTable.insert repeated key n)
+    (List.tabulate (50, fn n => n))
+  val _ = check "repeated key newest" (SmtPointerTable.lookup repeated key
+    = SOME 49)
+  (* clear empties but does not shrink *)
+  val _ = moduli := []
+  val _ = SmtPointerTable.clear grow
+  val _ = check "cleared size" (SmtPointerTable.size grow = 0)
+  val _ = check "cleared miss" (List.all (fn k =>
+    SmtPointerTable.lookup grow k = NONE) many)
+  val grown_buckets = List.hd (!moduli)
+  val _ = check "clear keeps size" (grown_buckets = buckets_seen ()
+    andalso grown_buckets > 5)
+  val _ = SmtPointerTable.insert grow x 7
+  val _ = check "usable after clear" (SmtPointerTable.lookup grow x = SOME 7)
+in () end
+
+fun smt_resource_or_else () =
+let
+  val gate = Feedback.mk_HOL_ERR "SmtResource" "or_else"
+    "resource-gated: injected"
+  val ordinary = Feedback.mk_HOL_ERR "Unittest" "or_else" "ordinary"
+  val calls = ref 0
+  fun counted x = (calls := !calls + 1; x)
+  fun same_err (Feedback.HOL_ERR a, Feedback.HOL_ERR b) =
+        Feedback.message_of a = Feedback.message_of b andalso
+        Feedback.top_structure_of a = Feedback.top_structure_of b andalso
+        Feedback.top_function_of a = Feedback.top_function_of b
+    | same_err _ = false
+  val () = calls := 0
+  val v = SmtResource.or_else (fn () => 1) (fn () => counted 2)
+  val () = assert (v = 1 andalso !calls = 0,
+    "or_else success must return first's value without running second")
+  val () = calls := 0
+  val v = SmtResource.or_else (fn () => raise ordinary)
+    (fn () => counted 2)
+  val () = assert (v = 2 andalso !calls = 1,
+    "or_else must run second once after an ordinary HOL_ERR")
+  val () = calls := 0
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise gate)
+       (fn () => counted 2));
+     die "FAIL: or_else swallowed a resource gate")
+    handle exn as Feedback.HOL_ERR e =>
+      (assert (same_err (exn, gate),
+         "or_else must re-raise the identical gate");
+       assert (SmtResource.is_resource_gate e,
+         "re-raised gate must still be a resource gate");
+       assert (!calls = 0, "or_else ran second after a resource gate"))
+  val second_error = Feedback.mk_HOL_ERR "Unittest" "or_else_second"
+    "second failed"
+  val () = calls := 0
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise ordinary)
+       (fn () => (calls := !calls + 1; raise second_error)));
+     die "FAIL: or_else hid an error of second")
+    handle exn as Feedback.HOL_ERR _ =>
+      (assert (same_err (exn, second_error),
+         "or_else altered second's error");
+       assert (!calls = 1, "or_else must run second exactly once"))
+  val () = calls := 0
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise Fail "boom")
+       (fn () => counted 2));
+     die "FAIL: or_else swallowed a non-HOL_ERR exception")
+    handle Fail "boom" => assert (!calls = 0,
+      "or_else ran second after a non-HOL_ERR exception")
+in
+  ()
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -38401,13 +38979,22 @@ let
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
     ("string_named_obligations", SmtReplayStringTests.run),
     ("bag_named_obligations", bag_named_obligations),
+    ("smt_pointer_table", smt_pointer_table),
     ("public_wrapper_finalization", SmtPublicWrapperTests.run),
+    ("rulematch_shared_contract", SmtLib_RuleMatchContractTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("cpc_producer_endpoints", CPC_ProducerEndpointTests.run),
     ("cpc_aci_producer", CPC_AciProducerTests.run),
     ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
+    ("cpc_clausal_elimination_rows", CPC_ClausalEliminationTests.run),
+    ("cpc_owned_classification_charges", CPC_OwnedClassificationTests.run),
+    ("carrier_root_policy_contract",
+     SmtLib_GraphCarrierRootPolicyTests.run),
+    ("carrier_root_int_contract",
+     SmtLib_GraphCarrierRootIntTests.run),
+    ("cpc_typed_classification", cpc_typed_classification),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
@@ -38418,6 +39005,7 @@ let
       word_division_untranslated_operators),
     ("cvc_native_bag_goal_nested_application_success",
       cvc_native_bag_goal_nested_application_success),
+    ("smt_resource_or_else", smt_resource_or_else),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
@@ -38857,8 +39445,18 @@ let
       cpc_quant_miniscope_or_replay_success),
     ("z3_rewrite_datatype_normalize_success",
       z3_rewrite_datatype_normalize_success),
+    ("z3_rewrite_datatype_normalize_one_sided",
+      z3_rewrite_datatype_normalize_one_sided),
+    ("z3_rewrite_datatype_normalize_declines",
+      z3_rewrite_datatype_normalize_declines),
+    ("z3_rewrite_datatype_normalize_no_rewrites",
+      z3_rewrite_datatype_normalize_no_rewrites),
     ("z3_rewrite_datatype_normalize_admission",
       z3_rewrite_datatype_normalize_admission),
+    ("z3_rewrite_datatype_normalize_refusal_propagates",
+      z3_rewrite_datatype_normalize_refusal_propagates),
+    ("z3_rewrite_datatype_normalize_interrupt_propagates",
+      z3_rewrite_datatype_normalize_interrupt_propagates),
     ("cpc_quant_var_elim_repeated_guard_replay_success",
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",
@@ -38942,6 +39540,8 @@ let
       cpc_skolem_cache_preflight_rejections),
     ("cpc_process_scope_negated_leaf_diagnostic",
       cpc_process_scope_negated_leaf_diagnostic),
+    ("cpc_process_scope_boundary_matches_plain",
+      cpc_process_scope_boundary_matches_plain),
     ("cpc_concat_unify_and_re_unfold_pos_replay_success",
       cpc_concat_unify_and_re_unfold_pos_replay_success),
     ("cpc_proof_parser_private_fp_terms_success",
@@ -39044,6 +39644,12 @@ let
       cpc_array_set_assumption_bridge_success),
     ("cpc_array_set_definition_identity_success",
       cpc_array_set_definition_identity_success),
+    ("cpc_context_proof_hypothesis_success",
+      cpc_context_proof_hypothesis_success),
+    ("cpc_canonical_rung_hypothesis_success",
+      cpc_canonical_rung_hypothesis_success),
+    ("smt_replay_canon_transport_hypothesis",
+      smt_replay_canon_transport_hypothesis),
     ("cpc_arrays_select_const_set_success",
       cpc_arrays_select_const_set_success),
     ("cpc_eq_resolve_reflexive_left_success",
@@ -39098,6 +39704,8 @@ let
       cpc_fp_boolean_clause_bridge_success),
     ("cpc_fp_boolean_conditional_schema_success",
       cpc_fp_boolean_conditional_schema_success),
+    ("cpc_fp_word_bridge_memo_shapes",
+      cpc_fp_word_bridge_memo_shapes),
     ("cpc_fp_forced_check_rejects_unproved_clause",
       cpc_fp_forced_check_rejects_unproved_clause),
     ("cpc_fp_word_bridge_shared_dag_step_time_gate",
@@ -39403,6 +40011,7 @@ let
       z3_bv_resource_gate_contract),
     ("z3_bv_resource_gate_outer_handlers_contract",
       z3_bv_resource_gate_outer_handlers_contract),
+    ("cpc_next_fp_contract", cpc_next_fp_contract),
     ("z3_bv_width12_dense_literal_exact_lhs_normalization",
       z3_bv_width12_dense_literal_exact_lhs_normalization),
     ("z3_commuted_rewrite_orientation_replay_success",
@@ -39655,7 +40264,9 @@ let
     ("solver_spec_rejects_bad_proof_theorem",
       solver_spec_rejects_bad_proof_theorem),
     (* Retires private canaries to test both declaration epochs. *)
-    ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run)
+    ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run),
+    ("source_condition_builder_contract",
+      SmtReplaySourceConditionTests.run)
   ]
   val selected =
     case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of

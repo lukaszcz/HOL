@@ -9,11 +9,137 @@ struct
                                  | CVCVersionPrefixes of string list
                                  | CVCVersions of string list
 
+  (* One constructor per registered replay handler, named H followed by the
+     handler in CamelCase.  [handler_name] is the string view. *)
+  datatype replay_handler =
+      HAciNorm | HAlphaEquiv | HAndElim | HAndIntro | HArith | HArithAbsEq
+      | HArithAbsIntGt | HArithMaxGeq1 | HArithMaxGeq2 | HArithMinLt2
+      | HArithMultAbsComparison | HArithMultNeg | HArithMultPos
+      | HArithMultSign | HArithReduction | HArithRel | HArithRule
+      | HArithSumUb | HArithTrichotomy | HArray | HArraysExt
+      | HArraysReadOverWrite | HArraysSelectConst | HBetaReduce | HBool
+      | HBvAshrByConst0 | HBvBitwiseSlicing | HBvLshrByConst0 | HBvNotIdemp
+      | HBvPolyNorm | HBvPolyNormEq | HBvShlByConst0 | HBvShlByConst2
+      | HBvWordRewrite | HBvXorDuplicate | HBvZeroExtendEliminate0 | HCnf
+      | HCong | HContra | HDatatype | HDatatypeEq | HDtSplit | HEqRefl
+      | HEqResolve | HEquivElim1 | HEquivElim2 | HEvaluate | HExistsElim
+      | HFactoring | HFalseElim | HFalseIntro | HHoCong | HImpliesElim
+      | HInstantiate | HIntTightLb | HIntTightUb | HIteElim1 | HIteElim2
+      | HIteEq | HIteFalseCond | HIteNegBranch | HIteNotCond
+      | HIteThenFalse | HIteThenTrue | HIteTrueCond | HLambdaElim
+      | HModusPonens | HNotAnd | HNotEquivElim1 | HNotEquivElim2
+      | HNotImpliesElim1 | HNotImpliesElim2 | HNotIteElim1 | HNotIteElim2
+      | HNotNotElim | HNotOrElim | HProcessScope | HQuantDtSplit
+      | HQuantRewrite | HQuantUnusedVars | HRareInventory | HRefl
+      | HReordering | HResolution | HRewrite | HScope | HSeqRewrite | HSets
+      | HSetsExt | HSetsRewrite | HSkolemize | HString | HSymm | HTrans
+      | HTrueElim | HTrueIntro | HTrust
+
+  fun handler_name h =
+    case h of
+      HAciNorm => "aci_norm"
+    | HAlphaEquiv => "alpha_equiv"
+    | HAndElim => "and_elim"
+    | HAndIntro => "and_intro"
+    | HArith => "arith"
+    | HArithAbsEq => "arith_abs_eq"
+    | HArithAbsIntGt => "arith_abs_int_gt"
+    | HArithMaxGeq1 => "arith_max_geq1"
+    | HArithMaxGeq2 => "arith_max_geq2"
+    | HArithMinLt2 => "arith_min_lt2"
+    | HArithMultAbsComparison => "arith_mult_abs_comparison"
+    | HArithMultNeg => "arith_mult_neg"
+    | HArithMultPos => "arith_mult_pos"
+    | HArithMultSign => "arith_mult_sign"
+    | HArithReduction => "arith_reduction"
+    | HArithRel => "arith_rel"
+    | HArithRule => "arith_rule"
+    | HArithSumUb => "arith_sum_ub"
+    | HArithTrichotomy => "arith_trichotomy"
+    | HArray => "array"
+    | HArraysExt => "arrays_ext"
+    | HArraysReadOverWrite => "arrays_read_over_write"
+    | HArraysSelectConst => "arrays_select_const"
+    | HBetaReduce => "beta_reduce"
+    | HBool => "bool"
+    | HBvAshrByConst0 => "bv_ashr_by_const_0"
+    | HBvBitwiseSlicing => "bv_bitwise_slicing"
+    | HBvLshrByConst0 => "bv_lshr_by_const_0"
+    | HBvNotIdemp => "bv_not_idemp"
+    | HBvPolyNorm => "bv_poly_norm"
+    | HBvPolyNormEq => "bv_poly_norm_eq"
+    | HBvShlByConst0 => "bv_shl_by_const_0"
+    | HBvShlByConst2 => "bv_shl_by_const_2"
+    | HBvWordRewrite => "bv_word_rewrite"
+    | HBvXorDuplicate => "bv_xor_duplicate"
+    | HBvZeroExtendEliminate0 => "bv_zero_extend_eliminate_0"
+    | HCnf => "cnf"
+    | HCong => "cong"
+    | HContra => "contra"
+    | HDatatype => "datatype"
+    | HDatatypeEq => "datatype_eq"
+    | HDtSplit => "dt_split"
+    | HEqRefl => "eq_refl"
+    | HEqResolve => "eq_resolve"
+    | HEquivElim1 => "equiv_elim1"
+    | HEquivElim2 => "equiv_elim2"
+    | HEvaluate => "evaluate"
+    | HExistsElim => "exists_elim"
+    | HFactoring => "factoring"
+    | HFalseElim => "false_elim"
+    | HFalseIntro => "false_intro"
+    | HHoCong => "ho_cong"
+    | HImpliesElim => "implies_elim"
+    | HInstantiate => "instantiate"
+    | HIntTightLb => "int_tight_lb"
+    | HIntTightUb => "int_tight_ub"
+    | HIteElim1 => "ite_elim1"
+    | HIteElim2 => "ite_elim2"
+    | HIteEq => "ite_eq"
+    | HIteFalseCond => "ite_false_cond"
+    | HIteNegBranch => "ite_neg_branch"
+    | HIteNotCond => "ite_not_cond"
+    | HIteThenFalse => "ite_then_false"
+    | HIteThenTrue => "ite_then_true"
+    | HIteTrueCond => "ite_true_cond"
+    | HLambdaElim => "lambda_elim"
+    | HModusPonens => "modus_ponens"
+    | HNotAnd => "not_and"
+    | HNotEquivElim1 => "not_equiv_elim1"
+    | HNotEquivElim2 => "not_equiv_elim2"
+    | HNotImpliesElim1 => "not_implies_elim1"
+    | HNotImpliesElim2 => "not_implies_elim2"
+    | HNotIteElim1 => "not_ite_elim1"
+    | HNotIteElim2 => "not_ite_elim2"
+    | HNotNotElim => "not_not_elim"
+    | HNotOrElim => "not_or_elim"
+    | HProcessScope => "process_scope"
+    | HQuantDtSplit => "quant_dt_split"
+    | HQuantRewrite => "quant_rewrite"
+    | HQuantUnusedVars => "quant_unused_vars"
+    | HRareInventory => "rare_inventory"
+    | HRefl => "refl"
+    | HReordering => "reordering"
+    | HResolution => "resolution"
+    | HRewrite => "rewrite"
+    | HScope => "scope"
+    | HSeqRewrite => "seq_rewrite"
+    | HSets => "sets"
+    | HSetsExt => "sets_ext"
+    | HSetsRewrite => "sets_rewrite"
+    | HSkolemize => "skolemize"
+    | HString => "string"
+    | HSymm => "symm"
+    | HTrans => "trans"
+    | HTrueElim => "true_elim"
+    | HTrueIntro => "true_intro"
+    | HTrust => "trust"
+
   type proof_rule = {
     name : string,
     namespace : rule_namespace,
     version_support : proof_version_support,
-    replay_handler : string
+    replay_handler : replay_handler
   }
 
   (* The frozen CPC vocabulary was captured and replayed with cvc5 1.3.4.
@@ -1628,7 +1754,7 @@ struct
 
   val rare_inventory_rules = List.map
     (fn entry : rare_inventory_entry =>
-      mk_rule RareRewrite (#name entry, "rare_inventory"))
+      mk_rule RareRewrite (#name entry, HRareInventory))
     cvc134_rare_rewrite_inventory
 
   (* This is deliberately a registry, rather than a catch-all replay case.
@@ -1636,236 +1762,236 @@ struct
      the cvc5 1.3.4 dsl-rewrite seed inventory; an unlisted rule is a checked
      replay failure, never an implicit trust step. *)
   val proof_rule_registry : proof_rule list = [
-    mk_rule ProofRule ("refl", "refl"),
-    mk_rule ProofRule ("eq-refl", "eq_refl"),
-    mk_rule ProofRule ("symm", "symm"),
-    mk_rule ProofRule ("trans", "trans"),
-    mk_rule ProofRule ("cong", "cong"),
-    mk_rule ProofRule ("nary_cong", "cong"),
-    mk_rule ProofRule ("ho_cong", "ho_cong"),
-    mk_rule ProofRule ("beta-reduce", "beta_reduce"),
-    mk_rule ProofRule ("lambda-elim", "lambda_elim"),
-    mk_rule ProofRule ("eq_resolve", "eq_resolve"),
-    mk_rule ProofRule ("evaluate", "evaluate"),
-    mk_rule ProofRule ("and_elim", "and_elim"),
-    mk_rule ProofRule ("instantiate", "instantiate"),
-    mk_rule ProofRule ("contra", "contra"),
-    mk_rule ProofRule ("false_intro", "false_intro"),
-    mk_rule ProofRule ("false_elim", "false_elim"),
-    mk_rule ProofRule ("distinct_values", "datatype"),
-    mk_rule ProofRule ("dt_split", "dt_split"),
-    mk_rule ProofRule ("dt-cycle", "datatype_eq"),
-    mk_rule ProofRule ("dt", "datatype"),
-    mk_rule ProofRule ("resolution", "resolution"),
-    mk_rule ProofRule ("chain_resolution", "resolution"),
-    mk_rule ProofRule ("chain_m_resolution", "resolution"),
-    mk_rule ProofRule ("reordering", "reordering"),
-    mk_rule ProofRule ("arith", "arith"),
-    mk_rule ProofRule ("array", "array"),
-    mk_rule ProofRule ("arrays_ext", "arrays_ext"),
-    mk_rule ProofRule ("arrays-select-const", "arrays_select_const"),
-    mk_rule ProofRule ("arrays_read_over_write_1", "arrays_read_over_write"),
-    mk_rule ProofRule ("arrays_read_over_write", "arrays_read_over_write"),
+    mk_rule ProofRule ("refl", HRefl),
+    mk_rule ProofRule ("eq-refl", HEqRefl),
+    mk_rule ProofRule ("symm", HSymm),
+    mk_rule ProofRule ("trans", HTrans),
+    mk_rule ProofRule ("cong", HCong),
+    mk_rule ProofRule ("nary_cong", HCong),
+    mk_rule ProofRule ("ho_cong", HHoCong),
+    mk_rule ProofRule ("beta-reduce", HBetaReduce),
+    mk_rule ProofRule ("lambda-elim", HLambdaElim),
+    mk_rule ProofRule ("eq_resolve", HEqResolve),
+    mk_rule ProofRule ("evaluate", HEvaluate),
+    mk_rule ProofRule ("and_elim", HAndElim),
+    mk_rule ProofRule ("instantiate", HInstantiate),
+    mk_rule ProofRule ("contra", HContra),
+    mk_rule ProofRule ("false_intro", HFalseIntro),
+    mk_rule ProofRule ("false_elim", HFalseElim),
+    mk_rule ProofRule ("distinct_values", HDatatype),
+    mk_rule ProofRule ("dt_split", HDtSplit),
+    mk_rule ProofRule ("dt-cycle", HDatatypeEq),
+    mk_rule ProofRule ("dt", HDatatype),
+    mk_rule ProofRule ("resolution", HResolution),
+    mk_rule ProofRule ("chain_resolution", HResolution),
+    mk_rule ProofRule ("chain_m_resolution", HResolution),
+    mk_rule ProofRule ("reordering", HReordering),
+    mk_rule ProofRule ("arith", HArith),
+    mk_rule ProofRule ("array", HArray),
+    mk_rule ProofRule ("arrays_ext", HArraysExt),
+    mk_rule ProofRule ("arrays-select-const", HArraysSelectConst),
+    mk_rule ProofRule ("arrays_read_over_write_1", HArraysReadOverWrite),
+    mk_rule ProofRule ("arrays_read_over_write", HArraysReadOverWrite),
     (* cvc5 has used both this macro and the narrow [sets-*] rewrites. *)
-    mk_rule ProofRule ("sets", "sets"),
-    mk_rule ProofRule ("sets_ext", "sets_ext"),
-    mk_rule ProofRule ("bool", "bool"),
-    mk_rule ProofRule ("trust", "trust"),
-    mk_rule ProofRule ("str", "string"),
-    mk_rule ProofRule ("string_eager_reduction", "string"),
-    mk_rule ProofRule ("string_length_pos", "string"),
-    mk_rule ProofRule ("string_reduction", "string"),
-    mk_rule ProofRule ("concat_unify", "string"),
-    mk_rule ProofRule ("re_unfold_pos", "string"),
-    mk_rule ProofRule ("aci_norm", "aci_norm"),
-    mk_rule ProofRule ("bv_poly_norm", "bv_poly_norm"),
-    mk_rule ProofRule ("bv_poly_norm_eq", "bv_poly_norm_eq"),
-    mk_rule ProofRule ("bv_bitblast_step", "bv_poly_norm"),
-    mk_rule RareRewrite ("bv-extract-whole", "bv_word_rewrite"),
-    mk_rule RareRewrite ("bv-extract-not", "bv_word_rewrite"),
-    mk_rule RareRewrite ("bv-extract-concat-1", "bv_word_rewrite"),
-    mk_rule RareRewrite ("bv-shl-by-const-1", "bv_word_rewrite"),
-    mk_rule RareRewrite ("bv-lshr-by-const-1", "bv_word_rewrite"),
-    mk_rule RareRewrite ("bv-bitwise-slicing", "bv_bitwise_slicing"),
-    mk_rule RareRewrite ("bv-xor-duplicate", "bv_xor_duplicate"),
-    mk_rule RareRewrite ("bv-not-idemp", "bv_not_idemp"),
+    mk_rule ProofRule ("sets", HSets),
+    mk_rule ProofRule ("sets_ext", HSetsExt),
+    mk_rule ProofRule ("bool", HBool),
+    mk_rule ProofRule ("trust", HTrust),
+    mk_rule ProofRule ("str", HString),
+    mk_rule ProofRule ("string_eager_reduction", HString),
+    mk_rule ProofRule ("string_length_pos", HString),
+    mk_rule ProofRule ("string_reduction", HString),
+    mk_rule ProofRule ("concat_unify", HString),
+    mk_rule ProofRule ("re_unfold_pos", HString),
+    mk_rule ProofRule ("aci_norm", HAciNorm),
+    mk_rule ProofRule ("bv_poly_norm", HBvPolyNorm),
+    mk_rule ProofRule ("bv_poly_norm_eq", HBvPolyNormEq),
+    mk_rule ProofRule ("bv_bitblast_step", HBvPolyNorm),
+    mk_rule RareRewrite ("bv-extract-whole", HBvWordRewrite),
+    mk_rule RareRewrite ("bv-extract-not", HBvWordRewrite),
+    mk_rule RareRewrite ("bv-extract-concat-1", HBvWordRewrite),
+    mk_rule RareRewrite ("bv-shl-by-const-1", HBvWordRewrite),
+    mk_rule RareRewrite ("bv-lshr-by-const-1", HBvWordRewrite),
+    mk_rule RareRewrite ("bv-bitwise-slicing", HBvBitwiseSlicing),
+    mk_rule RareRewrite ("bv-xor-duplicate", HBvXorDuplicate),
+    mk_rule RareRewrite ("bv-not-idemp", HBvNotIdemp),
     mk_rule RareRewrite ("bv-zero-extend-eliminate-0",
-      "bv_zero_extend_eliminate_0"),
-    mk_rule RareRewrite ("bv-shl-by-const-0", "bv_shl_by_const_0"),
-    mk_rule RareRewrite ("bv-shl-by-const-2", "bv_shl_by_const_2"),
-    mk_rule RareRewrite ("bv-lshr-by-const-0", "bv_lshr_by_const_0"),
-    mk_rule RareRewrite ("bv-ashr-by-const-0", "bv_ashr_by_const_0"),
-    mk_rule RareRewrite ("eq-symm", "rewrite"),
+      HBvZeroExtendEliminate0),
+    mk_rule RareRewrite ("bv-shl-by-const-0", HBvShlByConst0),
+    mk_rule RareRewrite ("bv-shl-by-const-2", HBvShlByConst2),
+    mk_rule RareRewrite ("bv-lshr-by-const-0", HBvLshrByConst0),
+    mk_rule RareRewrite ("bv-ashr-by-const-0", HBvAshrByConst0),
+    mk_rule RareRewrite ("eq-symm", HRewrite),
     (* Native (Seq A) rules observed in the frozen cvc5 CPC corpus. *)
-    mk_rule RareRewrite ("seq-eval-op", "seq_rewrite"),
+    mk_rule RareRewrite ("seq-eval-op", HSeqRewrite),
     (* Complete frozen cvc5 1.3.4 Set RARE inventory.  Keep this explicit:
        an unrecorded sets-* spelling must fail registry lookup loudly. *)
-    mk_rule RareRewrite ("sets-card-emp", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-card-singleton", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-card-union", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-card-minus", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-choose-singleton", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-eval-op", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-insert-elim", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-inter-comm", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-inter-member", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-is-empty-elim", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-is-singleton-elim", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-member-emp", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-member-singleton", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-minus-member", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-minus-self", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-subset-elim", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-union-comm", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-union-member", "sets_rewrite"),
-    mk_rule RareRewrite ("exists-elim", "exists_elim"),
-    mk_rule RareRewrite ("absorb", "rewrite"),
-    mk_rule RareRewrite ("arith-divisible-elim", "rewrite"),
-    mk_rule RareRewrite ("arith-abs-eq", "arith_abs_eq"),
-    mk_rule RareRewrite ("arith-abs-int-gt", "arith_abs_int_gt"),
-    mk_rule RareRewrite ("arith-geq-ite-lift", "rewrite"),
-    mk_rule RareRewrite ("arith-leq-ite-lift", "rewrite"),
-    mk_rule RareRewrite ("arith-div-total-zero-real", "rewrite"),
-    mk_rule RareRewrite ("arith-div-total-zero-int", "rewrite"),
-    mk_rule RareRewrite ("arith-int-div-total", "rewrite"),
-    mk_rule RareRewrite ("arith-int-div-total-one", "rewrite"),
-    mk_rule RareRewrite ("arith-int-div-total-zero", "rewrite"),
-    mk_rule RareRewrite ("arith-int-div-total-neg", "rewrite"),
-    mk_rule RareRewrite ("arith-int-mod-total", "rewrite"),
-    mk_rule RareRewrite ("arith-int-mod-total-one", "rewrite"),
-    mk_rule RareRewrite ("arith-int-mod-total-zero", "rewrite"),
-    mk_rule RareRewrite ("arith-int-mod-total-neg", "rewrite"),
-    mk_rule RareRewrite ("arith-mod-over-mod-1", "rewrite"),
-    mk_rule RareRewrite ("arith-mod-over-mod", "rewrite"),
-    mk_rule RareRewrite ("arith-mod-over-mod-mult", "rewrite"),
-    mk_rule RareRewrite ("bool-or-taut2", "rewrite"),
-    mk_rule RareRewrite ("bool-double-not-elim", "rewrite"),
-    mk_rule RareRewrite ("bool-and-de-morgan", "rewrite"),
-    mk_rule RareRewrite ("bool-eq-false", "rewrite"),
-    mk_rule RareRewrite ("bool-eq-true", "rewrite"),
-    mk_rule RareRewrite ("bool-xor-comm", "rewrite"),
-    mk_rule RareRewrite ("bool-xor-false", "rewrite"),
-    mk_rule RareRewrite ("bool-xor-true", "rewrite"),
-    mk_rule RareRewrite ("bool-impl-elim", "rewrite"),
-    mk_rule RareRewrite ("bool-impl-false1", "rewrite"),
-    mk_rule RareRewrite ("bool-impl-true1", "rewrite"),
-    mk_rule RareRewrite ("bool-impl-true2", "rewrite"),
-    mk_rule RareRewrite ("bool-eq-nrefl", "rewrite"),
-    mk_rule RareRewrite ("bool-not-eq-elim2", "rewrite"),
-    mk_rule RareRewrite ("bool-not-eq-elim1", "rewrite"),
-    mk_rule RareRewrite ("distinct-elim", "rewrite"),
-    mk_rule RareRewrite ("eq-ite-lift", "rewrite"),
-    mk_rule RareRewrite ("ite-neg-branch", "ite_neg_branch"),
-    mk_rule RareRewrite ("re-loop-elim", "string"),
-    mk_rule RareRewrite ("str-in-re-eval", "string"),
-    mk_rule RareRewrite ("str-replace-re-all-eval", "string"),
-    mk_rule RareRewrite ("str-replace-re-eval", "string"),
-    mk_rule RareRewrite ("bool-or-de-morgan", "rewrite"),
-    mk_rule RareRewrite ("bool-implies-de-morgan", "rewrite"),
-    mk_rule ProofRule ("not_implies_elim2", "not_implies_elim2"),
-    mk_rule ProofRule ("not_implies_elim1", "not_implies_elim1"),
-    mk_rule ProofRule ("implies_elim", "implies_elim"),
-    mk_rule ProofRule ("factoring", "factoring"),
-    mk_rule ProofRule ("cnf_implies_neg1", "cnf"),
-    mk_rule ProofRule ("cnf_implies_neg2", "cnf"),
-    mk_rule ProofRule ("cnf_implies_pos", "cnf"),
-    mk_rule ProofRule ("cnf_and_pos", "cnf"),
-    mk_rule ProofRule ("cnf_and_neg", "cnf"),
-    mk_rule ProofRule ("cnf_or_neg", "cnf"),
-    mk_rule ProofRule ("cnf_or_pos", "cnf"),
-    mk_rule ProofRule ("cnf_equiv_neg1", "cnf"),
-    mk_rule ProofRule ("cnf_equiv_neg2", "cnf"),
-    mk_rule ProofRule ("cnf_equiv_pos1", "cnf"),
-    mk_rule ProofRule ("cnf_equiv_pos2", "cnf"),
-    mk_rule ProofRule ("cnf_xor_pos1", "cnf"),
-    mk_rule ProofRule ("cnf_xor_pos2", "cnf"),
-    mk_rule ProofRule ("cnf_xor_neg1", "cnf"),
-    mk_rule ProofRule ("cnf_xor_neg2", "cnf"),
-    mk_rule ProofRule ("cnf_ite_pos1", "cnf"),
-    mk_rule ProofRule ("cnf_ite_pos2", "cnf"),
-    mk_rule ProofRule ("cnf_ite_pos3", "cnf"),
-    mk_rule ProofRule ("cnf_ite_neg1", "cnf"),
-    mk_rule ProofRule ("cnf_ite_neg2", "cnf"),
-    mk_rule ProofRule ("cnf_ite_neg3", "cnf"),
-    mk_rule ProofRule ("not_equiv_elim1", "not_equiv_elim1"),
-    mk_rule ProofRule ("not_equiv_elim2", "not_equiv_elim2"),
-    mk_rule ProofRule ("equiv_elim2", "equiv_elim2"),
-    mk_rule ProofRule ("equiv_elim1", "equiv_elim1"),
-    mk_rule ProofRule ("arith_poly_norm", "arith_rule"),
-    mk_rule ProofRule ("arith_poly_norm_rel", "arith_rel"),
-    mk_rule ProofRule ("arith-elim-lt", "arith_rule"),
-    mk_rule ProofRule ("arith-elim-leq", "arith_rule"),
-    mk_rule ProofRule ("arith-elim-gt", "arith_rule"),
-    mk_rule ProofRule ("arith-leq-norm", "arith_rule"),
-    mk_rule ProofRule ("arith-eq-elim-int", "arith_rule"),
-    mk_rule ProofRule ("skolem_intro", "refl"),
-    mk_rule ProofRule ("skolemize", "skolemize"),
-    mk_rule ProofRule ("true_elim", "true_elim"),
-    mk_rule ProofRule ("true_intro", "true_intro"),
-    mk_rule ProofRule ("ite_eq", "ite_eq"),
-    mk_rule ProofRule ("ite_elim1", "ite_elim1"),
-    mk_rule ProofRule ("ite_elim2", "ite_elim2"),
-    mk_rule ProofRule ("not_ite_elim1", "not_ite_elim1"),
-    mk_rule ProofRule ("not_ite_elim2", "not_ite_elim2"),
-    mk_rule ProofRule ("quant-unused-vars", "quant_unused_vars"),
-    mk_rule ProofRule ("quant_var_reordering", "quant_rewrite"),
-    mk_rule RareRewrite ("quant-merge-prenex", "quant_rewrite"),
-    mk_rule ProofRule ("quant-dt-split", "quant_dt_split"),
-    mk_rule ProofRule ("quant-miniscope-and", "quant_rewrite"),
-    mk_rule ProofRule ("quant-miniscope-or", "quant_rewrite"),
-    mk_rule ProofRule ("quant-var-elim-eq", "quant_rewrite"),
-    mk_rule ProofRule ("alpha_equiv", "alpha_equiv"),
-    mk_rule ProofRule ("scope", "scope"),
-    mk_rule ProofRule ("process_scope", "process_scope"),
-    mk_rule ProofRule ("not_and", "not_and"),
-    mk_rule ProofRule ("not_or_elim", "not_or_elim"),
-    mk_rule ProofRule ("not_not_elim", "not_not_elim"),
-    mk_rule ProofRule ("and_intro", "and_intro"),
-    mk_rule ProofRule ("arith_mult_neg", "arith_mult_neg"),
-    mk_rule ProofRule ("arith_mult_pos", "arith_mult_pos"),
-    mk_rule ProofRule ("arith_mult_sign", "arith_mult_sign"),
-    mk_rule ProofRule ("arith_trichotomy", "arith_trichotomy"),
-    mk_rule ProofRule ("arith_reduction", "arith_reduction"),
-    mk_rule ProofRule ("int_tight_lb", "int_tight_lb"),
-    mk_rule ProofRule ("int_tight_ub", "int_tight_ub"),
-    mk_rule ProofRule ("modus_ponens", "modus_ponens"),
-    mk_rule ProofRule ("arith_sum_ub", "arith_sum_ub"),
+    mk_rule RareRewrite ("sets-card-emp", HSetsRewrite),
+    mk_rule RareRewrite ("sets-card-singleton", HSetsRewrite),
+    mk_rule RareRewrite ("sets-card-union", HSetsRewrite),
+    mk_rule RareRewrite ("sets-card-minus", HSetsRewrite),
+    mk_rule RareRewrite ("sets-choose-singleton", HSetsRewrite),
+    mk_rule RareRewrite ("sets-eval-op", HSetsRewrite),
+    mk_rule RareRewrite ("sets-insert-elim", HSetsRewrite),
+    mk_rule RareRewrite ("sets-inter-comm", HSetsRewrite),
+    mk_rule RareRewrite ("sets-inter-member", HSetsRewrite),
+    mk_rule RareRewrite ("sets-is-empty-elim", HSetsRewrite),
+    mk_rule RareRewrite ("sets-is-singleton-elim", HSetsRewrite),
+    mk_rule RareRewrite ("sets-member-emp", HSetsRewrite),
+    mk_rule RareRewrite ("sets-member-singleton", HSetsRewrite),
+    mk_rule RareRewrite ("sets-minus-member", HSetsRewrite),
+    mk_rule RareRewrite ("sets-minus-self", HSetsRewrite),
+    mk_rule RareRewrite ("sets-subset-elim", HSetsRewrite),
+    mk_rule RareRewrite ("sets-union-comm", HSetsRewrite),
+    mk_rule RareRewrite ("sets-union-member", HSetsRewrite),
+    mk_rule RareRewrite ("exists-elim", HExistsElim),
+    mk_rule RareRewrite ("absorb", HRewrite),
+    mk_rule RareRewrite ("arith-divisible-elim", HRewrite),
+    mk_rule RareRewrite ("arith-abs-eq", HArithAbsEq),
+    mk_rule RareRewrite ("arith-abs-int-gt", HArithAbsIntGt),
+    mk_rule RareRewrite ("arith-geq-ite-lift", HRewrite),
+    mk_rule RareRewrite ("arith-leq-ite-lift", HRewrite),
+    mk_rule RareRewrite ("arith-div-total-zero-real", HRewrite),
+    mk_rule RareRewrite ("arith-div-total-zero-int", HRewrite),
+    mk_rule RareRewrite ("arith-int-div-total", HRewrite),
+    mk_rule RareRewrite ("arith-int-div-total-one", HRewrite),
+    mk_rule RareRewrite ("arith-int-div-total-zero", HRewrite),
+    mk_rule RareRewrite ("arith-int-div-total-neg", HRewrite),
+    mk_rule RareRewrite ("arith-int-mod-total", HRewrite),
+    mk_rule RareRewrite ("arith-int-mod-total-one", HRewrite),
+    mk_rule RareRewrite ("arith-int-mod-total-zero", HRewrite),
+    mk_rule RareRewrite ("arith-int-mod-total-neg", HRewrite),
+    mk_rule RareRewrite ("arith-mod-over-mod-1", HRewrite),
+    mk_rule RareRewrite ("arith-mod-over-mod", HRewrite),
+    mk_rule RareRewrite ("arith-mod-over-mod-mult", HRewrite),
+    mk_rule RareRewrite ("bool-or-taut2", HRewrite),
+    mk_rule RareRewrite ("bool-double-not-elim", HRewrite),
+    mk_rule RareRewrite ("bool-and-de-morgan", HRewrite),
+    mk_rule RareRewrite ("bool-eq-false", HRewrite),
+    mk_rule RareRewrite ("bool-eq-true", HRewrite),
+    mk_rule RareRewrite ("bool-xor-comm", HRewrite),
+    mk_rule RareRewrite ("bool-xor-false", HRewrite),
+    mk_rule RareRewrite ("bool-xor-true", HRewrite),
+    mk_rule RareRewrite ("bool-impl-elim", HRewrite),
+    mk_rule RareRewrite ("bool-impl-false1", HRewrite),
+    mk_rule RareRewrite ("bool-impl-true1", HRewrite),
+    mk_rule RareRewrite ("bool-impl-true2", HRewrite),
+    mk_rule RareRewrite ("bool-eq-nrefl", HRewrite),
+    mk_rule RareRewrite ("bool-not-eq-elim2", HRewrite),
+    mk_rule RareRewrite ("bool-not-eq-elim1", HRewrite),
+    mk_rule RareRewrite ("distinct-elim", HRewrite),
+    mk_rule RareRewrite ("eq-ite-lift", HRewrite),
+    mk_rule RareRewrite ("ite-neg-branch", HIteNegBranch),
+    mk_rule RareRewrite ("re-loop-elim", HString),
+    mk_rule RareRewrite ("str-in-re-eval", HString),
+    mk_rule RareRewrite ("str-replace-re-all-eval", HString),
+    mk_rule RareRewrite ("str-replace-re-eval", HString),
+    mk_rule RareRewrite ("bool-or-de-morgan", HRewrite),
+    mk_rule RareRewrite ("bool-implies-de-morgan", HRewrite),
+    mk_rule ProofRule ("not_implies_elim2", HNotImpliesElim2),
+    mk_rule ProofRule ("not_implies_elim1", HNotImpliesElim1),
+    mk_rule ProofRule ("implies_elim", HImpliesElim),
+    mk_rule ProofRule ("factoring", HFactoring),
+    mk_rule ProofRule ("cnf_implies_neg1", HCnf),
+    mk_rule ProofRule ("cnf_implies_neg2", HCnf),
+    mk_rule ProofRule ("cnf_implies_pos", HCnf),
+    mk_rule ProofRule ("cnf_and_pos", HCnf),
+    mk_rule ProofRule ("cnf_and_neg", HCnf),
+    mk_rule ProofRule ("cnf_or_neg", HCnf),
+    mk_rule ProofRule ("cnf_or_pos", HCnf),
+    mk_rule ProofRule ("cnf_equiv_neg1", HCnf),
+    mk_rule ProofRule ("cnf_equiv_neg2", HCnf),
+    mk_rule ProofRule ("cnf_equiv_pos1", HCnf),
+    mk_rule ProofRule ("cnf_equiv_pos2", HCnf),
+    mk_rule ProofRule ("cnf_xor_pos1", HCnf),
+    mk_rule ProofRule ("cnf_xor_pos2", HCnf),
+    mk_rule ProofRule ("cnf_xor_neg1", HCnf),
+    mk_rule ProofRule ("cnf_xor_neg2", HCnf),
+    mk_rule ProofRule ("cnf_ite_pos1", HCnf),
+    mk_rule ProofRule ("cnf_ite_pos2", HCnf),
+    mk_rule ProofRule ("cnf_ite_pos3", HCnf),
+    mk_rule ProofRule ("cnf_ite_neg1", HCnf),
+    mk_rule ProofRule ("cnf_ite_neg2", HCnf),
+    mk_rule ProofRule ("cnf_ite_neg3", HCnf),
+    mk_rule ProofRule ("not_equiv_elim1", HNotEquivElim1),
+    mk_rule ProofRule ("not_equiv_elim2", HNotEquivElim2),
+    mk_rule ProofRule ("equiv_elim2", HEquivElim2),
+    mk_rule ProofRule ("equiv_elim1", HEquivElim1),
+    mk_rule ProofRule ("arith_poly_norm", HArithRule),
+    mk_rule ProofRule ("arith_poly_norm_rel", HArithRel),
+    mk_rule ProofRule ("arith-elim-lt", HArithRule),
+    mk_rule ProofRule ("arith-elim-leq", HArithRule),
+    mk_rule ProofRule ("arith-elim-gt", HArithRule),
+    mk_rule ProofRule ("arith-leq-norm", HArithRule),
+    mk_rule ProofRule ("arith-eq-elim-int", HArithRule),
+    mk_rule ProofRule ("skolem_intro", HRefl),
+    mk_rule ProofRule ("skolemize", HSkolemize),
+    mk_rule ProofRule ("true_elim", HTrueElim),
+    mk_rule ProofRule ("true_intro", HTrueIntro),
+    mk_rule ProofRule ("ite_eq", HIteEq),
+    mk_rule ProofRule ("ite_elim1", HIteElim1),
+    mk_rule ProofRule ("ite_elim2", HIteElim2),
+    mk_rule ProofRule ("not_ite_elim1", HNotIteElim1),
+    mk_rule ProofRule ("not_ite_elim2", HNotIteElim2),
+    mk_rule ProofRule ("quant-unused-vars", HQuantUnusedVars),
+    mk_rule ProofRule ("quant_var_reordering", HQuantRewrite),
+    mk_rule RareRewrite ("quant-merge-prenex", HQuantRewrite),
+    mk_rule ProofRule ("quant-dt-split", HQuantDtSplit),
+    mk_rule ProofRule ("quant-miniscope-and", HQuantRewrite),
+    mk_rule ProofRule ("quant-miniscope-or", HQuantRewrite),
+    mk_rule ProofRule ("quant-var-elim-eq", HQuantRewrite),
+    mk_rule ProofRule ("alpha_equiv", HAlphaEquiv),
+    mk_rule ProofRule ("scope", HScope),
+    mk_rule ProofRule ("process_scope", HProcessScope),
+    mk_rule ProofRule ("not_and", HNotAnd),
+    mk_rule ProofRule ("not_or_elim", HNotOrElim),
+    mk_rule ProofRule ("not_not_elim", HNotNotElim),
+    mk_rule ProofRule ("and_intro", HAndIntro),
+    mk_rule ProofRule ("arith_mult_neg", HArithMultNeg),
+    mk_rule ProofRule ("arith_mult_pos", HArithMultPos),
+    mk_rule ProofRule ("arith_mult_sign", HArithMultSign),
+    mk_rule ProofRule ("arith_trichotomy", HArithTrichotomy),
+    mk_rule ProofRule ("arith_reduction", HArithReduction),
+    mk_rule ProofRule ("int_tight_lb", HIntTightLb),
+    mk_rule ProofRule ("int_tight_ub", HIntTightUb),
+    mk_rule ProofRule ("modus_ponens", HModusPonens),
+    mk_rule ProofRule ("arith_sum_ub", HArithSumUb),
     mk_rule ProofRule
-      ("arith_mult_abs_comparison", "arith_mult_abs_comparison"),
-    mk_rule ProofRule ("aci_norm", "aci_norm"),
-    mk_rule RareRewrite ("arith-geq-norm1-int", "arith_rule"),
-    mk_rule RareRewrite ("arith-geq-norm1-real", "arith_rule"),
-    mk_rule RareRewrite ("arith-geq-tighten", "arith_rule"),
-    mk_rule RareRewrite ("arith-int-geq-tighten", "arith_rule"),
-    mk_rule RareRewrite ("arith-max-geq1", "arith_max_geq1"),
-    mk_rule RareRewrite ("arith-max-geq2", "arith_max_geq2"),
-    mk_rule RareRewrite ("arith-min-lt2", "arith_min_lt2"),
-    mk_rule RareRewrite ("ite-not-cond", "ite_not_cond"),
-    mk_rule RareRewrite ("ite-true-cond", "ite_true_cond"),
-    mk_rule RareRewrite ("ite-then-true", "ite_then_true"),
-    mk_rule RareRewrite ("ite-then-false", "ite_then_false"),
-    mk_rule RareRewrite ("ite-false-cond", "ite_false_cond"),
-    mk_rule RareRewrite ("bv-nego-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-sdivo-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-sge-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-sgt-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-sle-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-uge-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-ugt-eliminate", "rewrite"),
-    mk_rule RareRewrite ("bv-ule-eliminate", "rewrite"),
-    mk_rule RareRewrite ("distinct-false", "rewrite"),
-    mk_rule RareRewrite ("distinct-binary-elim", "rewrite"),
+      ("arith_mult_abs_comparison", HArithMultAbsComparison),
+    mk_rule ProofRule ("aci_norm", HAciNorm),
+    mk_rule RareRewrite ("arith-geq-norm1-int", HArithRule),
+    mk_rule RareRewrite ("arith-geq-norm1-real", HArithRule),
+    mk_rule RareRewrite ("arith-geq-tighten", HArithRule),
+    mk_rule RareRewrite ("arith-int-geq-tighten", HArithRule),
+    mk_rule RareRewrite ("arith-max-geq1", HArithMaxGeq1),
+    mk_rule RareRewrite ("arith-max-geq2", HArithMaxGeq2),
+    mk_rule RareRewrite ("arith-min-lt2", HArithMinLt2),
+    mk_rule RareRewrite ("ite-not-cond", HIteNotCond),
+    mk_rule RareRewrite ("ite-true-cond", HIteTrueCond),
+    mk_rule RareRewrite ("ite-then-true", HIteThenTrue),
+    mk_rule RareRewrite ("ite-then-false", HIteThenFalse),
+    mk_rule RareRewrite ("ite-false-cond", HIteFalseCond),
+    mk_rule RareRewrite ("bv-nego-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-sdivo-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-sge-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-sgt-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-sle-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-uge-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-ugt-eliminate", HRewrite),
+    mk_rule RareRewrite ("bv-ule-eliminate", HRewrite),
+    mk_rule RareRewrite ("distinct-false", HRewrite),
+    mk_rule RareRewrite ("distinct-binary-elim", HRewrite),
     (* Complete cvc5 1.3.4 datatype rewrite family from Datatypes.eo.  Each
        certificate is a closed datatype equality discharged by the shared
        checked datatype prover. *)
-    mk_rule RareRewrite ("dt-inst", "datatype_eq"),
-    mk_rule RareRewrite ("dt-collapse-selector", "datatype_eq"),
-    mk_rule RareRewrite ("dt-collapse-tester", "datatype_eq"),
-    mk_rule RareRewrite ("dt-collapse-tester-singleton", "datatype_eq"),
-    mk_rule RareRewrite ("dt-cons-eq", "datatype_eq"),
-    mk_rule RareRewrite ("dt-cons-eq-clash", "datatype_eq"),
-    mk_rule RareRewrite ("dt-collapse-updater", "datatype_eq"),
-    mk_rule RareRewrite ("dt-updater-elim", "datatype_eq")
+    mk_rule RareRewrite ("dt-inst", HDatatypeEq),
+    mk_rule RareRewrite ("dt-collapse-selector", HDatatypeEq),
+    mk_rule RareRewrite ("dt-collapse-tester", HDatatypeEq),
+    mk_rule RareRewrite ("dt-collapse-tester-singleton", HDatatypeEq),
+    mk_rule RareRewrite ("dt-cons-eq", HDatatypeEq),
+    mk_rule RareRewrite ("dt-cons-eq-clash", HDatatypeEq),
+    mk_rule RareRewrite ("dt-collapse-updater", HDatatypeEq),
+    mk_rule RareRewrite ("dt-updater-elim", HDatatypeEq)
   ] @ rare_inventory_rules
 
   val unknown_cvc_version = "<unknown>"

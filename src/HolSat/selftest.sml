@@ -641,3 +641,79 @@ local
 in
   val _ = ()
 end
+
+(* After the command, SatProcess's supervisor shell stays alive to pin its
+   process group until HOL's cleanup kills the group.  If HOL dies while the
+   command runs, no cleanup comes: the supervisor must exit by itself once
+   the command ends.  A child HOL records its PID and the supervisor's ($PPID
+   of the command) and is killed mid-command; the command ends only once the
+   test has killed the child (or after 60 s). *)
+val _ = if not Systeml.isUnix then () else
+let
+  val _ = tprint "SatProcess supervisor exits when HOL dies mid-command"
+  val base = OS.FileSys.tmpName ()
+  val (script,pids,partial,release) =
+    (base ^ ".sml",base ^ ".pids",base ^ ".tmp",base ^ ".go")
+  fun sh path = String.toString (Systeml.protect path)
+  val out = TextIO.openOut script
+  val _ = TextIO.output (out,String.concat
+    ["load \"SatProcess\";\n",
+     "val pid = SysWord.fmt StringCvt.DEC\n",
+     "  (Posix.Process.pidToWord (Posix.ProcEnv.getpid ()));\n",
+     "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",sh partial,
+     " && mv ",sh partial," ",sh pids," && i=0 && while [ ! -e ",sh release,
+     " ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done\");\n"])
+  val _ = TextIO.closeOut out
+  val hol = Systeml.protect (OS.Path.concat (Globals.HOLDIR,"bin/hol"))
+  fun poll tenths ready = ready () orelse
+    (tenths > 0 andalso
+     (OS.Process.sleep (Time.fromMilliseconds 100); poll (tenths-1) ready))
+  fun pid s = Posix.Process.wordToPid (SysWord.fromInt (valOf
+    (Int.fromString s)))
+  fun signal target s = Posix.Process.kill (target,s)
+  (* An exited supervisor may stay a zombie until its new parent reaps it:
+     only an existing, non-zombie process is alive.  Where /proc exists, read
+     the state there: ps may be missing (e.g. in containers). *)
+  fun alive process =
+    if (OS.FileSys.isDir "/proc/self" handle OS.SysErr _ => false) then
+      (let val input = TextIO.openIn ("/proc/" ^ process ^ "/stat")
+          val text = TextIO.inputAll input before TextIO.closeIn input
+          (* The state follows the parenthesised command name. *)
+          val (_,state) = Substring.splitr (fn c => c <> #")")
+            (Substring.full text)
+      in not (String.isPrefix " Z" (Substring.string state)) end
+       handle IO.Io _ => false)
+    else OS.Process.isSuccess (OS.Process.system
+      ("ps -o stat= -p " ^ process ^ " | grep -qv Z"))
+  fun failure () =
+    let
+      (* --bare (hol.state0): the default heap is built after HolSat. *)
+      val _ = OS.Process.system
+        (hol ^ " run --bare " ^ Systeml.protect script ^
+         " </dev/null >/dev/null 2>&1 &")
+      val text = if not (poll 600 (fn () => OS.FileSys.access (pids,[])))
+        then "" else
+        let val input = TextIO.openIn pids
+        in TextIO.inputAll input before TextIO.closeIn input end
+    in
+      case String.tokens Char.isSpace text of
+        [child,supervisor] =>
+          let
+            val _ = signal (Posix.Process.K_PROC (pid child))
+              Posix.Signal.kill handle OS.SysErr _ => ()
+            val _ = TextIO.closeOut (TextIO.openOut release)
+            val gone = poll 300 (fn () => not (alive supervisor))
+          in
+            if gone then NONE
+            else ((signal (Posix.Process.K_GROUP (pid supervisor))
+                     Posix.Signal.kill handle OS.SysErr _ => ());
+                  SOME "supervisor outlived the killed HOL process")
+          end
+      | _ => SOME ("child HOL recorded no PIDs: \"" ^ text ^ "\"")
+    end
+  val result = failure ()
+  val _ = List.app (fn path => OS.FileSys.remove path
+    handle OS.SysErr _ => ()) [base,script,pids,partial,release]
+in
+  case result of NONE => OK () | SOME message => die message
+end

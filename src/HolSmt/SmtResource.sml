@@ -62,6 +62,12 @@ struct
     Feedback.top_structure_of holerr = "SmtResource" andalso
     String.isPrefix "resource-gated: " (Feedback.message_of holerr)
 
+  (* Run [first]; if it raises an ordinary HOL_ERR run [second].  A
+     resource gate from [first] and any other exception escape unchanged. *)
+  fun or_else first second =
+    first () handle Feedback.HOL_ERR e =>
+      if is_resource_gate e then raise Feedback.HOL_ERR e else second ()
+
   fun terminal_diagnostic_exception exn =
     case exn of
       Interrupt => true

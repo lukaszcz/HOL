@@ -24,6 +24,712 @@ struct
   val _ = SmtReplayGraph.discover_compact_selected_partial
   val _ = SmtReplayGraph.record_opened_type_projection
   val ERR = Feedback.mk_HOL_ERR "SmtLib_FixedNumericSimple"
+  (* Workers shared by the int owner below and the PolicySimple* owner.
+     Each takes the operations that differ (Work payer, int or policy
+     receipt calls, labels) as arguments, so a caller keeps its own
+     calls, order and diagnostics. *)
+  type ('a,'l) described = {node:G.node,child:G.closure_child,scope:G.scope,
+    frame:F.receipt,admission:'a,source_limit:'l,category:A.category}
+  fun retire_owner work dead = (dead := true;W.close work)
+  fun protect_with close owner action = action () handle primary =>
+    (close owner;raise primary)
+  fun guard_app work action rows = case rows of
+      [] => W.spend_guard_policy work 1
+    | row::rest =>
+        (W.spend_guard_policy work 1;action row;guard_app work action rest)
+  (* The cache-hit protocol of both owners' active: entry checks, then a
+     backing pass only when the validated revision/list pair is stale. *)
+  fun active_with {graph,root,validated,backing}
+      {entry,refresh,unchanged,changed} =
+    let val _ = entry ()
+        val revision = G.validation_revision graph root
+        val rows = !backing
+        val hit = case !validated of SOME (old,held) =>
+            old=revision andalso Portable.pointer_eq (held,rows)
+          | NONE => false
+    in if hit then () else
+      (refresh rows;
+       if unchanged () andalso
+           G.validation_revision graph root=revision andalso
+           Portable.pointer_eq (rows,!backing) then
+         validated := SOME (revision,rows) else changed ())
+    end
+  (* The actual-source record that admission and receipt calls take. *)
+  fun expected_with graph sources work scope =
+    {graph=graph,scope=scope,sources=sources,work=work}
+  (* The normalization ordinal of both owners: the owner is active and its
+     traversal valid before the traversal's ordinal is read. *)
+  fun ordinal_with active validate ordinal =
+    (active ();validate ();ordinal ())
+  fun revalidate_with active fence validated =
+    (fence := !fence+1;validated := NONE;active ())
+  fun describe_with label {active,graph,root,scope,fence,described,frame,
+      lower} =
+    let val _ = active () val _ = G.validate_scope graph scope
+        val revision = G.validation_revision graph root
+        val generation = !fence
+        fun full () =
+          let val (held_graph,held_root,held_scope) = frame ()
+              val _ = if Portable.pointer_eq (held_graph,graph) andalso
+                  held_root=root andalso held_scope=scope then () else
+                raise ERR label "foreign actual frame"
+              val answer = lower ()
+              val _ = active ()
+              val _ = if G.validation_revision graph root=revision andalso
+                  !fence=generation then () else
+                raise ERR label "validation state changed"
+              val _ = described := SOME (revision,generation,answer)
+          in answer end
+    in case !described of SOME (old,held,answer) =>
+         if old=revision andalso held=generation then answer else full ()
+       | NONE => full () end
+  fun capture_with {work,frames,backing,frame,guard,make,describe} =
+    let fun present [] = (W.spend_guard_policy work 1;false)
+          | present (held::rest) =
+              (W.spend_guard_policy work 1;
+               Portable.pointer_eq (held,frame) orelse present rest)
+        val _ = if present (!frames) then () else frames := frame :: !frames
+        val focus = make ()
+        val _ = ignore (describe focus)
+        val _ = backing := guard :: !backing
+    in focus end
+  fun action_with work describe_focus spend operation =
+    W.with_step work (fn () =>
+      let fun observe () = (describe_focus ();spend ())
+          val answer = operation observe
+          val _ = describe_focus ()
+      in answer end)
+  fun checked_type active describe_focus check_type ty =
+    (active ();describe_focus ();check_type ty;active ();describe_focus ())
+  fun identity_with graph (describe:unit -> ('x,'y) described) action =
+    let val d = describe ()
+    in action (fn observe => C.graph_identity graph (#scope d)
+      {observe=observe} (#node d)) end
+  fun join_with joined source left right = case (left,right) of
+      (NONE,_) => right
+    | (_,NONE) => left
+    | (SOME l,SOME r) => SOME (joined source l r)
+  fun expect_work label expected work action =
+    ((if Portable.pointer_eq (work,expected) then () else
+        raise ERR label "foreign expected Work";
+      action ())
+     handle primary => (W.close expected;raise primary))
+  (* The core receipt of both owners' result: the owner's source is
+     re-described and the Core description of the proof is checked
+     under the expected Work before the proof is handed out. *)
+  fun core_with label expected work describe description proof =
+    expect_work label expected work (fn () =>
+      (ignore (describe ());ignore (description ());proof))
+  (* The exact public PURE_ss clause scan of the int begin and of the
+     policy net build: scalar-only patterns, the permutation test, net
+     insertion in foldr order, and the recorded discovery heads. *)
+  fun fixed_net graph root {label,lambda,schematic,free_var,step,pattern,
+      original,maximum} schemas =
+    let
+      fun nonscalar ty = Type.is_vartype ty orelse
+        (case Type.dest_thy_type ty of
+           {Thy="min",Tyop="fun",...} => true | _ => false)
+      fun scan term =
+        (step ();if Term.is_comb term then
+           let val (f,x) = Term.dest_comb term in scan f;scan x end
+         else if Term.is_abs term then raise ERR label lambda
+         else if Term.is_var term then
+           (if nonscalar (Term.type_of term) then raise ERR label schematic
+            else ())
+         else ())
+      fun vperm (l,r) =
+        (step ();case (Term.dest_term l,Term.dest_term r) of
+           (Term.VAR (_,a),Term.VAR (_,b)) => Type.compare (a,b)=EQUAL
+         | (Term.LAMB (_,a),Term.LAMB (_,b)) => vperm (a,b)
+         | (Term.COMB (a,b),Term.COMB (c,d)) =>
+             vperm (a,c) andalso vperm (b,d)
+         | _ => Term.aconv l r)
+      fun row schema =
+        let val {left,right} = pattern schema
+            val _ = scan left
+            val _ = List.app (fn variable =>
+              let val _ = step () val ty = Term.type_of variable
+              in if nonscalar ty then raise ERR label free_var else () end)
+              (Term.free_vars (Thm.concl (original schema)))
+            val perm = vperm (left,right) andalso
+              HOLset.equal (Term.FVL [left] Term.empty_tmset,
+                Term.FVL [right] Term.empty_tmset)
+            val (head,_) = HolKernel.strip_comb left
+            val {Thy,Name,...} = Term.dest_thy_const head
+            val _ = step ()
+            val constant = G.constant graph root head
+        in (schema,left,perm,(Thy,Name),constant) end
+      val rows = List.map row schemas
+      val net = List.foldr (fn ((schema,left,perm,_,_),net) =>
+        (step ();Ho_Net.enter ([],left,(schema,perm)) net))
+        Ho_Net.empty rows
+      val selected = G.record_discovery_heads graph root
+        {heads=List.map (fn (_,_,_,_,node) => node) rows,
+         maximum=maximum,step=step}
+    in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end
+  (* The candidate gate of both owners: the constant head of the target
+     spine (one observation per visited node) must be a fixed-net head,
+     else no net lookup runs and the result is []. On a head the owner's
+     [charge] (its size admission and Work debit) runs first, then the
+     net walk, which observes once. *)
+  fun candidates_with graph action (d:('a,'l) described) heads net charge =
+    let fun head observe child =
+          let val _ = observe ()
+              val n = G.closure_child_node graph (#scope d) child
+          in case G.view graph n of G.Application _ =>
+               head observe (#1 (G.closure_application_children
+                 graph (#scope d) child))
+             | G.Constant id =>
+                 let val {Thy,Name} = KernelSig.name_of_id id
+                 in SOME (Thy,Name) end
+             | _ => NONE end
+    in action (fn observe =>
+      case head observe (#child d) of NONE => []
+      | SOME name => if not (List.exists (fn key => key=name) heads)
+          then [] else
+          let val _ = charge ()
+              val answer = Ho_Net.lookup (G.representative graph (#node d))
+                net
+              val _ = observe ()
+          in answer end) end
+  (* The memoised pairwise walk of both owners' same: [leaf] decides two
+     non-application children. Every visited child is recorded in
+     [paths] and revalidated, in order, once the walk is over. *)
+  fun same_tree observe graph scope paths leaf left right =
+    let val memo = ref ([] : (G.node * G.node * bool) list)
+        fun lookup x y [] = NONE
+          | lookup x y ((a,b,v)::rest) =
+              (observe ();if x=a andalso y=b then SOME v
+                else lookup x y rest)
+        fun compare left right =
+          let val _ = observe ()
+              val a = G.closure_child_node graph scope left
+              val b = G.closure_child_node graph scope right
+              val _ = paths := left::right:: !paths
+          in if a=b then true else
+            case lookup a b (!memo) of SOME value => value
+            | NONE =>
+              let val result = if G.type_id graph a<>G.type_id graph b
+                    then false else case (G.view graph a,G.view graph b) of
+                      (G.Application _,G.Application _) =>
+                        let val (f,x) = G.closure_application_children
+                              graph scope left
+                            val (g,y) = G.closure_application_children
+                              graph scope right
+                        in compare f g andalso compare x y end
+                    | (G.Application _,_) => false
+                    | (_,G.Application _) => false
+                    | _ => leaf left right
+                  val _ = observe ()
+                  val _ = memo := (a,b,result):: !memo
+              in result end
+          end
+        val result = compare left right
+        val _ = List.app (fn child =>
+          (observe ();ignore (G.closure_child_node graph scope child)))
+          (!paths)
+    in result end
+  (* Cond_rewr's exact AC order, with nominal visits/name/type work
+     debited at the actual comparison sites. No policy or proof callback.
+     [text] pays for a string; [one],[add],[compare] are the size
+     arithmetic of the caller's Work (int or IntInf). *)
+  fun ac_order_with observe text {one,add,compare=num_compare} pair =
+    let fun weight ty =
+          (observe ();if Type.is_vartype ty then
+             (text (Type.dest_vartype ty);()) else
+           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
+           in text Thy;text Tyop;List.app weight Args end)
+        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
+        fun size term = (observe ();case Term.dest_term term of
+            Term.LAMB (_,body) => add (one,size body)
+          | Term.COMB (f,x) => add (size f,size x) | _ => one)
+        fun env_find env term = case env of [] => NONE
+          | (key,value)::rest =>
+              (observe ();if Term.aconv key term then SOME value
+                else env_find rest term)
+        fun dest_head env term = (observe ();case Term.dest_term term of
+            Term.VAR (name,ty) =>
+              (case env_find env term of NONE => (((name,""),0),ty)
+              | SOME n => ((("",""),~n),Type.alpha))
+          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
+          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
+          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
+        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
+        fun heads (e1,e2) (a,b) =
+          let val (((an,at),ak),aty) = dest_head e1 a
+              val (((bn,bt),bk),bty) = dest_head e2 b
+          in case name_order (an,bn) of EQUAL =>
+               (case name_order (at,bt) of EQUAL =>
+                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
+                    | other => other) | other => other)
+             | other => other end
+        fun compare n (e1,e2) (a,b) =
+          (observe ();case num_compare (size a,size b) of EQUAL =>
+             if Term.is_abs a then
+               if Term.is_abs b then
+                 let val (av,ab) = Term.dest_abs a
+                     val (bv,bb) = Term.dest_abs b
+                 in case type_order (Term.type_of av,Term.type_of bv) of
+                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
+                   | other => other end else GREATER
+             else if Term.is_abs b then LESS else
+               let val (ah,aa) = HolKernel.strip_comb a
+                   val (bh,ba) = HolKernel.strip_comb b
+                   fun args ([],[]) = EQUAL
+                     | args ([],_) = LESS | args (_,[]) = GREATER
+                     | args (x::xs,y::ys) =
+                         (case compare n (e1,e2) (x,y) of EQUAL =>
+                           args (xs,ys) | other => other)
+               in case heads (e1,e2) (ah,bh) of EQUAL =>
+                    (case Int.compare (length aa,length ba) of EQUAL =>
+                      args (aa,ba) | other => other) | other => other end
+           | other => other)
+    in compare 0 ([],[]) pair end
+  fun observed live operation =
+    (live ();let val value = operation () in live ();value end)
+  (* The audited projection of an opened selected source, shared by both
+     discover bodies: it pays the exact alpha-equality, primitive
+     projection and annotation Work through [spend], records the
+     projection guard through [add_backing], and returns the cached
+     Types, the source bridge theorem and the target root. *)
+  fun opened_projection graph scope {node,view,target,raw:IntInf.int,
+      inc:IntInf.int,output,cap,ceiling,spend,live,add_backing} =
+    let
+      val _ = if 3+2*raw<=IntInf.fromInt output andalso
+          3+2*inc<=IntInf.fromInt output andalso
+          3+2*raw<=IntInf.fromInt cap andalso
+          3+2*inc<=IntInf.fromInt cap then () else
+        raise ERR "discover" "alpha equality exceeds quota"
+      val types = ref ([] : Type.hol_type list)
+      fun inspect operation = observed live operation
+      fun step () = (live ();spend 1;live ())
+      fun weight ty : IntInf.int =
+        (step ();if Type.is_vartype ty then
+           (spend (IntInf.fromInt (String.size (Type.dest_vartype ty)));1)
+         else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
+                  val _ = spend (IntInf.fromInt (String.size Thy)+
+                    IntInf.fromInt (String.size Tyop))
+              in List.foldl (fn (t,n) => n+weight t) 1 Args end)
+      (* Primitive projection provenance belongs to the exact
+         original opaque object, not a fake no-op profile. Its
+         future capture is planned from the genuine rich path.
+         Cached type incidences precede all raw Term getters. *)
+      val rich=inspect
+        (fn () => G.closure_root graph scope target)
+      fun cached_types child =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+            val ty=inspect (fn () => G.type_of graph n)
+            val own=weight ty val _ = types := ty:: !types
+        in case G.view graph n of G.Application _ =>
+             let val (f,x)=inspect (fn () =>
+                   G.closure_application_children
+                     graph scope child)
+             in own+cached_types f+cached_types x end
+           | G.AdmittedBinder _ =>
+             let val held=inspect (fn () =>
+                   G.closure_child_binder graph scope child)
+                 val data=inspect (fn () =>
+                   G.binder_closure_data graph scope held)
+                 val bt=inspect (fn () =>
+                   G.type_of graph (#binder data))
+                 val bw=weight bt val _ = types := bt:: !types
+                 val body=inspect (fn () =>
+                   G.binder_closure_body graph scope held)
+             in own+bw+cached_types body end
+           | G.OpaqueRetained => raise ERR "discover"
+               "rich projection has no complete type portfolio"
+           | _ => own
+        end
+      val cached_ann=cached_types rich
+      val _ = if cached_ann<=ceiling then spend cached_ann
+        else raise ERR "discover"
+          "projected annotation portfolio exceeds original Work"
+      (* EXACT record_opened_type_projection spend grammar:
+         initial representative=1; App=3+operator;
+         Binder=6+body; Atom=5. collect pays one per actual
+         incoming incidence, skipping descendants on an ID hit. *)
+      fun path_visits child : IntInf.int =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+        in case G.view graph n of G.Application _ =>
+             3+path_visits (#1 (inspect (fn () =>
+               G.closure_application_children graph scope child)))
+           | G.AdmittedBinder _ =>
+             6+path_visits (inspect (fn () =>
+               G.binder_closure_body graph scope
+                 (G.closure_child_binder graph scope child)))
+           | G.OpaqueRetained => raise ERR "discover"
+               "projection path cannot use an opaque rich node"
+           | _ => 5
+        end
+      val seen=ref ([] : G.node list)
+      fun collected child : IntInf.int =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+            fun present [] = false
+              | present (held::rest) =
+                  (step ();n=held orelse present rest)
+        in if present (!seen) then 1 else
+          (seen := n:: !seen;
+           case G.view graph n of G.Application _ =>
+             let val (f,x)=inspect (fn () =>
+                   G.closure_application_children
+                     graph scope child)
+             in 1+collected f+collected x end
+           | G.AdmittedBinder _ =>
+             1+collected (inspect (fn () =>
+               G.binder_closure_body graph scope
+                 (G.closure_child_binder graph scope child)))
+           | _ => 1)
+        end
+      (* This scan is rooted at this exact opaque original, so
+         PartialFull's whole ready_root IS its rich annotation.
+         The second rich collect is one hit; old opaque is one. *)
+      val projection_visits=1+path_visits rich+collected rich+2
+      val _ = if projection_visits<=ceiling then spend projection_visits
+        else raise ERR "discover"
+          "primitive projection capture exceeds original Work"
+      val alpha=inspect (fn () => G.carrier_alpha_for
+        graph scope cap {original=node,source=view})
+      val projection=inspect (fn () =>
+        G.record_opened_type_projection graph scope
+          (IntInf.toInt projection_visits) alpha)
+      val actual_visits=inspect (fn () =>
+        G.opened_type_projection_visits graph scope projection)
+      val _ = if IntInf.fromInt actual_visits=projection_visits
+        then () else raise ERR "discover"
+          "actual primitive projection grammar changed"
+      fun projected () =
+        let val data=G.opaque_type_projection_data
+              graph scope projection 0
+        in if #node data=node then () else
+          raise ERR "discover" "projected original changed" end
+      val _ = projected ()
+      val _ = add_backing projected
+      fun measure term :
+          IntInf.int * IntInf.int * IntInf.int =
+        let val _ = step ()
+            val ty=inspect (fn () => Term.type_of term)
+            val ann=weight ty val _ = types := ty:: !types
+        in if Term.is_comb term then
+             let val (f,x)=inspect (fn () => Term.dest_comb term)
+                 val (a,b,c)=measure f val (e,h,j)=measure x
+             in (1+a+e,1+b+h,ann+c+j) end
+           else if Term.is_abs term then
+             let val (v,b)=inspect (fn () => Term.dest_abs term)
+                 val bt=inspect (fn () => Term.type_of v)
+                 val bw=weight bt val _ = types := bt:: !types
+                 val (a,c,e)=measure b
+             in (1+a,2+c,ann+bw+e) end
+           else (1,1,ann)
+        end
+      val proof= #bridge (view:G.source)
+      val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
+      val term=inspect (fn () => G.representative graph target)
+      val (tr,ti,ta)=measure term
+      val (tr2,ti2,ta2)=measure term
+      val (eq_partial,_)=inspect
+        (fn () => Term.dest_comb (Thm.concl proof))
+      val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
+      val header_types=List.map (fn t => inspect
+        (fn () => Term.type_of t))
+        [Thm.concl proof,eq_partial,eq_head]
+      val header=List.foldl (fn (ty,n) => n+weight ty) 0
+        header_types
+      val rr=3+tr+tr2 val ri=3+ti+ti2
+      val ra=header+ta+ta2
+      val amount=er+ei+ea+rr+ri+ra
+      val _ = if er=3+2*raw andalso ei=3+2*inc andalso
+          tr=raw andalso ti=inc andalso tr=tr2 andalso
+          ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
+          ra<=ceiling andalso amount<=ceiling then () else
+        raise ERR "discover" "alpha metadata/Work mismatch"
+      val _ = spend amount
+      val _ = types := header_types @ !types
+      val target_child=inspect
+        (fn () => G.closure_root graph scope target)
+    in {types=types,proof=proof,target_child=target_child} end
+  type ('f,'p) outcome_of =
+    {target:'f,recipe:C.graph_conversion,proof:'p}
+  type ('l,'o) memo_row = {node:G.node,scope:G.scope,category:A.category,
+    limit:'l,stack:(G.node * G.scope) list,result:'o option}
+  type ('f,'a,'l,'p) normalize_ops =
+    {work:W.portfolio,graph:G.graph,spend:unit -> unit,
+     describe:'f -> ('a,'l) described,capture:F.receipt -> 'a -> 'f,
+     identity:'f -> C.graph_conversion,same:'f -> 'f -> bool,
+     seal:'f -> C.graph_conversion -> ('f,'p) outcome_of,
+     joined:'f -> ('f,'p) outcome_of -> ('f,'p) outcome_of ->
+       ('f,'p) outcome_of,
+     reuse:('a,'l) described -> 'f -> ('f,'p) outcome_of ->
+       ('f,'p) outcome_of,
+     application_children:G.scope -> 'a -> 'a * 'a,
+     body_frame:F.receipt -> G.closure_child -> F.receipt,
+     binder_body:G.scope -> 'a -> 'a,
+     discover:'f -> ('f,'p) outcome_of option,
+     lift:'f -> ('f,'p) outcome_of -> ('f,'p) outcome_of}
+  fun is_true_with graph (describe:unit -> ('x,'y) described) action =
+    let val d = describe ()
+    in action (fn observe =>
+      (observe ();case G.view graph (#node d) of G.Constant id =>
+        KernelSig.id_compare
+          (id,#Name (Term.dest_thy_constid boolSyntax.T))=EQUAL
+       | _ => false)) end
+  (* The memoised fixed-point recursion of both owners. [rewrite] is the
+     owner's one-focus rewrite step; it receives this recursion's simplify
+     for the conditions it must prove. Everything else is reached through
+     [ops], so each owner keeps its own receipts, Work payer and order. *)
+  fun normalize_with (ops:('f,'a,''l,'p) normalize_ops) rewrite source =
+    let
+      val {work,graph,spend,describe,capture,identity,same,seal,joined,
+           reuse,application_children,body_frame,binder_body,discover,
+           lift} = ops
+      val join = join_with joined
+      fun action focus operation = action_with work
+        (fn () => ignore (describe focus)) spend operation
+      fun simplify memo stack focus =
+        let val d = describe focus
+            val stack_key = action focus (fn observe =>
+              List.map (fn held =>
+                let val _ = observe () val data = describe held
+                in (#node data,#scope data) end) stack)
+            fun stack_equal observe ([],[]) = true
+              | stack_equal observe ((a,s)::xs,(b,t)::ys) =
+                  (observe ();a=b andalso s=t andalso
+                    stack_equal observe (xs,ys))
+              | stack_equal _ _ = false
+            val cached = action focus (fn observe =>
+              let fun find [] = NONE
+                    | find ({node,scope,category,limit,stack=held,
+                             result}::rest) =
+                        (observe ();if node= #node d andalso
+                           scope= #scope d andalso category= #category d
+                           andalso limit= #source_limit d andalso
+                           stack_equal observe (held,stack_key)
+                         then SOME result else find rest)
+              in find (!memo) end)
+        in case cached of SOME NONE => NONE
+          | SOME (SOME old) => SOME (reuse d focus old)
+          | NONE =>
+            let val result = fresh memo stack focus
+                val _ = action focus (fn observe =>
+                  (observe ();memo := {node= #node d,scope= #scope d,
+                    category= #category d,limit= #source_limit d,
+                    stack=stack_key,result=result}:: !memo))
+            in result end
+        end
+      and fresh memo stack focus =
+        let val (middle,roots) = repeat memo stack focus
+            val children = descend memo stack middle
+        in case children of NONE => roots | SOME child_result =>
+          let val prefix = join focus roots (SOME child_result)
+              val retry = if same middle (#target child_result) then NONE
+                else rewrite simplify memo stack (#target child_result)
+          in case retry of NONE => prefix | SOME changed =>
+            join focus (join focus prefix (SOME changed))
+              (simplify memo stack (#target changed)) end
+        end
+      and repeat memo stack first =
+        let fun loop current accumulated =
+              case rewrite simplify memo stack current of
+                NONE => (current,accumulated)
+              | SOME result => loop (#target result)
+                  (join first accumulated (SOME result))
+        in loop first NONE end
+      and descend memo stack focus =
+        let val d = describe focus val scope = #scope d
+        in case G.view graph (#node d) of
+            G.Application _ =>
+              let val (a,b) = application_children scope (#admission d)
+                  val left = capture (#frame d) a
+                  val right = capture (#frame d) b
+                  val l = simplify memo stack left
+                  val r = simplify memo stack right
+              in case (l,r) of (NONE,NONE) => NONE | _ =>
+                 let val lp = case l of NONE => identity left
+                       | SOME x => #recipe x
+                     val rp = case r of NONE => identity right
+                       | SOME x => #recipe x
+                     val composed = action focus (fn observe =>
+                       C.graph_application_fused graph scope
+                         {source= #node d,left=lp,right=rp,observe=observe})
+                 in SOME (seal focus composed) end
+              end
+          | G.AdmittedBinder _ =>
+              let val frame = body_frame (#frame d) (#child d)
+                  val body = capture frame (binder_body scope (#admission d))
+              in case simplify memo stack body of NONE => NONE
+                | SOME result => SOME (lift focus result) end
+          | G.OpaqueRetained =>
+              (case discover focus of NONE => NONE | SOME prefix =>
+                join focus (SOME prefix)
+                  (simplify memo stack (#target prefix)))
+          | _ => NONE
+        end
+    in simplify (ref []) [] source end
+  (* The one-shot plan protocol of both owners; [label] names the
+     owner family in each refusal and [body] is its normalization. *)
+  fun prepare_with label protect active running make =
+    protect (fn () =>
+      (active ();
+       if !running then raise ERR label "reentrant SIMPLE preparation"
+         else ();
+       make ()))
+  fun execute_with label protect active running used body =
+    protect (fn () =>
+      let val _ = active ()
+          val _ = if !running orelse !used then
+            raise ERR label "consumed or reentrant SIMPLE plan"
+            else (used := true;running := true)
+          fun restore () = running := false
+          val answer = body () handle primary => (restore ();raise primary)
+          val _ = restore () val _ = active ()
+      in answer end)
+  (* Auxiliary normalization: the held lease is re-read around every
+     external type policy; an unchanged result keeps the original
+     conversion, a changed one is adopted and composed behind it. *)
+  fun aux_normalization {aux_target,conversion,changed,core,adopt,compose,
+      active,check_type} =
+    let val held = aux_target ()
+        val result = changed held
+    in case result of NONE =>
+         (ignore (aux_target ());conversion held)
+       | SOME result =>
+         let val proof = core result
+             val local_result = adopt held proof
+         in compose held local_result (fn ty =>
+             (active ();
+              ignore (aux_target ());
+              check_type ty;
+              active ();
+              ignore (aux_target ()))) end
+    end
+  (* The owned-Lambda lift of both owners: run the body's lambda plan,
+     convert its value, build the leaf, then seal it. *)
+  fun lift_with describe run convert leaf seal =
+    let val d = describe ()
+        val value = run d
+        val converted = convert d value
+    in seal (leaf d converted) end
+  (* The seal of both owners: describe the focus, prepare and execute the
+     closed Core proof, [publish] its generated target (the owner's own
+     backing and capture sequence) and build the closed leaf recipe. *)
+  fun seal_with describe prepare execute publish closed =
+    let val d = describe ()
+        val plan = prepare d
+        val proof = execute plan
+        val target = publish d proof
+        val recipe = closed proof
+    in {target=target,recipe=recipe,proof=proof} end
+  (* The reuse of both owners: the old closed proof's Core description is
+     checked, then it is published under THIS occurrence by the owner's
+     [publish]; the recipe and proof are the old ones. *)
+  fun reuse_with description publish (old:('f,'p) outcome_of) =
+    let val _ = ignore (description ())
+        val target = publish (#proof old)
+    in {target=target,recipe= #recipe old,proof= #proof old} end
+  exception Inapplicable
+  fun outcome_target (result:('f,'p) outcome_of) = #target result
+  fun outcome_proof (result:('f,'p) outcome_of) = #proof result
+  (* The result of one owner's execute: a normalization that changed
+     the source keeps its proof; an unchanged one yields the sealed
+     identity proof only when [require_proof]. *)
+  fun converted_with require_proof normalized identity_proof make =
+    case normalized () of
+      SOME result => SOME (make (outcome_proof result))
+    | NONE => if require_proof then SOME (make (identity_proof ()))
+      else NONE
+  (* The condition-discharge tail of both owners' one-focus rewrite, from
+     the capture of the instance's conditions to the sealed leaf. The
+     owner supplies the operations that differ: [condition] captures
+     condition [index] from its own initial-condition admission,
+     [conditional] runs its prepare/execute/convert pipeline over the
+     evidence proofs and [leaf] builds the leaf recipe from the resulting
+     conversion. [retry] continues with the next candidate clause, as
+     the owner's [attempt] does, both for a looping stack and after an
+     [Inapplicable] condition (after [redescribe] has re-described the
+     rewrite focus). *)
+  fun discharge_with {count,condition,same,stack,simplify,seal,identity,
+      is_true,conditional,leaf,seal_focus,redescribe,retry} =
+    let val conditions = List.tabulate (count,condition)
+        val looping = List.exists (fn ant =>
+          List.exists (same ant) stack) conditions
+    in if looping then retry () else
+      let val stack' = conditions @ stack
+          fun prove condition =
+            let val normalized = case simplify stack' condition of
+                  NONE => seal condition (identity condition)
+                | SOME result => result
+            in if is_true (outcome_target normalized) then
+                 outcome_proof normalized else raise Inapplicable end
+          val evidence = List.map prove conditions
+          val conversion = conditional evidence
+          val recipe = leaf conversion
+      in SOME (seal_focus recipe) end
+      handle Inapplicable => (redescribe ();retry ())
+    end
+  (* The opened-view half of both owners' discover, run inside the
+     owner's action after its own prelude (the policy owner's native
+     preflight and envelope). The owner supplies [discover] (the
+     selected-partial discovery receipt, paying through its own
+     observer), [data_of] (the receipt's data), [count_for] (the
+     opened target's raw / binder-inclusive size under its output cap;
+     the policy owner prepares its profiled metric first), [spend],
+     [plan_identity], [check_type] and [record] (the typed conversion
+     recorder). Returns the recorded conversion, or NONE when the scan
+     selected nothing. *)
+  fun opened_conversion_with graph scope {node,discover,data_of,backing,
+      redescribe,count_for,cap,output,ceiling,spend,plan_identity,
+      check_type,record} =
+    let val receipt = discover ()
+        fun data () =
+          let val value : {original:G.node,view:G.source option} =
+                data_of receipt
+          in if #original value= node then value else
+            raise ERR "discover" "selected original changed" end
+        val _ = backing := (fn () => ignore (data ())) :: !backing
+    in case #view (data ()) of NONE => NONE
+      | SOME view =>
+        let val target = #node view
+            val _ = G.validate_opened_view graph scope node view
+            (* The genuine private alpha recipe preserves every raw,
+               binder-variable and type incidence. Its cached rich
+               profile bounds the old raw term before inspection. *)
+            val count = count_for target
+            val raw = count G.RawNodes
+            val inc = count G.BinderInclusiveNodes
+            fun live () =
+              (redescribe ();ignore (data ());
+               G.validate_opened_view graph scope node view)
+            fun inspect operation = observed live operation
+            val {types,proof,target_child} = opened_projection graph
+              scope {node=node,view=view,target=target,raw=raw,
+                inc=inc,output=output,cap=cap,ceiling=ceiling,
+                spend=spend,live=live,
+                add_backing=fn guard => backing := guard :: !backing}
+            val identity=inspect (fn () =>
+              (* Original/partial guards remain in data/live,
+                 owner.backing and P.source_view validation. The
+                 raw opaque original is not an identity recipe. *)
+              plan_identity target_child)
+            val _ = List.app (fn ty => inspect
+              (fn () => check_type ty)) (List.rev (!types))
+            val target_view=inspect
+              (fn () => G.execute_identity_closure_view identity)
+            val conversion=inspect (fn () => record
+              {source=node,source_view=view,target=target,
+               target_view=target_view,theorem=proof,
+               check_type=fn ty => inspect (fn () => check_type ty)})
+        in SOME conversion end
+    end
+  (* The tail of both owners' discover: the leaf recipe for the recorded
+     conversion, then sealed into the outcome. *)
+  fun discovered_with converted leaf seal =
+    case converted of NONE => NONE | SOME conversion =>
+      let val recipe = leaf conversion in SOME (seal recipe) end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -36,97 +742,64 @@ struct
      frames:F.receipt list ref,
      validated:(IntInf.int * (unit -> unit) list) option ref,
      fence:IntInf.int ref}
-  type description = {node:G.node,child:G.closure_child,scope:G.scope,
-    frame:F.receipt,admission:A.focus,source_limit:int,category:A.category}
+  type description = (A.focus,int) described
   datatype focus = Focus of
     {admission:A.focus,frame:F.receipt,scope:G.scope,
      described:(IntInf.int * IntInf.int * description) option ref,
      backing_guard:unit -> unit}
   datatype plan = Plan of {owner:owner,source:focus,used:bool ref}
   datatype result = Result of {owner:owner,source:focus,proof:Core.result}
-  type outcome = {target:focus,recipe:C.graph_conversion,proof:Core.result}
-  type memo_entry = {node:G.node,scope:G.scope,category:A.category,limit:int,
-    stack:(G.node * G.scope) list,result:outcome option}
-  exception Inapplicable
-  fun close (Owner {work,dead,...}) = (dead := true;W.close work)
-  fun protect owner action = action () handle primary =>
-    (close owner;raise primary)
-  fun guard_app work action rows = case rows of
-      [] => W.spend_guard_policy work 1
-    | row::rest =>
-        (W.spend_guard_policy work 1;action row;guard_app work action rest)
+  type outcome = (focus,Core.result) outcome_of
+  fun close (Owner {work,dead,...}) = retire_owner work dead
+  fun protect owner action = protect_with close owner action
   fun active (Owner {work,graph,root,sources,catalogue,traversal,
                     symbols,stack_limit,dead,backing,discovery_heads,
                     validated,frames,...}) =
-    let
-      val _ = if !dead then raise ERR "active" "numeric owner retired" else ()
-      val _ = W.validate work graph root sources (W.semantic_limits work)
-      val _ = if Term.term_epoch () = symbols then () else
-        raise ERR "active" "constant retirement epoch changed"
-      val _ = if !Cond_rewr.stack_limit=stack_limit then () else
-        raise ERR "active" "fixed conditional stack policy changed"
-      (* A lexical zero-binder frame may retire without any G mutation.
-         Its authentic private lifetime is checked on EVERY cache hit. *)
-      val _ = guard_app work (F.validate_lifetime_for work) (!frames)
-      val revision = G.validation_revision graph root
-      val rows = !backing
-      val hit = case !validated of SOME (old,held) =>
-          old=revision andalso Portable.pointer_eq (held,rows)
-        | NONE => false
-    in if hit then () else
-      (T.revalidate_for work traversal;K.validate_for work catalogue;
-       G.validate_discovery_heads graph root discovery_heads;
-       guard_app work (fn guard => guard ()) rows;
-       W.validate work graph root sources (W.semantic_limits work);
-       if Term.term_epoch () = symbols andalso
-           !Cond_rewr.stack_limit=stack_limit andalso
-           G.validation_revision graph root=revision andalso
-           Portable.pointer_eq (rows,!backing) then
-         validated := SOME (revision,rows) else
-         raise ERR "active" "validation state changed during backing pass")
-    end
+    active_with {graph=graph,root=root,validated=validated,backing=backing}
+     {entry=fn () =>
+        let
+          val _ = if !dead then raise ERR "active" "numeric owner retired"
+            else ()
+          val _ = W.validate work graph root sources (W.semantic_limits work)
+          val _ = if Term.term_epoch () = symbols then () else
+            raise ERR "active" "constant retirement epoch changed"
+          val _ = if !Cond_rewr.stack_limit=stack_limit then () else
+            raise ERR "active" "fixed conditional stack policy changed"
+          (* A lexical zero-binder frame may retire without any G mutation.
+             Its authentic private lifetime is checked on EVERY cache hit. *)
+          val _ = guard_app work (F.validate_lifetime_for work) (!frames)
+        in () end,
+      refresh=fn rows =>
+        (T.revalidate_for work traversal;K.validate_for work catalogue;
+         G.validate_discovery_heads graph root discovery_heads;
+         guard_app work (fn guard => guard ()) rows;
+         W.validate work graph root sources (W.semantic_limits work)),
+      unchanged=fn () => Term.term_epoch () = symbols andalso
+        !Cond_rewr.stack_limit=stack_limit,
+      changed=fn () => raise ERR "active"
+        "validation state changed during backing pass"}
   fun revalidate (owner as Owner {validated,fence,...}) =
-    (fence := !fence+1;validated := NONE;active owner)
-  fun expected (Owner {graph,sources,work,...}) scope =
-    {graph=graph,scope=scope,sources=sources,work=work}
+    revalidate_with (fn () => active owner) fence validated
+  fun expected (Owner {graph,sources,work,...}) =
+    expected_with graph sources work
   fun describe (owner as Owner {work,graph,root,fence,...})
       (Focus {admission,frame,scope,described,...}) : description =
-    let val _ = active owner val _ = G.validate_scope graph scope
-        val revision=G.validation_revision graph root val generation= !fence
-        fun full () =
-          let val data = F.description_for work frame
-              val _ = if Portable.pointer_eq (#graph data,graph) andalso
-                  #root data=root andalso #scope data=scope then () else
-                raise ERR "describe" "foreign actual frame"
-              val lower = A.describe_for (expected owner scope) admission
-              val answer = {node= #node lower,child= #child lower,
-                scope=scope,frame=frame,admission=admission,
-                source_limit= #source_limit lower,category= #category lower}
-                : description
-              val _ = active owner
-              val _ = if G.validation_revision graph root=revision andalso
-                  !fence=generation then () else
-                raise ERR "describe" "validation state changed"
-              val _ = described := SOME (revision,generation,answer)
-          in answer end
-    in case !described of SOME (old,held,answer) =>
-         if old=revision andalso held=generation then answer else full ()
-       | NONE => full () end
+    describe_with "describe" {active=fn () => active owner,graph=graph,
+      root=root,scope=scope,fence=fence,described=described,
+      frame=fn () => let val data = F.description_for work frame
+        in (#graph data,#root data,#scope data) end,
+      lower=fn () =>
+        let val lower = A.describe_for (expected owner scope) admission
+        in {node= #node lower,child= #child lower,scope=scope,frame=frame,
+            admission=admission,source_limit= #source_limit lower,
+            category= #category lower} : description end}
   fun capture (owner as Owner {work,backing,frames,...}) frame admission =
-    let val scope = #scope (F.description_for
-          (case owner of Owner {work,...} => work) frame)
-        fun present [] = (W.spend_guard_policy work 1;false)
-          | present (held::rest) =
-              (W.spend_guard_policy work 1;
-               Portable.pointer_eq (held,frame) orelse present rest)
-        val _ = if present (!frames) then () else
-          frames := frame :: !frames
+    let val scope = #scope (F.description_for work frame)
         fun guard () = A.validate_for (expected owner scope) admission
-        val focus = Focus {admission=admission,frame=frame,scope=scope,
-          described=ref NONE,backing_guard=guard}
-        val _ = ignore (describe owner focus)
-        val _ = backing := guard :: !backing
-    in focus end
+    in capture_with {work=work,frames=frames,backing=backing,frame=frame,
+        guard=guard,describe=describe owner,
+        make=fn () => Focus {admission=admission,frame=frame,scope=scope,
+          described=ref NONE,backing_guard=guard}} end
   (* A.generated_compact retains and validates its exact parent focus.
      Once that child is registered, its parent's separate owner-list entry
      is redundant, not a new dependency. Prune only that private closure;
@@ -139,43 +812,49 @@ struct
                if Portable.pointer_eq (guard,backing_guard) then retain rest
                else guard :: retain rest)
     in backing := retain (!backing) end
+  (* Publish a closed Core proof as the generated target of [focus].
+     capture retains the generated admission, whose guard owns this
+     EXACT Core receipt and its parent. Do not retain a second guard
+     for the same proof beside that authentic dependency chain. *)
+  fun publish owner (focus:focus) (d:description) proof =
+    let val target = capture owner (#frame d)
+          (A.generated_compact (expected owner (#scope d))
+            (#admission d) proof)
+        val _ = covered_parent owner focus
+    in target end
   fun action (owner as Owner {work,...}) focus operation =
-    W.with_step work (fn () =>
-      let fun observe () =
-            (ignore (describe owner focus);W.spend work 1)
-          val answer = operation observe
-          val _ = ignore (describe owner focus)
-      in answer end)
+    action_with work (fn () => ignore (describe owner focus))
+      (fn () => W.spend work 1) operation
+  (* The graph leaf of [conversion] under a charged action; [limit] is
+     evaluated inside the action, as the template limit of the caller. *)
+  fun leaf (owner as Owner {graph,...}) focus limit (d:description)
+      conversion =
+    action owner focus (fn observe =>
+      C.graph_leaf graph (#scope d)
+        {conversion=conversion,template_limit=limit (),observe=observe})
   fun ordinal (owner as Owner {work,traversal,...}) =
-    (active owner;T.validate_for work traversal;
-     T.normalization_ordinal traversal)
+    ordinal_with (fn () => active owner)
+      (fn () => T.validate_for work traversal)
+      (fn () => T.normalization_ordinal traversal)
   fun policy (owner as Owner {check_type,...}) focus ty =
     (* active checks original owner/epochs/stack/private Scope lifetimes on
        every call, and forces backing geometry on a genuine G revision or
        retained-list change. Every policy is still invoked in order. *)
-    (active owner;ignore (describe owner focus);check_type ty;
-     active owner;ignore (describe owner focus))
+    checked_type (fn () => active owner)
+      (fn () => ignore (describe owner focus)) check_type ty
   fun identity (owner as Owner {graph,...}) focus =
-    let val d = describe owner focus
-    in action owner focus (fn observe => C.graph_identity graph (#scope d)
-      {observe=observe} (#node d)) end
+    identity_with graph (fn () => describe owner focus) (action owner focus)
   fun seal (owner as Owner {work,graph,...}) focus recipe =
-    let val d = describe owner focus
-        val plan = Core.prepare_in_scope work
-          {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
-           check_type=policy owner focus}
-        val proof = Core.execute work plan
-        (* capture retains the generated admission, whose guard owns this
-           EXACT Core receipt and its parent. Do not retain a second guard
-           for the same proof beside that authentic dependency chain. *)
-        val target = capture owner (#frame d)
-          (A.generated_compact (expected owner (#scope d))
-            (#admission d) proof)
-        val _ = covered_parent owner focus
-        val closed = action owner focus (fn observe =>
-          C.graph_realized_leaf work
-            {realization=Core.realization_for work proof,observe=observe})
-    in {target=target,recipe=closed,proof=proof} : outcome end
+    seal_with (fn () => describe owner focus)
+      (fn d => Core.prepare_in_scope work
+        {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
+         check_type=policy owner focus})
+      (fn plan => Core.execute work plan)
+      (publish owner focus)
+      (fn proof => action owner focus (fn observe =>
+        C.graph_realized_leaf work
+          {realization=Core.realization_for work proof,observe=observe}))
+    : outcome
   fun joined (owner as Owner {work,...}) source
       (left:outcome) (right:outcome) =
     let val d = describe owner source
@@ -183,47 +862,25 @@ struct
           C.graph_realized_sequence work
             {first= #recipe left,second= #recipe right,observe=observe})
     in seal owner source recipe end
-  fun after source NONE = source
-    | after _ (SOME (value:outcome)) = #target value
-  fun join owner source NONE right = right
-    | join _ _ left NONE = left
-    | join owner source (SOME left) (SOME right) =
-        SOME (joined owner source left right)
   (* Exact public PURE_ss discrimination net: foldr insertion and its
      lookup order, never a reordered head bucket or a caller rule table. *)
   fun candidates (owner as Owner {graph,net,heads,...}) focus =
     let val d = describe owner focus
-        fun head observe child =
-          let val _ = observe ()
-              val n = G.closure_child_node graph (#scope d) child
-          in case G.view graph n of G.Application _ =>
-                head observe (#1 (G.closure_application_children
-                  graph (#scope d) child))
-             | G.Constant id =>
-                 let val {Thy,Name} = KernelSig.name_of_id id
-                 in SOME (Thy,Name) end
-             | _ => NONE end
-    in action owner focus (fn observe =>
-      case head observe (#child d) of NONE => []
-      | SOME name => if not (List.exists (fn key => key=name) heads)
-          then [] else
+    in candidates_with graph (action owner focus) d heads net (fn () =>
         let val _ = List.app (fn metric =>
               case G.unfolded_nodes graph metric (#source_limit d)
                   (#node d) of SOME n => if n<= #source_limit d then () else
                     raise ERR "candidates" "relevant source exceeds its role"
               | NONE => raise ERR "candidates" "missing numeric source syntax")
               [G.RawNodes,G.BinderInclusiveNodes]
-            (* Actual lookup is constructor-only, with no callbacks. Debit
-               the full admitted source visits before that public net walk.
-               Internal balanced-map/kernel costs remain a separate gate. *)
-            val _ = case G.unfolded_nodes graph G.RawNodes
-                (#source_limit d) (#node d) of SOME n =>
-                  (case owner of Owner {work,...} => W.spend work n)
-              | NONE => raise ERR "candidates" "missing admitted source"
-            val term = G.representative graph (#node d)
-            val answer = Ho_Net.lookup term net
-            val _ = observe ()
-        in answer end)
+        in
+          (* Actual lookup is constructor-only, with no callbacks. Debit
+             the full admitted source visits before that public net walk.
+             Internal balanced-map/kernel costs remain a separate gate. *)
+          case G.unfolded_nodes graph G.RawNodes
+              (#source_limit d) (#node d) of SOME n =>
+            (case owner of Owner {work,...} => W.spend work n)
+          | NONE => raise ERR "candidates" "missing admitted source" end)
     end
   fun same owner first second =
     let val Owner {graph,work,...} = owner
@@ -241,12 +898,7 @@ struct
          Term.aconv (G.representative graph (#node l))
            (G.representative graph (#node r)))
       else let val scope = #scope l
-               val memo = ref ([] : (G.node * G.node * bool) list)
                val paths = ref ([] : G.closure_child list)
-               fun lookup x y [] = NONE
-                 | lookup x y ((a,b,v)::rest) =
-                     (observe ();if x=a andalso y=b then SOME v
-                       else lookup x y rest)
                (* A raw opaque child can already have a genuine retained
                   alpha opening. Compare that annotation, never an invented
                   no-op metric or a newly opened comparison operand. The
@@ -294,155 +946,33 @@ struct
                         in annotation end
                     | _ => child
                  end
-               fun compare left right =
-                 let val _ = observe ()
-                     val a = G.closure_child_node graph scope left
-                     val b = G.closure_child_node graph scope right
-                     val _ = paths := left::right:: !paths
-                 in if a=b then true else
-                   case lookup a b (!memo) of SOME value => value
-                   | NONE =>
-                     let val result = if G.type_id graph a<>G.type_id graph b
-                           then false else case (G.view graph a,G.view graph b) of
-                             (G.Application _,G.Application _) =>
-                               let val (f,x) = G.closure_application_children
-                                     graph scope left
-                                   val (g,y) = G.closure_application_children
-                                     graph scope right
-                               in compare f g andalso compare x y end
-                           | (G.Application _,_) => false
-                           | (_,G.Application _) => false
-                           | _ => SmtReplayOwnedAlpha.same_inside work
-                               {caller=scope,traversal=scope,
-                                left=comparison_child left,
-                                right=comparison_child right}
-                         val _ = observe ()
-                         val _ = memo := (a,b,result):: !memo
-                     in result end
-                 end
-               val result = compare (#child l) (#child r)
-               val _ = List.app (fn child =>
-                 (observe ();ignore (G.closure_child_node graph scope child)))
-                 (!paths)
+               val result = same_tree observe graph scope paths
+                 (fn left => fn right =>
+                   SmtReplayOwnedAlpha.same_inside work {caller=scope,
+                     traversal=scope,left=comparison_child left,
+                     right=comparison_child right}) (#child l) (#child r)
                val _ = ignore (describe owner second)
            in result end)
     end
-  (* Cond_rewr's exact AC order, with nominal visits/name/type work
-     debited at the actual comparison sites. No policy or proof callback. *)
   fun ac_order owner focus pair = action owner focus (fn observe =>
     let val Owner {work,...} = owner
-        fun text value = W.spend work (String.size value)
-        fun weight ty =
-          (observe ();if Type.is_vartype ty then
-             (text (Type.dest_vartype ty);()) else
-           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
-           in text Thy;text Tyop;List.app weight Args end)
-        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
-        fun size term = (observe ();case Term.dest_term term of
-            Term.LAMB (_,body) => 1+size body
-          | Term.COMB (f,x) => size f+size x | _ => 1)
-        fun env_find env term = case env of [] => NONE
-          | (key,value)::rest =>
-              (observe ();if Term.aconv key term then SOME value
-                else env_find rest term)
-        fun dest_head env term = (observe ();case Term.dest_term term of
-            Term.VAR (name,ty) =>
-              (case env_find env term of NONE => (((name,""),0),ty)
-              | SOME n => ((("",""),~n),Type.alpha))
-          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
-          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
-          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
-        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
-        fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),aty) = dest_head e1 a
-              val (((bn,bt),bk),bty) = dest_head e2 b
-          in case name_order (an,bn) of EQUAL =>
-               (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
-                    | other => other) | other => other)
-             | other => other end
-        fun compare n (e1,e2) (a,b) =
-          (observe ();case Int.compare (size a,size b) of EQUAL =>
-             if Term.is_abs a then
-               if Term.is_abs b then
-                 let val (av,ab) = Term.dest_abs a
-                     val (bv,bb) = Term.dest_abs b
-                 in case type_order (Term.type_of av,Term.type_of bv) of
-                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
-                   | other => other end else GREATER
-             else if Term.is_abs b then LESS else
-               let val (ah,aa) = HolKernel.strip_comb a
-                   val (bh,ba) = HolKernel.strip_comb b
-                   fun args ([],[]) = EQUAL
-                     | args ([],_) = LESS | args (_,[]) = GREATER
-                     | args (x::xs,y::ys) =
-                         (case compare n (e1,e2) (x,y) of EQUAL =>
-                           args (xs,ys) | other => other)
-               in case heads (e1,e2) (ah,bh) of EQUAL =>
-                    (case Int.compare (length aa,length ba) of EQUAL =>
-                      args (aa,ba) | other => other) | other => other end
-           | other => other)
-    in compare 0 ([],[]) pair end)
-  (* root, condition and descendant routines are mutually recursive so the
-     fixed PURE context never receives an enclosing antecedent or Source. *)
-  fun simplify owner memo stack focus =
-    let val d = describe owner focus
-        val stack_key = action owner focus (fn observe =>
-          List.map (fn held =>
-            let val _ = observe () val data = describe owner held
-            in (#node data,#scope data) end) stack)
-        fun stack_equal observe ([],[]) = true
-          | stack_equal observe ((a,s)::xs,(b,t)::ys) =
-              (observe ();a=b andalso s=t andalso
-                stack_equal observe (xs,ys))
-          | stack_equal _ _ = false
-        val cached = action owner focus (fn observe =>
-          let fun find [] = NONE
-                | find ((row:memo_entry)::rest) =
-                    (observe ();if #node row= #node d andalso
-                       #scope row= #scope d andalso #category row= #category d
-                       andalso #limit row= #source_limit d andalso
-                       stack_equal observe (#stack row,stack_key)
-                     then SOME (#result row) else find rest)
-          in find (!memo) end)
-        fun reuse (old:outcome) =
-          let val Owner {work,...} = owner
-              val _ = ignore (Core.conversion_description_for work (#proof old))
-              (* Preserve THIS occurrence/path even when the semantic node
-                 and already-paid closed proof have a genuine DAG alias. *)
-              val target = capture owner (#frame d)
-                (A.generated_compact (expected owner (#scope d))
-                  (#admission d) (#proof old))
-              val _ = covered_parent owner focus
-          in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
-    in case cached of SOME NONE => NONE | SOME (SOME old) => SOME (reuse old)
-      | NONE =>
-        let val result = fresh owner memo stack focus
-            val _ = action owner focus (fn observe =>
-              (observe ();memo := {node= #node d,scope= #scope d,
-                category= #category d,limit= #source_limit d,stack=stack_key,
-                result=result}:: !memo))
-        in result end
-    end
-  and fresh owner memo stack focus =
-    let val (middle,roots) = repeat owner memo stack focus
-        val children = descend owner memo stack middle
-    in case children of NONE => roots | SOME child_result =>
-      let val prefix = join owner focus roots (SOME child_result)
-          val retry = if same owner middle (#target child_result) then NONE
-            else rewrite owner memo stack (#target child_result)
-      in case retry of NONE => prefix | SOME changed =>
-        join owner focus (join owner focus prefix (SOME changed))
-          (simplify owner memo stack (#target changed)) end
-    end
-  and repeat owner memo stack source =
-    let fun loop current accumulated =
-          case rewrite owner memo stack current of NONE => (current,accumulated)
-          | SOME result => loop (#target result)
-              (join owner source accumulated (SOME result))
-    in loop source NONE end
-  and rewrite (owner as Owner
-      {work,matcher,conditional,stack_limit,...}) memo stack focus =
+    in ac_order_with observe (fn value => W.spend work (String.size value))
+      {one=1,add=fn (a:int,b) => a+b,compare=Int.compare} pair end)
+  (* The root, condition and descendant routines run in normalize_with, so
+     the fixed PURE context never receives an enclosing antecedent or
+     Source. *)
+  fun reuse owner (d:description) focus (old:outcome) =
+    let val Owner {work,...} = owner
+    in (* Preserve THIS occurrence/path even when the semantic node
+          and already-paid closed proof have a genuine DAG alias. *)
+      reuse_with (fn () => Core.conversion_description_for work (#proof old))
+        (publish owner focus d) old : outcome end
+  fun is_true owner focus =
+    let val Owner {graph,...} = owner
+    in is_true_with graph (fn () => describe owner focus)
+      (action owner focus) end
+  fun rewrite (owner as Owner
+      {work,matcher,conditional,stack_limit,...}) simplify memo stack focus =
     let val d = describe owner focus
         fun attempt [] = NONE
           | attempt ((schema,isperm)::rest) =
@@ -473,317 +1003,90 @@ struct
                        in ac_order owner focus pair=GREATER end)
 
                  in if not applicable then attempt rest else
-                   let val conditions = List.tabulate (count,fn index =>
-                         capture owner (#frame d)
-                           (A.initial_condition work
-                             {instance=instance,index=index}))
-                       val looping = List.exists (fn ant =>
-                         List.exists (same owner ant) stack) conditions
-                   in if looping then attempt rest else
-                     let val stack' = conditions @ stack
-                         fun prove condition =
-                           let val normalized = case simplify owner memo stack'
-                                 condition of NONE =>
-                                   seal owner condition
-                                     (identity owner condition)
-                               | SOME result => result
-                           in if is_true owner (#target normalized) then
-                                #proof normalized else raise Inapplicable end
-                         val evidence = List.map prove conditions
-                         val prepared = Conditional.prepare_owned conditional
-                           {frame= #frame d,instance=instance,
-                            conditions=evidence}
-                         val result = Conditional.execute prepared
-                         val conversion =
-                           Conditional.conversion_for work result
-                         val leaf = action owner focus (fn observe =>
-                           C.graph_leaf
-                             (case owner of Owner {graph,...} => graph)
-                             (#scope d) {conversion=conversion,
-                               template_limit= #template_limit
-                                 (W.semantic_limits work),observe=observe})
-                     in SOME (seal owner focus leaf) end
-                     handle Inapplicable =>
-                       (ignore (describe owner focus);attempt rest)
-                   end
+                   discharge_with {count=count,
+                     condition=fn index => capture owner (#frame d)
+                       (A.initial_condition work
+                         {instance=instance,index=index}),
+                     same=same owner,stack=stack,simplify=simplify memo,
+                     seal=seal owner,identity=identity owner,
+                     is_true=is_true owner,
+                     conditional=fn evidence =>
+                       let val prepared = Conditional.prepare_owned
+                             conditional {frame= #frame d,
+                               instance=instance,conditions=evidence}
+                           val result = Conditional.execute prepared
+                       in Conditional.conversion_for work result end,
+                     leaf=leaf owner focus (fn () =>
+                       #template_limit (W.semantic_limits work)) d,
+                     seal_focus=seal owner focus,
+                     redescribe=fn () => ignore (describe owner focus),
+                     retry=fn () => attempt rest}
                  end
                end)
     in attempt (candidates owner focus) end
-  and descend (owner as Owner {graph,work,...}) memo stack focus =
-    let val d = describe owner focus val scope = #scope d
-    in case G.view graph (#node d) of
-        G.Application _ =>
-          let val (a,b) = A.application_children (expected owner scope)
-                (#admission d)
-              val left = capture owner (#frame d) a
-              val right = capture owner (#frame d) b
-              val l = simplify owner memo stack left
-              val r = simplify owner memo stack right
-          in case (l,r) of (NONE,NONE) => NONE | _ =>
-             let val lp = case l of NONE => identity owner left
-                   | SOME x => #recipe x
-                 val rp = case r of NONE => identity owner right
-                   | SOME x => #recipe x
-                 val composed = action owner focus (fn observe =>
-                   C.graph_application_fused graph scope
-                     {source= #node d,left=lp,right=rp,observe=observe})
-             in SOME (seal owner focus composed) end
-          end
-      | G.AdmittedBinder _ =>
-          let val frame = F.body work (#frame d) (#child d)
-              val body = capture owner frame
-                (A.binder_body (expected owner scope) (#admission d))
-          in case simplify owner memo stack body of NONE => NONE
-            | SOME result => SOME (lift owner focus result) end
-      | G.OpaqueRetained => discover owner memo stack focus
-      | _ => NONE
-    end
   (* Selection is derived from ALL authenticated fixed canonical rows in
      begin, not supplied by a caller. A complete negative scan needs no
      opening. A positive scan retains the exact private alpha recipe. *)
-  and discover (owner as Owner {work,graph,discovery_heads,...})
-      memo stack focus =
+  fun discover (owner as Owner {work,graph,discovery_heads,backing,...})
+      focus =
     let val d = describe owner focus val scope = #scope d
         val cap = #template_limit (W.semantic_limits work)
         val output = #output_limit (W.semantic_limits work)
         val ceiling = IntInf.fromInt (W.work_limit work)
         val converted = action owner focus (fn observe =>
-          let val receipt = G.discover_compact_selected_partial graph scope
-                {original= #node d,heads=discovery_heads,
-                 maximum= #source_limit d,scan_limit=W.work_limit work,
-                 step=observe}
-              fun data () =
-                let val value = G.selected_partial_data graph scope
-                      discovery_heads receipt
-                in if #original value= #node d then value else
-                  raise ERR "discover" "selected original changed" end
-              val _ = (case owner of Owner {backing,...} =>
-                backing := (fn () => ignore (data ())) :: !backing)
-          in case #view (data ()) of NONE => NONE
-            | SOME view =>
-              let val target = #node view
-                  val _ = G.validate_opened_view graph scope (#node d) view
-                  (* The genuine private alpha recipe preserves every raw,
-                     binder-variable and type incidence. Its cached rich
-                     profile bounds the old raw term before inspection. *)
-                  fun count metric =
-                    case G.unfolded_nodes graph metric output target of
-                      SOME n => if n<=output then IntInf.fromInt n else
-                        raise ERR "discover" "opened target exceeds output"
-                    | NONE => raise ERR "discover" "missing opened profile"
-                  val raw = count G.RawNodes
-                  val inc = count G.BinderInclusiveNodes
-                  val _ = if 3+2*raw<=IntInf.fromInt output andalso
-                      3+2*inc<=IntInf.fromInt output andalso
-                      3+2*raw<=IntInf.fromInt cap andalso
-                      3+2*inc<=IntInf.fromInt cap then () else
-                    raise ERR "discover" "alpha equality exceeds quota"
-                  val types = ref ([] : Type.hol_type list)
-                  fun live () =
-                    (ignore (describe owner focus);ignore (data ());
-                     G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation =
-                    (live ();let val value=operation () in live ();value end)
-                  fun step () = (live ();W.spend work 1;live ())
-                  fun weight ty : IntInf.int =
-                    (step ();if Type.is_vartype ty then
-                       (W.spend work (String.size (Type.dest_vartype ty));1)
-                     else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                              val _ = W.spend work
-                                (String.size Thy+String.size Tyop)
-                          in List.foldl (fn (t,n) => n+weight t) 1 Args end)
-                  (* Primitive projection provenance belongs to the exact
-                     original opaque object, not a fake no-op profile. Its
-                     future capture is planned from the genuine rich path.
-                     Cached type incidences precede all raw Term getters. *)
-                  val rich=inspect
-                    (fn () => G.closure_root graph scope target)
-                  fun cached_types child =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        val ty=inspect (fn () => G.type_of graph n)
-                        val own=weight ty val _ = types := ty:: !types
-                    in case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in own+cached_types f+cached_types x end
-                       | G.AdmittedBinder _ =>
-                         let val held=inspect (fn () =>
-                               G.closure_child_binder graph scope child)
-                             val data=inspect (fn () =>
-                               G.binder_closure_data graph scope held)
-                             val bt=inspect (fn () =>
-                               G.type_of graph (#binder data))
-                             val bw=weight bt val _ = types := bt:: !types
-                             val body=inspect (fn () =>
-                               G.binder_closure_body graph scope held)
-                         in own+bw+cached_types body end
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "rich projection has no complete type portfolio"
-                       | _ => own
-                    end
-                  val cached_ann=cached_types rich
-                  val _ = if cached_ann<=ceiling then
-                      W.spend work (IntInf.toInt cached_ann)
-                    else raise ERR "discover"
-                      "projected annotation portfolio exceeds original Work"
-                  (* EXACT record_opened_type_projection spend grammar:
-                     initial representative=1; App=3+operator;
-                     Binder=6+body; Atom=5. collect pays one per actual
-                     incoming incidence, skipping descendants on an ID hit. *)
-                  fun path_visits child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                    in case G.view graph n of G.Application _ =>
-                         3+path_visits (#1 (inspect (fn () =>
-                           G.closure_application_children graph scope child)))
-                       | G.AdmittedBinder _ =>
-                         6+path_visits (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "projection path cannot use an opaque rich node"
-                       | _ => 5
-                    end
-                  val seen=ref ([] : G.node list)
-                  fun collected child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        fun present [] = false
-                          | present (held::rest) =
-                              (step ();n=held orelse present rest)
-                    in if present (!seen) then 1 else
-                      (seen := n:: !seen;
-                       case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in 1+collected f+collected x end
-                       | G.AdmittedBinder _ =>
-                         1+collected (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | _ => 1)
-                    end
-                  (* This scan is rooted at this exact opaque original, so
-                     PartialFull's whole ready_root IS its rich annotation.
-                     The second rich collect is one hit; old opaque is one. *)
-                  val projection_visits=1+path_visits rich+collected rich+2
-                  val _ = if projection_visits<=ceiling then
-                      W.spend work (IntInf.toInt projection_visits)
-                    else raise ERR "discover"
-                      "primitive projection capture exceeds original Work"
-                  val alpha=inspect (fn () => G.carrier_alpha_for
-                    graph scope cap {original= #node d,source=view})
-                  val projection=inspect (fn () =>
-                    G.record_opened_type_projection graph scope
-                      (IntInf.toInt projection_visits) alpha)
-                  val actual_visits=inspect (fn () =>
-                    G.opened_type_projection_visits graph scope projection)
-                  val _ = if IntInf.fromInt actual_visits=projection_visits
-                    then () else raise ERR "discover"
-                      "actual primitive projection grammar changed"
-                  fun projected () =
-                    let val data=G.opaque_type_projection_data
-                          graph scope projection 0
-                    in if #node data= #node d then () else
-                      raise ERR "discover" "projected original changed" end
-                  val _ = projected ()
-                  val _ = (case owner of Owner {backing,...} =>
-                    backing := projected :: !backing)
-                  fun measure term :
-                      IntInf.int * IntInf.int * IntInf.int =
-                    let val _ = step ()
-                        val ty=inspect (fn () => Term.type_of term)
-                        val ann=weight ty val _ = types := ty:: !types
-                    in if Term.is_comb term then
-                         let val (f,x)=inspect (fn () => Term.dest_comb term)
-                             val (a,b,c)=measure f val (e,h,j)=measure x
-                         in (1+a+e,1+b+h,ann+c+j) end
-                       else if Term.is_abs term then
-                         let val (v,b)=inspect (fn () => Term.dest_abs term)
-                             val bt=inspect (fn () => Term.type_of v)
-                             val bw=weight bt val _ = types := bt:: !types
-                             val (a,c,e)=measure b
-                         in (1+a,2+c,ann+bw+e) end
-                       else (1,1,ann)
-                    end
-                  val proof= #bridge view
-                  val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
-                  val term=inspect (fn () => G.representative graph target)
-                  val (tr,ti,ta)=measure term
-                  val (tr2,ti2,ta2)=measure term
-                  val (eq_partial,_)=inspect
-                    (fn () => Term.dest_comb (Thm.concl proof))
-                  val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
-                  val header_types=List.map (fn t => inspect
-                    (fn () => Term.type_of t))
-                    [Thm.concl proof,eq_partial,eq_head]
-                  val header=List.foldl (fn (ty,n) => n+weight ty) 0
-                    header_types
-                  val rr=3+tr+tr2 val ri=3+ti+ti2
-                  val ra=header+ta+ta2
-                  val amount=er+ei+ea+rr+ri+ra
-                  val _ = if er=3+2*raw andalso ei=3+2*inc andalso
-                      tr=raw andalso ti=inc andalso tr=tr2 andalso
-                      ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
-                      ra<=ceiling andalso amount<=ceiling then () else
-                    raise ERR "discover" "alpha metadata/Work mismatch"
-                  val _ = W.spend work (IntInf.toInt amount)
-                  val _ = types := header_types @ !types
-                  val target_child=inspect
-                    (fn () => G.closure_root graph scope target)
-                  val identity=inspect (fn () =>
-                    G.plan_identity_closure_view graph scope cap
-                      (* Original/partial guards remain in data/live,
-                         owner.backing and P.source_view validation. The
-                         raw opaque original is not an identity recipe. *)
-                      {target=target_child,retain=[]})
-                  val _ = List.app (fn ty => inspect
-                    (fn () => policy owner focus ty)) (List.rev (!types))
-                  val target_view=inspect
-                    (fn () => G.execute_identity_closure_view identity)
-                  val conversion=inspect (fn () => P.record_typed_conversion
-                    graph scope {source= #node d,source_view=view,
-                      target=target,target_view=target_view,theorem=proof,
-                      template_limit=cap,check_type=fn ty => inspect
-                        (fn () => policy owner focus ty)})
-              in SOME conversion end
-          end)
-    in case converted of NONE => NONE | SOME conversion =>
-      let val leaf=action owner focus (fn observe =>
-            C.graph_leaf graph scope {conversion=conversion,
-              template_limit=cap,observe=observe})
-          val prefix=seal owner focus leaf
-          val rest=simplify owner memo stack (#target prefix)
-      in join owner focus (SOME prefix) rest end
-    end
+          opened_conversion_with graph scope
+            {node= #node d,
+             discover=fn () => G.discover_compact_selected_partial graph scope
+               {original= #node d,heads=discovery_heads,
+                maximum= #source_limit d,scan_limit=W.work_limit work,
+                step=observe},
+             data_of=fn receipt => G.selected_partial_data graph scope
+               discovery_heads receipt,
+             backing=backing,redescribe=fn () => ignore (describe owner focus),
+             count_for=fn target => fn metric =>
+               case G.unfolded_nodes graph metric output target of
+                 SOME n => if n<=output then IntInf.fromInt n else
+                   raise ERR "discover" "opened target exceeds output"
+               | NONE => raise ERR "discover" "missing opened profile",
+             cap=cap,output=output,ceiling=ceiling,
+             spend=fn n => W.spend work (IntInf.toInt n),
+             plan_identity=fn target_child =>
+               G.plan_identity_closure_view graph scope cap
+                 {target=target_child,retain=[]},
+             check_type=policy owner focus,
+             record=fn {source,source_view,target,target_view,theorem,
+                 check_type} =>
+               P.record_typed_conversion graph scope
+                 {source=source,source_view=source_view,target=target,
+                  target_view=target_view,theorem=theorem,
+                  template_limit=cap,check_type=check_type}})
+    in discovered_with converted (leaf owner focus (fn () => cap) d)
+      (seal owner focus) end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
-  and is_true owner focus =
-    let val Owner {graph,...} = owner val d = describe owner focus
-    in action owner focus (fn observe =>
-      (observe ();case G.view graph (#node d) of G.Constant id =>
-        KernelSig.id_compare
-          (id,#Name (Term.dest_thy_constid boolSyntax.T))=EQUAL
-       | _ => false)) end
-  and lift owner focus (result:outcome) =
-    let val Owner {work,conditional,graph,...} = owner
-        val d = describe owner focus
-        val plan = Lambda.prepare_admitted work
-          {frame= #frame d,admission= #admission d,body= #proof result,
-           ordinal=ordinal owner,check_type=policy owner focus}
-        val value = Lambda.execute work plan
-        val converted = Conditional.lambda_conversion_for work conditional
-          {frame= #frame d,result=value}
-        val leaf = action owner focus (fn observe =>
-          C.graph_leaf graph (#scope d)
-            {conversion=converted,template_limit= #template_limit
-              (W.semantic_limits work),observe=observe})
-    in seal owner focus leaf end
+  fun lift owner focus (result:outcome) =
+    let val Owner {work,conditional,...} = owner
+    in lift_with (fn () => describe owner focus)
+      (fn d => Lambda.execute work (Lambda.prepare_admitted work
+        {frame= #frame d,admission= #admission d,body= #proof result,
+         ordinal=ordinal owner,check_type=policy owner focus}))
+      (fn d => fn value => Conditional.lambda_conversion_for work conditional
+        {frame= #frame d,result=value})
+      (leaf owner focus (fn () =>
+        #template_limit (W.semantic_limits work)))
+      (seal owner focus) end
+  fun normalize owner source =
+    let val Owner {work,graph,...} = owner
+    in normalize_with {work=work,graph=graph,spend=fn () => W.spend work 1,
+        describe=describe owner,capture=capture owner,
+        identity=identity owner,same=same owner,seal=seal owner,
+        joined=joined owner,reuse=reuse owner,
+        application_children=fn scope => fn admission =>
+          A.application_children (expected owner scope) admission,
+        body_frame=F.body work,
+        binder_body=fn scope => fn admission =>
+          A.binder_body (expected owner scope) admission,
+        discover=discover owner,lift=lift owner}
+      (rewrite owner) source end
   fun begin work {catalogue,traversal,check_type} =
     let val _ = T.validate_for work traversal
         val _ = K.validate_for work catalogue
@@ -799,55 +1102,14 @@ struct
                     (W.validate work graph root sources
                        (W.semantic_limits work);
                      K.validate_for work catalogue;W.spend work 1)
-              fun scan term =
-                (step ();if Term.is_comb term then
-                   let val (f,x) = Term.dest_comb term in scan f;scan x end
-                 else if Term.is_abs term then
-                   raise ERR "begin" "fixed left pattern contains a lambda"
-                 else if Term.is_var term then
-                   let val ty = Term.type_of term
-                   in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                       {Thy="min",Tyop="fun",...} => true | _ => false) then
-                     raise ERR "begin"
-                       "fixed catalogue has a non-scalar schematic"
-                     else () end else ())
-              fun vperm (l,r) =
-                (step ();case (Term.dest_term l,Term.dest_term r) of
-                   (Term.VAR (_,a),Term.VAR (_,b)) => Type.compare (a,b)=EQUAL
-                 | (Term.LAMB (_,a),Term.LAMB (_,b)) => vperm (a,b)
-                 | (Term.COMB (a,b),Term.COMB (c,d)) =>
-                     vperm (a,c) andalso vperm (b,d)
-                 | _ => Term.aconv l r)
-              fun row schema =
-                let val {left,right} = M.pattern_for work schema
-                    val _ = scan left
-                    val _ = List.app (fn variable =>
-                      let val _ = step () val ty = Term.type_of variable
-                      in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                       {Thy="min",Tyop="fun",...} => true | _ => false) then
-                        raise ERR "begin"
-                          "fixed rule contains non-scalar free var"
-                        else () end)
-                      (Term.free_vars (Thm.concl (M.original schema)))
-                    val perm = vperm (left,right) andalso
-                      HOLset.equal (Term.FVL [left] Term.empty_tmset,
-                        Term.FVL [right] Term.empty_tmset)
-                    val (head,_) = HolKernel.strip_comb left
-                    val {Thy,Name,...} = Term.dest_thy_const head
-                    val _ = step ()
-                    val constant = G.constant graph root head
-                in (schema,left,perm,(Thy,Name),constant) end
-              val rows = List.map row schemas
-              val net = List.foldr (fn ((schema,left,perm,_,_),net) =>
-                (step ();Ho_Net.enter ([],left,(schema,perm)) net))
-                Ho_Net.empty rows
-              val selected = G.record_discovery_heads graph root
-                {heads=List.map (fn (_,_,_,_,node) => node) rows,
-                 maximum=W.work_limit work,step=step}
+              val built = fixed_net graph root
+                {label="begin",lambda="fixed left pattern contains a lambda",
+                 schematic="fixed catalogue has a non-scalar schematic",
+                 free_var="fixed rule contains non-scalar free var",
+                 step=step,pattern=M.pattern_for work,original=M.original,
+                 maximum=W.work_limit work} schemas
               val _ = step ()
-          in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end)
+          in built end)
         val conditional = Conditional.begin work catalogue
           {check_type=check_type}
     in Owner {work=work,graph=graph,root=root,sources=sources,
@@ -859,66 +1121,38 @@ struct
       validated=ref NONE,fence=ref 0} end
     handle primary => (W.close work;raise primary)
   fun prepare (owner as Owner {running,...}) {frame,admission} =
-    protect owner (fn () =>
-    (active owner;
-     if !running then raise ERR "prepare" "reentrant SIMPLE preparation"
-       else ();
-     Plan {owner=owner,source=capture owner frame admission,used=ref false}))
+    prepare_with "prepare" (protect owner) (fn () => active owner) running
+      (fn () => Plan {owner=owner,source=capture owner frame admission,
+        used=ref false})
   fun execute_internal require_proof
       (Plan {owner=owner as Owner {running,...},source,used}) =
-    protect owner (fn () =>
-    let val _ = active owner
-        val _ = if !running orelse !used then
-          raise ERR "execute" "consumed or reentrant SIMPLE plan"
-          else (used := true;running := true)
-        fun restore () = running := false
-        val answer = (let val converted = simplify owner
-            (ref ([] : memo_entry list)) [] source
-          in case converted of SOME result =>
-               SOME (Result {owner=owner,source=source,proof= #proof result})
-             | NONE => if require_proof then
-                 SOME (Result {owner=owner,source=source,
-                   proof= #proof (seal owner source (identity owner source))})
-               else NONE end)
-          handle primary => (restore ();raise primary)
-        val _ = restore () val _ = active owner
-    in answer end)
+    execute_with "execute" (protect owner) (fn () => active owner)
+      running used (fn () =>
+      converted_with require_proof (fn () => normalize owner source)
+        (fn () => #proof (seal owner source (identity owner source)))
+        (fn proof => Result {owner=owner,source=source,proof=proof}))
   fun execute plan = valOf (execute_internal true plan)
   fun execute_changed plan = execute_internal false plan
   fun core_for expected
       (Result {owner=owner as Owner {work,...},source,proof}) =
-    ((if Portable.pointer_eq (work,expected) then () else
-        raise ERR "core_for" "foreign expected Work";
-      ignore (describe owner source);
-      ignore (Core.conversion_description_for expected proof);proof)
-     handle primary => (W.close expected;raise primary))
+    core_with "core_for" expected work (fn () => describe owner source)
+      (fn () => Core.conversion_description_for expected proof) proof
   fun validate_for expected (owner as Owner {work,...}) =
-    ((if Portable.pointer_eq (work,expected) then revalidate owner else
-        raise ERR "validate_for" "foreign expected Work")
-     handle primary => (W.close expected;raise primary))
+    expect_work "validate_for" expected work (fn () => revalidate owner)
   fun validate_cached_for expected (owner as Owner {work,...}) =
-    ((if Portable.pointer_eq (work,expected) then active owner else
-        raise ERR "validate_cached_for" "foreign expected Work")
-     handle primary => (W.close expected;raise primary))
-  fun normalize_aux (owner as Owner {work,traversal,...}) target =
-    protect owner (fn () =>
-      let val held = T.aux_target_for work traversal target
-          val plan = prepare owner
-            {frame= #frame held,admission= #admission held}
-          val result = execute_changed plan
-      in case result of NONE =>
-           (ignore (T.aux_target_for work traversal target);#conversion held)
-       | SOME result =>
-         let val proof = core_for work result
-             val local_result = D.adopt_compact (#dynamic held) proof
-         in D.compose {first= #conversion held,second=local_result,
-           ordinal=ordinal owner,check_type=fn ty =>
-             (active owner;
-              ignore (T.aux_target_for work traversal target);
-              let val Owner {check_type,...} = owner in check_type ty end;
-              active owner;
-              ignore (T.aux_target_for work traversal target))}
-         end end)
+    expect_work "validate_cached_for" expected work (fn () => active owner)
+  fun normalize_aux (owner as Owner {work,traversal,check_type,...}) target =
+    protect owner (fn () => aux_normalization
+      {aux_target=fn () => T.aux_target_for work traversal target,
+       conversion=fn held => #conversion held,
+       changed=fn held => execute_changed (prepare owner
+         {frame= #frame held,admission= #admission held}),
+       core=core_for work,
+       adopt=fn held => fn proof => D.adopt_compact (#dynamic held) proof,
+       compose=fn held => fn local_result => fn policy_check =>
+         D.compose {first= #conversion held,second=local_result,
+           ordinal=ordinal owner,check_type=policy_check},
+       active=fn () => active owner,check_type=check_type})
 
   (* Actual implementation dependency anchors. Structure aliases alone do
      not force Holmake to load these implementation objects. No call runs. *)
@@ -960,117 +1194,88 @@ struct
        frames:F.receipt list ref,
        validated:(IntInf.int * (unit -> unit) list) option ref,
        fence:IntInf.int ref}
-    type description={node:G.node,child:G.closure_child,scope:G.scope,
-      frame:F.receipt,admission:A.policy_focus,source_limit:RP.limit,
-      category:A.category}
+    type description=(A.policy_focus,RP.limit)described
     datatype focus=Focus of
       {admission:A.policy_focus,frame:F.receipt,scope:G.scope,
        described:(IntInf.int * IntInf.int * description) option ref}
     datatype plan=Plan of {owner:owner,source:focus,used:bool ref}
     datatype result=Result of
       {owner:owner,source:focus,proof:Core.policy_result}
-    type outcome={target:focus,recipe:C.graph_conversion,
-      proof:Core.policy_result}
-    type memo_entry={node:G.node,scope:G.scope,category:A.category,
-      limit:RP.limit,stack:(G.node * G.scope) list,result:outcome option}
-    exception Inapplicable
-    fun close(Owner{work,dead,...})=(dead:=true;W.close work)
-    fun protect owner action=action()handle primary=>
-      (close owner;raise primary)
+    type outcome=(focus,Core.policy_result)outcome_of
+    fun close(Owner{work,dead,...})=retire_owner work dead
+    fun protect owner action=protect_with close owner action
     fun active(Owner{work,graph,root,sources,catalogue,traversal,
         native_contract,symbols,epoch,stack_limit,dead,backing,
         discovery_heads,validated,frames,...})=
-      let
-        val _=if !dead then raise ERR "policy_simple" "numeric owner retired"
-          else ()
-        val _=NC.validate_for work native_contract
-        val _=W.validate_policy work graph root sources(W.semantic_policy work)
-        val _=if Term.term_epoch()=symbols andalso Type.type_epoch()=epoch
-          then ()else raise ERR "policy_simple" "native epoch changed"
-        val _=if !Cond_rewr.stack_limit=stack_limit then ()else
-          raise ERR "policy_simple" "fixed conditional stack policy changed"
-        val _=guard_app work(F.validate_lifetime_with_policy_for work)(!frames)
-        val revision=G.validation_revision graph root
-        val rows= !backing
-        val hit=case !validated of SOME(old,held)=>
-            old=revision andalso Portable.pointer_eq(held,rows)
-          | NONE=>false
-      in if hit then ()else
-        (T.validate_carrier_with_policy_for work traversal;
-         K.validate_with_policy_for work catalogue;
-         if Portable.pointer_eq(K.native_contract_for work catalogue,
-             native_contract)andalso
-             Portable.pointer_eq(T.native_contract_carrier_with_policy_for
-               work traversal,native_contract)then ()else
-           raise ERR "policy_simple" "different actual catalogue contract";
-         G.validate_discovery_heads graph root discovery_heads;
-         guard_app work(fn guard=>guard())rows;
-         W.validate_policy work graph root sources(W.semantic_policy work);
-         if Term.term_epoch()=symbols andalso Type.type_epoch()=epoch andalso
-             !Cond_rewr.stack_limit=stack_limit andalso
-             G.validation_revision graph root=revision andalso
-             Portable.pointer_eq(rows,!backing)then
-           validated:=SOME(revision,rows)else
-           raise ERR "policy_simple" "validation state changed during backing")
-      end
+      active_with{graph=graph,root=root,validated=validated,backing=backing}
+       {entry=fn()=>
+          let
+            val _=if !dead then raise ERR "policy_simple"
+                "numeric owner retired" else ()
+            val _=NC.validate_for work native_contract
+            val _=W.validate_policy work graph root sources
+              (W.semantic_policy work)
+            val _=if Term.term_epoch()=symbols andalso
+                Type.type_epoch()=epoch then ()else
+              raise ERR "policy_simple" "native epoch changed"
+            val _=if !Cond_rewr.stack_limit=stack_limit then ()else
+              raise ERR "policy_simple"
+                "fixed conditional stack policy changed"
+            val _=guard_app work(F.validate_lifetime_with_policy_for work)
+              (!frames)
+          in()end,
+        refresh=fn rows=>
+          (T.validate_carrier_with_policy_for work traversal;
+           K.validate_with_policy_for work catalogue;
+           if Portable.pointer_eq(K.native_contract_for work catalogue,
+               native_contract)andalso
+               Portable.pointer_eq(T.native_contract_carrier_with_policy_for
+                 work traversal,native_contract)then ()else
+             raise ERR "policy_simple" "different actual catalogue contract";
+           G.validate_discovery_heads graph root discovery_heads;
+           guard_app work(fn guard=>guard())rows;
+           W.validate_policy work graph root sources(W.semantic_policy work)),
+        unchanged=fn()=>Term.term_epoch()=symbols andalso
+          Type.type_epoch()=epoch andalso !Cond_rewr.stack_limit=stack_limit,
+        changed=fn()=>raise ERR "policy_simple"
+          "validation state changed during backing"}
     fun revalidate(owner as Owner{validated,fence,...})=
-      (fence:= !fence+1;validated:=NONE;active owner)
-    fun expected(Owner{graph,sources,work,...})scope=
-      {graph=graph,scope=scope,sources=sources,work=work}
+      revalidate_with(fn()=>active owner)fence validated
+    fun expected(Owner{graph,sources,work,...})=
+      expected_with graph sources work
     fun describe(owner as Owner{work,graph,root,fence,...})
         (Focus{admission,frame,scope,described}):description=
-      let val _=active owner val _=G.validate_scope graph scope
-          val revision=G.validation_revision graph root
-          val generation= !fence
-          fun full()=
-            let val data=F.description_with_policy_for work frame
-                val _=if Portable.pointer_eq(#graph data,graph)andalso
-                    #root data=root andalso #scope data=scope then ()else
-                  raise ERR "policy_simple" "foreign actual frame"
-                val lower=A.describe_with_policy_for
-                  (expected owner scope)admission
-                val answer={node= #node lower,child= #child lower,scope=scope,
-                  frame=frame,admission=admission,
-                  source_limit= #source_limit lower,category= #category lower}
-                  :description
-                val _=active owner
-                val _=if G.validation_revision graph root=revision andalso
-                    !fence=generation then ()else
-                  raise ERR "policy_simple" "validation state changed"
-                val _=described:=SOME(revision,generation,answer)
-            in answer end
-      in case !described of SOME(old,held,answer)=>
-           if old=revision andalso held=generation then answer else full()
-         | NONE=>full()end
+      describe_with "policy_simple" {active=fn()=>active owner,graph=graph,
+        root=root,scope=scope,fence=fence,described=described,
+        frame=fn()=>let val data=F.description_with_policy_for work frame
+          in(#graph data,#root data,#scope data)end,
+        lower=fn()=>
+          let val lower=A.describe_with_policy_for
+                (expected owner scope)admission
+          in{node= #node lower,child= #child lower,scope=scope,
+             frame=frame,admission=admission,
+             source_limit= #source_limit lower,category= #category lower}
+               :description end}
     fun capture(owner as Owner{work,backing,frames,...})frame admission=
       let val scope= #scope(F.description_with_policy_for work frame)
-          fun present []=(W.spend_guard_policy work 1;false)
-            | present(held::rest)=
-                (W.spend_guard_policy work 1;
-                 Portable.pointer_eq(held,frame)orelse present rest)
-          val _=if present(!frames)then ()else frames:=frame:: !frames
-          val focus=Focus{admission=admission,frame=frame,scope=scope,
-            described=ref NONE}
-          val _=ignore(describe owner focus)
-          val _=backing:=(fn()=>A.validate_with_policy_for
-            (expected owner scope)admission):: !backing
-      in focus end
+      in capture_with{work=work,frames=frames,backing=backing,frame=frame,
+          guard=fn()=>A.validate_with_policy_for
+            (expected owner scope)admission,
+          describe=describe owner,
+          make=fn()=>Focus{admission=admission,frame=frame,scope=scope,
+            described=ref NONE}}end
     fun action(owner as Owner{work,...})focus operation=
-      W.with_step work(fn()=>
-        let fun observe()=(ignore(describe owner focus);W.spend_policy work 1)
-            val answer=operation observe
-            val _=ignore(describe owner focus)
-        in answer end)
+      action_with work(fn()=>ignore(describe owner focus))
+        (fn()=>W.spend_policy work 1)operation
     fun ordinal(owner as Owner{work,traversal,...})=
-      (active owner;T.validate_carrier_with_policy_for work traversal;
-       T.carrier_normalization_ordinal_with_policy_for work traversal)
+      ordinal_with(fn()=>active owner)
+        (fn()=>T.validate_carrier_with_policy_for work traversal)
+        (fn()=>T.carrier_normalization_ordinal_with_policy_for work traversal)
     fun policy(owner as Owner{check_type,...})focus ty=
-      (active owner;ignore(describe owner focus);check_type ty;
-       active owner;ignore(describe owner focus))
+      checked_type(fn()=>active owner)
+        (fn()=>ignore(describe owner focus))check_type ty
     fun identity(owner as Owner{graph,...})focus=
-      let val d=describe owner focus
-      in action owner focus(fn observe=>C.graph_identity graph(#scope d)
-        {observe=observe}(#node d))end
+      identity_with graph(fn()=>describe owner focus)(action owner focus)
     fun metric(owner as Owner{graph,profiles,backing,...})focus=
       let val d=describe owner focus
           val capture=G.prepare_scoped_profiled_metric graph(#scope d)
@@ -1096,57 +1301,54 @@ struct
   structure PolicySimpleProof =
   struct
     open PolicySimpleBase
-    fun seal(owner as Owner{work,graph,native_contract,profiles,backing,...})
-        focus recipe=
-      let val d=describe owner focus
-          val plan=Core.prepare_in_scope_with_policy work
-            {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
-             native_contract=native_contract,profiles=profiles,
-             check_type=policy owner focus}
-          val proof=Core.execute_with_policy work plan
-          val _=backing:=(fn()=>ignore
-            (Core.conversion_description_with_policy_for work proof))::
-              !backing
-          val wrapper=action owner focus(fn observe=>
+    (* Publish a closed Core proof as the generated target of [focus]:
+       the generated wrapper producer derives its own fact/frame/RHS
+       metric under a charged action. *)
+    fun publish(owner as Owner{work,profiles,...})focus(d:description)proof=
+      let val wrapper=action owner focus(fn observe=>
             let val _=observe()
                 val receipt=Core.realization_with_policy_for work proof
-            in P.policy_source_realization_generated_equality_for work receipt
-              {profiles=profiles}end)
-          val target=capture owner(#frame d)
-            (A.generated_scoped_with_policy(expected owner(#scope d))
-              (#admission d)wrapper)
-          val closed=action owner focus(fn observe=>
-            C.graph_realized_leaf_with_policy work
-              {realization=Core.realization_with_policy_for work proof,
-               observe=observe})
-      in {target=target,recipe=closed,proof=proof}:outcome end
+            in P.policy_source_realization_generated_equality_for work
+              receipt{profiles=profiles}end)
+      in capture owner(#frame d)
+        (A.generated_scoped_with_policy(expected owner(#scope d))
+          (#admission d)wrapper)end
+    fun seal(owner as Owner{work,graph,native_contract,profiles,backing,...})
+        focus recipe=
+      seal_with(fn()=>describe owner focus)
+        (fn d=>Core.prepare_in_scope_with_policy work
+          {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
+           native_contract=native_contract,profiles=profiles,
+           check_type=policy owner focus})
+        (fn plan=>Core.execute_with_policy work plan)
+        (fn d=>fn proof=>
+          let val _=backing:=(fn()=>ignore
+                (Core.conversion_description_with_policy_for work proof))::
+                  !backing
+          in publish owner focus d proof end)
+        (fn proof=>action owner focus(fn observe=>
+          C.graph_realized_leaf_with_policy work
+            {realization=Core.realization_with_policy_for work proof,
+             observe=observe}))
+      :outcome
+    fun leaf(owner as Owner{work,...})focus(d:description)conversion=
+      action owner focus(fn observe=>
+        C.graph_leaf_with_policy work
+          {frame= #frame d,conversion=conversion,observe=observe})
     fun joined(owner as Owner{work,...})source(left:outcome)(right:outcome)=
       let val recipe=action owner source(fn observe=>
             C.graph_realized_sequence_with_policy work
               {first= #recipe left,second= #recipe right,observe=observe})
       in seal owner source recipe end
-    fun after source NONE=source
-      | after _ (SOME(value:outcome))= #target value
-    fun join owner source NONE right=right
-      | join _ _ left NONE=left
-      | join owner source(SOME left)(SOME right)=
-          SOME(joined owner source left right)
     fun core_for expected
         (Result{owner=owner as Owner{work,...},source,proof})=
-      ((if Portable.pointer_eq(work,expected)then ()else
-          raise ERR "policy_simple" "foreign expected Work";
-        ignore(describe owner source);
-        ignore(Core.conversion_description_with_policy_for expected proof);
-        proof)
-       handle primary=>(W.close expected;raise primary))
+      core_with "policy_simple" expected work(fn()=>describe owner source)
+        (fn()=>Core.conversion_description_with_policy_for expected proof)
+        proof
     fun validate_for expected(owner as Owner{work,...})=
-      ((if Portable.pointer_eq(work,expected)then revalidate owner else
-          raise ERR "policy_simple" "foreign expected Work")
-       handle primary=>(W.close expected;raise primary))
+      expect_work "policy_simple" expected work(fn()=>revalidate owner)
     fun validate_cached_for expected(owner as Owner{work,...})=
-      ((if Portable.pointer_eq(work,expected)then active owner else
-          raise ERR "policy_simple" "foreign expected Work")
-       handle primary=>(W.close expected;raise primary))
+      expect_work "policy_simple" expected work(fn()=>active owner)
   end
 
   (* Exact fixed PURE_ss rule order. All native syntax/type inspection here
@@ -1235,54 +1437,19 @@ struct
            (* Complete geometry/Type discovery precedes the public FVL/net
               operations. It invokes no external policy and no native rule. *)
            val _=List.app preflight(ListPair.zip(schemas,facts))
-           fun scan term=
-             (step();if Term.is_comb term then
-                let val(f,x)=Term.dest_comb term in scan f;scan x end
-              else if Term.is_abs term then raise ERR "policy_simple_net"
-                "fixed left pattern contains a lambda"
-              else if Term.is_var term then
-                let val ty=Term.type_of term
-                in if Type.is_vartype ty orelse
-                    (case Type.dest_thy_type ty of
-                     {Thy="min",Tyop="fun",...}=>true|_=>false)then
-                  raise ERR "policy_simple_net" "non-scalar schematic"
-                  else ()end else ())
-           fun vperm(l,r)=
-             (step();case(Term.dest_term l,Term.dest_term r)of
-                (Term.VAR(_,a),Term.VAR(_,b))=>Type.compare(a,b)=EQUAL
-              | (Term.LAMB(_,a),Term.LAMB(_,b))=>vperm(a,b)
-              | (Term.COMB(a,b),Term.COMB(c,d))=>vperm(a,c)andalso vperm(b,d)
-              | _=>Term.aconv l r)
-           fun row schema=
-             let val{left,right}=M.pattern_with_policy_for work schema
-                 val _=scan left
-                 val _=List.app(fn variable=>
-                   let val _=step()val ty=Term.type_of variable
-                   in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                        {Thy="min",Tyop="fun",...}=>true|_=>false)then
-                     raise ERR "policy_simple_net" "non-scalar free variable"
-                     else ()end)
-                   (Term.free_vars(Thm.concl(M.original_with_policy schema)))
-                 val perm=vperm(left,right)andalso
-                   HOLset.equal(Term.FVL[left]Term.empty_tmset,
-                     Term.FVL[right]Term.empty_tmset)
-                 val(head,_)=HolKernel.strip_comb left
-                 val{Thy,Name,...}=Term.dest_thy_const head
-                 val _=step()val constant=G.constant graph root head
-             in(schema,left,perm,(Thy,Name),constant)end
-           val rows=List.map row schemas
-           val net=List.foldr(fn((schema,left,perm,_,_),net)=>
-             (step();Ho_Net.enter([],left,(schema,perm))net))Ho_Net.empty rows
-           (* This is a finite bound for this fixed native catalogue scan,
-              taken from its actual caller, not a projection of Work policy. *)
-           val heads=G.record_discovery_heads graph root
-             {heads=List.map(fn(_,_,_,_,node)=>node)rows,
-              maximum= #type_work_limit native,step=step}
+           val(net,names,heads)=fixed_net graph root
+             {label="policy_simple_net",
+              lambda="fixed left pattern contains a lambda",
+              schematic="non-scalar schematic",
+              free_var="non-scalar free variable",step=step,
+              pattern=M.pattern_with_policy_for work,
+              original=M.original_with_policy,
+              (* This is a finite bound for this fixed native catalogue scan,
+                 taken from its actual caller, not a projection of Work
+                 policy. *)
+              maximum= #type_work_limit native}schemas
            val _=valid()
-         in{matcher=matcher,net=net,
-            heads=List.map(fn(_,_,_,head,_)=>head)rows,
-            discovery_heads=heads}end)
+         in{matcher=matcher,net=net,heads=names,discovery_heads=heads}end)
        end)handle primary=>(W.close work;raise primary)
   end
 
@@ -1467,26 +1634,9 @@ struct
        charged IntInf work; it is not projected onto a finite sentinel. *)
     fun candidates(owner as Owner{graph,work,net,heads,...})focus=
       let val d=describe owner focus
-          fun head observe child=
-            let val _=observe()
-                val node=G.closure_child_node graph(#scope d)child
-            in case G.view graph node of G.Application _=>
-                 head observe(#1(G.closure_application_children
-                   graph(#scope d)child))
-              | G.Constant id=>
-                  let val{Thy,Name}=KernelSig.name_of_id id
-                  in SOME(Thy,Name)end
-              | _=>NONE
-            end
-      in action owner focus(fn observe=>case head observe(#child d)of
-          NONE=>[]
-        | SOME name=>if not(List.exists(fn key=>key=name)heads)then []else
-            let val data=metric owner focus
-                val _=W.spend_policy work(#raw data)
-                val answer=Ho_Net.lookup
-                  (G.representative graph(#node d))net
-                val _=observe()
-            in answer end)
+      in candidates_with graph(action owner focus)d heads net(fn()=>
+          let val data=metric owner focus
+          in W.spend_policy work(#raw data)end)
       end
     (* Native equality is reached only after both actual role envelopes
        and repeated annotation incidences have passed the finite contract. *)
@@ -1504,47 +1654,15 @@ struct
            in observe();ignore(describe owner second);answer end)
         else
           let val scope= #scope left
-              val memo=ref([]:(G.node*G.node*bool)list)
-              val held=ref([]:G.closure_child list)
-              fun lookup a b []=NONE
-                | lookup a b((x,y,value)::rest)=
-                    (observe();if a=x andalso b=y then SOME value
-                     else lookup a b rest)
-              fun compare l r=
-                let val _=observe()
-                    val a=G.closure_child_node graph scope l
-                    val b=G.closure_child_node graph scope r
-                    val _=held:=l::r:: !held
-                in if a=b then true else case lookup a b(!memo)of
-                    SOME answer=>answer
-                  | NONE=>
-                    let val answer=if G.type_id graph a<>
-                          G.type_id graph b then false else
-                          case(G.view graph a,G.view graph b)of
-                            (G.Application _,G.Application _)=>
-                              let val(f,x)=G.closure_application_children
-                                    graph scope l
-                                  val(g,y)=G.closure_application_children
-                                    graph scope r
-                              in compare f g andalso compare x y end
-                          | (G.Application _,_)=>false
-                          | (_,G.Application _)=>false
-                          | _=>
-                              SmtReplayOwnedAlpha.same_inside_with_policy
-                                work {caller=scope,traversal=scope,
-                                  left=l,right=r,
-                                  native_contract=native_contract,
-                                  profiles=profiles}
-                        val _=observe()
-                        val _=memo:=(a,b,answer):: !memo
-                    in answer end
-                end
-              val answer=compare(#child left)(#child right)
-              val _=List.app(fn child=>
-                (observe();ignore(G.closure_child_node
-                  graph scope child)))(!held)
+              val result=same_tree observe graph scope
+                (ref([]:G.closure_child list))
+                (fn l=>fn r=>
+                  SmtReplayOwnedAlpha.same_inside_with_policy
+                    work {caller=scope,traversal=scope,left=l,right=r,
+                      native_contract=native_contract,profiles=profiles})
+                (#child left)(#child right)
               val _=ignore(describe owner second)
-          in answer end)
+          in result end)
       end
   end
 
@@ -1557,59 +1675,9 @@ struct
     let val Owner {work,...} = owner
         val proof=native_instance owner focus instance
         val pair=boolSyntax.dest_eq(#2(boolSyntax.strip_imp(Thm.concl proof)))
-        fun text value =
-          W.spend_policy work (IntInf.fromInt(String.size value))
-        fun weight ty =
-          (observe ();if Type.is_vartype ty then
-             (text (Type.dest_vartype ty);()) else
-           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
-           in text Thy;text Tyop;List.app weight Args end)
-        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
-        fun size term : IntInf.int = (observe ();case Term.dest_term term of
-            Term.LAMB (_,body) => 1+size body
-          | Term.COMB (f,x) => size f+size x | _ => 1)
-        fun env_find env term = case env of [] => NONE
-          | (key,value)::rest =>
-              (observe ();if Term.aconv key term then SOME value
-                else env_find rest term)
-        fun dest_head env term = (observe ();case Term.dest_term term of
-            Term.VAR (name,ty) =>
-              (case env_find env term of NONE => (((name,""),0),ty)
-              | SOME n => ((("",""),~n),Type.alpha))
-          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
-          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
-          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
-        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
-        fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),aty) = dest_head e1 a
-              val (((bn,bt),bk),bty) = dest_head e2 b
-          in case name_order (an,bn) of EQUAL =>
-               (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
-                    | other => other) | other => other)
-             | other => other end
-        fun compare n (e1,e2) (a,b) =
-          (observe ();case IntInf.compare (size a,size b) of EQUAL =>
-             if Term.is_abs a then
-               if Term.is_abs b then
-                 let val (av,ab) = Term.dest_abs a
-                     val (bv,bb) = Term.dest_abs b
-                 in case type_order (Term.type_of av,Term.type_of bv) of
-                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
-                   | other => other end else GREATER
-             else if Term.is_abs b then LESS else
-               let val (ah,aa) = HolKernel.strip_comb a
-                   val (bh,ba) = HolKernel.strip_comb b
-                   fun args ([],[]) = EQUAL
-                     | args ([],_) = LESS | args (_,[]) = GREATER
-                     | args (x::xs,y::ys) =
-                         (case compare n (e1,e2) (x,y) of EQUAL =>
-                           args (xs,ys) | other => other)
-               in case heads (e1,e2) (ah,bh) of EQUAL =>
-                    (case Int.compare (length aa,length ba) of EQUAL =>
-                      args (aa,ba) | other => other) | other => other end
-           | other => other)
-    in compare 0 ([],[]) pair end)
+    in ac_order_with observe
+      (fn value => W.spend_policy work (IntInf.fromInt(String.size value)))
+      {one=1:IntInf.int,add=IntInf.+,compare=IntInf.compare} pair end)
   end
 
   (* The complete fixed net rejects nonconstant/wildcard heads before
@@ -1647,8 +1715,8 @@ struct
                 val _=guard()
             in answer end
       in List.exists member(#heads data)end
-    fun discover(owner as Owner
-        {work,graph,discovery_heads,native_contract,profiles,...})focus=
+    fun discover(owner as Owner{work,graph,discovery_heads,native_contract,
+        profiles,backing,...})focus=
     let val d = describe owner focus val scope = #scope d
         val native=NC.for_work work native_contract
         val cap= #template_limit(#semantic_limits native)
@@ -1670,228 +1738,45 @@ struct
                 raise ERR "policy_discover" "native alpha equality envelope"
               val actual_cap=Int.min(#import_limit native,
                 Int.min(cap,Int.min(output,native_source_cap owner focus)))
-              val receipt=G.discover_selected_partial_with_policy graph scope
-                {original= #node d,heads=discovery_heads,
-                 maximum=RP.AtMost(IntInf.fromInt actual_cap),
-                 scan_limit=RP.AtMost ceiling,step=observe}
-              fun data () =
-                let val value = G.selected_partial_data_with_policy graph scope
-                      discovery_heads receipt
-                in if #original value= #node d then value else
-                  raise ERR "discover" "selected original changed" end
-              val _ = (case owner of Owner {backing,...} =>
-                backing := (fn () => ignore (data ())) :: !backing)
-          in case #view (data ()) of NONE => NONE
-            | SOME view =>
-              let val target = #node view
-                  val _ = G.validate_opened_view graph scope (#node d) view
-                  (* The genuine private alpha recipe preserves every raw,
-                     binder-variable and type incidence. Its cached rich
-                     profile bounds the old raw term before inspection. *)
-                  val opened_metric=G.prepare_scoped_profiled_metric
-                    graph scope {node=target,profiles=profiles}
-                  fun count metric=
-                    let val data=G.profiled_metric_data
-                          graph scope opened_metric
-                        val n=case metric of G.RawNodes=> #raw data
-                          | G.BinderInclusiveNodes=> #inc data
-                    in if n<=IntInf.fromInt output then n else
-                      raise ERR "policy_discover" "native opened output cap"
-                    end
-                  val raw = count G.RawNodes
-                  val inc = count G.BinderInclusiveNodes
-                  val _ = if 3+2*raw<=IntInf.fromInt output andalso
-                      3+2*inc<=IntInf.fromInt output andalso
-                      3+2*raw<=IntInf.fromInt cap andalso
-                      3+2*inc<=IntInf.fromInt cap then () else
-                    raise ERR "discover" "alpha equality exceeds quota"
-                  val types = ref ([] : Type.hol_type list)
-                  fun live () =
-                    (ignore (describe owner focus);ignore (data ());
-                     G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation =
-                    (live ();let val value=operation () in live ();value end)
-                  fun step () = (live ();W.spend_policy work 1;live ())
-                  fun weight ty : IntInf.int =
-                    (step ();if Type.is_vartype ty then
-                       (W.spend_policy work
-                          (IntInf.fromInt
-                            (String.size(Type.dest_vartype ty)));1)
-                     else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                              val _ = W.spend_policy work
-                                (IntInf.fromInt(String.size Thy)+
-                                 IntInf.fromInt(String.size Tyop))
-                          in List.foldl (fn (t,n) => n+weight t) 1 Args end)
-                  (* Primitive projection provenance belongs to the exact
-                     original opaque object, not a fake no-op profile. Its
-                     future capture is planned from the genuine rich path.
-                     Cached type incidences precede all raw Term getters. *)
-                  val rich=inspect
-                    (fn () => G.closure_root graph scope target)
-                  fun cached_types child =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        val ty=inspect (fn () => G.type_of graph n)
-                        val own=weight ty val _ = types := ty:: !types
-                    in case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in own+cached_types f+cached_types x end
-                       | G.AdmittedBinder _ =>
-                         let val held=inspect (fn () =>
-                               G.closure_child_binder graph scope child)
-                             val data=inspect (fn () =>
-                               G.binder_closure_data graph scope held)
-                             val bt=inspect (fn () =>
-                               G.type_of graph (#binder data))
-                             val bw=weight bt val _ = types := bt:: !types
-                             val body=inspect (fn () =>
-                               G.binder_closure_body graph scope held)
-                         in own+bw+cached_types body end
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "rich projection has no complete type portfolio"
-                       | _ => own
-                    end
-                  val cached_ann=cached_types rich
-                  val _ = if cached_ann<=ceiling then
-                      W.spend_policy work cached_ann
-                    else raise ERR "discover"
-                      "projected annotation portfolio exceeds original Work"
-                  (* EXACT record_opened_type_projection spend grammar:
-                     initial representative=1; App=3+operator;
-                     Binder=6+body; Atom=5. collect pays one per actual
-                     incoming incidence, skipping descendants on an ID hit. *)
-                  fun path_visits child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                    in case G.view graph n of G.Application _ =>
-                         3+path_visits (#1 (inspect (fn () =>
-                           G.closure_application_children graph scope child)))
-                       | G.AdmittedBinder _ =>
-                         6+path_visits (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "projection path cannot use an opaque rich node"
-                       | _ => 5
-                    end
-                  val seen=ref ([] : G.node list)
-                  fun collected child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        fun present [] = false
-                          | present (held::rest) =
-                              (step ();n=held orelse present rest)
-                    in if present (!seen) then 1 else
-                      (seen := n:: !seen;
-                       case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in 1+collected f+collected x end
-                       | G.AdmittedBinder _ =>
-                         1+collected (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | _ => 1)
-                    end
-                  (* This scan is rooted at this exact opaque original, so
-                     PartialFull's whole ready_root IS its rich annotation.
-                     The second rich collect is one hit; old opaque is one. *)
-                  val projection_visits=1+path_visits rich+collected rich+2
-                  val _ = if projection_visits<=ceiling then
-                      W.spend_policy work projection_visits
-                    else raise ERR "discover"
-                      "primitive projection capture exceeds original Work"
-                  val alpha=inspect (fn () => G.carrier_alpha_for
-                    graph scope cap {original= #node d,source=view})
-                  val projection=inspect (fn () =>
-                    G.record_opened_type_projection graph scope
-                      (IntInf.toInt projection_visits) alpha)
-                  val actual_visits=inspect (fn () =>
-                    G.opened_type_projection_visits graph scope projection)
-                  val _ = if IntInf.fromInt actual_visits=projection_visits
-                    then () else raise ERR "discover"
-                      "actual primitive projection grammar changed"
-                  fun projected () =
-                    let val data=G.opaque_type_projection_data
-                          graph scope projection 0
-                    in if #node data= #node d then () else
-                      raise ERR "discover" "projected original changed" end
-                  val _ = projected ()
-                  val _ = (case owner of Owner {backing,...} =>
-                    backing := projected :: !backing)
-                  fun measure term :
-                      IntInf.int * IntInf.int * IntInf.int =
-                    let val _ = step ()
-                        val ty=inspect (fn () => Term.type_of term)
-                        val ann=weight ty val _ = types := ty:: !types
-                    in if Term.is_comb term then
-                         let val (f,x)=inspect (fn () => Term.dest_comb term)
-                             val (a,b,c)=measure f val (e,h,j)=measure x
-                         in (1+a+e,1+b+h,ann+c+j) end
-                       else if Term.is_abs term then
-                         let val (v,b)=inspect (fn () => Term.dest_abs term)
-                             val bt=inspect (fn () => Term.type_of v)
-                             val bw=weight bt val _ = types := bt:: !types
-                             val (a,c,e)=measure b
-                         in (1+a,2+c,ann+bw+e) end
-                       else (1,1,ann)
-                    end
-                  val proof= #bridge view
-                  val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
-                  val term=inspect (fn () => G.representative graph target)
-                  val (tr,ti,ta)=measure term
-                  val (tr2,ti2,ta2)=measure term
-                  val (eq_partial,_)=inspect
-                    (fn () => Term.dest_comb (Thm.concl proof))
-                  val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
-                  val header_types=List.map (fn t => inspect
-                    (fn () => Term.type_of t))
-                    [Thm.concl proof,eq_partial,eq_head]
-                  val header=List.foldl (fn (ty,n) => n+weight ty) 0
-                    header_types
-                  val rr=3+tr+tr2 val ri=3+ti+ti2
-                  val ra=header+ta+ta2
-                  val amount=er+ei+ea+rr+ri+ra
-                  val _ = if er=3+2*raw andalso ei=3+2*inc andalso
-                      tr=raw andalso ti=inc andalso tr=tr2 andalso
-                      ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
-                      ra<=ceiling andalso amount<=ceiling then () else
-                    raise ERR "discover" "alpha metadata/Work mismatch"
-                  val _ = W.spend_policy work amount
-                  val _ = types := header_types @ !types
-                  val target_child=inspect
-                    (fn () => G.closure_root graph scope target)
-                  val identity=inspect (fn () =>
-                    G.plan_scoped_identity_closure_view_with_policy graph scope
-                      (#template_limit(W.semantic_policy work))
-                      (* Original/partial guards remain in data/live,
-                         owner.backing and P.source_view validation. The
-                         raw opaque original is not an identity recipe. *)
-                      {target=target_child,retain=[],profiles=profiles})
-                  val _ = List.app (fn ty => inspect
-                    (fn () => policy owner focus ty)) (List.rev (!types))
-                  val target_view=inspect
-                    (fn () => G.execute_identity_closure_view identity)
-                  val conversion=inspect(fn()=>
-                    P.record_typed_conversion_with_policy_scoped_profiles
-                    graph scope {source= #node d,source_view=view,
-                      target=target,target_view=target_view,theorem=proof,
-                      template_limit= #template_limit(W.semantic_policy work),
-                      profiles=profiles,check_type=fn ty=>inspect
-                        (fn()=>policy owner focus ty)})
-              in SOME conversion end
+          in opened_conversion_with graph scope
+            {node= #node d,
+             discover=fn()=>G.discover_selected_partial_with_policy graph scope
+               {original= #node d,heads=discovery_heads,
+                maximum=RP.AtMost(IntInf.fromInt actual_cap),
+                scan_limit=RP.AtMost ceiling,step=observe},
+             data_of=fn receipt=>
+               let val value=G.selected_partial_data_with_policy graph scope
+                     discovery_heads receipt
+               in {original= #original value,view= #view value}end,
+             backing=backing,redescribe=fn()=>ignore(describe owner focus),
+             count_for=fn target=>
+               let val opened_metric=G.prepare_scoped_profiled_metric
+                     graph scope {node=target,profiles=profiles}
+               in fn metric=>
+                 let val data=G.profiled_metric_data
+                       graph scope opened_metric
+                     val n=case metric of G.RawNodes=> #raw data
+                       | G.BinderInclusiveNodes=> #inc data
+                 in if n<=IntInf.fromInt output then n else
+                   raise ERR "policy_discover" "native opened output cap"
+                 end end,
+             cap=cap,output=output,ceiling=ceiling,
+             spend=fn n=>W.spend_policy work n,
+             plan_identity=fn target_child=>
+               G.plan_scoped_identity_closure_view_with_policy graph scope
+                 (#template_limit(W.semantic_policy work))
+                 {target=target_child,retain=[],profiles=profiles},
+             check_type=policy owner focus,
+             record=fn{source,source_view,target,target_view,theorem,
+                 check_type}=>
+               P.record_typed_conversion_with_policy_scoped_profiles
+                 graph scope {source=source,source_view=source_view,
+                   target=target,target_view=target_view,theorem=theorem,
+                   template_limit= #template_limit(W.semantic_policy work),
+                   profiles=profiles,check_type=check_type}}
           end)
-    in case converted of NONE=>NONE | SOME conversion=>
-      let val leaf=action owner focus(fn observe=>
-            C.graph_leaf_with_policy work
-              {frame= #frame d,conversion=conversion,observe=observe})
-      in SOME(seal owner focus leaf)end
+    in discovered_with converted (leaf owner focus d)
+      (seal owner focus)
     end
   end
 
@@ -1902,185 +1787,86 @@ struct
   struct
     open PolicySimpleOrder
     open PolicySimpleProof
+    fun is_true owner focus=
+      let val Owner{graph,...}=owner
+      in is_true_with graph(fn()=>describe owner focus)(action owner focus)end
+    fun reuse owner(d:description)focus(old:outcome)=
+      let val Owner{work,...}=owner
+      in reuse_with(fn()=>Core.conversion_description_with_policy_for
+          work(#proof old))
+        (publish owner focus d)old:outcome end
+    fun rewrite owner simplify memo stack focus=
+      let val Owner{work,matcher,conditional,stack_limit,...}=owner
+          val d=describe owner focus
+          fun attempt []=NONE
+            | attempt((schema,isperm)::rest)=
+              if not(head_types_compatible owner focus schema)then
+                attempt rest else
+              (case M.prepare_with_policy matcher
+                  {policy_schema=schema,caller= #scope d,
+                   traversal= #scope d,target= #child d}of
+                  M.PolicyNoMatch=>attempt rest
+                | M.PolicyNeedsHigherOrder=>raise ERR "policy_simple"
+                    "fixed scalar clause needs higher-order matching"
+                | M.PolicyMatched matched=>
+                  let val metadata=M.describe_with_policy_for work matched
+                      val count=length(#conditions metadata)
+                  in if length stack+count>stack_limit then attempt rest
+                    else
+                    let val instance=M.instantiate_with_policy matched
+                          {check_type=policy owner focus}
+                        val applicable=action owner focus(fn observe=>
+                          let val _=observe()
+                              val proof=native_instance
+                                owner focus instance
+                              val(_,body)=boolSyntax.strip_imp
+                                (Thm.concl proof)
+                              val(l,r)=boolSyntax.dest_eq body
+                              val answer=not(Term.aconv l r)
+                          in observe();answer end)
+                        val applicable=applicable andalso
+                          (not isperm orelse
+                           ac_order owner focus instance=GREATER)
+                    in if not applicable then attempt rest else
+                      discharge_with{count=count,
+                        condition=fn index=>capture owner(#frame d)
+                          (A.initial_condition_with_policy work
+                            {instance=instance,index=index}),
+                        same=same owner,stack=stack,simplify=simplify memo,
+                        seal=seal owner,identity=identity owner,
+                        is_true=is_true owner,
+                        conditional=fn evidence=>
+                          let val prepared=
+                                Conditional.prepare_owned_with_policy
+                                  conditional {frame= #frame d,
+                                    instance=instance,conditions=evidence,
+                                    ordinal=ordinal owner}
+                              val result=Conditional.execute_with_policy
+                                prepared
+                          in Conditional.conversion_with_policy_for
+                            work result end,
+                        leaf=leaf owner focus d,
+                        seal_focus=seal owner focus,
+                        redescribe=fn()=>ignore(describe owner focus),
+                        retry=fn()=>attempt rest}
+                    end
+                  end)
+      in attempt(candidates owner focus)end
     fun normalize (discover:owner->focus->outcome option)
-        (lift:owner->focus->outcome->outcome) owner source =
-      let
-        fun simplify memo stack focus=
-          let val d=describe owner focus
-              val stack_key=action owner focus(fn observe=>
-                List.map(fn held=>
-                  let val _=observe()val data=describe owner held
-                  in(#node data,#scope data)end)stack)
-              fun stack_equal observe([],[])=true
-                | stack_equal observe((a,s)::xs,(b,t)::ys)=
-                    (observe();a=b andalso s=t andalso
-                      stack_equal observe(xs,ys))
-                | stack_equal _ _=false
-              val cached=action owner focus(fn observe=>
-                let fun find []=NONE
-                      | find((row:memo_entry)::rest)=
-                          (observe();if #node row= #node d andalso
-                             #scope row= #scope d andalso
-                             #category row= #category d andalso
-                             #limit row= #source_limit d andalso
-                             stack_equal observe(#stack row,stack_key)
-                           then SOME(#result row)else find rest)
-                in find(!memo)end)
-              fun reuse(old:outcome)=
-                let val Owner{work,profiles,...}=owner
-                    val _=ignore(Core.conversion_description_with_policy_for
-                      work(#proof old))
-                    val wrapper=action owner focus(fn observe=>
-                      (observe();
-                       P.policy_source_realization_generated_equality_for
-                         work(Core.realization_with_policy_for
-                           work(#proof old)){profiles=profiles}))
-                    val target=capture owner(#frame d)
-                      (A.generated_scoped_with_policy
-                        (expected owner(#scope d))(#admission d)wrapper)
-                in {target=target,recipe= #recipe old,proof= #proof old}
-                  :outcome end
-          in case cached of SOME NONE=>NONE
-            | SOME(SOME old)=>SOME(reuse old)
-            | NONE=>
-                let val result=fresh memo stack focus
-                    val _=action owner focus(fn observe=>
-                      (observe();memo:={node= #node d,scope= #scope d,
-                        category= #category d,limit= #source_limit d,
-                        stack=stack_key,result=result}:: !memo))
-                in result end
-          end
-        and fresh memo stack focus=
-          let val(middle,roots)=repeat memo stack focus
-              val children=descend memo stack middle
-          in case children of NONE=>roots | SOME child_result=>
-            let val prefix=join owner focus roots(SOME child_result)
-                val retry=if same owner middle(#target child_result)
-                  then NONE else rewrite memo stack(#target child_result)
-            in case retry of NONE=>prefix | SOME changed=>
-              join owner focus(join owner focus prefix(SOME changed))
-                (simplify memo stack(#target changed))end
-          end
-        and repeat memo stack first=
-          let fun loop current accumulated=
-                case rewrite memo stack current of NONE=>(current,accumulated)
-                | SOME result=>loop(#target result)
-                    (join owner first accumulated(SOME result))
-          in loop first NONE end
-        and rewrite memo stack focus=
-          let val Owner{work,matcher,conditional,stack_limit,...}=owner
-              val d=describe owner focus
-              fun attempt []=NONE
-                | attempt((schema,isperm)::rest)=
-                  if not(head_types_compatible owner focus schema)then
-                    attempt rest else
-                  (case M.prepare_with_policy matcher
-                      {policy_schema=schema,caller= #scope d,
-                       traversal= #scope d,target= #child d}of
-                      M.PolicyNoMatch=>attempt rest
-                    | M.PolicyNeedsHigherOrder=>raise ERR "policy_simple"
-                        "fixed scalar clause needs higher-order matching"
-                    | M.PolicyMatched matched=>
-                      let val metadata=M.describe_with_policy_for work matched
-                          val count=length(#conditions metadata)
-                      in if length stack+count>stack_limit then attempt rest
-                        else
-                        let val instance=M.instantiate_with_policy matched
-                              {check_type=policy owner focus}
-                            val applicable=action owner focus(fn observe=>
-                              let val _=observe()
-                                  val proof=native_instance
-                                    owner focus instance
-                                  val(_,body)=boolSyntax.strip_imp
-                                    (Thm.concl proof)
-                                  val(l,r)=boolSyntax.dest_eq body
-                                  val answer=not(Term.aconv l r)
-                              in observe();answer end)
-                            val applicable=applicable andalso
-                              (not isperm orelse
-                               ac_order owner focus instance=GREATER)
-                        in if not applicable then attempt rest else
-                          let val conditions=List.tabulate(count,fn index=>
-                                capture owner(#frame d)
-                                  (A.initial_condition_with_policy work
-                                    {instance=instance,index=index}))
-                              val looping=List.exists(fn ant=>
-                                List.exists(same owner ant)stack)conditions
-                          in if looping then attempt rest else
-                            let val next_stack=conditions@stack
-                                fun prove condition=
-                                  let val normalized=case
-                                        simplify memo next_stack condition of
-                                          NONE=>seal owner condition
-                                            (identity owner condition)
-                                        | SOME result=>result
-                                  in if is_true(#target normalized)then
-                                      #proof normalized
-                                    else raise Inapplicable end
-                                val evidence=List.map prove conditions
-                                val prepared=
-                                  Conditional.prepare_owned_with_policy
-                                    conditional {frame= #frame d,
-                                      instance=instance,conditions=evidence,
-                                      ordinal=ordinal owner}
-                                val result=Conditional.execute_with_policy
-                                  prepared
-                                val converted=
-                                  Conditional.conversion_with_policy_for
-                                    work result
-                                val leaf=action owner focus(fn observe=>
-                                  C.graph_leaf_with_policy work
-                                    {frame= #frame d,conversion=converted,
-                                     observe=observe})
-                            in SOME(seal owner focus leaf)end
-                            handle Inapplicable=>
-                              (ignore(describe owner focus);attempt rest)
-                          end
-                        end
-                      end)
-          in attempt(candidates owner focus)end
-        and descend memo stack focus=
-          let val Owner{graph,work,...}=owner
-              val d=describe owner focus val scope= #scope d
-          in case G.view graph(#node d)of
-              G.Application _=>
-                let val(a,b)=A.application_children_with_policy
-                      (expected owner scope)(#admission d)
-                    val left=capture owner(#frame d)a
-                    val right=capture owner(#frame d)b
-                    val l=simplify memo stack left
-                    val r=simplify memo stack right
-                in case(l,r)of(NONE,NONE)=>NONE | _=>
-                  let val lp=case l of NONE=>identity owner left
-                        | SOME x=> #recipe x
-                      val rp=case r of NONE=>identity owner right
-                        | SOME x=> #recipe x
-                      val composed=action owner focus(fn observe=>
-                        C.graph_application_fused graph scope
-                          {source= #node d,left=lp,right=rp,observe=observe})
-                  in SOME(seal owner focus composed)end
-                end
-            | G.AdmittedBinder _=>
-                let val frame=F.body_with_policy work(#frame d)(#child d)
-                    val body=capture owner frame
-                      (A.binder_body_with_policy(expected owner scope)
-                        (#admission d))
-                in case simplify memo stack body of NONE=>NONE
-                  | SOME result=>SOME(lift owner focus result)end
-            | G.OpaqueRetained=>
-                (case discover owner focus of NONE=>NONE | SOME prefix=>
-                  join owner focus(SOME prefix)
-                    (simplify memo stack(#target prefix)))
-            | _=>NONE
-          end
-        and is_true focus=
-          let val Owner{graph,...}=owner val d=describe owner focus
-          in action owner focus(fn observe=>
-            (observe();case G.view graph(#node d)of G.Constant id=>
-               KernelSig.id_compare
-                 (id,#Name(Term.dest_thy_constid boolSyntax.T))=EQUAL
-             | _=>false))end
-      in simplify(ref([]:memo_entry list))[] source end
+        (lift:owner->focus->outcome->outcome) owner source=
+      let val Owner{work,graph,...}=owner
+      in normalize_with{work=work,graph=graph,
+          spend=fn()=>W.spend_policy work 1,
+          describe=describe owner,capture=capture owner,
+          identity=identity owner,same=same owner,seal=seal owner,
+          joined=joined owner,reuse=reuse owner,
+          application_children=fn scope=>fn admission=>
+            A.application_children_with_policy(expected owner scope)admission,
+          body_frame=F.body_with_policy work,
+          binder_body=fn scope=>fn admission=>
+            A.binder_body_with_policy(expected owner scope)admission,
+          discover=discover owner,lift=lift owner}
+        (rewrite owner)source end
   end
 
   structure PolicySimpleLifecycle =
@@ -2123,33 +1909,20 @@ struct
         in owner end)
        handle primary=>(W.close work;raise primary))
     fun prepare_policy(owner as Owner{running,...}){frame,admission}=
-      protect owner(fn()=>
-        (active owner;if !running then raise ERR "policy_simple"
-           "reentrant SIMPLE preparation"else();
-         Plan{owner=owner,source=capture owner frame admission,
-           used=ref false}))
+      prepare_with "policy_simple" (protect owner)(fn()=>active owner)running
+        (fn()=>Plan{owner=owner,source=capture owner frame admission,
+          used=ref false})
     (* These internal adapter arguments are fixed in the eventual module
        exports, never supplied by a user of the policy API. *)
     fun execute_internal require_proof discover lift
         (Plan{owner=owner as Owner{running,...},source,used})=
-      protect owner(fn()=>
-        let val _=active owner
-            val _=if !running orelse !used then raise ERR "policy_simple"
-                "consumed or reentrant SIMPLE plan"
-              else(used:=true;running:=true)
-            fun restore()=running:=false
-            val answer=(let
-                val converted=PolicySimpleNormalize.normalize
-                  discover lift owner source
-              in case converted of SOME result=>
-                   SOME(Result{owner=owner,source=source,proof= #proof result})
-                | NONE=>if require_proof then
-                    SOME(Result{owner=owner,source=source,
-                      proof= #proof(PolicySimpleProof.seal owner source
-                        (identity owner source))})else NONE end)
-              handle primary=>(restore();raise primary)
-            val _=restore()val _=active owner
-        in answer end)
+      execute_with "policy_simple" (protect owner)(fn()=>active owner)
+        running used(fn()=>
+        converted_with require_proof
+          (fn()=>PolicySimpleNormalize.normalize discover lift owner source)
+          (fn()=> #proof(PolicySimpleProof.seal owner source
+            (identity owner source)))
+          (fn proof=>Result{owner=owner,source=source,proof=proof}))
   end
 
   structure PolicySimpleLambda =
@@ -2158,18 +1931,16 @@ struct
     open PolicySimpleProof
     fun lift(owner as Owner
         {work,conditional,native_contract,profiles,...})focus(result:outcome)=
-      let val d=describe owner focus
-          val plan=Lambda.prepare_admitted_with_policy work
+      lift_with(fn()=>describe owner focus)
+        (fn d=>Lambda.execute_with_policy work
+          (Lambda.prepare_admitted_with_policy work
             {frame= #frame d,admission= #admission d,body= #proof result,
              ordinal=ordinal owner,native_contract=native_contract,
-             profiles=profiles,check_type=policy owner focus}
-          val value=Lambda.execute_with_policy work plan
-          val converted=Conditional.lambda_conversion_with_policy_for
-            work conditional {frame= #frame d,result=value}
-          val leaf=action owner focus(fn observe=>
-            C.graph_leaf_with_policy work
-              {frame= #frame d,conversion=converted,observe=observe})
-      in seal owner focus leaf end
+             profiles=profiles,check_type=policy owner focus}))
+        (fn d=>fn value=>Conditional.lambda_conversion_with_policy_for
+          work conditional {frame= #frame d,result=value})
+        (leaf owner focus)
+        (seal owner focus)
   end
 
   type policy_owner=PolicySimpleBase.owner
@@ -2188,29 +1959,22 @@ struct
       PolicySimpleSelected.discover PolicySimpleLambda.lift plan)
   fun normalize_aux_with_policy
       (owner as PolicySimpleBase.Owner{work,traversal,check_type,...})target=
-    PolicySimpleBase.protect owner(fn()=>
-      let val held=T.carrier_aux_target_with_policy_for work traversal target
-          val plan=prepare_with_policy owner
-            {frame= #frame held,admission= #admission held}
-          val result=execute_changed_with_policy plan
-      in case result of NONE=>
-          (ignore(T.carrier_aux_target_with_policy_for work traversal target);
-           #conversion held)
-        | SOME result=>
-          let val proof=core_with_policy_for work result
-              val scope= #scope(F.description_with_policy_for
-                work(#frame held))
-              val local_result=D.adopt_core_with_policy_for
-                (PolicySimpleBase.expected owner scope)(#dynamic held)proof
-          in D.compose_with_policy
-            {first= #conversion held,second=local_result,
-             ordinal=PolicySimpleBase.ordinal owner,check_type=fn ty=>
-               (PolicySimpleBase.active owner;
-                ignore(T.carrier_aux_target_with_policy_for
-                  work traversal target);
-                check_type ty;PolicySimpleBase.active owner;
-                ignore(T.carrier_aux_target_with_policy_for
-                  work traversal target))}end
-      end)
+    PolicySimpleBase.protect owner(fn()=>aux_normalization
+      {aux_target=fn()=>T.carrier_aux_target_with_policy_for
+         work traversal target,
+       conversion=fn held=> #conversion held,
+       changed=fn held=>execute_changed_with_policy(prepare_with_policy owner
+         {frame= #frame held,admission= #admission held}),
+       core=core_with_policy_for work,
+       adopt=fn held=>fn proof=>
+         let val scope= #scope(F.description_with_policy_for
+               work(#frame held))
+         in D.adopt_core_with_policy_for
+           (PolicySimpleBase.expected owner scope)(#dynamic held)proof end,
+       compose=fn held=>fn local_result=>fn policy_check=>
+         D.compose_with_policy
+           {first= #conversion held,second=local_result,
+            ordinal=PolicySimpleBase.ordinal owner,check_type=policy_check},
+       active=fn()=>PolicySimpleBase.active owner,check_type=check_type})
 
 end

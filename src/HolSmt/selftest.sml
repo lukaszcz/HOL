@@ -2692,7 +2692,8 @@ val _ = fixture (fn {proof,prepare,type_calls,...} =>
   let
     fun future _ : CPC_Proof.proof_rule =
       {name = "future",namespace = CPC_Proof.ProofRule,
-       version_support = CPC_Proof.AllCVCVersions,replay_handler = "future"}
+       version_support = CPC_Proof.AllCVCVersions,
+       replay_handler = CPC_Proof.HEvaluate}
     val broken = replace_last proof
       (step_change future #premises false)
     val popped = replace_last proof
@@ -3261,7 +3262,7 @@ local
   fun modify_symmetry proof change =
     List.map (fn command => case command of
         Parser.GraphStep {step,pop} =>
-          if #replay_handler (#rule step) = "symm" then
+          if #replay_handler (#rule step) = CPC_Proof.HSymm then
             change (step,pop) else command
       | _ => command) (#commands (proof : Parser.graph_proof))
   fun altered (step : Parser.graph_rule_step)
@@ -3385,7 +3386,8 @@ in
   val _ = testutils.tprint "Transitivity still explicitly declines admission"
   val _ = refusal (fn (step,pop) => altered step pop
     {name = "trans",namespace = CPC_Proof.ProofRule,
-     version_support = CPC_Proof.AllCVCVersions,replay_handler = "trans"}
+     version_support = CPC_Proof.AllCVCVersions,
+     replay_handler = CPC_Proof.HTrans}
     (#premises step) (#args step) (#conclusion step))
   val _ = testutils.OK ()
 
@@ -46740,45 +46742,16 @@ end;
 
 local
   structure G=SmtReplayGraph
-  structure S=SmtReplaySource
   structure W=SmtReplayInvocationWork
-  structure P=SmtReplayProof
-  structure Q=SmtReplayFocusAdmission
-  structure RP=SmtReplayResourcePolicy
-  structure NC=SmtReplayNativeContract
   structure H=SmtLib_GraphLawTypeInstance
   structure C=SmtLib_GraphCarrierRoot
-  val cap=100000
-  val metadata:RP.semantic_policy=
-    {input_limit=RP.Uncapped,output_limit=RP.Uncapped,
-     template_limit=RP.Uncapped}
-  val native:NC.limits=
-    {semantic_limits={input_limit=cap,output_limit=cap,template_limit=cap},
-     import_limit=cap,type_work_limit=2000000}
-  type fixture={graph:G.graph,scope:G.scope,sources:S.sources,
-    work:W.portfolio,native:NC.contract,admission:Q.policy_focus,
-    law:P.closed_fact,node:G.node}
-  fun setup term fixed limits:fixture=
-    let val graph=G.new () val scope=G.root_scope graph
-        val sources=S.new_with_policy graph scope RP.Uncapped
-          {goal=term,assumptions=[]}
-        val view=G.record_opened_view_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (#node (S.goal_source sources))
-        val imported=G.import_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (Thm.concl fixed)
-        val opened=G.record_opened_view_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (#node imported)
-        val law=P.record_closed_from_import_with_policy graph scope
-          {node= #node opened,theorem=fixed,template_limit=RP.Uncapped,
-           check_type=fn _=>()}
-        val work=W.begin_with_policy graph scope sources
-          {limits=metadata,work_limit=RP.Uncapped}
-        val contract=NC.capture work limits
-        val admission=Q.initial_goal_with_policy work {view=SOME view}
-    in {graph=graph,scope=scope,sources=sources,work=work,native=contract,
-        admission=admission,law=law,node= #node view} end
-  fun expected(e:fixture)=
-    {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e}
+  structure X=SmtLib_GraphCarrierRootFixture
+  val cap=SmtLib_GraphCarrierRootFixture.cap
+  val native=X.native
+  type fixture=X.fixture
+  val setup=X.setup
+  val expected=X.expected
+  val producer=X.producer
   fun prepare(e:fixture) callback=C.prepare_closure_admitted_with_policy
     {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e,
      ordinal=0,admission= #admission e,law= #law e,
@@ -46802,10 +46775,6 @@ local
          (right,G.representative (#graph e) (#target d))
        andalso null(Thm.hyp (#theorem d))
        andalso not(#retired(W.audit_policy (#work e)))) end
-  fun producer(e:fixture) callback=H.begin_original_with_policy
-    (#graph e) (#scope e)
-    {original= #law e,work= #work e,native_contract= #native e,
-     check_type=callback}
 in
   val _ = run_postlude 279 "policy-carrier-root-12" (fn () =>
     let
@@ -48636,45 +48605,15 @@ end
 
 local
   structure G=SmtReplayGraph
-  structure S=SmtReplaySource
   structure W=SmtReplayInvocationWork
-  structure P=SmtReplayProof
-  structure Q=SmtReplayFocusAdmission
-  structure RP=SmtReplayResourcePolicy
-  structure NC=SmtReplayNativeContract
-  structure H=SmtLib_GraphLawTypeInstance
   structure C=SmtLib_GraphCarrierRoot
-  val cap=100000
-  val metadata:RP.semantic_policy=
-    {input_limit=RP.Uncapped,output_limit=RP.Uncapped,
-     template_limit=RP.Uncapped}
-  val native:NC.limits=
-    {semantic_limits={input_limit=cap,output_limit=cap,template_limit=cap},
-     import_limit=cap,type_work_limit=2000000}
-  type fixture={graph:G.graph,scope:G.scope,sources:S.sources,
-    work:W.portfolio,native:NC.contract,admission:Q.policy_focus,
-    law:P.closed_fact,node:G.node}
-  fun setup term fixed limits:fixture=
-    let val graph=G.new () val scope=G.root_scope graph
-        val sources=S.new_with_policy graph scope RP.Uncapped
-          {goal=term,assumptions=[]}
-        val view=G.record_opened_view_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (#node (S.goal_source sources))
-        val imported=G.import_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (Thm.concl fixed)
-        val opened=G.record_opened_view_with_policy graph scope
-          (RP.AtMost (IntInf.fromInt cap)) (#node imported)
-        val law=P.record_closed_from_import_with_policy graph scope
-          {node= #node opened,theorem=fixed,template_limit=RP.Uncapped,
-           check_type=fn _=>()}
-        val work=W.begin_with_policy graph scope sources
-          {limits=metadata,work_limit=RP.Uncapped}
-        val contract=NC.capture work limits
-        val admission=Q.initial_goal_with_policy work {view=SOME view}
-    in {graph=graph,scope=scope,sources=sources,work=work,native=contract,
-        admission=admission,law=law,node= #node view} end
-  fun expected(e:fixture)=
-    {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e}
+  structure X=SmtLib_GraphCarrierRootFixture
+  val cap=SmtLib_GraphCarrierRootFixture.cap
+  val native=X.native
+  type fixture=X.fixture
+  val setup=X.setup
+  val expected=X.expected
+  val opaque_setup=X.opaque_setup
   fun prepare(e:fixture) callback=C.prepare_closure_profiled_admitted_with_policy
     {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e,
      ordinal=0,admission= #admission e,law= #law e,
@@ -48698,94 +48637,6 @@ local
          (right,G.representative (#graph e) (#target d))
        andalso null(Thm.hyp (#theorem d))
        andalso not(#retired(W.audit_policy (#work e)))) end
-  fun producer(e:fixture) callback=H.begin_original_with_policy
-    (#graph e) (#scope e)
-    {original= #law e,work= #work e,native_contract= #native e,
-     check_type=callback}
-  (* Genuine Source -> ALPHA equality -> P scoped wrapper -> Q Generated.
-     No raw node is adopted as a focus or labelled a registered Source view. *)
-  fun opaque_setup body_issued limits =
-    let val graph=G.new() val scope=G.root_scope graph
-        val n=Term.mk_var("profiled_carrier_n",numSyntax.num)
-        val z=Term.mk_var("profiled_carrier_z",Type.bool)
-        val opaque=Term.mk_abs(z,boolSyntax.mk_neg z)
-        val f=Term.mk_var("profiled_carrier_f",
-          Type.mk_type("fun",[Term.type_of opaque,
-            Type.mk_type("fun",[numSyntax.num,Type.bool])]))
-        val term=boolSyntax.mk_forall(n,Term.list_mk_comb(f,[opaque,n]))
-        val sources=S.new_with_policy graph scope RP.Uncapped
-          {goal=term,assumptions=[]}
-        val frame=G.new_scope graph scope []
-        val binder=G.variable graph frame G.Bound n
-        val body_frame=G.new_scope graph frame [(n,binder)]
-        val origin=if body_issued then body_frame else scope
-        val retained= #node(G.import_with_policy graph origin
-          (RP.AtMost(IntInf.fromInt cap)) opaque)
-        val q=Term.mk_var("profiled_carrier_q",Type.bool)
-        val beta=Term.mk_comb(Term.mk_abs(q,q),boolSyntax.T)
-        val wrapped=boolSyntax.mk_conj(boolSyntax.mk_eq(opaque,opaque),beta)
-        val wrapper=G.import_with_policy graph origin
-          (RP.AtMost(IntInf.fromInt cap)) wrapped
-        val discovery=G.discover_partial_with_policy graph origin
-          {original= #node wrapper,maximum=RP.AtMost(IntInf.fromInt cap),
-           scan_limit=RP.AtMost 2000000,step=fn()=>()}
-        val body_profiles=G.partial_profiles_with_policy graph origin discovery
-        (* The original Source's whole predicate is a DISTINCT retained
-           opaque node. Its real no-op profile is required by the equality's
-           left side as well as the RHS's smaller retained operand. *)
-        val original_predicate=Term.rand
-          (G.representative graph (#node(S.goal_source sources)))
-        val root_wrapper=G.import_with_policy graph scope
-          (RP.AtMost(IntInf.fromInt cap))
-          (boolSyntax.mk_conj
-            (boolSyntax.mk_eq(original_predicate,original_predicate),beta))
-        val root_discovery=G.discover_partial_with_policy graph scope
-          {original= #node root_wrapper,maximum=RP.AtMost(IntInf.fromInt cap),
-           scan_limit=RP.AtMost 2000000,step=fn()=>()}
-        val profiles=body_profiles @
-          G.partial_profiles_with_policy graph scope root_discovery
-        val _=require "opaque fixture lost actual retained operand"
-          (case G.view graph retained of G.OpaqueRetained=>true | _=>false)
-        val work=W.begin_with_policy graph scope sources
-          {limits=metadata,work_limit=RP.Uncapped}
-        val contract=NC.capture work limits
-        fun step()=(NC.validate_for work contract;W.spend_policy work 1)
-        val operator=G.variable graph scope G.RigidSource f
-        val head=G.application graph body_frame (operator,retained)
-        val body=G.application graph body_frame (head,binder)
-        val predicate=W.with_step work (fn()=>
-          G.recorded_abstraction_with_profile_policy graph scope
-            {maximum=RP.Uncapped,
-             native_limit= #output_limit(#semantic_limits limits),
-             type_work_limit= #type_work_limit limits,
-             binder=binder,body=body,body_frame=body_frame,
-             profiles=profiles,step=step})
-        val universal=G.constant graph scope
-          (Term.rator(G.representative graph (#node(S.goal_source sources))))
-        val node=G.application graph scope (universal,predicate)
-        val original= #node(S.goal_source sources)
-        val theorem=Thm.ALPHA (G.representative graph original)
-          (G.representative graph node)
-        val equality=Term.rator(Term.rator(Thm.concl theorem))
-        val equality_head=G.constant graph scope equality
-        val partial=G.application graph scope (equality_head,original)
-        val equation=G.application graph scope (partial,node)
-        val saved=P.record_generated_equality_with_policy_scoped_profiles
-          graph scope {node=equation,theorem=theorem,
-            template_limit=RP.Uncapped,profiles=profiles,check_type=fn _=>()}
-        val parent=Q.initial_goal_with_policy work {view=NONE}
-        val admission=Q.generated_scoped_with_policy
-          {graph=graph,scope=scope,sources=sources,work=work} parent saved
-        val fixed=HolSmtTheory.NUM_FORALL_TO_INT
-        val imported=G.import_with_policy graph scope
-          (RP.AtMost(IntInf.fromInt cap)) (Thm.concl fixed)
-        val opened=G.record_opened_view_with_policy graph scope
-          (RP.AtMost(IntInf.fromInt cap)) (#node imported)
-        val law=P.record_closed_from_import_with_policy graph scope
-          {node= #node opened,theorem=fixed,template_limit=RP.Uncapped,
-           check_type=fn _=>()}
-    in ({graph=graph,scope=scope,sources=sources,work=work,native=contract,
-         admission=admission,law=law,node=node}:fixture,profiles) end
   fun prepare_profiles (e:fixture) profiles callback=
     C.prepare_closure_profiled_admitted_with_policy
       {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e,
@@ -75737,7 +75588,11 @@ in
     in ()end)
 end
 
-local
+functor Z3OwnedFinalizationFixtureFn(Arg : sig
+  structure Final : Z3_SparseOwnedValueProofReplay
+  val variant : string
+end) =
+struct
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -75755,8 +75610,7 @@ local
   structure P = SmtReplayOwnedValueProof
   structure NC = SmtReplayNativeContract
   structure Real = SmtReplayValueRealization
-  structure Final = Z3_OwnedValueProofReplay
-  val _ = Z3_OwnedValueProofReplay.prepare_with_policy
+  structure Final = Arg.Final
   val _ = SmtReplayValueRealization.prepare
   structure RP = SmtReplayResourcePolicy
   type env = {graph:G.graph,scope:G.scope,sources:S.sources,work:W.portfolio,
@@ -75768,8 +75622,8 @@ local
      type_work_limit=100000000}
   fun require message yes = if yes then () else raise Fail message
   fun test label action =
-    ((Count.counting_thms true;testutils.tprint label;action ();
-      Count.counting_thms false;testutils.OK ())
+    ((Count.counting_thms true;testutils.tprint (Arg.variant ^ label);
+      action ();Count.counting_thms false;testutils.OK ())
      handle primary=>(Count.counting_thms false;raise primary))
   fun refused action = (action ();false)
     handle Feedback.HOL_ERR _ => true
@@ -75885,7 +75739,7 @@ local
           val data=W.with_step (#work e) (fn()=>
             VP.contents_with_policy_for (#work e) (#query e) held)
           val assertions=graph_assertions e data
-          val prepared=Z3_OwnedValueProofReplay.prepare_with_policy
+          val prepared=Final.prepare_with_policy
             (#work e) (#query e) held
             {assertions=assertions,native_contract= #contract e,
              profiles=[],check_type=callback}
@@ -75923,8 +75777,7 @@ local
             (if n=0 then "true" else "(and " ^ name(n-1) ^
               " " ^ name(n-1) ^ ")") ^ ")) " ^ chain(n+1) ^ ")"
     in "((proof " ^ chain 0 ^ "))"end
-in
-  val _=run_postlude 406 "owned-value-public-goal-finalization-7"(fn()=>
+  fun run()=
     let
       val _=test "Parsed checked MP reaches exact non-atomic public Goal"
         (fn()=>let val final_phase=ref(SOME(Count.thm_count()))
@@ -76070,7 +75923,20 @@ in
                 (exact andalso Count.thm_count()=prior andalso
                  #retired(W.audit_policy(#work expected))andalso
                  not(#retired(W.audit_policy(#work held))))end)end)))
-    in ()end)
+    in ()end
+end
+
+local
+  structure Ordinary = Z3OwnedFinalizationFixtureFn
+    (struct structure Final = Z3_OwnedValueProofReplay
+            val variant = "" end)
+  structure Sparse = Z3OwnedFinalizationFixtureFn
+    (struct structure Final = Z3_OwnedValueProofReplay.Sparse
+            val variant = "sparse: " end)
+  val _ = Z3_OwnedValueProofReplay.prepare_with_policy
+in
+  val _=run_postlude 406 "owned-value-public-goal-finalization-7"(fn()=>
+    (Ordinary.run();Sparse.run()))
 end
 local
   structure G = SmtReplayGraph
@@ -76356,7 +76222,8 @@ in
               require "unsupported CPC rule ran a speculative prefix"
                 (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@c"andalso #replay_handler rule="trust"andalso
+                      id="@c"andalso
+                      #replay_handler rule = CPC_Proof.HTrust andalso
                       not pop andalso not(#retired(W.audit_policy(#work e)))
                   | _=>false))))
       val _=test "Actual Scope command remains a requirement before names"
@@ -76369,7 +76236,7 @@ in
               (case prepared of Receiver.Needs
                   [Receiver.ScopeProgramme{assumption=true,...},
                    Receiver.RuleProgramme{rule,pop=true,...}]=>
-                    #replay_handler rule="scope"andalso
+                    (#replay_handler rule) = CPC_Proof.HScope andalso
                     not(#retired(W.audit_policy(#work e)))|_=>false))))
       val _=test "Completed empty receiver fences foreign owner then expiry"
         (fn()=>fixture[clause]boolSyntax.F(fn held=>
@@ -77591,7 +77458,8 @@ in
                  not(#retired(W.audit_policy(#work e)))andalso
                  (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@later"andalso #replay_handler rule="trust"andalso
+                      id="@later"andalso
+                      #replay_handler rule = CPC_Proof.HTrust andalso
                       not pop|_=>false)))end))
       val _=test "New completed queue fences foreign Work before dead packet"
         (fn()=>fixture[double]``cpc_simple_goal410:bool``(fn held=>
@@ -78562,7 +78430,8 @@ in
              not(#retired(W.audit_policy(#work e)))andalso
              (case result of Final.ReplayNeeds
                 [Receiver.RuleProgramme{id,rule,pop}]=>
-                  id="@later"andalso #replay_handler rule="trust"andalso
+                  id="@later"andalso
+                  #replay_handler rule = CPC_Proof.HTrust andalso
                   not pop|_=>false))end))
       val _=test "The CPC public finalizer is consumed once only"
         (fn()=>fixture[double]goal(fn e=>using e ordinary(fn _=>())
@@ -78975,7 +78844,8 @@ local
        Count.thm_count()=prior andalso
        not(#retired(W.audit_policy(#work e)))andalso
        (case result of Final.ReplayNeeds
-           [Receiver.RuleProgramme{rule,...}]=> #replay_handler rule=handler
+           [Receiver.RuleProgramme{rule,...}]=>
+               #replay_handler rule=handler
          | _=>false))end
   fun pending e certificate handler=
     pending_checked(fn _=>fn _=>fn _=>true)e certificate handler
@@ -79033,7 +78903,7 @@ in
         (fn()=>fixture[eq(p,q)]goal(fn e=>pending e
           ("((assume @equal (= p q)) "^
            "(step @missing (= p r) :rule trans :premises (@equal)))")
-          "trans"))
+          CPC_Proof.HTrans))
       val _=test "RegLan transitivity leaves the whole parsed prefix pending"
         (* CPC RegLan '=' denotes language equivalence. A HOL datatype
            equality Source would instead leave its earlier assume pending. *)
@@ -79042,12 +78912,12 @@ in
           ("((assume @languages (= la lb)) "^
            "(step @prefix (= p p) :rule refl :args (p)) "^
            "(step @missing (= la lb) :rule trans "^
-             ":premises (@languages)))")"trans"))
+             ":premises (@languages)))")CPC_Proof.HTrans))
       val _=test "Negative symmetry keeps its genuine missing conversion port"
         (fn()=>fixture[neg(eq(p,q))]goal(fn e=>pending e
           ("((assume @negative (not (= p q))) "^
            "(step @inverse (not (= q p)) :rule symm "^
-             ":premises (@negative)))")"symm"))
+             ":premises (@negative)))")CPC_Proof.HSymm))
       val _=test "Owned OR congruence matches native and closes original Goal"
         (fn()=>let
           val assumptions=[eq(p,q),boolSyntax.mk_disj(p,r),
@@ -79321,7 +79191,11 @@ in
 end
 
 
-local
+functor Z3OwnedBinderFixtureFn(Arg : sig
+  structure Final : Z3_SparseOwnedValueProofReplay
+  val variant : string
+end) =
+struct
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -79339,11 +79213,10 @@ local
   structure P = SmtReplayOwnedValueProof
   structure NC = SmtReplayNativeContract
   structure Real = SmtReplayValueRealization
-  structure Final = Z3_OwnedValueProofReplay
+  structure Final = Arg.Final
   structure Binder = SmtReplayOwnedValueBinder
   val _ = SmtReplayOwnedValueBinder.prepare
   val _ = SmtReplayBinderClose.run
-  val _ = Z3_OwnedValueProofReplay.prepare_with_binders_with_policy
   val _ = SmtReplayValueRealization.prepare
   structure RP = SmtReplayResourcePolicy
   type env = {graph:G.graph,scope:G.scope,sources:S.sources,work:W.portfolio,
@@ -79355,8 +79228,8 @@ local
      type_work_limit=100000000}
   fun require message yes = if yes then () else raise Fail message
   fun test label action =
-    ((Count.counting_thms true;testutils.tprint label;action ();
-      Count.counting_thms false;testutils.OK ())
+    ((Count.counting_thms true;testutils.tprint (Arg.variant ^ label);
+      action ();Count.counting_thms false;testutils.OK ())
      handle primary=>(Count.counting_thms false;raise primary))
   fun refused action = (action ();false)
     handle Feedback.HOL_ERR _ => true
@@ -79535,8 +79408,8 @@ local
       (case PV.view(#context data)partial of PV.Application(_,left)=>
         (left,right)|_=>raise Fail "missing equality left")
     | _=>raise Fail "missing actual target equality"
-in
-  val _=run_postlude 416 "owned-value-source-free-scoped-binder-10"(fn()=>
+  (* The tests below that run a Final method. *)
+  fun final_tests()=
     let
       val _=test "Parsed source-free Bind is demanded through Real and Goal"
         (fn()=>fixture [] boolSyntax.T(fn e=>
@@ -79557,6 +79430,44 @@ in
                #dependencies result=[P.Current 0] andalso
                null(Thm.hyp(#theorem result)) andalso
                null(#1(S.original_goal(#sources e))))end)end))
+      val _=test "Unmigrated NNF keeps authentic Scope Needs without callbacks"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let val text=certificate
+                ("(nnf-pos (proof-bind (lambda ((x Bool)) " ^
+                 "(refl (= x x)))) (= (forall ((a Bool)) a) " ^
+                 "(forall ((b Bool)) b)))")
+              val callbacks=ref 0 val prior=Count.thm_count()
+          in using e text(fn _=>callbacks:= !callbacks+1)
+            (fn _=>fn _=>fn result=>
+              let val needed=case result of Final.ReplayNeeds rows=>
+                      List.exists(fn Receiver.ScopedBinding _=>true
+                        |_=>false)rows
+                    | _=>false
+              in require "unmigrated NNF lost its scoped requirement"
+                (needed andalso !callbacks=0 andalso
+                 Count.thm_count()=prior andalso
+                 not(#retired(W.audit_policy(#work e))))end)end))
+      val _=test "Later unsupported Bind prevents an earlier native ABS prefix"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let val other=alias_quant "(symm (refl (= x x)) (= x x))"
+              val first=alias_quant "(refl (= x x))"
+              val text=certificate(shared_target
+                ("(trans " ^ first ^ " " ^ other ^ " p)"))
+              val prior=Count.thm_count() val callbacks=ref 0
+          in using e text(fn _=>callbacks:= !callbacks+1)
+            (fn _=>fn _=>fn result=>
+            let val needed=case result of Final.ReplayNeeds rows=>
+                    List.exists(fn Receiver.BinderAdmission
+                      (Binder.ChildProgramme _)=>true|_=>false)rows
+                  | _=>false
+            in require "native binder prefix preceded a pending child"
+              (needed andalso !callbacks=0 andalso
+               Count.thm_count()=prior andalso
+               not(#retired(W.audit_policy(#work e))))end)end))
+    in ()end
+  (* Tests of the shared Binder programme alone; no Final method. *)
+  fun binder_tests()=
+    let
       val _=test "Non-Boolean binder admits actual REFLEXIVE Eq Type forest"
         (fn()=>fixture [] boolSyntax.T(fn e=>
           inspecting e(certificate int_quant)(fn held=>fn data=>
@@ -79669,41 +79580,20 @@ in
             in require "binder Type Primary was swallowed or delayed"
               (exact andalso Count.thm_count()=prior andalso
                #retired(W.audit_policy(#work e)))end)))
-      val _=test "Unmigrated NNF keeps authentic Scope Needs without callbacks"
-        (fn()=>fixture [] boolSyntax.T(fn e=>
-          let val text=certificate
-                ("(nnf-pos (proof-bind (lambda ((x Bool)) " ^
-                 "(refl (= x x)))) (= (forall ((a Bool)) a) " ^
-                 "(forall ((b Bool)) b)))")
-              val callbacks=ref 0 val prior=Count.thm_count()
-          in using e text(fn _=>callbacks:= !callbacks+1)
-            (fn _=>fn _=>fn result=>
-              let val needed=case result of Final.ReplayNeeds rows=>
-                      List.exists(fn Receiver.ScopedBinding _=>true
-                        |_=>false)rows
-                    | _=>false
-              in require "unmigrated NNF lost its scoped requirement"
-                (needed andalso !callbacks=0 andalso
-                 Count.thm_count()=prior andalso
-                 not(#retired(W.audit_policy(#work e))))end)end))
-      val _=test "Later unsupported Bind prevents an earlier native ABS prefix"
-        (fn()=>fixture [] boolSyntax.T(fn e=>
-          let val other=alias_quant "(symm (refl (= x x)) (= x x))"
-              val first=alias_quant "(refl (= x x))"
-              val text=certificate(shared_target
-                ("(trans " ^ first ^ " " ^ other ^ " p)"))
-              val prior=Count.thm_count() val callbacks=ref 0
-          in using e text(fn _=>callbacks:= !callbacks+1)
-            (fn _=>fn _=>fn result=>
-            let val needed=case result of Final.ReplayNeeds rows=>
-                    List.exists(fn Receiver.BinderAdmission
-                      (Binder.ChildProgramme _)=>true|_=>false)rows
-                  | _=>false
-            in require "native binder prefix preceded a pending child"
-              (needed andalso !callbacks=0 andalso
-               Count.thm_count()=prior andalso
-               not(#retired(W.audit_policy(#work e))))end)end))
-    in ()end)
+    in ()end
+end
+
+local
+  structure Ordinary = Z3OwnedBinderFixtureFn
+    (struct structure Final = Z3_OwnedValueProofReplay
+            val variant = "" end)
+  structure Sparse = Z3OwnedBinderFixtureFn
+    (struct structure Final = Z3_OwnedValueProofReplay.Sparse
+            val variant = "sparse: " end)
+  val _ = Z3_OwnedValueProofReplay.prepare_with_binders_with_policy
+in
+  val _=run_postlude 416 "owned-value-source-free-scoped-binder-10"(fn()=>
+    (Ordinary.binder_tests();Ordinary.final_tests();Sparse.final_tests()))
 end
 
 local
@@ -79725,13 +79615,14 @@ local
   structure P = SmtReplayOwnedValueProof
   structure NC = SmtReplayNativeContract
   structure RP = SmtReplayResourcePolicy
-  type env = {graph:G.graph,scope:G.scope,sources:S.sources,work:W.portfolio,
-    query:GP.graph_query,metadata:MD.metadata,contract:NC.contract}
-  val cap = RP.AtMost 1000000000
-  val native:NC.limits =
-    {semantic_limits={input_limit=1000000,output_limit=1000000,
-       template_limit=1000000},import_limit=1000000,
-     type_work_limit=100000000}
+  type env = CPC_OwnedValueTestFixture.env
+  val cap = CPC_OwnedValueTestFixture.cap
+  val native = CPC_OwnedValueTestFixture.native
+  fun fixture_with retain assumptions goal action =
+    CPC_OwnedValueTestFixture.fixture
+      {budget=NONE,retain=retain,prefix="cpc417_"}assumptions goal action
+  val input = CPC_OwnedValueTestFixture.input
+  val asserted_values = CPC_OwnedValueTestFixture.asserted_values
   fun require message yes = if yes then () else raise Fail message
   fun test label action =
     ((Count.counting_thms true;testutils.tprint label;action ();
@@ -79739,55 +79630,6 @@ local
      handle primary=>(Count.counting_thms false;raise primary))
   fun refused action = (action ();false)
     handle Feedback.HOL_ERR _ => true
-  fun fixture_with retain assumptions goal action =
-    let
-      val graph=G.new () val scope=G.root_scope graph
-      val sources=S.new graph scope 10000
-        {assumptions=assumptions,goal=goal}
-      val work=W.begin_with_policy graph scope sources
-        {limits={input_limit=cap,output_limit=cap,template_limit=cap},
-         work_limit=cap}
-      fun run () =
-        let
-          val contract=NC.capture work native
-          val {assumptions,denied}=V.originals_with_policy work
-          val validation=V.validate_portfolio_with_policy work
-            {assumptions=if retain then assumptions else [],
-             goal= #node (S.goal_source sources),
-             denied=denied}
-          val query=GP.prepare_query_with_policy work
-            (GP.from_portfolio_with_policy work validation)
-          fun open_view caller node=ignore
-            (G.record_opened_view_with_policy graph caller
-              (RP.AtMost 10000) node)
-          val metadata=T.with_outbound_query_analysis_with_policy work query
-            open_view (fn context=>SmtLib.outbound_with_backend_context
-              {sequence_emission=false,set_backend=SmtLib.Z3Set,
-               bag_backend=SmtLib.Z3ArrayBag,
-               has_set_terms=false,has_bag_terms=false} (fn backend=>
-              let
-                val operations=
-                  SmtLib_GraphCarrierOperations.make_with_datatypes context
-                    {sequence_emission=false}
-                    {term_to_string=fn _=>raise Fail "unexpected formatter"}
-                val emission=SmtLib_GraphDispatcher.emit context
-                  {operations=operations,regime=SmtLib.FirstOrder,
-                   apply_operator=SmtLib.ApplyUnderscore,prefix="cpc417_",
-                   roots=ListPair.zip
-                     (List.tabulate (length (#assumptions context)+2,Lib.I),
-                      #goal context :: #assumptions context @
-                        [#denied context])}
-              in SmtLib_GraphDeclarationMetadata.freeze context
-                {graph=graph,scope=scope,regime=SmtLib.FirstOrder,
-                 backend=backend,operations=operations,emission=emission}
-              end))
-        in action ({graph=graph,scope=scope,sources=sources,work=work,
-          query=query,metadata=metadata,contract=contract}:env) end
-      val outcome=Exn.capture run ()
-      val cleanup=Exn.capture (fn()=>
-        (W.close work;G.close_scope graph scope)) ()
-    in case outcome of Exn.Exn primary=>raise primary
-      | Exn.Res result=>(Exn.release cleanup;result) end
   val p=Term.mk_var("cpc_equality_p417",Type.bool)
   val q=Term.mk_var("cpc_equality_q417",Type.bool)
   val r=Term.mk_var("cpc_equality_r417",Type.bool)
@@ -79795,74 +79637,13 @@ local
   val g=Term.mk_var("cpc_equality_g417",Type.--> (Type.bool,Type.bool))
   val la=Term.mk_var("cpc_equality_la417",SmtRegLanProve.reglan_ty)
   val lb=Term.mk_var("cpc_equality_lb417",SmtRegLanProve.reglan_ty)
+  structure CE=CPC_ClausalEliminationTests
   val bindings=[("p",p),("q",q),("r",r),("f",f),("g",g),
-    ("la",la),("lb",lb)]
-  fun options (e:env):F.value_options =
-    {graph= #graph e,scope= #scope e,logic="ALL",sources=bindings,
-     sorts=Redblackmap.mkDict String.compare,binder_lists=[],
-     import_limit=cap,literal_limit=cap,binder_limit=RP.AtMost 1,
-     recipe_limits={template_limit=cap,index_limit=cap,
-       operand_limit=cap,token_limit=cap},
-     special=fn _=>fn _=>NONE,ascribed=fn _=>fn _=>fn _=>NONE}
-  fun input text =
-    let val index=ref 0 in fn()=>
-      if !index=String.size text then NONE else
-        let val result=String.sub (text,!index)
-        in index:= !index+1;SOME result end end
-  fun packet (e:env) text =
-    CPC_GraphValueProofParser.create_packet_with_policy_from_input
-      (#work e) (#query e) (options e) (#metadata e) "1.3.4" (input text)
-  fun graph_assertions (e:env) (data:CV.proof VP.contents) =
-    let val current=GP.query_nodes_with_policy_for (#work e) (#query e)
-    in W.with_step (#work e) (fn()=>
-      let
-        val context= #context data
-        fun guard ()=(PV.validate context;
-          G.validate_scope (#graph e) (#scope e))
-        fun tick ()=(guard ();W.spend_policy (#work e) 1)
-        fun compare (left,right)=(tick ();Int.compare (left,right))
-        val memo=ref (Redblackmap.mkDict compare)
-        (* The actual query supplies graph IDs. Copy App DATA with sharing;
-           graph_leaf remains restricted to its genuine atomic contract.
-           This fixture needs no native query term or binder conversion. *)
-        fun copy node=
-          let val _=tick () val syntax=G.view (#graph e) node
-              val id=G.node_id node
-          in case Redblackmap.peek (!memo,id) of
-              SOME value=>(PV.usable context (#scope e) value;value)
-            | NONE=>
-                let val value=case syntax of
-                        G.Variable _=>PV.graph_leaf context (#scope e) node
-                      | G.Constant _=>PV.graph_leaf context (#scope e) node
-                      | G.Application (left,right)=>
-                          let val f=copy left val x=copy right
-                          in PV.application context (#scope e) (f,x) end
-                      | _=>raise Fail "fixture Source needs binder programme"
-                    val _=PV.usable context (#scope e) value
-                    val _=tick ()
-                    val _=memo:=Redblackmap.insert (!memo,id,value)
-                in value end
-          end
-        fun copies []=(guard ();[])
-          | copies (node::rest)=(tick ();copy node::copies rest)
-      in copies (#assumptions current @ [#denied current]) end)
-    end
+    ("la",la),("lb",lb)]@CE.bindings(p,q,r)
+  val options = CPC_OwnedValueTestFixture.options bindings
+  val packet = CPC_OwnedValueTestFixture.packet bindings
   fun fixture assumptions goal=fixture_with true assumptions goal
-  fun asserted_values (e:env) (data:CV.proof VP.contents) =
-    let val current=GP.query_nodes_with_policy_for(#work e)(#query e)
-        val fallback=graph_assertions e data
-    in W.with_step(#work e)(fn()=>
-      let val context= #context data
-          val asserted=List.mapPartial(fn C.GraphAssume(_,term)=>
-              SOME(#node term)|_=>NONE)(#commands(#proof data))
-          fun actual(node,copied)=case List.find(fn value=>
-              case PV.corresponds_to_graph_with_policy context
-                  (#graph e)(#scope e){value=value,node=node}of
-                PV.Corresponding=>true|_=>false)asserted of
-              SOME value=>value|NONE=>copied
-      in ListPair.map actual
-        (#assumptions current@[#denied current],fallback)end)
-    end
+  fun fixture assumptions goal=fixture_with true assumptions goal
   fun using (e:env) text callback action =
     let
       val held=packet e text
@@ -79937,6 +79718,42 @@ local
     in require "clause boundary was broadened or named effects ran first"
       (exact andalso !calls=0 andalso Count.thm_count()=prior andalso
        #retired(W.audit_policy(#work e)))end
+  (* Characterization of the eleven clausal-elimination rules through the
+     owned Value consumer: the rows are shared with the term-replay and graph
+     groups. Verdicts, dependencies, retirement and refusal text are
+     checked; Work charges are not pinned (totals depend on the heap the
+     selftest runs in). *)
+  fun clausal_row(row:CE.row)=case #owned row of NONE=>() | SOME expected=>
+    let
+      val label= #label row
+      val lits=case expected of CE.Accept literals=>literals
+        | CE.Refuse _=>[]
+      val assumed=CE.final_literals row lits
+      val assumptions= #term row::List.map(CE.literal_term o CE.refutation)
+        assumed
+      val outcome=fixture assumptions goal
+        (fn e=>Exn.capture(fn()=>(op using) e
+           (CE.proof_text row lits CE.Declared)(fn _=>())
+           (fn _=>fn _=>fn prepared=>
+              let val result=proved(Final.finish_with_policy(#work e)
+                    (ready prepared))
+                  val _=checked e(#theorem result)
+              in(#dependencies result,#retired(W.audit_policy(#work e)))
+              end))())
+    in
+      (case(expected,outcome)of
+         (CE.Accept _,Exn.Res(dependencies,retired))=>
+           require(label^": owned dependencies or retired Work")
+             (dependencies=List.tabulate(List.length assumed+1,P.Current)
+              andalso not retired)
+       | (CE.Refuse needle,Exn.Exn(Feedback.HOL_ERR detail))=>
+           require(label^": owned refusal '"^Feedback.message_of detail^
+             "' lacks '"^needle^"'")
+             (String.isSubstring needle(Feedback.message_of detail))
+       | _=>raise Fail(label^": owned outcome differs from its row"))
+    end
+  fun clausal_rows rule=List.app clausal_row
+    (List.filter(fn(row:CE.row)=> #rule row=rule)(CE.rows(p,q,r)))
 in
   val _=run_postlude 417 "shared-cpc-value-boolean-clauses-16"(fn()=>
     let
@@ -80034,7 +79851,7 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                   local_id="@local"andalso id="@scoped"andalso
-                  #replay_handler rule="scope"
+                  (#replay_handler rule) = CPC_Proof.HScope
               | _=>false))end))
       val _=test "Clause Type callback keeps exact Primary before inference"
         (fn()=>fixture[not_or_source]goal(fn e=>
@@ -80070,6 +79887,9 @@ in
           in require "clause programme bypassed actual native contract"
             (rejected andalso Count.thm_count()=prior andalso
              #retired(W.audit_policy(#work e)))end))
+      val _=List.app(fn(rule,_,_,_)=>test("Clausal rows through the owned "^
+          "consumer: "^rule)(fn()=>clausal_rows rule))
+        (CE.rule_table(CE.operands(p,q,r)))
     in ()end)
 end
 
@@ -81557,7 +81377,7 @@ in
                  [Receiver.ScopeProgramme{id=local_id,assumption=true},
                   Receiver.RuleProgramme{id,rule,pop=true}]=>
                    local_id="@local"andalso id="@scoped"andalso
-                   #replay_handler rule="scope"
+                   (#replay_handler rule) = CPC_Proof.HScope
                 | _=>false))end))
       val _=test "NOT_AND Type callback keeps exact Primary before inference"
         (fn()=>fixture[neg(boolSyntax.mk_conj(p,q)),p,q]goal(fn e=>
@@ -84223,7 +84043,7 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                  local_id="@local"andalso id="@scope"andalso
-                 #replay_handler rule="scope"|_=>false))end))
+                 (#replay_handler rule) = CPC_Proof.HScope|_=>false))end))
       val _=test "Wrong CNF endpoint retires before names or native effects"
         (fn()=>fixture[neg(disj(p,q))]goal(fn e=>
           let val held=packet e
