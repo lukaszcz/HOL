@@ -1740,9 +1740,17 @@ struct
         "cvc5-1.3.4 RARE inventory is not closed and unique"
     end
 
-  fun rare_inventory_lookup name =
-    List.find (fn entry : rare_inventory_entry => #name entry = name)
-      cvc134_rare_rewrite_inventory
+  fun index_first_by_name name_of entries =
+    List.foldr (fn (entry, index) =>
+      Redblackmap.insert (index, name_of entry, entry))
+      (Redblackmap.mkDict String.compare) entries
+
+  local
+    val inventory_index = index_first_by_name
+      (#name : rare_inventory_entry -> string) cvc134_rare_rewrite_inventory
+  in
+    fun rare_inventory_lookup name = Redblackmap.peek (inventory_index, name)
+  end
 
   fun rare_unsupported_diagnostic name =
     case rare_inventory_lookup name of
@@ -2012,9 +2020,22 @@ struct
     | CVCVersionPrefixes prefixes =>
         List.exists (fn prefix => String.isPrefix prefix version) prefixes
 
+  local
+    (* Most congruence and transitivity steps match near the head. Keep
+       that short search and index the rest of the registry. *)
+    val (first_rules, remaining_rules) = Lib.split_after 8 proof_rule_registry
+    val rule_index = index_first_by_name
+      (#name : proof_rule -> string) remaining_rules
+  in
+    fun find_registered_rule name =
+      case List.find (fn (rule : proof_rule) => #name rule = name)
+          first_rules of
+        SOME rule => SOME rule
+      | NONE => Redblackmap.peek (rule_index, name)
+  end
+
   fun lookup_rule version name =
-    case List.find (fn (rule : proof_rule) => #name rule = name)
-      proof_rule_registry of
+    case find_registered_rule name of
       SOME rule => if version_supported version rule then SOME rule else NONE
     | NONE => NONE
 
@@ -2022,8 +2043,7 @@ struct
     | namespace_name RareRewrite = "RARE rewrite"
 
   fun registry_lookup_failure version name =
-    case List.find (fn (rule : proof_rule) => #name rule = name)
-      proof_rule_registry of
+    case find_registered_rule name of
       SOME rule => "CPC proof rule registry lookup failed: " ^
         namespace_name (#namespace rule) ^ " rule " ^ name ^
         " is not supported by cvc5 version " ^ version

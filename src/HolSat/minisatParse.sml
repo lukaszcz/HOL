@@ -110,14 +110,18 @@ fun addBranch next consume lfn cl sva tc id =
                       List.app (fn (_,ci) => consume ci) br; true) (* resolve *)
     in res end
 
-(* Parse a root clause. Final result is int list of literals *)
-fun getIntRoot next idx =
+(* Read the root's literal deltas, checking the cumulative literal number. *)
+fun fold_root next step first initial =
     let
-        fun loop idx' acc =
-            let val v = next ()
-            in if v=0 then idx::(rev acc) else loop (idx'+v) ((idx'+v)::acc) end
-        val res = loop idx []
-     in res  end
+      fun loop literal result =
+          case next () of
+              0 => result
+            | delta => let val literal' = literal + delta in
+                         loop literal' (step (literal', result))
+                       end
+    in loop first initial end
+
+fun getIntRoot next first = first :: rev (fold_root next (op ::) first [])
 
 (* Parse a root clause and add it to the sr stack
    This advances the file read pointer
@@ -132,17 +136,11 @@ fun getIntRoot next idx =
 fun addClause next lfn roots cl sva vc clauseth lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
-        val l = getIntRoot next (next ())
+        val length = fold_root next (fn (_, length) => length + 1) (next ()) 1
         val _ = if not (sat_profile ()) then () else
           (count "root-clauses" 1;
-           count "root-literal-occurrences" (List.length l))
-          (*val _ = (print "\nR ";
-                     print(int_to_string orc ^ "~" ^ int_to_string id)^ ": ");
-                     List.app (fn i => print (int_to_string i ^ " ")) l) *)
-    in case l of
-           []  => failwith
-                    ("addClause:Failed parsing clause "^Int.toString id^"\n")
-         | _ => prepareRootClause lfn roots orc clauseth cl id
+           count "root-literal-occurrences" length)
+    in prepareRootClause lfn roots orc clauseth cl id
     end
 
 (* SML equivalent of  C-style eval of v&1=0 *)
@@ -161,8 +159,7 @@ fun readTrace next ended consume advance
         if isRoot tmp then
           (addClause next lfn roots cl sva vc clauseth tmp id;
            advance id; continue (id+1))
-        else if addBranch next (consume id)
-                  lfn cl sva tmp id then
+        else if addBranch next (consume id) lfn cl sva tmp id then
           (advance id; continue (id+1))
         else continue id
       end
@@ -236,20 +233,31 @@ fun read_live_trace path lfn roots cl sva vc clauseth fin id =
       val {next,ended} = if bytes > 0 then buffered_input fin
         else {next=fn () => sat_getint fin,
               ended=fn () => BinIO.endOfStream fin}
-          fun release ci = case uses of NONE => () | SOME table =>
-              if ci < 0 orelse Dynarray.sub (table,ci) <> 0 then ()
-              else if Portable.pointer_eq (Dynarray.sub (cl,ci),TRUTH) then ()
-              else (Dynarray.update (cl,ci,TRUTH);
-                    count "last-use-releases" 1)
-          fun consume _ ci = case uses of NONE => () | SOME table =>
-              let val remaining = Dynarray.sub (table,ci)-1
-                  val _ = if remaining < 0 then
-                    failwith "resolution trace changed during replay" else ()
-              in Dynarray.update (table,ci,remaining); release ci end
-          (* Keep the latest result even with zero future references: it is
-             the driver's result at EOF, including after deletion records. *)
-          fun advance current = if current = 0 then ()
-                                else release (current-1)
+      fun release ci =
+          if Portable.pointer_eq (Dynarray.sub (cl,ci),TRUTH) then ()
+          else (Dynarray.update (cl,ci,TRUTH); count "last-use-releases" 1)
+      val (consume, advance) =
+          case uses of
+              NONE => (fn _ => ignore, ignore)
+            | SOME table =>
+                let
+                  fun consume _ ci =
+                      let val remaining = Dynarray.sub (table,ci)-1 in
+                        if remaining < 0 then
+                          failwith "resolution trace changed during replay"
+                        else
+                          (Dynarray.update (table,ci,remaining);
+                           if remaining = 0 then release ci else ())
+                      end
+                  (* Keep the latest result even with zero future references:
+                     it is the driver's result at EOF, including after
+                     deletion records. *)
+                  fun advance current =
+                      if current <> 0 andalso
+                         Dynarray.sub (table,current-1) = 0 then
+                        release (current-1)
+                      else ()
+                in (consume, advance) end
     in readTrace next ended consume advance
          lfn roots cl sva vc clauseth id end
 
@@ -286,7 +294,7 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
         fun trace message = sat_trace (fn () => message)
         fun make_roots () =
           if RBM.numItems lfn = 0 then
-            {conjunction = T, projections = Termtab.empty}
+            {conjunction = T, projections = Array.array (0,TRUTH)}
           else
             let val _ = trace "resolution roots start"
                 val roots = profile_stage "replay-roots"

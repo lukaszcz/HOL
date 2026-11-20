@@ -224,11 +224,7 @@ struct
   fun align target source =
     let
       val target_term = term target
-      val destination = from_literals target
-        ((rule1 SmtReplayRuleObservation.ASSUME) target_term)
-      val source_literals = literals source
-      val mapping = SmtReplayClauseOccurrences.alignment_mapping
-        List.map same boolSyntax.F find destination source_literals
+      val source_thm = theorem source
       fun insert literal position =
         let
           fun introduce 0 [_] thm = thm
@@ -255,12 +251,21 @@ struct
                 (term rest)))
         | derive _ _ _ = raise ERR "align" "invalid occurrence mapping"
     in
-      if same target_term (Thm.concl (theorem source)) then
-        SOME (from_literals target (theorem source))
-      else if List.all Option.isSome mapping then
-        SOME (from_literals target
-          (derive source_literals mapping (theorem source)))
-      else NONE
+      if same target_term (Thm.concl source_thm) then
+        SOME (from_literals target source_thm)
+      else
+        let
+          val destination = from_literals target
+            ((rule1 SmtReplayRuleObservation.ASSUME) target_term)
+          val source_literals = literals source
+          val mapping = SmtReplayClauseOccurrences.alignment_mapping
+            List.map same boolSyntax.F find destination source_literals
+        in
+          if List.all Option.isSome mapping then
+            SOME (from_literals target
+              (derive source_literals mapping source_thm))
+          else NONE
+        end
     end
   fun factor source =
     let
@@ -313,9 +318,8 @@ struct
       val sources = List.map (List.map literal o literals) premises
       val signed_pivots = List.map literal pivots
       val destination = Option.map (List.map literal) target
-      val root = boolSyntax.lhs (Thm.concl
-        (SmtCircuitSat.balanced_equivalences
-          (List.map ((rule1 SmtReplayRuleObservation.REFL) o term) sources)))
+      val root =
+        SmtCircuitSat.balanced_conjunction_term (List.map term sources)
       fun projections [] _ = []
         | projections [literals] thm = [from_literals literals thm]
         | projections clauses thm =

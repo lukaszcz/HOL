@@ -1441,12 +1441,13 @@ struct
     let
       fun walk (tm, acc) =
         tm ::
-        (let val (rator, rand) = Term.dest_comb tm
-         in walk (rator, walk (rand, acc)) end
-         handle Feedback.HOL_ERR _ =>
-           (let val (_, body) = Term.dest_abs tm
-            in walk (body, acc) end
-            handle Feedback.HOL_ERR _ => acc))
+        (if Term.is_comb tm then
+           let val (rator, rand) = Term.dest_comb tm
+           in walk (rator, walk (rand, acc)) end
+         else if Term.is_abs tm then
+           let val (_, body) = Term.dest_abs tm
+           in walk (body, acc) end
+         else acc)
     in
       walk (tm, [])
     end

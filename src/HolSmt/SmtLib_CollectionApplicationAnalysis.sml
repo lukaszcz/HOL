@@ -113,6 +113,7 @@ struct
     in List.exists (visit []) roots end
 
   fun has_bound_application operations collection_terms roots =
+    not (List.null collection_terms) andalso
     has_bound_application_with_memo operations
       (fn _ => fn _ => fn compute => compute ()) collection_terms roots
 end

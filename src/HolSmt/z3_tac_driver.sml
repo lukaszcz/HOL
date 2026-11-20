@@ -278,9 +278,8 @@ fun z3_tac_command_uses_fold_left command =
     | _ => false
   end
 
-fun z3_tac_script_diagnostic path =
+fun z3_tac_script_diagnostic script =
   let
-    val script = SmtLib_Parser.parse_script_file path
     val old_fold_left =
       case Z3.configured_version () of
         SOME version => Library.version_compare (version, "4.12.4") = LESS
@@ -330,12 +329,8 @@ fun z3_tac_timed_out status =
 (* Raw status checking needs only the result of check-sat.  In particular,
    never ask the unbounded raw invocation to materialise a proof: that is
    done only by the size-gated checked invocation. *)
-fun z3_tac_status_script path =
+fun z3_tac_write_status_script (text, commands) stream =
   let
-    val input = TextIO.openIn path
-    val text =
-      Portable.finally (fn () => TextIO.closeIn input) TextIO.inputAll input
-    val commands = SmtLib_Parser.parse_script_string text
     fun response command =
       case SmtLib_Parser.node_of command of
         SmtLib_Parser.CmdGetProof => true
@@ -358,19 +353,19 @@ fun z3_tac_status_script path =
       in
         loop commands []
       end
-    fun copy [] = ""
-      | copy (command :: rest) =
-          if response command then copy rest
-          else
-            let val (start, stop) = span command in
-              String.extract (text, start, SOME (stop - start)) ^ "\n" ^
-              copy rest
-            end
+    fun copy command =
+      if response command then ()
+      else
+        let val (start, stop) = span command in
+          TextIO.outputSubstr
+            (stream, Substring.substring (text, start, stop - start));
+          TextIO.output1 (stream, #"\n")
+        end
   in
-    copy (final_session commands)
+    List.app copy (final_session commands)
   end
 
-fun z3_tac_raw_result path =
+fun z3_tac_raw_result source =
   let
     val executable =
       case Z3.configured_executable () of
@@ -413,7 +408,7 @@ fun z3_tac_raw_result path =
         val _ =
           let val stream = TextIO.openOut input in
             Portable.finally (fn () => TextIO.closeOut stream)
-              (fn () => TextIO.output (stream, z3_tac_status_script path)) ()
+              (z3_tac_write_status_script source) stream
           end
         val script = quote executable ^
           Z3.with_timeout_option " -smt2 -in < " ^ quote input ^
@@ -451,10 +446,11 @@ fun z3_tac_checked_result goal =
   | SolverSpec.SAT (SOME _) => Z3_TAC_SAT
   | SolverSpec.UNKNOWN message => Z3_TAC_UNKNOWN message
 
-fun z3_tac_ok_snapshot path expected_logic =
+fun z3_tac_ok_snapshot text expected_logic =
 let
   val _ = HOLFlags.set_flag (Library.trace_flag, 0)
-  val script_diagnostic = z3_tac_script_diagnostic path
+  val script = SmtLib_Parser.parse_script_string text
+  val script_diagnostic = z3_tac_script_diagnostic script
   val _ =
     case script_diagnostic of
       SOME diagnostic =>
@@ -463,11 +459,11 @@ let
            "diagnostic=" ^ diagnostic]
     | NONE => ()
   val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
-    (SmtLib_Parser.parse_file_state_with_options
-       z3_tac_datatype_options path, NONE)
+    (SmtLib_Parser.typecheck_script_with_options
+       z3_tac_datatype_options script, NONE)
     handle Feedback.HOL_ERR holerr =>
-      (SmtLib_Parser.parse_file_state_with_options
-         (z3_tac_datatype_options_with_logic "ALL") path,
+      (SmtLib_Parser.typecheck_script_with_options
+         (z3_tac_datatype_options_with_logic "ALL") script,
        SOME holerr)
   val observed_logic = #logic state
   val queries = #queries state
@@ -503,7 +499,7 @@ in
         val goal = z3_tac_goal queries assertions transfer_hypotheses
         val (raw_observation, result) =
           (z3_tac_preflight_resource_gate assertions;
-           (z3_tac_raw_result path, z3_tac_checked_result goal))
+           (z3_tac_raw_result (text, script), z3_tac_checked_result goal))
           handle Z3_Tac_Raw_Timeout =>
             z3_tac_die "Z3_TAC_RESOURCE_GATED"
               ["logic=" ^ observed_logic,
@@ -613,42 +609,9 @@ handle Z3_Tac_Exit status => raise Z3_Tac_Exit status
     ["logic=" ^ expected_logic,
      "diagnostic=" ^ General.exnMessage exn]
 
-fun z3_tac_snapshot source =
-  let
-    val snapshot = OS.FileSys.tmpName ()
-    val keep_snapshot = ref false
-    fun cleanup () =
-      if !keep_snapshot then ()
-      else OS.FileSys.remove snapshot handle OS.SysErr _ => ()
-    fun write_snapshot () =
-      let
-        val input = TextIO.openIn source
-        val output = TextIO.openOut snapshot
-        fun close_input () = TextIO.closeIn input handle IO.Io _ => ()
-        fun close_output () = TextIO.closeOut output handle IO.Io _ => ()
-        fun copy () =
-          let val chunk = TextIO.inputN (input, 8192) in
-            if chunk = "" then ()
-            else (TextIO.output (output, chunk); copy ())
-          end
-      in
-        Portable.finally close_input
-          (fn () => Portable.finally close_output
-            (fn () => (copy (); keep_snapshot := true)) ()) ()
-      end
-    val () = Portable.finally cleanup write_snapshot ()
-  in
-    snapshot
-  end
-
 fun z3_tac_ok path expected_logic =
-  let
-    val snapshot = z3_tac_snapshot path
-    fun cleanup () = OS.FileSys.remove snapshot handle OS.SysErr _ => ()
-  in
-    Portable.finally cleanup
-      (fn () => z3_tac_ok_snapshot snapshot expected_logic) ()
-  end
+  z3_tac_ok_snapshot (SolverSpec.with_input_file path TextIO.inputAll)
+    expected_logic
 
 val () =
   (case z3_tac_args () of
