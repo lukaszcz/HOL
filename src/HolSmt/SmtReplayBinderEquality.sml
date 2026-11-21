@@ -118,15 +118,17 @@ struct
             (Array.sub (source_index,hint hypothesis)) of
           SOME (_,node) => node
         | NONE => raise ERR "close_equality" "noncanonical source hypothesis"
-      val chosen = Vector.fromList (indexed (fn (index,node) =>
+      fun choose (index,node) =
         case witnesses of NONE => NONE | SOME supply =>
           case supply (index,node) of NONE => NONE | SOME theorem =>
             if Portable.pointer_eq (Thm.concl theorem,
                 G.representative graph node) andalso clean theorem then
               SOME theorem else raise ERR "close_equality"
-                "invalid source witness") sources)
+                "invalid source witness"
+      val chosen = Vector.fromList
+        (indexed (fn (index,node) => (node,choose (index,node))) sources)
       val hypotheses = List.concat (indexed (fn (index,node) =>
-        case Vector.sub (chosen,index) of NONE => [node]
+        case #2 (Vector.sub (chosen,index)) of NONE => [node]
           | SOME theorem => List.map canonical (Thm.hyp theorem)) sources)
       val seen_hypotheses = ref (Redblackset.empty Int.compare)
       val captures = ref ([] : (G.node * G.node list) list)
@@ -230,21 +232,20 @@ struct
           | NONE => (node,Thm.REFL (G.representative graph node))
       fun closure_node node variables =
         let
+          val indexed_variables = Vector.fromList variables
           fun close (index,variable,result) =
             let
               val outer = if index = 0 then parent_scope
-                else G.node_scope graph (List.nth (variables,index-1))
+                else G.node_scope graph
+                  (Vector.sub (indexed_variables,index-1))
               val abstraction = G.abstraction graph outer output_limit
                 (variable,result)
               val operator = Term.rator (boolSyntax.mk_forall
                 (G.representative graph variable,boolSyntax.T))
             in G.application graph outer
               (G.constant graph outer operator,abstraction) end
-          val entries = indexed (fn (index,variable) => (index,variable))
-            variables
         in if null variables then #node (G.rehome graph parent_scope node)
-          else List.foldr (fn ((index,variable),result) =>
-            close (index,variable,result)) node entries end
+          else Vector.foldri close node indexed_variables end
       val closures = List.map (fn (node,captured) =>
         let
           val annotation = List.map (G.representative graph) captured
@@ -259,9 +260,11 @@ struct
                 (Thm.ALPHA original (G.representative graph owned))
                   bridge) end
         in (node,annotation,canonical,bridge) end) (!captures)
-      fun supplied (index,node) = if List.nth (sources,index) = node then
-          Vector.sub (chosen,index) else raise ERR "close_equality"
-            "source occurrence changed"
+      fun supplied (index,node) =
+        let val (saved,witness) = Vector.sub (chosen,index) in
+          if saved = node then witness
+          else raise ERR "close_equality" "source occurrence changed"
+        end
       val theorem = P.realize_with_sources block body edge supplied
       fun close_hypothesis ((node,variables,closure,bridge),theorem) =
         let

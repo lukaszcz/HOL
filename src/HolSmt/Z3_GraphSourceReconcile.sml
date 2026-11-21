@@ -316,6 +316,10 @@ struct
     (active plan;case Redblackmap.peek (laws,index) of
         SOME (endpoint,proof) => if endpoint = node then SOME proof else NONE
       | NONE => NONE)
+  fun unpriced_witnesses (plan as Plan {graph,scope,laws,...}) =
+    case G.unpriced_validation_revision graph scope of
+      SOME _ => (active plan;SOME (Redblackmap.listItems' laws))
+    | NONE => NONE
   fun assemble (plan as Plan {graph,bindings,source_nodes,...}) block node =
     let
       val _ = active plan

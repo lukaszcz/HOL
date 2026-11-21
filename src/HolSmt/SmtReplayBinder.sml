@@ -88,7 +88,7 @@ struct
         let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
           List.all (fn tag => tag = "DISK_THM") oracles andalso
           List.null (Tag.axioms_of (Thm.tag theorem)) end
-      val chosen = Vector.fromList (indexed (fn (index,node) =>
+      fun choose (index,node) =
         if assignment node then NONE else
           case witnesses of NONE => NONE | SOME provide =>
             case provide (index,node) of NONE => NONE
@@ -96,10 +96,11 @@ struct
                   if Portable.pointer_eq
                       (Thm.concl theorem,G.representative graph node) andalso
                       clean theorem then SOME theorem else
-                    raise ERR "close_forall" "invalid source witness")
-        source_nodes)
+                    raise ERR "close_forall" "invalid source witness"
+      val chosen = Vector.fromList
+        (indexed (fn (index,node) => (node,choose (index,node))) source_nodes)
       val hypotheses = List.concat (indexed (fn (index,node) =>
-        if assignment node then [] else case Vector.sub (chosen,index) of
+        if assignment node then [] else case #2 (Vector.sub (chosen,index)) of
             NONE => [node]
           | SOME theorem => List.map canonical (Thm.hyp theorem)) source_nodes)
       val visited = ref (Redblackset.empty Int.compare)
@@ -147,8 +148,10 @@ struct
           val _ = check_type (Term.type_of operator)
         in operator end) variables
       fun supplied (index,node) =
-        if List.nth (source_nodes,index) = node then Vector.sub (chosen,index)
-        else raise ERR "close_forall" "source occurrence changed"
+        let val (saved,witness) = Vector.sub (chosen,index) in
+          if saved = node then witness
+          else raise ERR "close_forall" "source occurrence changed"
+        end
       val theorem = case resolution of NONE =>
           P.realize_with_sources block body edge supplied
         | SOME result => P.realize_resolved_with_sources block result

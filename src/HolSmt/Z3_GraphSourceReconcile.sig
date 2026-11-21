@@ -14,6 +14,9 @@ sig
   val sources : plan -> SmtReplayGraph.node list
   val roots : plan -> SmtReplayGraph.node list
   val witness : plan -> int * SmtReplayGraph.node -> Thm.thm option
+  (* Closed law witnesses in source occurrence order for unpriced graphs. *)
+  val unpriced_witnesses :
+    plan -> (SmtReplayGraph.node * Thm.thm) list option
   (* Assemble the replay spelling from its original permitted occurrence
      and a closed beta/eta equality; never assume the extra replay Source. *)
   val assemble : plan -> SmtReplayProof.block -> SmtReplayGraph.node ->

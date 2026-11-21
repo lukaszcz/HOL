@@ -300,14 +300,24 @@ struct
             | SOME {work,...} =>
               let val pay = SmtReplayInvocationWork.spend_guard_policy work
               in pay 1;List.app (fn _ => pay 7) premises end
+          fun save_witness (node,theorem) =
+            witnesses := Redblackmap.insert
+              (!witnesses,G.node_id node,theorem)
           val _ = case reconciliation of NONE => () | SOME plan =>
-            List.app (fn (index,node) =>
-              case Z3_GraphSourceReconcile.witness plan (index,node) of
-                NONE => () | SOME theorem =>
-                  witnesses := Redblackmap.insert
-                    (!witnesses,G.node_id node,theorem))
-              (ListPair.zip (List.tabulate (length initial_sources,Lib.I),
-                initial_sources))
+            let
+              val batch = case preprocessing of NONE =>
+                    Z3_GraphSourceReconcile.unpriced_witnesses plan
+                  | SOME _ => NONE
+              fun pointwise _ [] = ()
+                | pointwise index (node :: rest) =
+                    (case Z3_GraphSourceReconcile.witness plan (index,node) of
+                       NONE => ()
+                     | SOME theorem => save_witness (node,theorem);
+                     pointwise (index+1) rest)
+            in case batch of
+                SOME entries => List.app save_witness entries
+              | NONE => pointwise 0 initial_sources
+            end
           (* Exact producer ID, within-handler occurrence and Source index. *)
           val recorded_indices = ref
             ([] : (Z.proof_id * int * G.node * int) list)

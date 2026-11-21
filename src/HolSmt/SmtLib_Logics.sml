@@ -631,8 +631,7 @@ in
     | NONE => false
 
   fun term_mentions_reglan tm =
-    term_type_contains
-      (type_contains (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) tm
+    term_type_contains (fn ty => Type.compare (ty, reglan_ty) = EQUAL) tm
     orelse term_mentions_smtstring_theory tm
 
   fun type_is_smtfloat ty =
@@ -685,8 +684,8 @@ in
 
   fun type_is_native_datatype_sort ty =
     Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
-    (not (type_contains_native_string ty) andalso
-     Lib.can listSyntax.dest_list_type ty)
+    (Lib.can listSyntax.dest_list_type ty andalso
+     not (type_contains_native_string ty))
 
   fun type_is_datatype_sort ty =
     (Type.is_vartype ty andalso
@@ -743,9 +742,8 @@ in
     end
 
   fun term_mentions_string_theory tm =
-    term_type_contains type_contains_string tm
+    (type_contains_string o Term.type_of) tm
     orelse term_mentions_reglan tm
-    orelse term_mentions_smtstring_theory tm
 
   (* Unlike the string and floating-point theories, no bitvector symbol is
      parsed into an abstract constant, so there is no bare-name rung here: the
@@ -753,7 +751,7 @@ in
      exemption never sees.  A bare "bv" prefix would only ever match a user
      symbol that happens to be named `bvar`, `bvec`, ... *)
   fun term_mentions_bitvector_theory tm =
-    term_type_contains type_contains_word tm
+    (type_contains_word o Term.type_of) tm
     orelse symbol_name_is_prefix "smtlib_bv" tm
 
   fun type_contains_free_sort ty =
@@ -790,10 +788,10 @@ in
       else
         let val (lhs, rhs) = boolSyntax.dest_eq tm
         in
-          if term_type_contains type_contains_int lhs orelse
-             term_type_contains type_contains_real lhs orelse
-             term_type_contains type_contains_int rhs orelse
-             term_type_contains type_contains_real rhs then
+          if (type_contains_int o Term.type_of) lhs orelse
+             (type_contains_real o Term.type_of) lhs orelse
+             (type_contains_int o Term.type_of) rhs orelse
+             (type_contains_real o Term.type_of) rhs then
             SOME [lhs, rhs]
           else
             NONE
@@ -822,7 +820,7 @@ in
     | NONE => false
 
   fun term_has_word_subterm tm =
-    List.exists (term_type_contains type_contains_word) (subterms tm)
+    List.exists (type_contains_word o Term.type_of) (subterms tm)
 
   fun is_bv_logic_pure_int_atom tm =
     case is_arith_relation tm of
@@ -833,18 +831,10 @@ in
       (surface_flags : surface_flags) assertions =
     let
       val fragment = logic_fragment_of_logic logic
-      val all_subterms = List.concat (List.map subterms assertions)
-      fun some_subterm p = List.exists p all_subterms
-      val has_int = some_subterm (term_type_contains type_contains_int)
-      val has_real = some_subterm (term_type_contains type_contains_real)
-      val has_word = some_subterm (term_type_contains type_contains_word)
-      val has_string = some_subterm (term_type_contains type_contains_string)
-      (* HOL lists represent both Seq and datatypes.  In a sequence logic,
-         accept the native sequence representation rather than rejecting it
-         as a datatype. *)
-      val has_datatype =
-        List.exists (assertion_mentions_datatype_sort (#strings fragment))
-          assertions
+      val all_subterms = Portable.HOLSusp.delay
+        (fn () => List.concat (List.map subterms assertions))
+      fun some_subterm p = List.exists p (Portable.HOLSusp.force all_subterms)
+      fun has_int () = some_subterm (type_contains_int o Term.type_of)
       fun qf_violation () =
         not (#quantifiers fragment) andalso List.exists has_quantifier assertions
       fun nonlinear_violation () =
@@ -868,25 +858,31 @@ in
                  term_mentions_bitvector_theory tm))
       fun bv_int_atom_violation () =
         logic <> "ALL" andalso #bitvectors fragment andalso
-        #arith fragment = NO_ARITH andalso has_int andalso
+        #arith fragment = NO_ARITH andalso has_int () andalso
         some_subterm is_bv_logic_pure_int_atom
       fun int_sort_violation () =
-        not (#ints fragment) andalso has_int
+        not (#ints fragment) andalso has_int ()
       fun real_sort_violation () =
-        not (#reals fragment) andalso has_real
+        not (#reals fragment) andalso
+        some_subterm (type_contains_real o Term.type_of)
       fun bitvector_sort_violation () =
-        not (#bitvectors fragment) andalso has_word
+        not (#bitvectors fragment) andalso
+        some_subterm (type_contains_word o Term.type_of)
       fun string_sort_violation () =
         not (#strings fragment) andalso
-        (has_string orelse some_subterm term_mentions_reglan)
+        (some_subterm (type_contains_string o Term.type_of) orelse
+         some_subterm term_mentions_reglan)
       fun floatingpoint_sort_violation () =
         not (#floatingpoint fragment) andalso
         some_subterm term_mentions_floatingpoint
+      (* HOL lists may encode native Seq rather than SMT datatypes. *)
       fun datatype_sort_violation () =
-        not (#datatypes fragment) andalso has_datatype
+        not (#datatypes fragment) andalso
+        List.exists (assertion_mentions_datatype_sort (#strings fragment))
+          assertions
       fun free_sort_violation () =
         not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
-        some_subterm (term_type_contains type_contains_free_sort)
+        some_subterm (type_contains_free_sort o Term.type_of)
       fun higher_order_violation () =
         if #higher_order fragment then NONE
         else if #partial_application_used surface_flags then

@@ -4514,6 +4514,14 @@ local
         [(positive,positive_edge),(negative,negative_edge)]
       val theorem = P.realize_with_sources block false_node edge
         (H.witness plan)
+      val _ = case H.unpriced_witnesses plan of
+          SOME [(node,witness)] =>
+            (case H.witness plan (List.length (H.sources plan)-1,node) of
+               SOME expected =>
+                 if Portable.pointer_eq (expected,witness) then ()
+                 else testutils.die "batch changed checked law witness"
+             | NONE => testutils.die "batch changed checked law occurrence")
+        | _ => testutils.die "expected one closed reconciliation witness"
       val _ = S.check_contradiction sources theorem
       val goal = S.close_contradiction sources theorem
       val _ = S.check_goal sources goal
@@ -4532,6 +4540,25 @@ in
     let
   val _ = testutils.tprint "Graph Source beta lookup preserves original Hyp"
   val _ = ignore (accepted ``(\x:int. x) y = y`` ``(y:int) = y``)
+
+  val _ = testutils.tprint "Graph Source batches an unchanged portfolio"
+  val _ = let
+      val g = G.new ()
+      val s = G.root_scope g
+      val width = 256
+      val original = S.new g s maximum
+        {goal = boolSyntax.F,
+         assumptions = List.tabulate (width-1,fn index =>
+           Term.mk_var ("source_batch_" ^ Int.toString index,Type.bool))}
+      val replay = List.map #node (S.reconciliation_sources original)
+      val plan = prepare g s original replay []
+        maximum maximum maximum (fn _ => ())
+      val (batch,current) = G.with_node_statistics g s (fn () =>
+        H.unpriced_witnesses plan)
+    in ensure "wrong witness result or repeated portfolio validation"
+      ((case batch of SOME [] => true | _ => false) andalso
+       #node_accesses current <= IntInf.fromInt (3 * width))
+    end
 
   val _ = testutils.tprint "Graph Source eta lookup preserves original Hyp"
   val _ = ignore (accepted

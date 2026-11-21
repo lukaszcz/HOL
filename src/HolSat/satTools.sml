@@ -141,15 +141,19 @@ fun invokeSat_result model =
 
 fun invokeSat sat_solver tm vc nr svm sva infile =
   let
-    fun model only_true numbers =
+    fun complete numbers =
       let
-        val all = if only_true then
-                    numbers @ map (fn n => 0-n)
-                      (subtract
-                         (map snd (snd (dimacsTools.showSatVarMap svm)))
-                         numbers)
-                  else numbers
-      in map (dimacsTools.intToLiteral sva) all end
+        (* Keep the reported numbers verbatim for literal conversion.
+           Only an exact DIMACS number excludes a variable from completion. *)
+        val reported = Redblackset.fromList Int.compare numbers
+        val missing = dimacsTools.SVM.foldr
+          (fn (_,(_,n),rest) =>
+            if Redblackset.member (reported,n) then rest else ~n :: rest)
+          [] (snd svm)
+      in numbers @ missing end
+    fun model only_true numbers =
+      map (dimacsTools.intToLiteral sva)
+        (if only_true then complete numbers else numbers)
   in invokeSat_result model sat_solver infile end
 
 (* Keep parsing and variable-number validation for proof-only SAT answers.

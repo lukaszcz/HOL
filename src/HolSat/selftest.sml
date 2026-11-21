@@ -25,7 +25,7 @@ local
     in dimacsTools.with_cleanup (fn () => TextIO.closeOut out)
          (fn () => TextIO.output (out,text)) () end
   fun exists path = OS.FileSys.access (path,[])
-  fun named_solver name run post =
+  fun make_solver only_true name run post =
     let val SatSolver fields = minisatp
     in SatSolver
       {name = name, URL = #URL fields,
@@ -34,9 +34,10 @@ local
        post_exe = Option.map (fn _ => "unused") post,
        notime_run = run, time_run = #time_run fields,
        post_run = (case post of SOME f => f | NONE => #post_run fields),
-       only_true = false, failure_string = "UNSAT",
+       only_true = only_true, failure_string = "UNSAT",
        start_string = "SAT", end_string = " 0"}
     end
+  val named_solver = make_solver false
   fun solver run post = named_solver "cleanup-sentinel" run post
 
   (* A backend name does not establish ownership.  Check the fixed trace
@@ -212,6 +213,33 @@ local
              failure "SAT -20 31 0" = "lookup_sat_numError: 20\n" andalso
              failure "SAT 20 + 2 0" = "parseSat" andalso
              failure ("SAT 20 " ^ overflow ^ " 0") = "parseSat") ()
+      end)
+  val _ = control "Partial SAT models preserve order and signed literals"
+    (fn () =>
+      let
+        val input = OS.FileSys.tmpName ()
+        val backend = make_solver true "partial-model" (fn _ => fn _ => ":")
+          NONE
+        val output = input ^ "." ^ getSolverName backend
+        val (a,b,c,d) = (``a:bool``,``b:bool``,``c:bool``,``d:bool``)
+        val sva = Array.fromList [T,b,d,c,a]
+        val entries = [(a,4),(b,1),(c,3),(d,2)]
+        val vars = dimacsTools.SVM.mkDict Term.compare
+        val svm = (5,List.foldl (fn ((v,n),m) =>
+          dimacsTools.SVM.insert (m,v,(v,n))) vars entries)
+        fun model text =
+          (put output text; satTools.invokeSat backend T NONE NONE svm sva
+                                               input)
+      in dimacsTools.with_cleanup
+           (fn () => dimacsTools.clean_files [input, output])
+           (fn () =>
+             (case model "SAT 3 -2 3 0" of
+                  SOME literals => ListPair.allEq (op ~~)
+                    (literals,[c,mk_neg d,c,mk_neg a,mk_neg b,mk_neg d])
+                | NONE => false) andalso
+             ((ignore (model "SAT 20 -21 0"); false)
+              handle HOL_ERR error => Feedback.message_of error =
+                "lookup_sat_numError: 20\n")) ()
       end)
   val _ = control "Proof-only DIMACS checks the input used for replay"
     (fn () =>

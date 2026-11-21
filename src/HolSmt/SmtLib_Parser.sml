@@ -4421,7 +4421,8 @@ local
   fun checked_term_with_surface_sort surface_sort t =
     CheckedTerm {term = t, sort = Term.type_of t, surface_sort = surface_sort}
   fun checked_term_of t =
-    checked_term_with_surface_sort (RigidSort (Term.type_of t)) t
+    let val sort = Term.type_of t
+    in CheckedTerm {term = t, sort = sort, surface_sort = RigidSort sort} end
   fun checked_term (CheckedTerm {term, ...}) = term
   fun checked_sort (CheckedTerm {sort, ...}) = sort
   fun checked_surface_sort (CheckedTerm {surface_sort, ...}) = surface_sort
@@ -5562,55 +5563,55 @@ local
               else ()
           | _ => ())
         end
-      fun collection_result_surface element_surface t =
-        if pred_setSyntax.is_set_type (Term.type_of t) orelse
-           bagSyntax.is_bag_ty (Term.type_of t) then
-          ConstructorSort (Term.type_of t, [element_surface])
-        else RigidSort (Term.type_of t)
-      fun collapsed_collection_result_surface t =
-        if pred_setSyntax.is_set_type (Term.type_of t) then
-          let val element = pred_setSyntax.dest_set_type (Term.type_of t) in
-            ConstructorSort (Term.type_of t, [RigidSort element])
+      fun collection_result_surface element_surface sort =
+        if pred_setSyntax.is_set_type sort orelse
+           bagSyntax.is_bag_ty sort then
+          ConstructorSort (sort, [element_surface])
+        else RigidSort sort
+      fun collapsed_collection_result_surface sort =
+        if pred_setSyntax.is_set_type sort then
+          let val element = pred_setSyntax.dest_set_type sort in
+            ConstructorSort (sort, [RigidSort element])
           end
-        else if bagSyntax.is_bag_ty (Term.type_of t) then
+        else if bagSyntax.is_bag_ty sort then
           let val element = bagSyntax.base_type
-            (Term.mk_var ("collection_result", Term.type_of t)) in
-            ConstructorSort (Term.type_of t, [RigidSort element])
+            (Term.mk_var ("collection_result", sort)) in
+            ConstructorSort (sort, [RigidSort element])
           end
-        else RigidSort (Term.type_of t)
+        else RigidSort sort
       fun terminal_map_surface surface =
         case surface of
           MapSort (_, range) => terminal_map_surface range
         | _ => surface
-      fun result_surface_sort t =
+      fun result_surface_sort sort =
         case (name, args) of
           ("set.filter", _ :: set :: _) => checked_surface_sort set
         | ("bag.filter", _ :: bag :: _) => checked_surface_sort bag
         | ("set.map", map :: _) =>
             collection_result_surface (terminal_map_surface
-              (checked_surface_sort map)) t
+              (checked_surface_sort map)) sort
         | ("bag.map", map :: _) =>
             collection_result_surface (terminal_map_surface
-              (checked_surface_sort map)) t
+              (checked_surface_sort map)) sort
         | ("seq.map", map :: _) =>
-            ConstructorSort (Term.type_of t, [terminal_map_surface
+            ConstructorSort (sort, [terminal_map_surface
               (checked_surface_sort map)])
         | ("set.singleton", element :: _) =>
-            collection_result_surface (checked_surface_sort element) t
+            collection_result_surface (checked_surface_sort element) sort
         | ("set.comprehension", _ :: value :: _) =>
             collection_result_surface (terminal_map_surface
-              (checked_surface_sort value)) t
+              (checked_surface_sort value)) sort
         | ("seq.unit", element :: _) =>
-            if Type.compare (Term.type_of t, smtstr_ty) = EQUAL then
+            if Type.compare (sort, smtstr_ty) = EQUAL then
               RigidSort smtstr_ty
             else
-              ConstructorSort (Term.type_of t,
+              ConstructorSort (sort,
                 [checked_surface_sort element])
         | ("select", array :: _) =>
             (case checked_surface_sort array of
                ArraySort (_, element) => element
              | MapSort (_, range) => range
-             | _ => RigidSort (Term.type_of t))
+             | _ => RigidSort sort)
         | ("store", array :: _) => checked_surface_sort array
         | ("ite", _ :: then_term :: else_term :: _) =>
             let
@@ -5622,21 +5623,21 @@ local
               else then_surface
             end
         | (_, [arg]) =>
-            (case surface_component_of_type (Term.type_of t)
+            (case surface_component_of_type sort
                 (checked_surface_sort arg) of
                SOME surface_sort => surface_sort
-             | NONE => RigidSort (Term.type_of t))
+             | NONE => RigidSort sort)
         | _ =>
             (case Lib.get_first
                 (fn arg =>
                   let val surface_sort = checked_surface_sort arg in
-                    if same_sort (Term.type_of t)
+                    if same_sort sort
                          (surface_sort_type surface_sort) then
                       SOME surface_sort
                     else NONE
                   end) args of
                SOME surface_sort => surface_sort
-             | NONE => collapsed_collection_result_surface t)
+             | NONE => collapsed_collection_result_surface sort)
     in
       if List.null indices andalso name = "@bbterm" then
         let
@@ -5694,7 +5695,8 @@ local
                       ": " ^ Feedback.message_of holerr)
              in
                let
-                 val result_surface = result_surface_sort t
+                 val result_sort = Term.type_of t
+                 val result_surface = result_surface_sort result_sort
                  fun finite_binder surface =
                    case surface of
                      MapSort (domain, range) =>
@@ -5703,14 +5705,14 @@ local
                           MapSort _ => finite_binder range
                         | _ => true)
                    | _ => false
-                 val finite_binders =
-                   List.all (finite_binder o checked_surface_sort) args
                in
                  if name = "set.comprehension" andalso
-                    #solver context = SOME "cvc5" andalso not finite_binders
+                    #solver context = SOME "cvc5" andalso
+                    not (List.all (finite_binder o checked_surface_sort) args)
                  then type_error fn_name context loc NONE NONE
                    "cvc5 set.comprehension requires finite binder sorts"
-                 else checked_term_with_surface_sort result_surface t
+                 else CheckedTerm {term = t, sort = result_sort,
+                   surface_sort = result_surface}
                end
              end)
       else

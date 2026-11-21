@@ -1810,9 +1810,10 @@ local
             (free_variables item)
           fun visit bound current =
             memoize tag [evidence,bound] current (fn () =>
-              (is_collection (type_of current) andalso native current andalso
-               List.exists (fn item => member shadow_same current evidence
-                 andalso uses_bound bound item) evidence) orelse
+              (not (null bound) andalso is_collection (type_of current)
+               andalso native current
+               andalso member shadow_same current evidence
+               andalso List.exists (uses_bound bound) evidence) orelse
               (case view current of
                  BackendAbstraction (binder,body) => visit (binder::bound) body
                | BackendApplication (left,right) =>
