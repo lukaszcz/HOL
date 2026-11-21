@@ -58635,11 +58635,41 @@ local
   fun invoke handoff callback prepare_options goal =
     Z3.Z3_SMT_Caller_Owned_Source_Paid_Prover_With_Policy
       {handoff=handoff,discover=callback,prepare_options=prepare_options} goal
+  fun source_prefix_charge_parity () =
+    let
+      val {goal,handoff} = begin cap
+      val held = ref NONE
+      val calls = ref 0
+      val {work,invocation} = CG.prepare_children_first_with_policy
+        handoff (discover held calls) goal
+      fun check () =
+        let
+          val validation = CG.preprocessing_with_policy_for work invocation
+          val sources = CG.original_sources_with_policy_for work invocation
+          fun charged () = #charged (W.audit_policy work)
+          val before_old = charged ()
+          val old = Portable.pointer_eq (GP.original_sources validation,sources)
+            andalso GP.source_nodes validation = S.assumption_nodes sources @
+              [S.denied_goal_node sources]
+          val before_new = charged ()
+          val fresh = GP.same_original_sources validation sources
+          val after_new = charged ()
+        in
+          require "Source prefix comparison changed the paid projection cost"
+            (old andalso fresh andalso before_new > before_old andalso
+             before_new - before_old = after_new - before_new)
+        end
+    in
+      Portable.finally (fn () => CG.close_original_with_policy work invocation)
+        check ()
+    end
 in
   val _ = run_postlude 342 "paid-z3-wrapper-handoff-cleanup-4" (fn () =>
-    if not (Z3.is_configured ()) then
-      print "SKIPPED: configured external Z3 required\n"
-    else
+    (test "Paid original Source comparison preserves projection charges"
+       source_prefix_charge_parity;
+     if not (Z3.is_configured ()) then
+       print "SKIPPED: configured external Z3 required\n"
+     else
       let
         val _ = test "Paid Z3 profile-end Interrupt closes transferred owner"
           (fn () =>
@@ -58720,7 +58750,7 @@ in
             in require "paid Uncapped refusal skipped owned cleanup"
               (no = SOME "paid proof capture requires finite original Work"
                andalso !calls = 1 andalso !prepared = 0 andalso closed) end)
-      in () end)
+      in () end))
 end
 
 (* Graph declarations bind lexical tokens to existing typed graph nodes. *)

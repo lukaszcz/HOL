@@ -42,6 +42,7 @@ sig
     SmtLib_GraphSourcePortfolio.validation option
 
   val original_sources : validation -> SmtReplaySource.sources
+  val same_original_sources : validation -> SmtReplaySource.sources -> bool
   val processed_goal : validation -> Abbrev.goal
   val processed_assumptions : validation -> SmtReplayGraph.node list
   val processed_denied_goal : validation -> SmtReplayGraph.node

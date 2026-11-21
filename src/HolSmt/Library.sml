@@ -466,28 +466,35 @@ struct
      from being traversed. It also removes non-trivial overloads, since some of
      them are also causing the pretty-printer to appear to hang when printing
      terms. *)
-  (* Clearing the overloads of a large grammar costs more than printing at
-     depth 15, and replay failure messages print often, so the cleared
-     grammar is kept while the grammar and the number of constants stay
-     the same.  Clearing also overloads every constant on its own name, and
-     a grammar installed again with temp_set_grammars can predate a
-     constant. *)
-  val simpler = ref (NONE : (term_grammar.grammar * int *
+  (* Clearing the grammar adds every live constant on its own name.
+     Both immutable signatures determine that set: a type retirement can
+     hide constants without changing the term signature. *)
+  val simpler = ref (NONE : (term_grammar.grammar *
+    Type_dtype.holty KernelSig.symboltable * int KernelSig.symboltable *
     term_grammar.grammar) option)
   fun term_to_string tm =
   let
-    val grammar = Parse.term_grammar ()
-    val constants = List.length (Term.all_consts ())
+    val context = Context.snapshot ()
+    val grammar = Parse.get_term_grammar context
+    val termsig = Context.termsig context
+    val typesig = Context.typesig context
+    fun clear () =
+      let val cleared = term_grammar.clear_overloads grammar
+      in
+        simpler := SOME (grammar, termsig, typesig, cleared);
+        cleared
+      end
     val simpler_grammar = case !simpler of
-        SOME (old, count, cleared) =>
-          if Portable.pointer_eq (old, grammar) andalso count = constants
-          then cleared
-          else term_grammar.clear_overloads grammar
-      | NONE => term_grammar.clear_overloads grammar
-    val _ = simpler := SOME (grammar, constants, simpler_grammar)
+        SOME (old_grammar, old_termsig, old_typesig, cleared) =>
+          if Portable.pointer_eq (old_grammar, grammar) andalso
+             Portable.pointer_eq (old_termsig, termsig) andalso
+             Portable.pointer_eq (old_typesig, typesig)
+          then cleared else clear ()
+      | NONE => clear ()
   in
     Lib.with_flag(Globals.max_print_depth, 15)
-      (Parse.term_to_string_by_grammar (Parse.type_grammar (), simpler_grammar))
+      (Parse.term_to_string_by_grammar
+        (Parse.get_type_grammar context, simpler_grammar))
         tm
   end
 
@@ -1453,6 +1460,10 @@ struct
       walk (tm, [])
     end
 
+  fun exists_subterm predicate tm =
+    Option.isSome (HolKernel.gen_find_term
+      (fn (_, subterm) => if predicate subterm then SOME () else NONE) tm)
+
   (* Rewrites contributed by the rows of a goal-directed fact table whose
      head constant occurs in 'tm'.  The goal is traversed once, rather than
      once per row: constants are identified by theory and name, exactly as
@@ -1525,7 +1536,7 @@ struct
       is_nl_power intSyntax.dest_exp t orelse
       is_nl_power numSyntax.dest_exp t
   in
-    List.exists check (subterms tm)
+    exists_subterm check tm
   end
 
   (* e.g., "(A --> B) --> C --> D" acc  ==>  [A, B, C, D] @ acc *)
@@ -1629,8 +1640,7 @@ struct
     end
 
 
-  fun contains_conditional tm =
-    List.exists (Lib.can boolSyntax.dest_cond) (subterms tm)
+  val contains_conditional = exists_subterm (Lib.can boolSyntax.dest_cond)
 
   (* SOS procedures accept polynomial arithmetic.  A totalized division or
      remainder encoding can contain syntactic products, but those products do

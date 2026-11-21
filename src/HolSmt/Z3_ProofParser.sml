@@ -1228,13 +1228,19 @@ local
     val work = ref 0
     val vars = proof_vars proof
     val version = proof_version proof
-    fun add_decomposition decomposition decompositions =
-      if List.exists (fn {bv_var, equation, ...} =>
-          Term.aconv bv_var (#bv_var decomposition) andalso
-          Term.aconv equation (#equation decomposition)) decompositions then
-        decompositions
-      else
-        decomposition :: decompositions
+    val equations = ref (Redblackmap.mkDict Term.compare)
+    fun add_decomposition (decomposition : bit_decomposition) decompositions =
+      let
+        val {bv_var, equation, ...} = decomposition
+        val seen = Option.getOpt (Redblackmap.peek (!equations, bv_var), [])
+      in
+        if List.exists (fn saved => Term.aconv saved equation) seen then
+          decompositions
+        else
+          (equations := Redblackmap.insert
+             (!equations, bv_var, equation :: seen);
+           decomposition :: decompositions)
+      end
     fun collect (pt, decompositions) =
       (work := !work + 1;
       case pt of

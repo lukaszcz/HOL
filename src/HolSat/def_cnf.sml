@@ -220,14 +220,28 @@ fun clausify tm lfn eq cls =
    not just their free HOL variables.  An already-CNF problem can contain a
    compound Boolean atom, and counting FVL alone underallocates the reverse
    map used by termToDimacs. *)
-fun cnf_atom_count clauses =
+fun cnf_atom_count clause_of clauses =
     let
-      fun positive literal =
-          if is_neg literal then dest_neg literal else literal
-      fun add_clause (clause, atoms) =
-          List.foldl (fn (literal, seen) =>
-                        HOLset.add (seen, positive literal)) atoms
-                     (strip_disj clause)
+      fun add clause pending atoms =
+          if is_comb clause then
+            let val (operator,right) = dest_comb clause in
+              if is_comb operator then
+                let val (head,left) = dest_comb operator in
+                  if same_const disjunction head then
+                    add left (right :: pending) atoms
+                  else add_atom clause pending atoms
+                end
+              else if same_const negation operator then
+                add_atom right pending atoms
+              else add_atom clause pending atoms
+            end
+          else add_atom clause pending atoms
+      and add_atom literal pending atoms =
+          let val atoms' = HOLset.add (atoms, literal) in
+            case pending of [] => atoms'
+              | next :: rest => add next rest atoms'
+          end
+      fun add_clause (clause, atoms) = add (clause_of clause) [] atoms
     in HOLset.numItems
          (List.foldl add_clause (HOLset.empty Term.compare) clauses)
     end
@@ -237,7 +251,7 @@ fun explicit_cnf known_count tm =
       val cnf = dest_neg tm
       val clauses = strip_conj cnf
       val count = case known_count of SOME count => count
-                                    | NONE => cnf_atom_count clauses
+                                    | NONE => cnf_atom_count I clauses
     in (NONE, count, RBM.mkDict Term.var_compare,
         Array.fromList (zip clauses (CONJUNCTSR (ASSUME cnf)))) end
 
@@ -248,7 +262,7 @@ fun to_cnf is_cnf tm =
         val (cnfv,vc,eqs,tops,lfn) =
             if is_cnf then
             let val tops = List.map (fn (_,th) => (concl th,th)) ths
-            in (NONE, cnf_atom_count (List.map fst tops),
+            in (NONE, cnf_atom_count fst tops,
                 [],tops,RBM.mkDict Term.var_compare) end else
             let
                 val cnfv = (!cnfv_ref)

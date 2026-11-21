@@ -84,9 +84,7 @@ struct
          Type.type_epoch()=epoch andalso Term.term_epoch()=symbols then ()
        else raise ERR "owner" "actual packet version/epochs changed"end;
      GP.validate_with_policy work preprocessing;
-     if Portable.pointer_eq(GP.original_sources preprocessing,sources)andalso
-         GP.source_nodes preprocessing=S.assumption_nodes sources @
-           [S.denied_goal_node sources]then ()else
+     if GP.same_original_sources preprocessing sources then ()else
        raise ERR "owner" "actual original Source prefix changed";
      case !phase of Completing=>()|Complete=>()
        | _=>Option.app(P.validate_block_for work)(!block))

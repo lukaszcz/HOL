@@ -17792,11 +17792,11 @@ local
       fun wrong message = raise ERR name
         ("cvc5-1.3.4 RARE rule " ^ name ^ " formal " ^ formal ^ " " ^
          message)
-      fun split width aggregate_term =
-        if width = 1 then [aggregate_term]
+      fun split width aggregate_term tail =
+        if width = 1 then aggregate_term :: tail
         else if width > 1 then
           (case rare_source_binary_head aggregate carrier_ty aggregate_term of
-             SOME (left, right) => split (width - 1) left @ [right]
+             SOME (left, right) => split (width - 1) left (right :: tail)
            | NONE => wrong
                "has aggregate syntax inconsistent with its operands")
         else wrong "has an empty aggregate application"
@@ -17806,7 +17806,7 @@ local
           if actual_head <> expected_head then
             wrong ("uses mismatched aggregate " ^ actual_head ^
               " instead of " ^ expected_head)
-          else split width term
+          else split width term []
       | NONE => if rare_source_identity aggregate term then [] else [term]
     end
 
@@ -17840,24 +17840,25 @@ local
         else
           (rare_source_native_list name formal aggregate located,
            Term.type_of (#term located))
-      fun seq_candidate ((formal, kind, source), located : located_term) =
-        if source <> RareSourceSeq then NONE
+      fun prepare_seq_argument ((formal, kind, source), located : located_term) =
+        if source <> RareSourceSeq then (NONE, NONE)
         else case kind of
           RareSourceTerm =>
-            if rare_source_structured_wrapper located then NONE
-            else SOME (Term.type_of (#term located))
+            (if rare_source_structured_wrapper located then NONE
+             else SOME (Term.type_of (#term located)), NONE)
         | RareSourceList aggregate =>
-            let val (elements, element_ty) =
-              list_parts formal aggregate located
-            in
-              if List.null elements andalso Type.is_vartype element_ty
-              then NONE
-              else if List.null elements then SOME element_ty
-              else SOME (Term.type_of (List.hd elements))
-            end
-        | RareSourceIndex => NONE
-      val seq_candidates = List.mapPartial seq_candidate
-        (ListPair.zip (formals, located_args))
+            let
+              val parts as (elements, element_ty) =
+                list_parts formal aggregate located
+              val candidate = case elements of
+                  [] => if Type.is_vartype element_ty then NONE
+                        else SOME element_ty
+                | first :: _ => SOME (Term.type_of first)
+            in (candidate, SOME parts) end
+        | RareSourceIndex => (NONE, NONE)
+      val arguments = ListPair.zip (formals, located_args)
+      val seq_arguments = List.map prepare_seq_argument arguments
+      val seq_candidates = List.mapPartial #1 seq_arguments
       val seq_type = case seq_candidates of
           [] => NONE
         | first :: rest =>
@@ -17877,7 +17878,8 @@ local
         | SOME expected =>
             if Type.compare (Term.type_of term, expected) = EQUAL then ()
             else wrong formal "has the wrong declared carrier"
-      fun normalize ((formal, kind, source), located : located_term) =
+      fun normalize
+          (((formal, kind, source), located : located_term), (_, seq_parts)) =
         let
           val term = #term located
           val wrapper = rare_source_structured_wrapper located
@@ -17885,8 +17887,9 @@ local
           case kind of
             RareSourceList aggregate =>
               let
-                val (elements, element_ty) =
-                  list_parts formal aggregate located
+                val (elements, element_ty) = case seq_parts of
+                    SOME parts => parts
+                  | NONE => list_parts formal aggregate located
                 val carrier_ty = case expected_type source of
                     SOME ty => ty
                   | NONE =>
@@ -17914,7 +17917,7 @@ local
               else (check_type formal source term; term)
         end
     in
-      ListPair.map normalize (formals, located_args)
+      ListPair.map normalize (arguments, seq_arguments)
     end
 
   fun eval_rare_source_recipe name formals args expression =
@@ -24072,10 +24075,8 @@ in
        W.validate_policy work graph root sources(W.semantic_policy work);
        GP.validate_with_policy work preprocessing;
        if Portable.pointer_eq(Packet.graph packet,graph)andalso
-           Packet.scope packet=root andalso Portable.pointer_eq
-             (GP.original_sources preprocessing,sources)andalso
-           GP.source_nodes preprocessing=S.assumption_nodes sources @
-             [S.denied_goal_node sources]andalso
+           Packet.scope packet=root andalso
+           GP.same_original_sources preprocessing sources andalso
            Type.type_epoch()=epoch andalso Term.term_epoch()=symbols
          then ()else raise ERR "policy_native" "packet owner changed")
     fun begin_with_policy work native

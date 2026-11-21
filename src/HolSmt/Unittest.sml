@@ -3566,12 +3566,43 @@ let
                   String.isPrefix "smtlib_dt_ctor_" collision_cons,
     "constructor name collision was not freshened")
 
-  val same1 = define_one
+  val same1_decl = datatype_command
     "(declare-datatype SameA1 ((sameMk (x Int))))"
-  val same2 = define_one
+  val same2_decl = datatype_command
     "(declare-datatype SameA1 ((sameMk (x Bool))))"
+  val same1 = SmtLib_Datatypes.define_datatype same1_decl
+  val same2 = SmtLib_Datatypes.define_datatype same2_decl
   val _ = assert (#hol_types same1 <> #hol_types same2,
     "different datatype structures with the same SMT name reused a HOL type")
+  val active_count = List.length (#active (!SmtLib_Datatypes.cache))
+  val type_order = SmtLib_Datatypes.cached_type_names ()
+  fun check_alias ({selectors, hol_types, ...} : SmtLib_Datatypes.elaboration) =
+    let
+      val row as {selector_hol, constructor_hol, ...} = hd selectors
+      val scrutinee = Term.mk_var ("same", hd hol_types)
+      fun tester constructor = SmtLib_Datatypes.mk_tester_case
+        {constructor = constructor, scrutinee = scrutinee}
+    in
+      assert (SmtLib_Datatypes.lookup_selector selector_hol constructor_hol =
+        SOME row, "a cached datatype lost its HOL selector aliases");
+      assert (tester constructor_hol ~~ tester "sameMk",
+        "a cached datatype lost its constructor alias")
+    end
+  fun check_cache_hit (decl, expected : SmtLib_Datatypes.elaboration) =
+    let val actual = SmtLib_Datatypes.define_datatype decl in
+      assert (#hol_types actual = #hol_types expected,
+        "an alternating datatype declaration missed the cache");
+      assert (SmtLib_Datatypes.lookup_selector "x" "sameMk" =
+        SOME (hd (#selectors expected)),
+        "the most recent cached datatype lost selector precedence");
+      List.app check_alias [same1, same2]
+    end
+  val _ = List.app (fn _ => List.app check_cache_hit
+      [(same1_decl, same1), (same2_decl, same2)]) (List.tabulate (20, Lib.I))
+  val _ = assert (List.length (#active (!SmtLib_Datatypes.cache)) =
+      active_count, "datatype cache hits accumulated registrations")
+  val _ = assert (SmtLib_Datatypes.cached_type_names () = type_order,
+    "datatype cache hits changed type dependency precedence")
 
   val pair_decl = define_one
     ("(declare-datatype MaybePairA1 " ^
@@ -9233,6 +9264,16 @@ let
     ``if (r:real) = 0r then 0r else HolSmt$smt_rdiv 1r r``
   val inverse = checked_conversion "inverse assertion normalization"
     inverse_input
+  val bound = ``r:real``
+  val opaque_application = ``(\r:real. realinv r) (r:real)``
+  fun abstract argument = Term.mk_abs (bound,
+    realSyntax.mk_plus (argument, opaque_application))
+  val abstracted = checked_conversion "normalization under abstraction"
+    (abstract inverse_input)
+  val _ = (ignore (SmtLib.z3_assertion_roundtrip_conv_for_test
+      opaque_application);
+    die "FAIL: assertion normalization rewrote an opaque application head")
+    handle Conv.UNCHANGED => ()
   val nested_inverse_input = ``realinv (realinv (r:real))``
   val nested_inverse_expected = totalized (totalized ``r:real``)
   val nested_inverse =
@@ -9310,6 +9351,9 @@ in
   assert_no_hyps ("Z3 total real-inverse normalization", inverse);
   assert_concl_alpha ("Z3 total real-inverse normalization", inverse,
     boolSyntax.mk_eq (inverse_input, inverse_expected));
+  assert_no_hyps ("Z3 normalization under abstraction", abstracted);
+  assert_concl_alpha ("Z3 normalization under abstraction", abstracted,
+    boolSyntax.mk_eq (abstract inverse_input, abstract inverse_expected));
   assert_concl_alpha ("Z3 nested real-inverse normalization", nested_inverse,
     boolSyntax.mk_eq (nested_inverse_input, nested_inverse_expected));
   assert_no_hyps ("Z3 real-ceiling normalization", ceiling);
@@ -23117,8 +23161,6 @@ in
     "a nested binder's Type ID differs from its Type's")
 end
 
-(* The overload-free grammar is reused while the grammar and the constants
-   are unchanged, and rebuilt when either changes. *)
 fun term_to_string_follows_grammar_changes_success () =
 let
   val term = ``(x:int) - y <> z /\ m < (n:num)``
@@ -23131,21 +23173,25 @@ let
   val changed = Library.term_to_string term
   val _ = Parse.temp_set_grammars saved
   val restored = Library.term_to_string term
-  (* Made after the last call, which used the saved grammar.  The new
-     constant replaces the grammar; installing the saved one again brings
-     back the grammar that call cleared, which predates the constant.
-     The grammar with the constant is installed again afterwards. *)
-  val _ = Theory.new_constant ("smt_printer_late_constant", Type.bool)
-  val declared = Parse.current_grammars ()
-  val _ = Parse.temp_set_grammars saved
-  val late = Library.term_to_string
-      (Term.prim_mk_const {Thy = Theory.current_theory (),
-         Name = "smt_printer_late_constant"})
-    handle e => (Parse.temp_set_grammars declared; raise e)
-  val _ = Parse.temp_set_grammars declared
+  (* Both contexts use the original grammar and have the same number of
+     constants, but they introduce different names. *)
+  val (late, replacement) =
+    Portable.bracket Context.snapshot Context.restore (fn context =>
+      let
+        fun declare_and_print name =
+          (Theory.new_constant (name, Type.bool);
+           Parse.temp_set_grammars saved;
+           Library.term_to_string
+             (Term.prim_mk_const {Thy = Theory.current_theory (),
+                Name = name}))
+        val late = declare_and_print "smt_printer_late_constant"
+        val _ = Context.restore context
+      in (late, declare_and_print "smt_printer_replacement_constant") end)
 in
   assert (late = "smt_printer_late_constant",
     "term_to_string missed a constant made after its last call: " ^ late);
+  assert (replacement = "smt_printer_replacement_constant",
+    "term_to_string retained another signature of equal size: " ^ replacement);
   assert (String.isSubstring "~(x int_sub y = z)" first andalso
       second = first andalso restored = first,
     "term_to_string printed one term two ways under one grammar");

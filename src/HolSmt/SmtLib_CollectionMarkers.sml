@@ -109,10 +109,19 @@ struct
               (case List.rev (prefixes term) of
                  [] => terms
                | head :: partials =>
-                   #2 (List.foldl (fn (partial, (count, acc)) =>
-                     (count + 1, mark_application partial rator
-                        (List.take (rands, count)) acc))
-                     (1, walk head terms) partials))
+                   let
+                     val arity = List.length rands
+                     (* Only unary and binary marker arguments are inspected. *)
+                     fun prefix_arguments count =
+                       if count <= 2 orelse count > arity then
+                         List.take (rands, count)
+                       else rands
+                   in
+                     #2 (List.foldl (fn (partial, (count, acc)) =>
+                       (count + 1, mark_application partial rator
+                          (prefix_arguments count) acc))
+                       (1, walk head terms) partials)
+                   end)
             else terms
         in
           mark_application term rator rands terms

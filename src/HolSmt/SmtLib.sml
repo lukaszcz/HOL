@@ -8740,8 +8740,7 @@ in
     end
 
   fun goal_entangles_num_and_word (asms, concl) =
-    List.exists num_meets_word
-      (List.concat (List.map subterms (concl :: asms)))
+    List.exists (Library.exists_subterm num_meets_word) (concl :: asms)
 
   (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
      numeral, which the solvers read as an integer constant: it needs no
@@ -8918,10 +8917,8 @@ in
     POP_ASSUM_LIST (MAP_EVERY cleanup o List.rev) g
   end
 
-  fun has_set_complement tm =
-    List.exists (fn subterm =>
-      Option.isSome (Lib.total pred_setSyntax.dest_compl subterm))
-      (Library.subterms tm)
+  val has_set_complement =
+    Library.exists_subterm (Lib.can pred_setSyntax.dest_compl)
 
   (* Checked CARD keeps finite set atoms native, while unrelated non-finite
      atoms still lower to predicates. Native-by-default mode only lowers
@@ -9257,20 +9254,34 @@ in
         val children =
           if Term.is_abs input then
             let val (variable, body) = Term.dest_abs input
-            in Thm.ABS variable (normalize body) end
+            in Option.map (Thm.ABS variable) (normalize body) end
           else
             let
               val (head, arguments) = boolSyntax.strip_comb input
-              val argument_theorems = List.map normalize arguments
+              fun combine (argument, application) =
+                Thm.MK_COMB (application,
+                  case normalize argument of
+                    SOME theorem => theorem
+                  | NONE => Thm.REFL argument)
+              fun first_change _ [] = NONE
+                | first_change prefix (argument :: rest) =
+                    case normalize argument of
+                      NONE => first_change (argument :: prefix) rest
+                    | SOME theorem =>
+                        let val function =
+                          Term.list_mk_comb (head, List.rev prefix)
+                        in SOME (List.foldl combine
+                          (Thm.MK_COMB (Thm.REFL function, theorem)) rest)
+                        end
             in
-              List.foldl (fn (argument, application) =>
-                Thm.MK_COMB (application, argument))
-                (Thm.REFL head) argument_theorems
+              first_change [] arguments
             end
-        val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+        val current = case children of
+            NONE => input
+          | SOME theorem => Lib.snd (boolSyntax.dest_eq (Thm.concl theorem))
         val root =
           case recognize_z3_roundtrip_expansion current of
-            NONE => Thm.REFL current
+            NONE => NONE
           | SOME admitted =>
               let
                 val old_measure = z3_roundtrip_measure current
@@ -9289,13 +9300,24 @@ in
                      Int.toString old_measure ^ " -> " ^
                      Int.toString new_measure)
               in
-                Thm.TRANS step (normalize rhs)
+                SOME (case normalize rhs of
+                        NONE => step
+                      | SOME theorem => Thm.TRANS step theorem)
               end
       in
-        if changed children then Thm.TRANS children root else root
+        case children of
+          NONE => root
+        | SOME theorem =>
+            if changed theorem then
+              SOME (case root of
+                      NONE => theorem
+                    | SOME expansion => Thm.TRANS theorem expansion)
+            else
+              SOME (case root of NONE => Thm.REFL current
+                               | SOME expansion => expansion)
       end
   in
-    normalize tm
+    case normalize tm of NONE => Thm.REFL tm | SOME theorem => theorem
   end
 
   val z3_assertion_roundtrip_total_conv =

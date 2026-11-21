@@ -209,6 +209,7 @@ local
                = [1,2,~3,~4] andalso
              status "SAT\t1suffix\n-2 +1 0 ignored" = SOME () andalso
              failure "SAT 20 0" = "lookup_sat_numError: 20\n" andalso
+             failure "SAT -20 31 0" = "lookup_sat_numError: 20\n" andalso
              failure "SAT 20 + 2 0" = "parseSat" andalso
              failure ("SAT 20 " ^ overflow ^ " 0") = "parseSat") ()
       end)
@@ -353,6 +354,11 @@ val _ = require_msg
               (satConfig.set_flag_is_cnf true
                 (satConfig.set_term tm satConfig.base_config))))
           ``(P:bool->bool) T /\ ~P T /\ P F /\ ~P F``
+
+val _ = tprint "explicit CNF counts a negated compound as one atom"
+val _ = require_msg (check_result (fn count => count = 4)) Int.toString
+          (fn tm => #2 (def_cnf.explicit_cnf NONE tm))
+          ``~(~(p \/ q) /\ p /\ q /\ ~(~p))``
 
 val _ = tprint "proof-only explicit CNF rejects SAT without model checking"
 val _ = require_msg

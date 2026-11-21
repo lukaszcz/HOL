@@ -10,6 +10,7 @@ struct
   datatype sources = Sources of
     {graph : G.graph, scope : G.scope,
      goal : G.source, assumptions : G.source list,
+     assumption_nodes : G.node list Portable.HOLSusp.susp,
      assumption_index : G.node vector Portable.HOLSusp.susp,
      denied : G.source, allowed : Term.term list Array.array,
      ordinary : Term.term list Array.array,work_claimed : bool ref}
@@ -36,8 +37,12 @@ struct
       List.null (Tag.axioms_of (Thm.tag theorem))
     end
 
-  fun index_assumptions (sources : G.source list) =
-    Portable.HOLSusp.delay (fn () => Vector.fromList (List.map #node sources))
+  fun assumption_views (sources : G.source list) =
+    let
+      val nodes = Portable.HOLSusp.delay (fn () => List.map #node sources)
+      val index = Portable.HOLSusp.delay (fn () =>
+        Vector.fromList (Portable.HOLSusp.force nodes))
+    in (nodes,index) end
 
   fun new graph scope maximum {goal, assumptions} =
     let
@@ -66,9 +71,10 @@ struct
         if clean (#bridge source) then () else
           raise ERR "new" "unexpected source bridge tags")
         (goal_source :: denied :: assumption_sources)
+      val (nodes,index) = assumption_views assumption_sources
     in Sources {graph = graph, scope = scope, goal = goal_source,
       assumptions = assumption_sources, denied = denied,
-      assumption_index = index_assumptions assumption_sources,
+      assumption_nodes = nodes, assumption_index = index,
       allowed = allowed, ordinary = ordinary,work_claimed = ref false} end
 
   fun owning_graph (sources as Sources {graph,...}) =
@@ -143,8 +149,8 @@ struct
     | canonical_goal (OriginalSources binding) =
         A.source_binding_canonical_goal binding
 
-  fun assumption_nodes (sources as Sources {assumptions, ...}) =
-    (active sources;List.map #node assumptions)
+  fun assumption_nodes (sources as Sources {assumption_nodes, ...}) =
+    (active sources;Portable.HOLSusp.force assumption_nodes)
     | assumption_nodes (OriginalSources binding) =
         A.source_binding_assumption_nodes binding
 
@@ -246,9 +252,10 @@ struct
         if clean (#bridge source) then () else
           raise ERR "new" "unexpected source bridge tags")
         (goal_source :: denied :: assumption_sources)
+      val (nodes,index) = assumption_views assumption_sources
     in Sources {graph = graph, scope = scope, goal = goal_source,
       assumptions = assumption_sources, denied = denied,
-      assumption_index = index_assumptions assumption_sources,
+      assumption_nodes = nodes, assumption_index = index,
       allowed = allowed, ordinary = ordinary,work_claimed = ref false} end
 
 

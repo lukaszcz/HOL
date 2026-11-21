@@ -72,9 +72,11 @@ struct
     constructors : name_pair list
   }
 
-  val cache : cache_entry list ref = ref []
-  val selector_table : selector_info list ref = ref []
-  val constructor_table : name_pair list ref = ref []
+  (* Type dependencies follow declaration order. Selector name collisions
+     prefer the most recently requested group. Store each group once in
+     both orders so repeated elaborations cannot accumulate lookup rows. *)
+  val cache = ref
+    {defined = [] : cache_entry list, active = [] : cache_entry list}
 
   fun node (P.Located {node, ...}) = node
 
@@ -269,17 +271,16 @@ struct
     end
 
   fun lookup_selector selector constructor =
-    List.find
-      (fn {selector_smt, selector_hol, constructor_smt, constructor_hol, ...} =>
+    let
+      fun matches
+          ({selector_smt, selector_hol, constructor_smt, constructor_hol, ...}
+            : selector_info) =
         (selector = selector_smt orelse selector = selector_hol) andalso
-        (constructor = constructor_smt orelse constructor = constructor_hol))
-      (!selector_table)
-
-  fun register_selectors selectors =
-    selector_table := selectors @ !selector_table
-
-  fun register_constructors constructors =
-    constructor_table := constructors @ !constructor_table
+        (constructor = constructor_smt orelse constructor = constructor_hol)
+    in
+      Lib.get_first (fn {selectors, ...} => List.find matches selectors)
+        (#active (!cache))
+    end
 
   fun entries TypeName ({types, ...} : name_map) = types
     | entries ConstructorName {constructors, ...} = constructors
@@ -358,7 +359,8 @@ struct
         end
 
   fun cached_type_names () =
-    List.concat (List.map (fn {result, ...} => #types (#names result)) (!cache))
+    List.concat (List.map (fn {result, ...} => #types (#names result))
+      (#defined (!cache)))
 
   fun build_names_and_asts group =
     let
@@ -435,7 +437,8 @@ struct
         end
       val (names, asts, selectors, _, _) =
         List.foldl one (base_names, [], [],
-          List.map #selector_hol (!selector_table), []) group
+          List.concat (List.map (fn {selectors, ...} =>
+            List.map #selector_hol selectors) (#defined (!cache))), []) group
     in
       (List.rev asts, names, selectors, ctor_names)
     end
@@ -478,22 +481,34 @@ struct
         tyinfos = tyinfos, selectors = selectors, constructors = constructors}
       val entry = {key = key, result = result, selectors = selectors,
         constructors = constructors}
-      val _ = cache := entry :: !cache
-      val _ = register_selectors selectors
-      val _ = register_constructors constructors
+      val {defined, active} = !cache
+      val _ = cache := {defined = entry :: defined, active = entry :: active}
     in
       result
     end
 
   fun define_datatype_group (group : datatype_group) =
-    let val key = group_key group
+    let
+      val key = group_key group
+      val {defined, active} = !cache
+      (* Rebuild the prefix only when a cached group was found. *)
+      fun take_cached [] = NONE
+        | take_cached ((entry : cache_entry) :: rest) =
+            if #key entry = key then SOME (entry, rest)
+            else case take_cached rest of
+                NONE => NONE
+              | SOME (found, remaining) => SOME (found, entry :: remaining)
     in
-      case List.find (fn {key = k, ...} => k = key) (!cache) of
-        SOME {result, selectors, constructors, ...} =>
-          (register_selectors selectors;
-           register_constructors constructors;
-           result)
-      | NONE => define_new_group key group
+      case active of
+        entry :: rest =>
+          if #key entry = key then #result entry
+          else (case take_cached rest of
+              NONE => define_new_group key group
+            | SOME (found, remaining) =>
+                (cache := {defined = defined,
+                   active = found :: entry :: remaining};
+                 #result found))
+      | [] => define_new_group key group
     end
 
   fun define_datatype (name : string located, decl : datatype_decl) =
@@ -547,14 +562,14 @@ struct
     let
       val ty = Term.type_of scrutinee
       val constructors = constructors_of_type ty
+      fun matches ctor =
+        let val name = const_name ctor in
+          name = constructor orelse List.exists (fn {constructors, ...} =>
+            List.exists (fn {smt, hol} => constructor = smt andalso name = hol)
+              constructors) (#active (!cache))
+        end
       val target =
-        case List.find
-          (fn ctor => const_name ctor = constructor orelse
-             List.exists
-               (fn {smt, hol} =>
-                 constructor = smt andalso const_name ctor = hol)
-               (!constructor_table))
-          constructors of
+        case List.find matches constructors of
           SOME ctor => const_name ctor
         | NONE => raise ERR "mk_tester_case"
             ("constructor '" ^ constructor ^

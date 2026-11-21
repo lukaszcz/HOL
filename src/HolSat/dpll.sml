@@ -64,24 +64,27 @@ in
                  | NONE => boolSyntax.T)
 end
 
-fun CoreDPLL initial_th = let (* [ci] |- cnf *)
+local
+datatype search_result = Refutation of thm | Assignment of thm
+
+fun search initial_th = let (* [ci] |- cnf *)
    fun recurse th = let (* [assigns, ci] |- curr *)
     val c = concl th (* current *)
   in
     if aconv c boolSyntax.T then
-      mk_satmap th
+      Assignment th
     else if aconv c boolSyntax.F then
-      Unsat th
+      Refutation th
     else let
         val v = find_splitting_var c
         val (l,r) = casesplit v th
           (*[assigns,v=T,ci]|- curr[T/v],[assigns,v=F,ci]|- curr[F/v]*)
       in
         case recurse l of
-          Unsat l_false =>
+          Refutation l_false =>
           (case recurse r of
-               Unsat r_false =>
-               Unsat (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
+               Refutation r_false =>
+               Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
                (* [assignsr\v,assignsl\v,ci] |- F *)
             | x => x)
         | x => x
@@ -90,6 +93,13 @@ fun CoreDPLL initial_th = let (* [ci] |- cnf *)
 in
    recurse initial_th (* [ci] |-  F *)
 end
+
+in
+
+fun CoreDPLL initial =
+    case search initial of
+        Refutation th => Unsat th
+      | Assignment th => mk_satmap th
 
 fun doCNF neg_tm =
     (* clauses is (ci,[~t] |- ci') pairs, where ci' is expanded ci *)
@@ -122,10 +132,12 @@ fun DPLL_REFUTE lfn clauseth =
         val initial = List.foldr
           (fn ((clause,_),th) => CONJ (ASSUME clause) th) TRUTH clauses
     in
-      case CoreDPLL initial of
-        Unsat th => SOME (undoCNF lfn clauses th)
-      | Sat _ => NONE
+      case search initial of
+        Refutation th => SOME (undoCNF lfn clauses th)
+      | Assignment _ => NONE
     end
+
+end
 
 fun mk_model_thm cnfv lfn t f =
     if isSome cnfv then

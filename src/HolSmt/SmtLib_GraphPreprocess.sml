@@ -72,6 +72,22 @@ struct
   fun source_nodes validation =
     let val sources = original_sources validation in
       S.assumption_nodes sources @ [S.denied_goal_node sources] end
+
+  fun same_original_sources validation expected =
+    Portable.pointer_eq (original_sources validation,expected) andalso
+    let
+      (* Preserve the original paid projections and their order without
+         copying the assumption prefixes to append the denied goal. *)
+      val sources = original_sources validation
+      val actual_nodes = S.assumption_nodes sources
+      val actual_denied = S.denied_goal_node sources
+      val expected_nodes = S.assumption_nodes expected
+      val expected_denied = S.denied_goal_node expected
+    in
+      (Portable.pointer_eq (actual_nodes,expected_nodes) orelse
+       actual_nodes = expected_nodes) andalso actual_denied = expected_denied
+    end
+
   fun roots (Portfolio value) = V.roots value
     | roots (validation as Validation {roots,...}) =
     (active validation;roots)

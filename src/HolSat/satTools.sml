@@ -32,7 +32,8 @@ fun substringContains s ss =
 ** occurrence of s2 that is after the first occurrence of s1
 *)
 
-fun parseSat (s1,s2) ss =
+local
+fun fold_sat step initial (s1,s2) ss =
  let val (_,start) = Substring.position s1 ss
      val rest = Substring.triml (String.size s1) start
      val (numbers,_) = Substring.position s2 rest
@@ -53,14 +54,17 @@ fun parseSat (s1,s2) ss =
          else i
      fun loop i acc =
          let val start = skip_space i in
-           if start = limit then List.rev acc
+           if start = limit then acc
            else
              let val (number,next) = valOf (scan start)
-             in loop (skip_suffix next) (number :: acc) end
+             in loop (skip_suffix next) (step (number,acc)) end
          end
- in loop offset [] end
+ in loop offset initial end
  handle e => if dimacsTools.is_terminal e then raise e
              else failwith("parseSat");
+in
+
+fun parseSat markers output = List.rev (fold_sat (op ::) [] markers output)
 
 fun isSuccess s = Process.isSuccess s
 
@@ -100,7 +104,8 @@ fun observed_internal_solver action =
     (count_call #internal_calls; action ())
 end
 
-fun invokeSat_result model sat_solver infile =
+local
+fun invoke_sat parse sat_solver infile =
  let
    val (name,executable,notime_run,only_true,failure_string,start_string,
         end_string) =
@@ -125,9 +130,14 @@ fun invokeSat_result model sat_solver infile =
   if result
    then NONE
    else
-    SOME (model only_true (parseSat (start_string,end_string) sat_res_ss))
+    SOME (parse only_true (start_string,end_string) sat_res_ss)
  end
 handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
+in
+
+fun invokeSat_result model =
+  invoke_sat (fn only_true => fn markers => fn output =>
+    model only_true (parseSat markers output))
 
 fun invokeSat sat_solver tm vc nr svm sva infile =
   let
@@ -146,9 +156,22 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
    Missing variables for only_true solvers come from the valid DIMACS map;
    completing that assignment is only needed when returning a model. *)
 fun invokeSat_status sat_solver sva infile =
-  invokeSat_result
-    (fn _ => List.app (fn n => ignore (dimacsTools.lookup_sat_num sva (abs n))))
-    sat_solver infile
+  let
+    val limit = Array.length sva
+    fun check (number,NONE) =
+          if number <= ~limit orelse number >= limit then SOME number else NONE
+      | check (_,invalid) = invalid
+    (* Finish scanning before reporting a bad index so parse errors still
+       take precedence. Let the original lookup report the first bad index. *)
+    fun status _ markers output =
+        case fold_sat check NONE markers output of
+            NONE => ()
+          | SOME number =>
+              ignore (dimacsTools.lookup_sat_num sva (abs number))
+  in invoke_sat status sat_solver infile end
+
+end
+end
 
 (*
 ** satCheck [l1,...,ln] t

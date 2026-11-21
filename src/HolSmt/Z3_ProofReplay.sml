@@ -1118,14 +1118,14 @@ local
         (fn var => Term.type_of var = Type.bool andalso
           Lib.can (fp_k_index version) var)
         (HOLset.listItems registered))
-    fun allocate ([], remaining, definitions) =
+    fun allocate ([], remaining, _, definitions) =
           if List.null remaining then List.rev definitions
           else raise ERR "fp_per_bit_definitions"
             "unallocated fpa2bv Boolean skolems"
-      | allocate (bv :: bvs, remaining, definitions) =
+      | allocate (bv :: bvs, remaining, available, definitions) =
           let
             val width = Arbnum.toInt (wordsSyntax.size_of bv)
-            val _ = List.length remaining >= width orelse
+            val _ = available >= width orelse
               raise ERR "fp_per_bit_definitions"
                 "too few fpa2bv Boolean skolems"
             val bits = List.take (remaining, width)
@@ -1134,14 +1134,14 @@ local
               boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
                 (numSyntax.term_of_int offset, bv))
           in
-            allocate (bvs, remaining,
+            allocate (bvs, remaining, available - width,
               List.revAppend
                 (List.map definition
                    (ListPair.zip (List.tabulate (width, Lib.I), bits)),
                  definitions))
           end
   in
-    allocate (bv_vars, bool_vars, [])
+    allocate (bv_vars, bool_vars, List.length bool_vars, [])
   end
   handle Fail _ => []
        | Option.Option => []
