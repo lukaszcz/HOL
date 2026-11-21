@@ -33,13 +33,32 @@ fun substringContains s ss =
 *)
 
 fun parseSat (s1,s2) ss =
- let val (ss1,ss2) = Substring.position s1 ss
-     val ss3       = Substring.triml (String.size s1) ss2
-     val (ss4,ss5) = Substring.position s2 ss3
-     val ssl       = Substring.tokens Char.isSpace ss4
- in
-  List.map (valOf o Int.fromString o Substring.string) ssl
- end
+ let val (_,start) = Substring.position s1 ss
+     val rest = Substring.triml (String.size s1) start
+     val (numbers,_) = Substring.position s2 rest
+     val (source,offset,length) = Substring.base numbers
+     val limit = offset + length
+     fun getc i =
+         if i < limit then SOME (String.sub (source,i),i+1) else NONE
+     val scan = Int.scan StringCvt.DEC getc
+     fun skip_space i =
+         if i < limit andalso Char.isSpace (String.sub (source,i)) then
+           skip_space (i+1)
+         else i
+     (* Int.fromString accepts an integer prefix. Skip any remainder of
+        that token before scanning the next integer. *)
+     fun skip_suffix i =
+         if i < limit andalso not (Char.isSpace (String.sub (source,i))) then
+           skip_suffix (i+1)
+         else i
+     fun loop i acc =
+         let val start = skip_space i in
+           if start = limit then List.rev acc
+           else
+             let val (number,next) = valOf (scan start)
+             in loop (skip_suffix next) (number :: acc) end
+         end
+ in loop offset [] end
  handle e => if dimacsTools.is_terminal e then raise e
              else failwith("parseSat");
 

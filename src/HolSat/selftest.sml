@@ -186,6 +186,32 @@ local
                 GEN_SAT (fn result => raised primary result andalso
                   dimacsTools.readDimacs input ~~ ``v1:bool``))) ()
       end)
+  val _ = control "SAT result parsing preserves prefixes and error order"
+    (fn () =>
+      let
+        val input = OS.FileSys.tmpName ()
+        val backend = solver (fn _ => fn _ => ":") NONE
+        val output = input ^ "." ^ getSolverName backend
+        val sva = Array.fromList [T, ``p:bool``, ``q:bool``]
+        fun status text =
+            (put output text; satTools.invokeSat_status backend sva input)
+        fun failure text =
+            (ignore (status text); "")
+            handle HOL_ERR error => Feedback.message_of error
+        val overflow = case Int.maxInt of
+            SOME maximum => Int.toString maximum ^ "0"
+          | NONE => "+"
+      in dimacsTools.with_cleanup
+           (fn () => dimacsTools.clean_files [input, output])
+           (fn () =>
+             satTools.parseSat ("[","]")
+               (Substring.substring ("skip[1junk\t+2\n-3 ~4x]skip",4,18))
+               = [1,2,~3,~4] andalso
+             status "SAT\t1suffix\n-2 +1 0 ignored" = SOME () andalso
+             failure "SAT 20 0" = "lookup_sat_numError: 20\n" andalso
+             failure "SAT 20 + 2 0" = "parseSat" andalso
+             failure ("SAT 20 " ^ overflow ^ " 0") = "parseSat") ()
+      end)
   val _ = control "Proof-only DIMACS checks the input used for replay"
     (fn () =>
       let

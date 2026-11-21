@@ -4571,10 +4571,7 @@ local
   fun sort_list_to_string tys =
     "[" ^ String.concatWith ", " (List.map type_to_string tys) ^ "]"
 
-  (* Index the term-kind symbol metadata by name.  This depends only on the
-     logic's dictionary, so a caller handling one command builds it once and
-     reuses it across the several `command_context` values it needs (see the
-     memoized `context` in `typecheck_command`). *)
+  (* Index the term-kind symbol metadata by name for a logic dictionary. *)
   fun build_metadata_index dictionary_metadata =
     List.foldl
       (fn (metadata as {kind, name, ...}
@@ -7213,37 +7210,19 @@ local
             "assumption literal must have Bool sort"
       end) terms
 
-  fun typecheck_command
-      ({dict_logic, solver, elaborate_datatypes}: typecheck_options) command state =
+  fun typecheck_command dictionary_logic metadata_index
+      ({solver, elaborate_datatypes, ...}: typecheck_options) command state =
     let
-      fun dictionary_logic logic =
-        case dict_logic of SOME broad_logic => broad_logic | NONE => logic
       fun parsedicts_for_solver logic =
         case solver of
           SOME target => SmtLib_Logics.parsedicts_of_solver_logic target logic
         | NONE => SmtLib_Logics.parsedicts_of_any_solver_logic logic
-      (* A command handler asks for several `context` values (one per phase
-         that reports errors), all sharing the same logic.  The metadata index
-         depends only on that logic, so derive it once and reuse it; only the
-         command description varies between the returned contexts. *)
-      val context_shared = ref NONE
       fun context command =
         let
-          val (surface_flags, metadata_index) =
-            case !context_shared of
-              SOME shared => shared
-            | NONE =>
-                let
-                  val {logic, surface_flags, ...} =
-                    dest_typecheck_state command state
-                  val metadata = SmtLib_Logics.metadata_of_logic
-                    (dictionary_logic (visible_logic logic))
-                  val shared = (surface_flags, build_metadata_index metadata)
-                in
-                  context_shared := SOME shared; shared
-                end
+          val {logic, surface_flags, ...} = dest_typecheck_state command state
+          val index = metadata_index (dictionary_logic (visible_logic logic))
         in
-          command_context solver surface_flags metadata_index command
+          command_context solver surface_flags index command
         end
       fun finish state = SOME state
       fun cvc5_set_surface surface =
@@ -7642,13 +7621,28 @@ local
     elaborate_datatypes = false
   }
 
-  fun typecheck_script_with_options options script : checked_script =
+  fun typecheck_script_with_options (options : typecheck_options) script
+      : checked_script =
     let
+      fun dictionary_logic logic = Option.getOpt (#dict_logic options, logic)
+      (* A reset can change the active dictionary within one script. *)
+      val cached_index = ref NONE
+      fun rebuild_index logic =
+        let
+          val index = build_metadata_index
+            (SmtLib_Logics.metadata_of_logic logic)
+        in cached_index := SOME (logic, index); index end
+      fun metadata_index logic =
+        case !cached_index of
+          SOME (cached_logic, index) =>
+            if logic = cached_logic then index else rebuild_index logic
+        | NONE => rebuild_index logic
+      val check = typecheck_command dictionary_logic metadata_index options
       fun loop [] state = finalize_typecheck_state "(end-of-stream)" state
         | loop (command :: rest) state =
             (case node_of command of
                CmdExit => finalize_typecheck_state "exit" state
-             | _ => loop rest (typecheck_command options command state))
+             | _ => loop rest (check command state))
     in
       loop script NONE
     end

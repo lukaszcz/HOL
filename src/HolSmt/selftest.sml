@@ -74413,16 +74413,17 @@ local
          Portable.pointer_eq (term,G.representative (#graph state) node))
            original) (Thm.hyp theorem)
        andalso not (#retired (W.audit (#work state)))) end
-  (* Exercise the formerly unpaid constructor boundary independently of
-     native inference quotations. Populate BOTH intern tables/recent Types
-     and a scope chain; the debit must reflect their actual geometry. *)
+  (* Exercise the constructor boundary independently of native quotations.
+     Compound Types populate both the intern tables and the pointer cache.
+     A scope chain adds ancestry lookups to the same construction. *)
   fun construction width depth budget inspect =
     let val graph = G.new () val root = G.root_scope graph
         val sources = S.new graph root 512
           {assumptions=[],goal=boolSyntax.F}
         val _ = List.app (fn index => ignore (G.variable graph root
           G.RigidSource (Term.mk_var ("metered_" ^ Int.toString index,
-            Type.mk_vartype ("'metered_" ^ Int.toString index)))))
+            Type.mk_type ("list",
+              [Type.mk_vartype ("'metered_" ^ Int.toString index)])))))
           (List.tabulate (width,fn i => i))
         fun descend 0 scope = scope
           | descend n scope = descend (n-1) (G.new_scope graph scope [])
@@ -74511,6 +74512,13 @@ in
       val _ = test "Selected-law graph fee exhausts Work before interning"
         (fn () =>
           let val fee = construction_cost 128 16
+              val _ = construction 128 16 fee
+                (fn {target,work,result,stats,...} =>
+                  let val audit = W.audit work
+                  in require "exact construction fee did not admit interning"
+                    (Exn.release result=target andalso #charged audit=fee
+                     andalso not (#retired audit)
+                     andalso #node_creations stats=1) end)
           (* Exclude the final empty-spine debit as well as one fee unit. *)
           in construction 128 16 (fee-3)
             (fn {graph,root,work,result,stats,revision,prior,...} =>

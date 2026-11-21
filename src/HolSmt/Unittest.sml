@@ -4397,6 +4397,25 @@ in
     "indexed identifiers were misclassified as the _ apply operator")
 end
 
+fun smtlib_indexed_metadata_after_reset () =
+let
+  val script =
+    "(set-logic ALL)\n" ^
+    "(assert true)\n" ^
+    "(reset)\n" ^
+    "(set-logic HO_UF)\n" ^
+    "(declare-const extract (-> Bool Bool))\n" ^
+    "(assert (_ extract true))\n"
+  val state = SmtLib_Parser.typecheck_script_string script
+in
+  assert (#apply_operator_used (#surface_flags state),
+    "reset retained indexed operator metadata from the previous logic");
+  expect_hol_error_contains "indexed metadata from the dictionary override"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => ignore
+      (SmtLib_Parser.typecheck_script_string_with_dict_logic "ALL" script))
+end
+
 fun smtlib_apply_operator_diagnostics () =
 let
   fun typecheck text () =
@@ -39658,6 +39677,8 @@ let
       smtlib_apply_operators_success),
     ("smtlib_apply_indexed_ambiguity_success",
       smtlib_apply_indexed_ambiguity_success),
+    ("smtlib_indexed_metadata_after_reset",
+      smtlib_indexed_metadata_after_reset),
     ("smtlib_apply_operator_diagnostics",
       smtlib_apply_operator_diagnostics),
     ("smtlib_apply_operator_metadata_success",

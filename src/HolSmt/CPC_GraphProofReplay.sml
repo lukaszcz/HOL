@@ -1267,6 +1267,49 @@ struct
             (clause_fact (C.discover graph scope literals))
         in (current,if List.null (!schemas) then Boolean
                     else BooleanSchemas (!schemas)) end
+      val cache_selection = Option.isSome
+        (G.unpriced_validation_revision graph scope)
+      fun provenance_children provenance = case provenance of
+          ConjunctionProvenance (_,children) => children
+        | ApplicationProvenance (_,children) => children
+        | _ => raise ERR "discover" "missing immediate operand boundary"
+      val selection_operands = CPC_SharedReplayPlan.selection_operands
+        {children = provenance_children,recorded = recorded graph,
+         length = List.length,error = ERR "discover"}
+      fun invalid_index () = raise ERR "discover" "operand index out of range"
+      fun list_at (nodes,origins) index =
+        (List.nth (nodes,index),List.nth (origins,index))
+        handle Subscript => invalid_index ()
+      fun vector_at pairs index = Vector.sub (pairs,index)
+        handle Subscript => invalid_index ()
+      datatype selection =
+          First of G.node list * term_provenance list
+        | Repeated of (G.node * term_provenance) vector
+      (* Keep only the last validated constructor spine. Equal graph nodes
+         can have different operand boundaries, so retain the occurrence. *)
+      val last_selection = ref NONE
+      fun selected operator source provenance index =
+        let
+          fun remember entries =
+            last_selection := SOME (operator,source,provenance,entries)
+          fun first () =
+            let val entries = selection_operands operator source provenance
+                val result = list_at entries index
+            in if cache_selection then remember (First entries) else ();
+               result end
+          fun repeat (Repeated pairs) = vector_at pairs index
+            | repeat (First entries) =
+                let val pairs = Vector.fromList (ListPair.zip entries)
+                    val result = vector_at pairs index
+                in remember (Repeated pairs);result end
+        in
+          case !last_selection of
+             SOME (head,node,origin,entries) =>
+               if source = node andalso Portable.pointer_eq (head,operator)
+                 andalso Portable.pointer_eq (origin,provenance)
+               then repeat entries else first ()
+           | NONE => first ()
+        end
       fun simple (step : Q.graph_rule_step) premises =
         let
           val handler = #replay_handler (#rule step)
@@ -1307,14 +1350,6 @@ struct
             | NONE => raise ERR "discover" "expected relation premise"
           fun pair node = case R.relation graph node of SOME (_,pair) => pair
             | NONE => raise ERR "discover" "expected relation premise"
-          fun provenance_children provenance = case provenance of
-              ConjunctionProvenance (_,children) => children
-            | ApplicationProvenance (_,children) => children
-            | _ => raise ERR "discover" "missing immediate operand boundary"
-          val selected = CPC_SharedReplayPlan.selected
-            {children = provenance_children,recorded = recorded graph,
-             length = List.length,node_at = List.nth,
-             provenance_at = List.nth,error = ERR "discover"}
           fun index () = case #args step of [Q.GraphIndex index] => index
             | _ => raise ERR "discover" "expected one recorded index"
           val owned_symmetry = ref (NONE : K.graph_conversion option)

@@ -9,6 +9,7 @@ struct
   structure GP = SmtLib_GraphPreprocess
   structure Q = CPC_ProofParser
   structure F = SmtLib_GraphFrontend
+  structure P = SmtLib_Parser
   structure R = CPC_GraphProofReplay
   val maximum = 512
   val goal = ``SUC (task37_n:num) = SUC task37_n``
@@ -144,6 +145,60 @@ struct
       require "malformed local certificate accepted or retried"
         (calls=1 andalso (case result of
            Exn.Exn (Feedback.HOL_ERR _) => true | _ => false)))
+  fun projections invalid () =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val assumption = ``projection_p /\ projection_q /\ F``
+      val sources = S.new graph scope maximum
+        {goal=boolSyntax.T,assumptions=[assumption]}
+      val source = hd (S.assumption_nodes sources)
+      fun node term = #node (G.import graph scope maximum term)
+      val p = node ``projection_p:bool``
+      val q = node ``projection_q:bool``
+      val falsity = node boolSyntax.F
+      val tail = node ``projection_q /\ F``
+      fun occurrence role token children node = P.ConstructionOccurrence
+        {value=node,role=role,token=token,children=children}
+      val atom = occurrence P.ConstructionAtom ""
+      val conj = occurrence P.ConstructionApplication "and"
+      fun located node occurrence : F.term =
+        {node=node,scope=scope,binder_blocks=[],source_syntax=NONE,
+         occurrence=occurrence}
+      val tail_syntax = conj [atom [] q,atom [] falsity] tail
+      val flat = located source
+        (conj [atom [] p,atom [] q,atom [] falsity] source)
+      val nested = located source (conj [atom [] p,tail_syntax] source)
+      val q_term = located q (atom [] q)
+      val false_term = located falsity (atom [] falsity)
+      val tail_term = located tail tail_syntax
+      val rule = valOf (CPC_Proof.lookup_rule "1.3.4" "and_elim")
+      fun project id premise index target = Q.GraphStep {pop=false,step=
+        {id=id,rule=rule,premises=[premise],conclusion=SOME target,
+         args=[Q.GraphIndex index],raw_args=[],raw_conclusion=NONE}}
+      val proof : Q.graph_proof = {cvc_version="1.3.4",commands=
+        [Q.GraphAssume ("@flat",flat),Q.GraphAssume ("@nested",nested),
+         project "@q1" "@flat" 1 q_term,project "@q2" "@flat" 1 q_term] @
+        (case invalid of
+           SOME index => [project "@done" "@flat" index false_term]
+         | NONE =>
+             [project "@tail" "@nested" 1 tail_term,
+              project "@q3" "@flat" 1 q_term,
+              project "@done" "@tail" 1 false_term])}
+      exception Fallback
+      val result = Exn.capture (fn () =>
+        let val contradiction = R.check_contradiction
+              {graph=graph,scope=scope,sources=sources,proof=proof,
+               ordinary_limit=maximum,template_limit=maximum,
+               worker=fn _ => raise Fallback}
+        in S.close_contradiction sources contradiction end) ()
+      val _ = G.close_scope graph scope
+    in case invalid of
+         NONE => exact boolSyntax.T [assumption] (Exn.release result)
+       | SOME _ => require "out-of-range cached projection accepted"
+           (case result of Exn.Exn Fallback => true
+              | Exn.Exn (Feedback.HOL_ERR _) => true | _ => false)
+    end
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
   fun run () =
@@ -166,5 +221,10 @@ struct
      test "CPC nested scopes discharge used locals before original Hyp"
        (positive_with 2 false false Partial);
      test "CPC wrong local-law endpoint rejects" (negative Wrong);
-     test "CPC unrelated local-law Hyp rejects" (negative Open))
+     test "CPC unrelated local-law Hyp rejects" (negative Open);
+     test "CPC repeated projections respect each occurrence"
+       (projections NONE);
+     test "CPC cached projections reject high indices" (projections (SOME 3));
+     test "CPC cached projections reject negative indices"
+       (projections (SOME (~1))))
 end

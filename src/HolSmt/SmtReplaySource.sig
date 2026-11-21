@@ -19,6 +19,8 @@ sig
   val canonical_goal : sources -> Term.term
   val assumption_nodes : sources -> SmtReplayGraph.node list
   val denied_goal_node : sources -> SmtReplayGraph.node
+  (* Zero-based assumption occurrence, followed by the denial. *)
+  val original_node : sources -> int -> SmtReplayGraph.node option
   val goal_bridge : sources -> Thm.thm
   (* Exact denied goal then ordered original assumption occurrences. *)
   val reconciliation_sources : sources -> SmtReplayGraph.source list

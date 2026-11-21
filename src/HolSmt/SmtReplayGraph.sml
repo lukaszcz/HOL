@@ -675,21 +675,29 @@ struct
   fun intern_type (g:graph) ty =
     case #indices g of
         LegacyIndices state =>
-          (case legacy_recent_type state ty of SOME id => id
-           | NONE =>
-             let val key=if Type.is_vartype ty then
-                   TypeVariable (Type.dest_vartype ty)
-                 else
-                   let val {Tyop,Args,...}=Type.dest_thy_typeid ty
-                   in TypeOperator (Tyop,List.map (intern_type g) Args) end
-                 val id=case Redblackmap.peek (!(#types state),key) of
-                     SOME id => id
-                   | NONE =>
-                     let val id=Redblackmap.numItems (!(#types state))
-                     in #types state := Redblackmap.insert
-                          (!(#types state),key,id);id end
-                 val _= #recent state := (ty,id):: !(#recent state)
-             in id end)
+          let
+            fun intern_key key =
+              case Redblackmap.peek (!(#types state),key) of
+                SOME id => id
+              | NONE =>
+                  let val id=Redblackmap.numItems (!(#types state))
+                  in #types state := Redblackmap.insert
+                       (!(#types state),key,id);id end
+          in
+            (* Type variables already supply a complete key. Keep them
+               out of the pointer cache for shared operator arguments. *)
+            if Type.is_vartype ty then
+              intern_key (TypeVariable (Type.dest_vartype ty))
+            else
+              case legacy_recent_type state ty of SOME id => id
+              | NONE =>
+                  let
+                    val {Tyop,Args,...}=Type.dest_thy_typeid ty
+                    val id=intern_key
+                      (TypeOperator (Tyop,List.map (intern_type g) Args))
+                    val _= #recent state := (ty,id):: !(#recent state)
+                  in id end
+          end
       | PaidIndices state =>
           (case paid_recent_type g state ty of SOME id => id
            | NONE =>

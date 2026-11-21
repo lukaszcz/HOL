@@ -10,6 +10,7 @@ struct
   datatype sources = Sources of
     {graph : G.graph, scope : G.scope,
      goal : G.source, assumptions : G.source list,
+     assumption_index : G.node vector Portable.HOLSusp.susp,
      denied : G.source, allowed : Term.term list Array.array,
      ordinary : Term.term list Array.array,work_claimed : bool ref}
     | OriginalSources of A.source_binding
@@ -34,6 +35,9 @@ struct
       List.all (fn oracle => oracle = "DISK_THM") oracles andalso
       List.null (Tag.axioms_of (Thm.tag theorem))
     end
+
+  fun index_assumptions (sources : G.source list) =
+    Portable.HOLSusp.delay (fn () => Vector.fromList (List.map #node sources))
 
   fun new graph scope maximum {goal, assumptions} =
     let
@@ -64,6 +68,7 @@ struct
         (goal_source :: denied :: assumption_sources)
     in Sources {graph = graph, scope = scope, goal = goal_source,
       assumptions = assumption_sources, denied = denied,
+      assumption_index = index_assumptions assumption_sources,
       allowed = allowed, ordinary = ordinary,work_claimed = ref false} end
 
   fun owning_graph (sources as Sources {graph,...}) =
@@ -148,6 +153,27 @@ struct
     | denied_goal_node (OriginalSources binding) =
         #node (#denied (A.source_binding_sources binding))
 
+  fun original_node (sources as Sources {assumption_index,denied,...}) index =
+    (active sources;
+     let val indexed = Portable.HOLSusp.force assumption_index
+         val count = Vector.length indexed
+     in
+       if index < 0 orelse index > count then NONE
+       else if index = count then SOME (#node denied)
+       else SOME (Vector.sub (indexed,index))
+     end)
+    | original_node (sources as OriginalSources _) index =
+        let
+          (* Keep both paid Ready projections even for an out-of-range index. *)
+          val assumptions = assumption_nodes sources
+          val denied = denied_goal_node sources
+          val count = List.length assumptions
+        in
+          if index < 0 orelse index > count then NONE
+          else if index = count then SOME denied
+          else SOME (List.nth (assumptions,index))
+        end
+
   fun goal_bridge (sources as Sources {goal, ...}) =
     (active sources;#bridge goal)
     | goal_bridge (OriginalSources binding) =
@@ -222,6 +248,7 @@ struct
         (goal_source :: denied :: assumption_sources)
     in Sources {graph = graph, scope = scope, goal = goal_source,
       assumptions = assumption_sources, denied = denied,
+      assumption_index = index_assumptions assumption_sources,
       allowed = allowed, ordinary = ordinary,work_claimed = ref false} end
 
 

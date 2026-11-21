@@ -19,6 +19,11 @@ sig
   val recorded_observed : (unit -> unit) ->
     (Term.term -> int -> 'node -> 'node list option) ->
     Term.term -> int -> 'node -> 'node list option
+  val selection_operands :
+    {children:'provenance -> 'provenance list,
+     recorded:Term.term -> int -> 'node -> 'node list option,
+     length:'provenance list -> int,error:string -> exn} ->
+    Term.term -> 'node -> 'provenance -> 'node list * 'provenance list
   val selected :
     {children:'provenance -> 'provenance list,
      recorded:Term.term -> int -> 'node -> 'node list option,

@@ -69,10 +69,9 @@ struct
     end
   fun original graph scope sources index =
     let val _ = G.validate_scope graph scope
-        val originals = nodes sources
-        val _ = if index >= 0 andalso index < List.length originals then ()
-          else raise ERR "original" "original Source occurrence index"
-        val node = List.nth (originals,index)
+        val node = case S.original_node sources index of
+            SOME node => node
+          | NONE => raise ERR "original" "original Source occurrence index"
         val _ = visible graph scope node
     in Fact {identity = next_identity (),graph = graph,scope = scope,
              node = node,
@@ -259,6 +258,8 @@ struct
       val _ = charge (List.length originals)
       val _ = charge 2 (* query goal and denial incidence *)
       val _ = List.app (fn _ => charge 1) assumptions
+      val original_index = Portable.HOLSusp.delay
+        (fn () => Vector.fromList originals)
       val visited = ref (Redblackmap.mkDict Int.compare : (int,fact)
         Redblackmap.dict)
       val closed_facts = ref ([] : P.closed_fact list)
@@ -290,7 +291,8 @@ struct
             in case row of
                 Original (original,index) =>
                   if Portable.pointer_eq (sources,original) andalso
-                      List.nth (originals,index) = node then walk rest roots
+                      Vector.sub (Portable.HOLSusp.force original_index,index)
+                        = node then walk rest roots
                   else raise ERR "validate" "different original Source object"
               | PolicyOriginal _ =>
                   raise ERR "validate" "policy original needs policy validation"
@@ -388,15 +390,6 @@ struct
       in {assumptions=assumptions,denied=denied} end)
      handle primary => (W.close work;raise primary))
 
-  fun policy_nth originals index =
-    if index < (0:IntInf.int) then
-      raise ERR "validate_with_policy" "negative original occurrence"
-    else let fun seek [] _ =
-                   raise ERR "validate_with_policy" "original index absent"
-               | seek (node::rest) n =
-                   if n=0 then node else seek rest (n-1)
-         in seek originals index end
-
   (* This pass precedes endpoint/Type getters, just as the finite owned
      validator's guard_facts pass does. Foreign facts cannot activate their
      graph or proof backing while the expected Work is being validated. *)
@@ -462,6 +455,8 @@ struct
       val _ = List.app (fn _=>charge 1) originals
       val _ = charge 2
       val _ = List.app (fn _=>charge 1) assumptions
+      val original_index = Portable.HOLSusp.delay
+        (fn () => Vector.fromList originals)
       val visited = ref (Redblackmap.mkDict Int.compare : (int,fact)
         Redblackmap.dict)
       val closed_facts = ref ([]:P.closed_fact list)
@@ -483,9 +478,15 @@ struct
       val _ = if exact_denial graph scope goal denied then () else
         raise ERR "validate_with_policy"
           "query denial is not exact negated query goal"
+      fun original_at index =
+        if index < 0 then
+          raise ERR "validate_with_policy" "negative original occurrence"
+        else Vector.sub (Portable.HOLSusp.force original_index,index)
+          handle Subscript =>
+            raise ERR "validate_with_policy" "original index absent"
       fun original sources_from index node rest roots =
         if Portable.pointer_eq (sources,sources_from) andalso
-            policy_nth originals index=node then walk rest roots
+            original_at index=node then walk rest roots
         else raise ERR "validate_with_policy" "different original Source"
       and walk [] roots = roots
         | walk ((fact as Fact
@@ -507,7 +508,7 @@ struct
                  val roots = node::roots
              in case row of
                   Original (saved,index) =>
-                    original saved (IntInf.fromInt index) node rest roots
+                    original saved index node rest roots
                 | PolicyOriginal (saved,_,held_node) =>
                     if Portable.pointer_eq (sources,saved) andalso
                         node=held_node then walk rest roots else

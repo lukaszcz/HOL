@@ -6931,7 +6931,7 @@ local
      assertion, so only assertions whose rules fire become hypotheses. *)
   fun asserted_macro_theorems assertions =
     let
-      fun is_macro assertion =
+      fun macro_parts assertion =
         let
           val (vars, body) = boolSyntax.strip_forall assertion
           val (lhs, rhs) = boolSyntax.dest_eq body
@@ -6940,57 +6940,87 @@ local
             Term.aconv tm head orelse
             (Term.is_const tm andalso Term.is_const head andalso
              Term.same_const tm head)
+          val eligible =
+            not (List.null vars) andalso
+            List.length args = List.length vars andalso
+            List.all (fn arg => Lib.op_mem Term.aconv arg vars) args andalso
+            List.length (Lib.op_mk_set Term.aconv args) =
+              List.length args andalso
+            List.all (fn v => Lib.op_mem Term.aconv v args)
+              (Term.free_vars rhs) andalso
+            not (Lib.op_mem Term.aconv head vars) andalso
+            not (Lib.can (HolKernel.find_term is_head) rhs) andalso
+            SmtLib.outbound_collection_symbol head andalso
+            not (TypeBase.is_constructor head) andalso
+            not (Option.isSome (SmtLib.builtin_encoding lhs))
         in
-          not (List.null vars) andalso
-          List.length args = List.length vars andalso
-          List.all (fn arg => Lib.op_mem Term.aconv arg vars) args andalso
-          List.length (Lib.op_mk_set Term.aconv args) =
-            List.length args andalso
-          List.all (fn v => Lib.op_mem Term.aconv v args)
-            (Term.free_vars rhs) andalso
-          not (Lib.op_mem Term.aconv head vars) andalso
-          not (Lib.can (HolKernel.find_term is_head) rhs) andalso
-          SmtLib.outbound_collection_symbol head andalso
-          not (TypeBase.is_constructor head) andalso
-          not (Option.isSome (SmtLib.builtin_encoding lhs))
+          if eligible then SOME (head, rhs) else NONE
         end
-        handle Feedback.HOL_ERR _ => false
-      fun parts th =
-        let val (lhs, rhs) = boolSyntax.dest_eq
-          (#2 (boolSyntax.strip_forall (Thm.concl th)))
-        in (#1 (boolSyntax.strip_comb lhs), rhs) end
-      val head_of = #1 o parts
-      fun group [] = []
-        | group (th :: ths) =
-            let
-              val head = head_of th
-              val (same, rest) = List.partition
-                (fn other => Term.aconv (head_of other) head) ths
-            in
-              (th :: same) :: group rest
-            end
-      fun uses group head =
-        List.exists (fn th => Lib.can (HolKernel.find_term (fn tm =>
-            Term.aconv tm head orelse
-            (Term.is_const tm andalso Term.is_const head andalso
-             Term.same_const tm head))) (#2 (parts th))) group
-      val rules = List.filter (is_macro o Thm.concl)
+        handle Feedback.HOL_ERR _ => NONE
+      fun group (th, state as (heads, groups, next)) =
+        case macro_parts (Thm.concl th) of
+          NONE => state
+        | SOME (head, rhs) =>
+            case Redblackmap.peek (heads, head) of
+              SOME (_, rules) => (rules := (th, rhs) :: !rules; state)
+            | NONE =>
+                let val rules = ref [(th, rhs)] in
+                  (Redblackmap.insert (heads, head, (next, rules)),
+                   (head, rules) :: groups, next + 1)
+                end
+      val (heads, groups, _) = List.foldl group
+        (Redblackmap.mkDict Term.compare, [], 0)
         (List.concat (List.map (Drule.CONJUNCTS o Thm.ASSUME) assertions))
-      val groups = Vector.fromList (group rules)
-      val indices = List.tabulate (Vector.length groups, Lib.I)
-      fun calls (i, j) = i <> j andalso
-        uses (Vector.sub (groups, i)) (head_of (hd (Vector.sub (groups, j))))
-      val graph = List.foldl (fn (i, graph) =>
-        Int_Graph.new_node (i, ()) graph) Int_Graph.empty indices
-      val graph = List.foldl (fn (i, graph) =>
-          List.foldl (fn (j, graph) =>
-            if calls (i, j) then Int_Graph.add_edge (i, j) graph else graph)
-            graph indices)
-        graph indices
+      val groups = Vector.fromList (List.rev groups)
+      val graph = Vector.foldli (fn (i, _, graph) =>
+        Int_Graph.new_node (i, ()) graph) Int_Graph.empty groups
+
+      (* Calls to one constant can connect multiple type instances. Use
+         the kernel constant identity, as in same_const. *)
+      fun constant_id tm = #Name (Term.dest_thy_constid tm)
+      val constant_heads = Vector.foldli (fn (i, (head, _), index) =>
+        if Term.is_const head then
+          Redblackmap.update (index, constant_id head,
+            fn NONE => [i] | SOME ids => i :: ids)
+        else index) (Redblackmap.mkDict KernelSig.id_compare) groups
+      fun add_calls i rhs graph =
+        let
+          fun edge (j, graph) =
+            if i = j then graph else Int_Graph.add_edge (i, j) graph
+          fun walk [] graph = graph
+            | walk (tm :: rest) graph =
+                if Term.is_comb tm then
+                  let val (rator, rand) = Term.dest_comb tm in
+                    walk (rator :: rand :: rest) graph
+                  end
+                else if Term.is_abs tm then
+                  (* Like find_term, open the body without visiting the
+                     binder declaration. *)
+                  walk (Term.body tm :: rest) graph
+                else if Term.is_const tm then
+                  let val called = Redblackmap.peek
+                    (constant_heads, constant_id tm)
+                  in
+                    walk rest (case called of NONE => graph
+                      | SOME ids => List.foldl edge graph ids)
+                  end
+                else
+                  walk rest (case Redblackmap.peek (heads, tm) of
+                    NONE => graph | SOME (j, _) => edge (j, graph))
+        in walk [rhs] graph end
+      val graph =
+        if Vector.length groups <= 1 then graph
+        else Vector.foldli (fn (i, (_, rules), graph) =>
+          List.foldl (fn ((_, rhs), graph) => add_calls i rhs graph)
+            graph (!rules)) graph groups
+      fun theorems [i] =
+            let val (_, rules) = Vector.sub (groups, i)
+            in SOME (List.foldl (fn ((th, _), ths) => th :: ths) [] (!rules))
+            end
+        | theorems _ = NONE
     in
       (* components come callers first *)
-      List.mapPartial (fn [i] => SOME (Vector.sub (groups, i)) | _ => NONE)
-        (Int_Graph.strong_conn graph)
+      List.mapPartial theorems (Int_Graph.strong_conn graph)
     end
 
   (* Substitution is the only use made of the assertions.  Most solve-eqs

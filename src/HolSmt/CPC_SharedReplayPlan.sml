@@ -653,12 +653,18 @@ struct
     in walk count root end)
   fun recorded operands operator count root=
     recorded_observed(fn()=>())operands operator count root
-  fun selected {children,recorded,length,node_at,provenance_at,error}
-      operator source provenance index =
+  fun selection_operands {children,recorded,length,error}
+      operator source provenance =
     let val provenance_children=children provenance
         val count=length provenance_children
         val nodes=case recorded operator count source of SOME nodes=>nodes
           | NONE=>raise error "invalid operand boundary"
+    in (nodes,provenance_children) end
+  fun selected {children,recorded,length,node_at,provenance_at,error}
+      operator source provenance index =
+    let val (nodes,provenance_children) = selection_operands
+          {children=children,recorded=recorded,length=length,error=error}
+          operator source provenance
     in (node_at(nodes,index),provenance_at(provenance_children,index))
       handle Subscript=>raise error "operand index out of range"
     end
