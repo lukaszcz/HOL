@@ -610,8 +610,9 @@ local
         val x = mk_var ("sat_x",bool)
         val y = mk_var ("sat_y",bool)
         val short = mk_disj (x,mk_neg y)
-        val wide = list_mk_disj
-          (List.tabulate (2200,fn i => if i mod 2 = 0 then x else mk_neg y))
+        val wide_tail = list_mk_disj
+          (List.tabulate (2198,fn i => if i mod 2 = 0 then x else mk_neg y))
+        val wide = mk_disj (short,wide_tail)
         val clauses = Array.fromList [short,wide]
         fun contents path =
           let val input = TextIO.openIn path
@@ -628,7 +629,7 @@ local
              val parsed = readDimacs path
              val expected_term = subst
                [x |-> intToPrefixedLiteral 2,y |-> intToPrefixedLiteral 1]
-               (mk_conj (short,wide))
+               (mk_conj (short,mk_disj (x,mk_disj (mk_neg y,wide_tail))))
              val rejected =
                (case Exn.capture (termToDimacsFile (SOME path) 1 2)
                                   clauses of

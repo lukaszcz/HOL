@@ -25,6 +25,9 @@ struct
   fun set () = Redblackset.empty Int.compare
   fun get table id = Option.getOpt (Redblackmap.peek (table,id),[])
   fun has ids node = Redblackset.member (ids,G.node_id node)
+  fun allocated_index allocated =
+    Susp.delay (fn () =>
+      Redblackset.addList (set (),List.map G.node_id allocated))
   fun require yes message = if yes then () else raise ERR "resolve" message
   fun check_instantiation_template limit theorem =
     let
@@ -148,6 +151,7 @@ struct
           Redblackset.union (ids,Redblackset.intersection
             (defined,dependencies (#residue row)))) (set ()) rs)) by_name
       val parts = components names adjacency
+      val allocation = allocated_index allocated
       fun constant node expected = case G.view graph node of G.Constant _ =>
           Term.same_const (G.representative graph node) expected | _ => false
       fun vector node = case G.view graph node of G.Application (head,list) =>
@@ -187,8 +191,7 @@ struct
                   val width = length bs
                   val word_type = G.type_of graph word
                   val vector_type = G.type_of graph (#residue row)
-                  val allocated_ids = Redblackset.addList
-                    (set (),List.map G.node_id allocated)
+                  val allocated_ids = Susp.force allocation
                   val unique = Redblackset.addList
                     (set (),List.map G.node_id bs)
                   val numeric = wordsSyntax.is_word_type word_type andalso
@@ -401,6 +404,7 @@ struct
           Redblackset.union (ids,Redblackset.intersection
             (defined,dependencies (#residue row)))) (set ()) rs)) by_name
       val parts = components names adjacency
+      val allocation = allocated_index allocated
       fun constant node expected = case G.view graph node of G.Constant _ =>
           Term.same_const (G.representative graph node) expected | _ => false
       fun vector node = case G.view graph node of G.Application (head,list) =>
@@ -475,8 +479,7 @@ struct
                   val width = length bs
                   val word_type = G.type_of graph word
                   val vector_type = G.type_of graph (#residue row)
-                  val allocated_ids = Redblackset.addList
-                    (set (),List.map G.node_id allocated)
+                  val allocated_ids = Susp.force allocation
                   val unique = Redblackset.addList
                     (set (),List.map G.node_id bs)
                   val numeric = wordsSyntax.is_word_type word_type andalso

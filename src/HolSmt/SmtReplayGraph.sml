@@ -1115,12 +1115,13 @@ struct
   (* Hashes are bounded routing hints, never equality claims. Abstractions
      are opaque here; no dest_abs/body/free-variable query occurs. *)
   val physical_hint = SmtReplayImport.pointer_bucket 4 4093
-  fun memo_row_peek (g : graph) scope term =
+  fun memo_row_peek (g : graph) scope term bucket =
     List.find (fn (saved,frame,_,_) => frame = scope_id scope andalso
           Portable.pointer_eq (saved,term))
-      (Array.sub (#imports g, physical_hint term))
+      (Array.sub (#imports g,bucket))
   fun memo_peek g scope term =
-    Option.map (fn (_,_,source,_) => source) (memo_row_peek g scope term)
+    Option.map (fn (_,_,source,_) => source)
+      (memo_row_peek g scope term (physical_hint term))
   (* The cell is the node's geometry cell on ordinary import paths.
      Non-root binder-body paths deliberately keep an empty private cell;
      they are never a root shape-transfer authority. *)
@@ -1187,6 +1188,40 @@ struct
   datatype import_plan = ImportPlan of
     {graph : graph,scope : scope,maximum : int,original : Term.term,
      types : Type.hol_type list}
+  (* Most plans visit few uncached terms. Allocate the bucket array only
+     once the small list fills, preserving the hash on larger imports. *)
+  local
+    datatype import_seen =
+        Small of int * Term.term list
+      | Buckets of Term.term list Array.array
+  in
+  fun new_import_seen () =
+    let
+      val seen = ref (Small (0,[]))
+      fun mark_bucket table term index =
+        let val held = Array.sub (table,index)
+        in if List.exists (fn old => Portable.pointer_eq (old,term)) held
+           then false
+           else (Array.update (table,index,term::held);true)
+        end
+      fun mark term bucket =
+        case !seen of
+          Buckets table => mark_bucket table term bucket
+        | Small (size,held) =>
+            if List.exists (fn old => Portable.pointer_eq (old,term)) held
+            then false
+            else if size < 8 then (seen := Small (size+1,term::held);true)
+            else
+              let
+                val table = Array.array (4093,[])
+                val _ = List.app
+                  (fn old => ignore (mark_bucket table old (physical_hint old)))
+                  (List.rev held)
+                val _ = seen := Buckets table
+              in mark_bucket table term bucket end
+    in mark end
+  end
+
   (* Public applications only; abstractions remain opaque and unopened.
      Count the same exposed DAG misses as import, before any alpha bridge.
      skip_root is private to fused import: its caller has ALREADY checked
@@ -1196,35 +1231,35 @@ struct
       val _ = if skip_root then () else check_scope g scope
       val _ = if maximum >= 1 then () else
         raise ERR "import" "nonpositive application import budget"
-      val buckets = 4093
-      val seen = Array.array (buckets,[] : Term.term list)
+      val mark_seen = new_import_seen ()
       val observations = ref 0
       val types = ref ([] : Type.hol_type list)
-      fun visit term = case memo_peek g scope term of SOME _ => ()
-        | NONE => missing term
-      and missing term =
-          let val bucket = SmtReplayImport.pointer_bucket 4 buckets term
-              val held = Array.sub (seen,bucket)
-          in if List.exists (fn old => Portable.pointer_eq (old,term)) held
-             then () else
-             let
-               val _ = observations := !observations+1
-               val _ = if !observations <= maximum then () else
-                 raise ERR "import"
-                   "application import DAG budget exhausted"
-               val _ = Array.update (seen,bucket,term :: held)
-               val _ = types := Term.type_of term :: !types
-             in if Term.is_comb term then
-                  let val (f,x) = Term.dest_comb term in visit f;visit x end
-                else if Term.is_var term orelse Term.is_const term orelse
-                    Term.is_abs term then () else
-                  raise ERR "import" "unexpected public term constructor"
-             end
+      fun visit term =
+        let val bucket = physical_hint term in
+          case memo_row_peek g scope term bucket of
+            SOME _ => ()
+          | NONE => missing term bucket
+        end
+      and missing term bucket =
+        if not (mark_seen term bucket) then ()
+        else
+          let
+            val _ = observations := !observations+1
+            val _ = if !observations <= maximum then () else
+              raise ERR "import"
+                "application import DAG budget exhausted"
+            val _ = types := Term.type_of term :: !types
+          in if Term.is_comb term then
+               let val (f,x) = Term.dest_comb term in visit f;visit x end
+             else if Term.is_var term orelse Term.is_const term orelse
+                 Term.is_abs term then () else
+               raise ERR "import" "unexpected public term constructor"
           end
       fun plan original =
         let val _ = observations := 0
             val _ = types := []
-            val _ = if skip_root then missing original else visit original
+            val _ = if skip_root then
+              missing original (physical_hint original) else visit original
         in ImportPlan {graph = g,scope = scope,maximum = maximum,
           original = original,types = List.rev (!types)} end
     in List.map plan originals end
@@ -4290,36 +4325,36 @@ struct
       val _ = if skip_root then () else check_scope g scope
       val _ = if SmtReplayResourcePolicy.positive maximum then () else
         raise ERR "import" "nonpositive application import budget"
-      val buckets = 4093
-      val seen = Array.array (buckets,[] : Term.term list)
+      val mark_seen = new_import_seen ()
       val observations = ref (0 : IntInf.int)
       val types = ref ([] : Type.hol_type list)
-      fun visit term = case memo_peek g scope term of SOME _ => ()
-        | NONE => missing term
-      and missing term =
-          let val bucket = SmtReplayImport.pointer_bucket 4 buckets term
-              val held = Array.sub (seen,bucket)
-          in if List.exists (fn old => Portable.pointer_eq (old,term)) held
-             then () else
-             let
-               val _ = observations := !observations+1
-               val _ = if SmtReplayResourcePolicy.allows maximum
-                   (!observations) then () else
-                 raise ERR "import"
-                   "application import DAG budget exhausted"
-               val _ = Array.update (seen,bucket,term :: held)
-               val _ = types := Term.type_of term :: !types
-             in if Term.is_comb term then
-                  let val (f,x) = Term.dest_comb term in visit f;visit x end
-                else if Term.is_var term orelse Term.is_const term orelse
-                    Term.is_abs term then () else
-                  raise ERR "import" "unexpected public term constructor"
-             end
+      fun visit term =
+        let val bucket = physical_hint term in
+          case memo_row_peek g scope term bucket of
+            SOME _ => ()
+          | NONE => missing term bucket
+        end
+      and missing term bucket =
+        if not (mark_seen term bucket) then ()
+        else
+          let
+            val _ = observations := !observations+1
+            val _ = if SmtReplayResourcePolicy.allows maximum
+                (!observations) then () else
+              raise ERR "import"
+                "application import DAG budget exhausted"
+            val _ = types := Term.type_of term :: !types
+          in if Term.is_comb term then
+               let val (f,x) = Term.dest_comb term in visit f;visit x end
+             else if Term.is_var term orelse Term.is_const term orelse
+                 Term.is_abs term then () else
+               raise ERR "import" "unexpected public term constructor"
           end
       fun plan original =
         let val _ = observations := 0
             val _ = types := []
-            val _ = if skip_root then missing original else visit original
+            val _ = if skip_root then
+              missing original (physical_hint original) else visit original
         in ExactPolicyImportPlan {graph = g,scope = scope,maximum = maximum,
           original = original,types = List.rev (!types)} end
     in List.map plan originals end

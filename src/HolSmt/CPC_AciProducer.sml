@@ -21,21 +21,30 @@ struct
 
   (* Pointer-only tables: structural Term.compare is NOT safe for an opaque
      operand, even when that operand is a Boolean connective itself. *)
-  fun table () = Array.array (4093, [])
+  val max_buckets = 4093
+  fun table buckets = Array.array (buckets, [])
   (* Use only a two-level routing hint, not Resource's deeper metric hash.
      Routing cannot grant permission to traverse an opaque operand. *)
-  val bucket_of = SmtReplayImport.pointer_bucket 2 4093
+  fun bucket_of buckets =
+    SmtReplayImport.pointer_bucket 2 (Array.length buckets)
   fun peek buckets term =
     Option.map #2 (List.find
       (fn (saved,_) => Portable.pointer_eq (term,saved))
-      (Array.sub (buckets,bucket_of term)))
+      (Array.sub (buckets,bucket_of buckets term)))
   fun put buckets term value =
-    let val bucket = bucket_of term in
+    let val bucket = bucket_of buckets term in
       Array.update (buckets,bucket,(term,value) ::
         List.filter (fn (saved,_) =>
           not (Portable.pointer_eq (term,saved)))
           (Array.sub (buckets,bucket)))
     end
+  (* Two binary walks visit at most 2^(depth + 2) - 2 occurrences.
+     Use an odd bucket count, capped at the full-depth size. *)
+  fun bucket_count depth =
+    if depth >= 0 andalso depth < 10 then
+      IntInf.toInt (IntInf.pow (2, depth + 2)) - 1
+    else max_buckets
+
   fun debit remaining =
     if !remaining = 0 then raise Declined
     else remaining := !remaining - 1
@@ -56,7 +65,7 @@ struct
      A \/ B may require opening the common A \/ B after all. *)
   fun occurrences conjunction depth root =
     let
-      val seen = table ()
+      val seen = table (bucket_count depth)
       val remaining = ref maximum
       fun visit depth term =
         (debit remaining;
@@ -83,9 +92,12 @@ struct
               val rs = occurrences conjunction depth right
             in fn term => Option.isSome (peek ls term) andalso
               Option.isSome (peek rs term) end
-      val atoms = table ()
+      val expected = case cut_depth of
+          NONE => max_buckets
+        | SOME depth => bucket_count depth
+      val atoms = table expected
       val operands = ref []
-      val memo = table ()
+      val memo = table expected
       val remaining = ref maximum
       fun atom term = case peek atoms term of SOME variable => variable
         | NONE =>

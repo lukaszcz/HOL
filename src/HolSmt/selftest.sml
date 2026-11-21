@@ -2758,11 +2758,21 @@ val _ =
   let val graph = G.new () val scope = G.root_scope graph
       val p = Term.genvar Type.bool
       val compound = boolSyntax.mk_conj (p,p)
-      val roots = [compound,boolSyntax.mk_neg compound]
+      val fresh = List.tabulate (12,fn _ => Term.genvar Type.bool)
+      val late = Term.genvar Type.bool
+      val roots = [compound,boolSyntax.mk_neg compound] @ fresh @
+        [late,compound,late]
+      val expected = [4,2] @ List.map (fn _ => 1) fresh @ [1,0,0]
       val plans = G.plan_imports graph scope 4 roots
       val counts = List.map (length o G.import_types) plans
+      val uncapped = G.plan_imports_with_policy graph scope
+        SmtReplayResourcePolicy.Uncapped roots
+      val uncapped_counts = List.map (length o G.import_types_with_policy)
+        uncapped
       val sources = List.map G.execute_import plans
-  in ensure "prospective memo lost sequential sharing" (counts = [4,2]);
+  in ensure "prospective memo lost sequential sharing" (counts = expected);
+     ensure "uncapped memo lost sequential sharing"
+       (uncapped_counts = expected);
      ensure "executed original endpoint changed"
        (ListPair.allEq (fn (source,original) =>
          Portable.pointer_eq (#original source,original)) (sources,roots))

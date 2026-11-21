@@ -333,14 +333,12 @@ struct
                  | _ => error "proof-bind expects one operand")
               else if name = "th-lemma" then
                 parse_lemma session aliases indices operands
-              else case lookup_rule version name of
+              else case lookup_registered_rule name of
                   SOME rule =>
-                    parse_rule session aliases rule NONE indices operands
-                | NONE =>
-                    if Option.isSome (List.find (rule_matches name)
-                        proof_rule_registry) then
-                      error (registry_lookup_failure version name)
-                    else Term (term session aliases raw)
+                    if version_supported version rule then
+                      parse_rule session aliases rule NONE indices operands
+                    else error (registry_lookup_failure version name)
+                | NONE => Term (term session aliases raw)
             end
         | List [] => error "empty proof or term expression"
       and parse_outer session aliases raw = case raw of

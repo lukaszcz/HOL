@@ -260,10 +260,26 @@ val tmp_name = ref "undefined";
 local
 fun number_clause sva clause svm =
     let
-      fun add (literal,(numbered,svm)) =
-          let val (number,svm') = literalToInt svm sva literal
-          in (number::numbered,svm') end
-    in List.foldl add ([],svm) (List.rev (strip_disj clause)) end
+      fun walk literal pending numbered svm =
+          if is_comb literal then
+            let val (operator,right) = dest_comb literal in
+              if is_comb operator then
+                let val (head,left) = dest_comb operator in
+                  if same_const disjunction head then
+                    walk right (left :: pending) numbered svm
+                  else add literal pending numbered svm
+                end
+              else add literal pending numbered svm
+            end
+          else add literal pending numbered svm
+      and add literal pending numbered svm =
+          let val (number,svm') = literalToInt svm sva literal in
+            case pending of
+                [] => (number :: numbered,svm')
+              | next :: rest => walk next rest (number :: numbered) svm'
+          end
+    (* Visit from the right to preserve the existing variable numbering. *)
+    in walk clause [] [] svm end
 
 fun fold_clauses count clause_at step initial =
     let fun loop i state =

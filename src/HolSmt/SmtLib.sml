@@ -6153,14 +6153,15 @@ local
                    partial and full applications from splitting one symbol. *)
                 val (domtys, rngty) = doms_rng [] declaration_arity
                   (carrier_type_of rator)
+                val arguments = Vector.fromList rands
                 (* A native collection argument determines the corresponding
                    declaration position.  Translating its HOL function type
                    alone would otherwise erase the selected Set/Bag sort. *)
                 fun translate_domain (tydict, (index, ty)) =
                   let
                     val argument =
-                      if index < List.length rands then
-                        SOME (List.nth (rands, index))
+                      if index < rands_count then
+                        SOME (Vector.sub (arguments, index))
                       else carrier_contextual_collection_argument rator index
                   in
                     case argument of

@@ -333,6 +333,8 @@ local
 
   val unlocated_pos : source_pos = {line = 1, column = 1, offset = 0}
   val unlocated_span = mk_point_span unlocated_pos
+  val open_paren = Token {text = "(", kind = AtomToken, loc = unlocated_span}
+  val close_paren = Token {text = ")", kind = AtomToken, loc = unlocated_span}
 
   fun make_tokenizer_from_input track_locations cpc_lexical_policy
       z3_quoted_escapes token_byte_gate
@@ -465,19 +467,23 @@ local
          in-string escape is a doubled quote ("") handled above, so every
          other character (backslash included) is taken literally. *)
       | SOME c => string_lit start (add_token_char c chars)
+
+    fun punctuation (tok as Token {text, ...}) =
+      if track_locations then
+        let
+          val start = token_start ()
+          val _ = advance ()
+        in
+          SOME (Token {text = text, kind = AtomToken, loc = token_span start})
+        end
+      else (ignore (advance ()); SOME tok)
   in
     fn () =>
       (skip_space_and_comments ();
        case peek () of
          NONE => NONE
-       | SOME #"(" =>
-           let val start = token_start ()
-               val _ = advance ()
-           in SOME (token AtomToken start [#"("]) end
-       | SOME #")" =>
-           let val start = token_start ()
-               val _ = advance ()
-           in SOME (token AtomToken start [#")"]) end
+       | SOME #"(" => punctuation open_paren
+       | SOME #")" => punctuation close_paren
        | SOME #"|" =>
            let val start = token_start ()
                val _ = advance ()
@@ -7697,10 +7703,9 @@ local
       fun pattern candidate =
         let
           val domains = constructor_domains (Term.type_of candidate)
-          val variables = List.tabulate (List.length domains, fn index =>
-            Term.mk_var
-              ("datatype_selector" ^ Int.toString index,
-               List.nth (domains, index)))
+          val variables = Lib.mapi (fn index => fn domain =>
+            Term.mk_var ("datatype_selector" ^ Int.toString index, domain))
+            domains
         in
           (Term.list_mk_comb (candidate, variables), variables)
         end

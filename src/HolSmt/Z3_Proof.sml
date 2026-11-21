@@ -337,15 +337,27 @@ struct
       SOME rule => if version_supported_observed observer version rule
         then SOME rule else NONE
     | NONE => NONE
-  fun lookup_rule version name=
-    lookup_rule_observed silent_registry_observer version name
+  local
+    (* Preserve the first match across canonical names and aliases. *)
+    fun index_rule (rule, index) =
+      List.foldl (fn (name, index) => Redblackmap.insert (index, name, rule))
+        index (rule_names rule)
+    val rule_index = List.foldr index_rule
+      (Redblackmap.mkDict String.compare) proof_rule_registry
+  in
+  fun lookup_registered_rule name = Redblackmap.peek (rule_index, name)
+  fun lookup_rule version name =
+    case lookup_registered_rule name of
+      SOME rule => if version_supported version rule then SOME rule else NONE
+    | NONE => NONE
+  end
 
   fun lookup_rule_by_handler (handler : string) =
     List.find (fn (rule : proof_rule) => #replay_handler rule = handler)
       proof_rule_registry
 
   fun registry_lookup_failure (version : string) (name : string) =
-    if Option.isSome (List.find (rule_matches name) proof_rule_registry) then
+    if Option.isSome (lookup_registered_rule name) then
       "Z3 proof rule registry lookup failed: rule " ^ name ^
       " not supported by Z3 version " ^ version
     else
