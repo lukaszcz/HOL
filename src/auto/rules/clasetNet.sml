@@ -136,7 +136,13 @@ fun insert ({pat, patvars}, value) net =
     enter (stored_labels patvars pat) net
   end
 
-fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
+(* Exact-only paths can return their result without copying the tips.
+   Measured walks still charge for each candidate in the left branch. *)
+fun join left [] = left
+  | join left right = left @ right
+
+fun follow checkpoint append normal_walk (tm, bvars) rest
+      (NODE (_, edges)) =
   let
     val vbranch =
       case edge checkpoint V edges of
@@ -159,19 +165,19 @@ fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
             end
         | SOME label => exact label rest
   in
-    appendMeasured checkpoint exact_branch vbranch
+    append exact_branch vbranch
   end
 
 fun match tm net =
   let
     fun walk [] (NODE (tips, _)) = tips
       | walk ((task, bvars) :: rest) node =
-          follow no_checkpoint walk (eta_contract task, bvars) rest node
+          follow no_checkpoint join walk (eta_contract task, bvars) rest node
   in
     walk [(tm, [])] net
   end
 
-fun unifyMeasured checkpoint {q, qvars} net =
+fun unify_with checkpoint append {q, qvars} net =
   let
     fun concat_map f items = concatMapMeasured checkpoint f items
     fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
@@ -199,13 +205,17 @@ fun unifyMeasured checkpoint {q, qvars} net =
                HOLset.member (qvars, tm) then
               concat_map (walk rest) (skip_one_m node)
             else
-              follow checkpoint walk (tm, bvars) rest node
+              follow checkpoint append walk (tm, bvars) rest node
           end
   in
     walk [(q, [])] net
   end
 
-fun unify query net = unifyMeasured no_checkpoint query net
+fun unify query net = unify_with no_checkpoint join query net
+
+fun unifyMeasured checkpoint query net =
+  if Portable.pointer_eq (checkpoint, no_checkpoint) then unify query net
+  else unify_with checkpoint (appendMeasured checkpoint) query net
 
 fun vfilter pred net =
   let

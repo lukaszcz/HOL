@@ -1289,6 +1289,17 @@ val _ =
 
 val _ =
   check
+    ("A1 catches a supplied theorem under nested truth equivalences",
+     fn () =>
+       let
+         val theorem = Thm.REFL boolSyntax.F
+         fun wrap term = boolSyntax.mk_eq (term, boolSyntax.T)
+       in
+         benchLib.theorem_is_goal (wrap (wrap (Thm.concl theorem))) theorem
+       end)
+
+val _ =
+  check
     ("A1 leaves a supplied theorem that states something else alone",
      fn () =>
        not

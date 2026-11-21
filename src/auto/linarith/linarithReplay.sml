@@ -604,11 +604,10 @@ fun extract_split theorem =
    sees.  So neqE not applying to an assumption that passed the test is
    an ill-formed instance, and is reported as one here. *)
 fun split_assumption discrete_only assumption =
-  (* An assumption whose carrier replay cannot even name is one decomp
-     answers NONE for, so reading the instance first costs nothing and
-     spares the traversal.  It is only a short circuit: everything the
-     answer depends on is below. *)
-  case Lib.total instance_of_term assumption of
+  (* Decomposition produces REL_NEQ only for a negated equality. *)
+  if not (boolSyntax.is_neg assumption andalso
+          boolSyntax.is_eq (boolSyntax.dest_neg assumption)) then NONE
+  else case Lib.total instance_of_term assumption of
       NONE => NONE
     | SOME instance =>
         if not (is_disequality assumption) then NONE

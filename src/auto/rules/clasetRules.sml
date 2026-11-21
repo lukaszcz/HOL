@@ -609,8 +609,22 @@ fun subgoals_of (is_elim, th) =
 
 fun safe_class_of ({kind, safe, ...} : rulespec) ({rl, ...} : info) =
   if kind = Forward orelse kind = Norm orelse not safe then NONE
-  else if subgoals_of (kind <> Intro, #1 rl) = 0 then SOME Safe0
-  else SOME SafeP
+  else
+    let
+      val conclusion = concl (#1 rl)
+      val body =
+        if is_forall conclusion then #2 (strip_forall conclusion)
+        else conclusion
+      (* Generalizing adds only outer binders. Currying keeps a nonempty
+         premise spine nonempty, and preserves an elimination's major
+         premise. So only the first two implications can affect the class. *)
+      val closes =
+        if kind = Intro then not (is_imp_only body)
+        else is_imp_only body andalso
+             not (is_imp_only (#2 (dest_imp_only body)))
+    in
+      SOME (if closes then Safe0 else SafeP)
+    end
 
 fun compare_tag ({weight = w1, index = i1} : tag,
                  {weight = w2, index = i2} : tag) =

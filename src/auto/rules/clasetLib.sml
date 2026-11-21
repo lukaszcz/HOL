@@ -586,21 +586,28 @@ fun match_elim_candidates (((_, enet), distinct) : claset_part) tm =
       {q = tm, qvars = Term.empty_tmset, flexible_type = K true}))
 
 fun unify_candidates checkpoint net tm =
-  candidate_order_measured checkpoint
-    (clasetNet.unifyMeasured checkpoint
-       {q = tm, qvars = Term.FVL [tm] Term.empty_tmset} net)
+  clasetNet.unifyMeasured checkpoint
+    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset} net
 
 fun unify_intro_candidates_measured checkpoint
-      (((inet, _), _) : claset_part) =
-  unify_candidates checkpoint inet
+      (((inet, _), _) : claset_part) tm =
+  candidate_order_measured checkpoint (unify_candidates checkpoint inet tm)
 
 (* Static nets retain their historical broad skeleton query; only lazy
    pair generation must distinguish true search metas from rigid frees. *)
 fun unify_elim_candidates_with (meter as {checkpoint, ...})
       (((_, enet), distinct) : claset_part) tm query =
-  candidate_order_measured checkpoint
-    (unify_candidates checkpoint enet tm @
-     map distinct_brl (distinct_candidates meter distinct query))
+  let
+    val static = unify_candidates checkpoint enet tm
+    (* Declaration and constructor-pair indices are disjoint, so one sort
+       suffices. Keep the first sort when comparisons are measured. *)
+    val static =
+      if Portable.pointer_eq (checkpoint, listUtil.no_checkpoint) then static
+      else candidate_order_measured checkpoint static
+  in
+    candidate_order_measured checkpoint
+      (static @ map distinct_brl (distinct_candidates meter distinct query))
+  end
 
 fun unify_elim_candidates_measured checkpoint part tm =
   unify_elim_candidates_with

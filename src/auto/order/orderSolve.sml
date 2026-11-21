@@ -39,36 +39,49 @@ fun search work f [] = NONE
 fun expand work (context : orderData.context) facts =
   let
     val {reflexive, ...} = #axioms context
-    fun weak_of_equal theorem =
-      case reflexive of
-          SOME r =>
-            (application work;
-             [MATCH_MP (MATCH_MP order_weak_of_equal r) theorem])
-        | NONE => []
+    fun weak_of_equal reflexivity theorem =
+      (application work;
+       MATCH_MP (MATCH_MP order_weak_of_equal reflexivity) theorem)
     fun edge (x, y) theorem = {source = x, target = y, theorem = theorem}
-    fun one fact =
-      case #literal (fact : orderData.fact) of
-          orderData.Weak (x, y) => ([edge (x, y) (#theorem fact)], [], [])
-        | orderData.Strict (x, y) =>
-            let
-              val _ = application work
-            in
-              ([edge (x, y) (MATCH_MP order_strict_weak (#theorem fact))],
-               [],
-               [(x, y, MATCH_MP order_strict_distinct (#theorem fact))])
-            end
-        | orderData.Equal (x, y) =>
-            (List.map (edge (x, y)) (weak_of_equal (#theorem fact)) @
-             List.map (edge (y, x)) (weak_of_equal (SYM (#theorem fact))),
-             [(x, y, #theorem fact)],
-             [])
-        | orderData.Distinct (x, y) => ([], [], [(x, y, #theorem fact)])
-    val parts =
-      List.map (fn fact => (candidate work; one fact)) facts
+    fun one (fact : orderData.fact, (edges, equalities, distinctions)) =
+      let
+        val _ = candidate work
+        val theorem = #theorem fact
+      in
+        case #literal fact of
+            orderData.Weak (x, y) =>
+              (edge (x, y) theorem :: edges, equalities, distinctions)
+          | orderData.Strict (x, y) =>
+              let
+                val _ = application work
+                val weak = MATCH_MP order_strict_weak theorem
+                val distinct = MATCH_MP order_strict_distinct theorem
+              in
+                (edge (x, y) weak :: edges, equalities,
+                 (x, y, distinct) :: distinctions)
+              end
+          | orderData.Equal (x, y) =>
+              let
+                val edges' =
+                  case reflexive of
+                      NONE => edges
+                    | SOME r =>
+                        let
+                          val forward = weak_of_equal r theorem
+                          val backward = weak_of_equal r (SYM theorem)
+                        in
+                          edge (y, x) backward :: edge (x, y) forward :: edges
+                        end
+              in
+                (edges', (x, y, theorem) :: equalities, distinctions)
+              end
+          | orderData.Distinct (x, y) =>
+              (edges, equalities, (x, y, theorem) :: distinctions)
+      end
+    val (edges, equalities, distinctions) =
+      List.foldl one ([], [], []) facts
   in
-    (List.concat (List.map #1 parts),
-     List.concat (List.map #2 parts),
-     List.concat (List.map #3 parts))
+    (List.rev edges, List.rev equalities, List.rev distinctions)
   end
 
 fun within_node_limit maximum edges =

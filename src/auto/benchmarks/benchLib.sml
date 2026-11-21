@@ -424,9 +424,13 @@ val definitional_conversion = ref (memoized_unfolding [])
 val definitional_heads : string HOLset.set ref =
   ref (HOLset.empty String.compare)
 
+fun forall_body term =
+  if boolSyntax.is_forall term then snd (boolSyntax.strip_forall term)
+  else term
+
 fun defined_head theorem =
   let
-    val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+    val body = forall_body (Thm.concl theorem)
     val (_, equation) = boolSyntax.strip_imp_only body
     val (left, _) = boolSyntax.dest_eq equation
     val (head, _) = boolSyntax.strip_comb left
@@ -495,7 +499,7 @@ fun definitional_theorems () = !definitional_context
    has content. *)
 fun contentless term =
   let
-    val (_, body) = boolSyntax.strip_forall term
+    val body = forall_body term
     val (_, conclusion) = boolSyntax.strip_imp_only body
   in
     Term.aconv conclusion boolSyntax.T orelse
@@ -563,12 +567,7 @@ fun prepare_statement_comparison goal =
       (case (left_head, right_head) of
            (SOME a, SOME b) => Term.same_const a b
          | _ => true) andalso same left right
-    fun parts term =
-      let
-        val (_, body) = boolSyntax.strip_forall term
-      in
-        boolSyntax.strip_imp_only body
-      end
+    fun parts term = boolSyntax.strip_imp_only (forall_body term)
     (* Keep premise groups shared across the conjuncts and check them in
        outer-to-inner order only if the conclusion matches. *)
     fun reading_exists matches inherited term =
@@ -587,7 +586,10 @@ fun prepare_statement_comparison goal =
       end
     val (goal_premises, goal_body) = parts goal
     val whole = prepare_stripped goal
-    val conclusion = strip_and_prepare goal_body
+    val stripped_body = strip_truth_equivalence goal_body
+    val distinct_readings = not (Portable.pointer_eq (stripped_body, goal))
+    val conclusion =
+      if distinct_readings then prepare_stripped stripped_body else whole
     val premises = map (prepare statement_normal_form) goal_premises
     fun covered term =
       let val left = prepare statement_normal_form term
@@ -604,13 +606,13 @@ fun prepare_statement_comparison goal =
              whole-goal comparison. Use exact identity since stripping a
              quantifier retains its binder name. *)
           if Portable.pointer_eq (term, statement) then
-            same_stripped stripped conclusion andalso
+            distinct_readings andalso same_stripped stripped conclusion andalso
             all_covered premises
           else
             let val left = strip_and_prepare term
             in
               same_stripped left whole orelse
-              (same_stripped left conclusion andalso
+              (distinct_readings andalso same_stripped left conclusion andalso
                all_covered premises)
             end
       in
@@ -1186,7 +1188,7 @@ val correspondence_heads : string HOLset.set ref =
 
 fun correspondence_head theorem =
   let
-    val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+    val body = forall_body (Thm.concl theorem)
     val (_, equation) = boolSyntax.strip_imp_only body
     val (left, _) = boolSyntax.dest_eq equation
     val (head, _) = boolSyntax.strip_comb left
@@ -1298,7 +1300,7 @@ fun across_correspondence entry args =
    pass. *)
 fun reading_is_supplied goal args =
   let
-    val (_, statement) = boolSyntax.strip_forall goal
+    val statement = forall_body goal
     fun readings theorem =
       Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
     fun applies theorem =

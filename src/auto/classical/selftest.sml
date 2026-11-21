@@ -1751,11 +1751,15 @@ val _ =
          val node = clasetGoal.create
            {goals = [{params = [], asl = [], w = applied}],
             store = store1, level = 0}
+         val expected = clasetGoal.from_goal ([], boolSyntax.T)
        in
          clasetGoal.term_size goal_p = 1
          andalso clasetGoal.term_size (Term.mk_comb (f, x)) = 2
          andalso clasetGoal.term_size lambda = 3
          andalso clasetGoal.size node = 1
+         andalso
+           Term.aconv (snd (clasetGoal.render node 1)) boolSyntax.T
+         andalso clasetGoal.equal (node, expected)
        end)
 
 val _ =

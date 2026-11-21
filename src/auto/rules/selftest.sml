@@ -835,6 +835,32 @@ val _ =
 
 val _ =
   test
+    ("safe rule classes agree with canonical premise counts",
+     fn () =>
+       let
+         fun check (kind, term) =
+           let
+             val theorem = ASSUME term
+             val rl = (theorem, NONE)
+             val elim = kind <> clasetRules.Intro
+             val expected =
+               if subgoals_of (elim, theorem) = 0 then Safe0 else SafeP
+           in
+             safe_class_of {kind = kind, safe = true, prio = NONE}
+               {rl = rl, dup_rl = rl} = SOME expected
+           end
+         val terms =
+           [``p : bool``, ``~p``, ``!x. P x ==> ~Q x``,
+            ``p /\ q ==> r``, ``p /\ q ==> r /\ s ==> t``,
+            ``!x. P x ==> !y. Q x y``]
+       in
+         List.all
+           (fn kind => List.all (fn term => check (kind, term)) terms)
+           [clasetRules.Intro, clasetRules.Elim, clasetRules.Dest]
+       end)
+
+val _ =
+  test
     ("candidate_order prefers fewer subgoals, then recent declarations",
      fn () =>
        let
@@ -2681,6 +2707,11 @@ val _ =
          val names = map #name candidates
          val tagged = unify_elim_candidates_with unmetered
            (safe0_part seed_claset) both (schematic_query both [x, y])
+         val polls = ref 0
+         val measured = unify_elim_candidates_with
+           {checkpoint = fn () => polls := !polls + 1,
+            derive = listUtil.no_checkpoint}
+           (safe0_part seed_claset) both (schematic_query both [x, y])
          val indices = map (#index o #1) tagged
        in
          count (clash_query one []) = 0 andalso
@@ -2689,6 +2720,7 @@ val _ =
          length candidates = 16 * 15 andalso
          length (Lib.mk_set names) = length names andalso
          length (Lib.mk_set indices) = length indices andalso
+         !polls > 0 andalso same_candidates tagged measured andalso
          count (clash_query ``ClasetWide15 n = ClasetWide15 m`` []) = 0
        end)
 

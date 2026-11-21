@@ -19,7 +19,7 @@ datatype node =
   Node of {goals : cgoal list,
            store : store,
            replay : replay_script,
-           size : int option ref,
+           size : {total : int, unchanged : bool} option ref,
            level : int,
            paths : int list list,
            marks : binding_marks,
@@ -34,9 +34,7 @@ datatype node =
 
 fun norm_term store tm =
   let
-    (* Structure sharing, as in [clasetMeta]: a render normalises every
-       assumption of every goal at every rule query, and rebuilding a term
-       that the store leaves alone costs a node per subterm for nothing. *)
+    (* Preserve structure sharing when the store leaves a term alone. *)
     fun recurse current =
       case dest_term current of
           COMB (operator, operand) =>
@@ -66,14 +64,30 @@ fun norm_term store tm =
 
 val term_size = HolKernel.term_size
 
-fun cgoal_size store ({asl, w, ...} : cgoal) =
+fun cgoal_size size_of ({asl, w, ...} : cgoal) =
   List.foldl
-    (fn (asm, total) => term_size (norm_term store asm) + total)
-    (term_size (norm_term store w)) asl
+    (fn (asm, total) => size_of asm + total)
+    (size_of w) asl
 
 fun goals_size store goals =
-  List.foldl (fn (cgoal, total) => cgoal_size store cgoal + total)
-    0 goals
+  let
+    val unchanged = ref true
+    fun normalized_size tm =
+      let
+        val normalized = norm_term store tm
+        val _ =
+          if !unchanged andalso not (Portable.pointer_eq (tm, normalized))
+          then unchanged := false
+          else ()
+      in
+        term_size normalized
+      end
+    val total =
+      List.foldl (fn (goal, total) => cgoal_size normalized_size goal + total)
+        0 goals
+  in
+    {total = total, unchanged = !unchanged}
+  end
 
 val empty_mark = {terms = [], types = []}
 fun fresh_marks goals = map (fn _ => empty_mark) goals
@@ -170,13 +184,13 @@ fun goal_paths (Node {paths, ...}) = paths
 fun binding_marks (Node {marks, ...}) = marks
 fun size (Node {size, goals, store, ...}) =
   case !size of
-      SOME cached => cached
+      SOME {total, ...} => total
     | NONE =>
         let
           val computed = goals_size store goals
           val _ = size := SOME computed
         in
-          computed
+          #total computed
         end
 fun avoids (Node {avoids, ...}) = avoids
 
@@ -398,12 +412,18 @@ fun encode_list values =
     (fn (value, rest) => mk_disj (mk_conj (T, value), rest))
     F values
 
-fun canonical_cgoal store ({params, asl, w} : cgoal) =
+fun render_cgoal (Node {size, store, ...}) ({asl, w, ...} : cgoal) =
+  (* Sizing already normalized all of these terms.  A flag suffices to
+     reuse the originals when normalization left them unchanged. *)
+  case !size of
+      SOME {unchanged = true, ...} => (asl, w)
+    | _ => (map (norm_term store) asl, norm_term store w)
+
+fun canonical_cgoal node (goal as {params, ...} : cgoal) =
   let
-    val params' = map (norm_term store) params
-    val asl' = map (norm_term store) asl
-    val w' = norm_term store w
-    val body = mk_conj (encode_list asl', mk_conj (T, w'))
+    val params' = map (norm_term (store node)) params
+    val (asl, w) = render_cgoal node goal
+    val body = mk_conj (encode_list asl, mk_conj (T, w))
   in
     list_mk_forall (params', body)
   end
@@ -415,7 +435,7 @@ fun canonical_rendering
     | NONE =>
         let
           val computed =
-            encode_list (map (canonical_cgoal (store node)) (goals node))
+            encode_list (map (canonical_cgoal node) (goals node))
           val _ = rendering := SOME computed
         in
           computed
@@ -436,12 +456,10 @@ fun render (node as Node {renders, ...}) pos =
       SOME (_, rendered) => rendered
     | NONE =>
         let
-          val {asl, w, ...} = goal_at node pos
-          val store = store node
           (* Unbound engine metavariables survive normalization as their
              marked frees.  HOL4 tactics consequently see rigid variables,
              not holes. *)
-          val rendered = (map (norm_term store) asl, norm_term store w)
+          val rendered = render_cgoal node (goal_at node pos)
           val _ = renders := (pos, rendered) :: !renders
         in
           rendered
