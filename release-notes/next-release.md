@@ -279,6 +279,9 @@ Bugs fixed
     and misreported as a later `sat` verdict.  The checked support matrix now
     passes Z3 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.
 
+-   `hol buildheap --exe` exited with status 0 when linking the executable failed, so callers took a missing or broken executable for a built one.
+    It now exits with a failure status.
+
 - HolRefute's model finder now builds adaptive scopes one solver batch at
   a time, avoids repeated cardinality-repair and monotonicity work, and
   reports counted reasons when Kodkod problems cannot be assembled.
