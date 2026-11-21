@@ -1100,21 +1100,34 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
                 else case remaining of
                          [] => NONE
                        | source::rest => additions rest (source::added)
-              val new_index = List.foldl
-                (fn (source,index) => Binarymap.insert (index,source,source))
-                (Binarymap.mkDict source_compare) sources
-              val added =
+              val (added,removed) =
                 case additions sources [] of
-                    SOME added => added
-                  | NONE => List.filter
-                      (not o Option.isSome o retained (#index old)) sources
-              val removed = List.filter
-                (fn source =>
-                  case Binarymap.peek (new_index,source) of
-                      NONE => true
-                    | SOME current =>
-                        not (simpLib.same_rewrite_source (source,current)))
-                (#sources old)
+                    SOME added =>
+                      (* A shared suffix still has the last entry at
+                         each old origin, including repeated origins. *)
+                      (added, if Binarymap.numItems (#index old) =
+                                 #derived old + #reused old
+                              then []
+                              else List.filter
+                                (not o Option.isSome o retained (#index old))
+                                (#sources old))
+                  | NONE =>
+                      let
+                        val new_index = List.foldl
+                          (fn (source,index) =>
+                            Binarymap.insert (index,source,source))
+                          (Binarymap.mkDict source_compare) sources
+                        val added = List.filter
+                          (not o Option.isSome o retained (#index old)) sources
+                        val removed = List.filter
+                          (fn source =>
+                            case Binarymap.peek (new_index,source) of
+                                NONE => true
+                              | SOME current =>
+                                  not (simpLib.same_rewrite_source
+                                    (source,current)))
+                          (#sources old)
+                      in (added,removed) end
               val keys = map key (added @ removed) @ #keys context
               val full = #rebuild context orelse
                 not (HOLset.equal (#positions old,positions)) orelse
@@ -1124,26 +1137,26 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
             in
               (#index old,selected,full orelse not (Option.isSome selected))
             end
-    fun stale source =
-      not (Option.isSome (retained old_index source)) orelse
-      (case dirty of NONE => true | SOME found => HOLset.member (found,source))
-    val pending = List.filter stale sources
-    val derive =
-      if null pending then NONE
-      else SOME
-        (prepare_lhs_view_derivation_with_positions ctxt charge
-           (Susp.force base) positions)
+    fun reusable source =
+      case dirty of
+          NONE => NONE
+        | SOME found =>
+            if HOLset.member (found,source) then NONE
+            else retained old_index source
+    val derived = ref 0
+    val derive = Susp.delay (fn () =>
+      prepare_lhs_view_derivation_with_positions ctxt charge
+        (Susp.force base) positions)
     fun obtain source =
-      if stale source then valOf derive source
-      else
-        let val old = valOf (retained old_index source)
-        in
+      case reusable source of
+          NONE =>
+            (derived := !derived + 1; Susp.force derive source)
+        | SOME old =>
           {origin=source,source=simpLib.source_rewrite source,
            view= #view old,rejection= #rejection old,
            footprint= #footprint old,
            abstraction_positions= #abstraction_positions old,
            normalization= #normalization old}
-        end
     val entries = map obtain sources
     val (index,heads) = table_indices entries
     val rewrite_patterns = rewrite_pattern_index sources
@@ -1159,7 +1172,7 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
        entries=entries,index=index,heads=heads,
        rewrite_patterns=rewrite_patterns,
        positions=positions,generation= !view_generation,
-       derived=length pending,reused=length sources - length pending,
+       derived= !derived,reused=length sources - !derived,
        rebuild=rebuild,normalization= !charged,full=full,
        decisions=Susp.delay (fn () => strip_decisions (Susp.force full)),
        plain=Susp.delay (fn () => strip_decisions ss)}

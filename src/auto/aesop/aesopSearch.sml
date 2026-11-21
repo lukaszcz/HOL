@@ -1065,16 +1065,20 @@ fun resume_budget_session
        ResumedLimitReached {kind = kind, usage = usage})
 
 fun proved_rapp tree id =
-  case
-    List.find
-      (fn rid => #state (aesopTree.rapp tree rid) = aesopTree.Proved)
-      (aesopTree.child_rapps tree id)
-  of
-      SOME rid => rid
-    | NONE =>
-        raise ERR "extract"
-          ("proved goal " ^ Int.toString id ^
-           " has no proved rule application")
+  let
+    fun find [] =
+          raise ERR "extract"
+            ("proved goal " ^ Int.toString id ^
+             " has no proved rule application")
+      | find (rid :: rest) =
+          let val application = aesopTree.rapp tree rid
+          in
+            if #state application = aesopTree.Proved then application
+            else find rest
+          end
+  in
+    find (aesopTree.child_rapps tree id)
+  end
 
 (* A goal carrying its own proof, as opposed to one the tree proved through
    a copy of it made elsewhere.  Only the former can be descended into
@@ -1084,12 +1088,7 @@ fun independently_proved tree id =
   let val current = aesopTree.goal tree id
   in
     #state current = aesopTree.Proved andalso
-    (case #norm current of
-         aesopTree.NormProved _ => true
-       | _ =>
-           List.exists
-             (fn rid => #state (aesopTree.rapp tree rid) = aesopTree.Proved)
-             (aesopTree.child_rapps tree id))
+    aesopTree.independently_proved tree current
   end
 
 (* A copied goal discharges the corresponding original sibling, but it is
@@ -1107,12 +1106,6 @@ fun winning_forest tree =
       Redblackmap.mkDict Int.compare
     val empty_requirements : requirements =
       Redblackmap.mkDict Int.compare
-
-    fun requirements_of items =
-      List.foldl
-        (fn ((goal,rid), required) =>
-          Redblackmap.insert (required,goal,rid))
-        empty_requirements items
 
     (* One obligation can be discharged more than once in the same tree:
        a goal may carry its own proof and also have a proved copy of it
@@ -1142,22 +1135,23 @@ fun winning_forest tree =
                   (selection', rapp_selection, store :: stores, required)
               | _ =>
                   let
-                    val rid =
+                    val application =
                       case Redblackmap.peek (required, actual) of
                           NONE => proved_rapp tree actual
                         | SOME required_rid =>
-                            if
-                              #state (aesopTree.rapp tree required_rid) =
-                                aesopTree.Proved andalso
-                              List.exists
-                                (fn child => child = required_rid)
-                                (aesopTree.child_rapps tree actual)
-                            then required_rid
-                            else
-                              raise ERR "extract"
-                                ("a required copy-support application " ^
-                                 "is not proved")
-                    val application = aesopTree.rapp tree rid
+                            let
+                              val required_app =
+                                aesopTree.rapp tree required_rid
+                            in
+                              if #state required_app = aesopTree.Proved andalso
+                                 #parent required_app = actual
+                              then required_app
+                              else
+                                raise ERR "extract"
+                                  ("a required copy-support application " ^
+                                   "is not proved")
+                            end
+                    val rid = #id application
                     val rapp_selection' =
                       Redblackmap.insert
                         (rapp_selection, actual, rid)
@@ -1198,10 +1192,10 @@ fun winning_forest tree =
                           if null copy_members then required
                           else
                             case
-                              aesopTree.select_copy_supports tree copy_members
-                                (Redblackmap.listItems required)
+                              aesopTree.select_copy_supports_map tree
+                                copy_members required
                             of
-                                SOME result => requirements_of result
+                                SOME result => result
                               | NONE =>
                                   raise ERR "extract"
                                     ("proved cluster " ^ Int.toString cid ^

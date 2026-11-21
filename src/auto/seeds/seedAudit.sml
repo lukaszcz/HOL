@@ -277,12 +277,8 @@ fun split_results waivers =
                                 detail = Feedback.exn_to_string exn}))
       end
     val splits = map inspect_split (splitLib.named_split_thms ())
-    val arith =
-      map inspect_arith
-        (ListPair.zip
-          (List.tabulate
-            (length (linarithData.arith_split_thms ()), fn i => i + 1),
-           linarithData.arith_split_thms ()))
+    val arith = Lib.mapi (fn i => fn theorem =>
+      inspect_arith (i + 1,theorem)) (linarithData.arith_split_thms ())
   in
     splits @ arith
   end

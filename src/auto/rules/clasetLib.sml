@@ -1687,33 +1687,31 @@ fun maximal_type_joins_with charge substitutions =
                       (fn (j, size) => if adjacent i j then size + 1
                                       else size)
                       0 pending
-                  fun pivot pending excluded =
-                    case pending @ excluded of
-                        [] => NONE
-                      | first :: rest =>
-                          SOME (#1
-                            (List.foldl
-                               (fn (i, (best, best_score)) =>
-                                 let val size = score i pending
-                                 in
-                                   if size > best_score then (i, size)
-                                   else (best, best_score)
-                                 end)
-                               (first, score first pending)
-                               rest))
+                  fun pivot pending first rest excluded =
+                    let
+                      fun consider (i, (best, best_score)) =
+                        let val size = score i pending
+                        in
+                          if size > best_score then (i, size)
+                          else (best, best_score)
+                        end
+                    in
+                      #1 (List.foldl consider
+                        (List.foldl consider
+                          (first, score first pending) rest)
+                        excluded)
+                    end
                   val found = ref []
-                  fun visit chosen pending excluded =
-                    if null pending andalso null excluded then
-                      (charge searchBudget.Candidate;
-                       found := Listsort.sort Int.compare chosen :: !found)
-                    else
+                  fun visit chosen [] [] =
+                        (charge searchBudget.Candidate;
+                         found := Listsort.sort Int.compare chosen :: !found)
+                    | visit _ [] _ = ()
+                    | visit chosen (pending as first :: rest) excluded =
                       let
+                        val selected = pivot pending first rest excluded
                         val candidates =
-                          case pivot pending excluded of
-                              NONE => pending
-                            | SOME i =>
-                                List.filter (fn j => not (adjacent i j))
-                                  pending
+                          List.filter (fn j => not (adjacent selected j))
+                            pending
                         fun branches [] _ _ = ()
                           | branches (i :: rest) available seen =
                               (visit (i :: chosen)

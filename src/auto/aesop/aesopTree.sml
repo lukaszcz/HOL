@@ -409,29 +409,31 @@ fun copy_support_path tree original copy =
           else NONE
         end
 
-fun independently_proved tree id =
-  let val current = goal tree id
+fun independently_proved tree (current : goal) =
+  case #norm current of
+      NormProved _ => true
+    | _ =>
+        List.exists
+          (fn rid => #state (rapp tree rid) = Proved)
+          (reverse_child_rapps tree (#id current))
+
+fun add_support_path lookup insert path required =
+  let
+    fun add [] required = SOME required
+      | add ((id, rid) :: rest) required =
+          case lookup required id of
+              NONE => add rest (insert required (id, rid))
+            | SOME rid' =>
+                if rid = rid' then add rest required else NONE
   in
-    case #norm current of
-        NormProved _ => true
-      | _ =>
-          List.exists
-            (fn rid => #state (rapp tree rid) = Proved)
-            (reverse_child_rapps tree id)
+    add path required
   end
 
-fun add_support_path [] required = SOME required
-  | add_support_path ((goal_id, rid) :: rest) required =
-      (case List.find (fn (id, _) => id = goal_id) required of
-           NONE => add_support_path rest ((goal_id, rid) :: required)
-         | SOME (_, rid') =>
-             if rid = rid' then add_support_path rest required else NONE)
-
-fun select_copy_supports tree goals initial_required =
+fun select_copy_supports_with add_path tree goals initial_required =
   let
     fun choose _ [] _ = NONE
       | choose original (copy :: rest) (goals, required) =
-          (case Option.mapPartial (fn path => add_support_path path required)
+          (case Option.mapPartial (fn path => add_path path required)
                   (copy_support_path tree original copy) of
                SOME required' =>
                  (case support goals required' of
@@ -440,20 +442,42 @@ fun select_copy_supports tree goals initial_required =
              | NONE => choose original rest (goals, required))
     and support [] required = SOME required
       | support (id :: rest) required =
-          if independently_proved tree id then support rest required
+          if independently_proved tree (goal tree id) then support rest required
           else
             choose id (List.rev (reverse_copy_goals tree id)) (rest, required)
   in
     support goals initial_required
   end
 
+fun select_copy_supports tree =
+  let
+    fun lookup required id =
+      Option.map #2 (List.find (fn (key, _) => key = id) required)
+    fun insert required entry = entry :: required
+  in
+    select_copy_supports_with (add_support_path lookup insert) tree
+  end
+
+fun select_copy_supports_map tree =
+  let
+    fun lookup required id = Redblackmap.peek (required, id)
+    fun insert required (id, rid) = Redblackmap.insert (required, id, rid)
+  in
+    select_copy_supports_with (add_support_path lookup insert) tree
+  end
+
 fun compatible_copy_supports tree goals =
-  Option.isSome (select_copy_supports tree goals [])
+  Option.isSome
+    (select_copy_supports_map tree goals (Redblackmap.mkDict Int.compare))
+
+fun has_copies (Tree {index, ...}) =
+  Redblackmap.numItems (#copy_children index) <> 0
 
 (* The goals of a cluster are conjunctive, and copy-derived proofs must also
    admit one compatible selection of all applications on their support
-   paths.  Sticking stays conservative: a stuck member may yet be discharged
-   by a copy the search is still working on. *)
+   paths.  Without copies, every proved member already has its own proof.
+   Sticking stays conservative: a stuck member may yet be discharged by a
+   copy the search is still working on. *)
 fun derive_cluster tree ({goals, ...} : cluster) =
   case goals of
       [] => Proved
@@ -463,7 +487,8 @@ fun derive_cluster tree ({goals, ...} : cluster) =
         in
           if state <> Unknown andalso
              List.all (fn id => #state (goal tree id) = state) rest andalso
-             (state = Stuck orelse compatible_copy_supports tree goals)
+             (state = Stuck orelse not (has_copies tree) orelse
+              compatible_copy_supports tree goals)
           then state
           else Unknown
         end
@@ -555,9 +580,6 @@ fun refresh tree =
   case refresh_once tree of
       NONE => tree
     | SOME next => refresh next
-
-fun has_copies (Tree {index, ...}) =
-  Redblackmap.numItems (#copy_children index) <> 0
 
 (* Without copies, only the unique parent can depend on a changed state.
    Stop at the first unchanged node.  Copy support can also depend on the

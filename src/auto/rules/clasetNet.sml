@@ -177,9 +177,15 @@ fun match tm net =
     walk [(tm, [])] net
   end
 
-fun unify_with checkpoint append {q, qvars} net =
+fun concat_map_unmeasured f [] = []
+  | concat_map_unmeasured f (item :: items) =
+      join (f item) (concat_map_unmeasured f items)
+
+fun unify_with checkpoint append measured {q, qvars} net =
   let
-    fun concat_map f items = concatMapMeasured checkpoint f items
+    fun concat_map f items =
+      if measured then concatMapMeasured checkpoint f items
+      else concat_map_unmeasured f items
     fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
 
     fun skip_one_m (NODE (_, edges)) =
@@ -211,11 +217,12 @@ fun unify_with checkpoint append {q, qvars} net =
     walk [(q, [])] net
   end
 
-fun unify query net = unify_with no_checkpoint join query net
+fun unify query net =
+  unify_with no_checkpoint join false query net
 
 fun unifyMeasured checkpoint query net =
   if Portable.pointer_eq (checkpoint, no_checkpoint) then unify query net
-  else unify_with checkpoint (appendMeasured checkpoint) query net
+  else unify_with checkpoint (appendMeasured checkpoint) true query net
 
 fun vfilter pred net =
   let

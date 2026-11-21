@@ -1750,6 +1750,29 @@ val _ =
                    goal = support_path andalso rid = #rapp support_first)
                  required))
 
+val _ =
+  check
+    ("aesop indexed copy support preserves choice order and requirements",
+     fn () =>
+       let
+         val empty = Redblackmap.mkDict Int.compare
+         val first_only = [support_original1]
+         val both = [support_original1, support_original2]
+         val select = aesopTree.select_copy_supports_map support_tree4
+       in
+         case select first_only empty of
+             NONE => false
+           | SOME first =>
+               Redblackmap.peek (first, support_path) =
+                 SOME (#rapp support_first) andalso
+               not (Option.isSome (select both first)) andalso
+               (case select both empty of
+                    NONE => false
+                  | SOME second =>
+                      Redblackmap.peek (second, support_path) =
+                        SOME (#rapp support_second))
+       end)
+
 val coupled_stuck_tree0 =
   new_tree cluster_store1 fifo_goal []
 val (coupled_stuck_root, coupled_stuck_tree1) =

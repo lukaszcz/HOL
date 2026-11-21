@@ -814,6 +814,36 @@ val _ =
 
 val _ =
   check
+    ("FM keeps the first contradictory pair and preserves budget charges",
+     fn () =>
+       let
+         val rows = map (fn (coeffs, k) => SOME (fm_row coeffs k))
+           [((1, 0), 0), ((1, 0), 1), ((~1, 0), 0),
+            ((~1, 0), 1), ((~1, 0), 2)]
+         val items = ListPair.zip
+           (List.tabulate
+              (List.length rows,
+               fn i => Term.mk_var ("fm_first_" ^ Int.toString i, Type.bool)),
+            rows)
+         val limited = searchBudget.create
+           {candidates = NONE, applications = SOME 2, normalization = NONE}
+       in
+         (case fm_refute rows of
+              SOME (Added (Asm 0, Asm 3)) => true
+            | _ => false) andalso
+         (case fm_budgeted (searchBudget.unbounded ()) items of
+              CertificateFound
+                {justifications = [Added (Asm 0, Asm 3)], ...} => true
+            | _ => false) andalso
+         (case fm_budgeted limited items of
+              CertificateLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 2
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("budgeted certificate search propagates an interrupt",
      fn () =>
        ((ignore

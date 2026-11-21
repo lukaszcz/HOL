@@ -263,7 +263,7 @@ fun reach_from work transitive edges =
   in
     fn source =>
       let val known = from source
-      in fn target => Option.map path_theorem (reached work known target)
+      in reached work known
       end
   end
 
@@ -281,14 +281,19 @@ fun crossing work (context : orderData.context) reach (x, y) =
                  (case reach y x of
                       NONE => NONE
                     | SOME down =>
-                        SOME
-                          (application work;
-                           MATCH_MP
-                             (MATCH_MP
-                                (MATCH_MP order_weak_antisymmetric
-                                   antisymmetric)
-                                up)
-                             down)))
+                        let
+                          val up_theorem = path_theorem up
+                          val down_theorem = path_theorem down
+                        in
+                          SOME
+                            (application work;
+                             MATCH_MP
+                               (MATCH_MP
+                                  (MATCH_MP order_weak_antisymmetric
+                                     antisymmetric)
+                                  up_theorem)
+                               down_theorem)
+                        end))
   end
 
 fun stated work equalities (x, y) =
@@ -342,7 +347,7 @@ fun prove_literal work context
         Option.map
           (fn r => MATCH_MP (MATCH_MP order_weak_of_equal r) (REFL x))
           reflexive
-      else reach x y
+      else Option.map path_theorem (reach x y)
   in
     case target of
         orderData.Weak pair => weak pair

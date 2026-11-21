@@ -183,18 +183,31 @@ fun mark_clashes visible
 
 type frame = {source : node option, states : node seq.seq}
 
-fun path_prefix [] _ = true
-  | path_prefix _ [] = false
-  | path_prefix (part :: path) (other :: candidate) =
-      part = other andalso path_prefix path candidate
+(* Compare as paths, treating the active subtree as one interval. *)
+fun compare_active_path [] _ = EQUAL
+  | compare_active_path _ [] = GREATER
+  | compare_active_path (part :: path) (other :: candidate) =
+      case Int.compare (part, other) of
+          EQUAL => compare_active_path path candidate
+        | order => order
 
 fun active_completed source child =
   case clasetGoal.goal_paths source of
       [] => false
     | active :: _ =>
-        not
-          (List.exists (path_prefix active)
-            (clasetGoal.goal_paths child))
+        let
+          (* Goal paths start ordered and replacing a goal splices its
+             children in path order. Earlier goals may still be present
+             when an expansion constructs a fresh frontier. *)
+          fun completed [] = true
+            | completed (candidate :: rest) =
+                case compare_active_path active candidate of
+                    LESS => true
+                  | EQUAL => false
+                  | GREATER => completed rest
+        in
+          completed (clasetGoal.goal_paths child)
+        end
 
 fun discard_subtree child frames =
   let

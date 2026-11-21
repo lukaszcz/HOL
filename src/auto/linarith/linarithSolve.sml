@@ -269,6 +269,8 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
            | order => order)
     | order => order
 
+datatype pair_result = PairRows of lineq list | PairContradiction of injust
+
 fun eliminate_pairs (work : work) independent pos neg =
   let
     fun derive p n =
@@ -282,22 +284,29 @@ fun eliminate_pairs (work : work) independent pos neg =
       end
     val empty =
       (HOLset.empty (fn pair => (candidate work; compare_key pair)), [])
-    val (_, rev_rows) =
-      if #metered work then
-        (* Charge all row applications before any key comparisons, as
-           callers with limited budgets can observe the cutoff order. *)
-        let val derived = List.map (fn p => List.map (derive p) neg) pos
-        in
-          List.foldl (fn (rows, kept) => List.foldl keep kept rows)
-            (List.foldl keep empty independent) derived
-        end
-      else
-        List.foldl
-          (fn (p, kept) =>
-            List.foldl (fn (n, kept) => keep (derive p n, kept)) kept neg)
-          (List.foldl keep empty independent) pos
+    fun finish (_, rev_rows) = PairRows (List.rev rev_rows)
+    fun positives [] kept = finish kept
+      | positives (p :: ps) kept = negatives p ps neg kept
+    and negatives p ps [] kept = positives ps kept
+      | negatives p ps (n :: ns) kept =
+          let val row as Lineq (_, _, coeffs, just) = derive p n
+          in
+            (* Independent rows are already nontrivial.  The next
+               round would pick the first contradictory constant row. *)
+            if is_contradictory row andalso List.all ai_zero coeffs then
+              PairContradiction just
+            else negatives p ps ns (keep (row, kept))
+          end
   in
-    List.rev rev_rows
+    if #metered work then
+      (* Charge all row applications before any key comparisons, as
+         callers with limited budgets can observe the cutoff order. *)
+      let val derived = List.map (fn p => List.map (derive p) neg) pos
+      in
+        finish (List.foldl (fn (rows, kept) => List.foldl keep kept rows)
+          (List.foldl keep empty independent) derived)
+      end
+    else positives pos (List.foldl keep empty independent)
   end
 
 (* Elimination traces one line per pivot, so the message is built only
@@ -353,8 +362,9 @@ fun elim_with (work : work) ineqs =
                       in
                         trace work
                           (fn () => "inequality pivot " ^ Int.toString v);
-                        elim_with work
-                          (eliminate_pairs work independent pos neg)
+                        case eliminate_pairs work independent pos neg of
+                            PairRows rows => elim_with work rows
+                          | PairContradiction just => SOME just
                       end
               end
       end

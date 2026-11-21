@@ -70,6 +70,7 @@ sig
   val rapp_count : tree -> int
 
   val child_rapps : tree -> gid -> rid list
+  val independently_proved : tree -> goal -> bool
   val active_cgoal : goal -> cgoal
   val active_store : goal -> store
   val is_normalised : goal -> bool
@@ -81,6 +82,9 @@ sig
      Candidate choice backtracks when a later obligation conflicts. *)
   val select_copy_supports :
     tree -> gid list -> (gid * rid) list -> (gid * rid) list option
+  val select_copy_supports_map :
+    tree -> gid list -> (gid, rid) Redblackmap.dict ->
+    (gid, rid) Redblackmap.dict option
 
   (* The goal's engine node.  Normalisation rewrites a goal in place and
      uses [goal_node]; a rule application descends, so it uses

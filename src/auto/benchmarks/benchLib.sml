@@ -285,21 +285,19 @@ in
     else term
 end
 
+fun strip_normal_truth_equivalence term =
+  if boolSyntax.is_eq term then
+    let
+      val (left, right) = boolSyntax.dest_eq term
+    in
+      if Term.aconv right boolSyntax.T then left
+      else if Term.aconv left boolSyntax.T then right
+      else term
+    end
+  else term
+
 fun strip_truth_equivalence term =
-  let
-    val normal = beta_eta_normalise term
-  in
-    if boolSyntax.is_eq normal then
-      let
-        val (left, right) = boolSyntax.dest_eq normal
-      in
-        if Term.aconv right boolSyntax.T then left
-        else if Term.aconv left boolSyntax.T then right
-        else normal
-      end
-    else
-      normal
-  end
+  strip_normal_truth_equivalence (beta_eta_normalise term)
 
 (* A statement is unchanged when a conjunction or a disjunction is
    reordered, when an equation or an equivalence is turned round, and
@@ -554,8 +552,8 @@ fun prepare_statement_comparison goal =
       else NONE
     fun prepare_stripped term =
       (rigid_head term, prepare statement_symmetry_normal_form term)
-    fun strip_and_prepare term =
-      prepare_stripped (strip_truth_equivalence term)
+    fun prepare_normal term =
+      prepare_stripped (strip_normal_truth_equivalence term)
     fun same (left, left_normal) (right, right_normal) =
       Term.aconv left right orelse variants left right orelse
       Term.aconv (Portable.HOLSusp.force left_normal)
@@ -586,7 +584,9 @@ fun prepare_statement_comparison goal =
       end
     val (goal_premises, goal_body) = parts goal
     val whole = prepare_stripped goal
-    val stripped_body = strip_truth_equivalence goal_body
+    (* Stripping the prefix and premises preserves the beta-eta normal
+       form obtained for the whole goal. *)
+    val stripped_body = strip_normal_truth_equivalence goal_body
     val distinct_readings = not (Portable.pointer_eq (stripped_body, goal))
     val conclusion =
       if distinct_readings then prepare_stripped stripped_body else whole
@@ -597,7 +597,11 @@ fun prepare_statement_comparison goal =
   in
     fn statement =>
       let
-        val stripped = strip_and_prepare statement
+        val normal = beta_eta_normalise statement
+        val stripped = prepare_normal normal
+        (* Readings of an unchanged statement only remove syntax from
+           an already beta-eta-normal term. *)
+        val unchanged = Portable.pointer_eq (normal, statement)
         fun all_covered [] = true
           | all_covered (premises :: earlier) =
               all_covered earlier andalso List.all covered premises
@@ -609,7 +613,10 @@ fun prepare_statement_comparison goal =
             distinct_readings andalso same_stripped stripped conclusion andalso
             all_covered premises
           else
-            let val left = strip_and_prepare term
+            let
+              val left =
+                prepare_normal (if unchanged then term
+                                else beta_eta_normalise term)
             in
               same_stripped left whole orelse
               (distinct_readings andalso same_stripped left conclusion andalso
@@ -627,7 +634,9 @@ fun prepare_goal_comparison goal =
     val expanded =
       Portable.HOLSusp.delay (fn () =>
         let val term = unfolded goal
-        in (term, prepare_statement_comparison term)
+        in
+          (term, if Portable.pointer_eq (term, goal) then ordinary
+                 else prepare_statement_comparison term)
         end)
   in
     fn statement =>
