@@ -30,16 +30,13 @@ fun getBiggest acc =
 
 (* The first unit we see, or the var that occurs most often *)
 fun find_splitting_var phi = let
-  fun recurse acc [] = getBiggest acc
-    | recurse acc (c::cs) = let
-        val ds = strip_disj c
-      in
-        case ds of
-          [lit] => (dest_neg lit handle HOL_ERR _ => lit)
-        | _ => recurse (count_vars ds acc) cs
-      end
+  val clauses = strip_conj phi
 in
-  recurse Termtab.empty (strip_conj phi)
+  case List.find (not o is_disj) clauses of
+      SOME lit => (dest_neg lit handle HOL_ERR _ => lit)
+    | NONE =>
+        getBiggest (List.foldl (fn (clause, acc) =>
+          count_vars (strip_disj clause) acc) Termtab.empty clauses)
 end
 
 fun split_branch v value th =

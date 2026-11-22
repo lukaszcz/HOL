@@ -456,6 +456,17 @@ local
       measured (internal (config compound)) sat_only andalso
       measured (internal (set_term invalid base_config)) sat_only andalso
       sat_only (set_term F base_config))
+  val _ = control "missing solvers do not write generated DIMACS"
+    (fn () =>
+      let val previous = !dimacsTools.tmp_name
+          val conf = internal (set_term valid base_config)
+      in checked valid (GEN_SAT conf) andalso
+         checked valid (GEN_SAT_PROVE_ONLY conf) andalso
+         !dimacsTools.tmp_name = previous
+      end)
+  val _ = control "DPLL chooses the first unit before counting literals"
+    (fn () => dpll.find_splitting_var
+      ``((p \/ q) /\ ~(r:bool)) /\ s`` ~~ ``r:bool``)
   val _ = control "balanced and asymmetric explicit CNF preserve clause order"
     (fn () =>
       let

@@ -274,34 +274,40 @@ local
      semantic rules consume those exact boundaries even when no conjunction
      occurs below them.  Other conjunction-irrelevant application and binder
      shells can still be collapsed to keep large arithmetic proofs bounded. *)
-  fun compact_live_provenance provenance =
+  fun compact_live_provenance AtomicProvenance = AtomicProvenance
+    | compact_live_provenance (item as UnavailableProvenance _) = item
+    | compact_live_provenance (item as AmbiguousProvenance _) = item
+    | compact_live_provenance provenance =
     let
       type summary = term_provenance * bool * bool
-      val buckets = Array.array
-        (4093, [] : (term_provenance * summary) list)
+      val bucket_count = 4093
+      val {peek,put} = SmtSkeletonProve.new_sparse_buckets bucket_count
+      fun entries bucket : (term_provenance * summary) list =
+        Option.getOpt (peek bucket, [])
       fun string_hash string =
         let
           fun loop index hash =
             if index = String.size string then hash
             else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod 4093)
+              ((hash * 33 + Char.ord (String.sub (string, index))) mod
+               bucket_count)
         in loop 0 5381 end
       fun tag item =
         case item of
           AtomicProvenance => 0
         | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod 4093
+            (17 * string_hash head + List.length operands) mod bucket_count
         | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod 4093
+            (31 * string_hash head + 1) mod bucket_count
         | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod 4093
+            (37 * string_hash head + size) mod bucket_count
         | EqualityProvenance _ => 41
         | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod 4093
+            (43 + List.length operands) mod bucket_count
         | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod 4093
+            (47 * string_hash reason) mod bucket_count
         | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod 4093
+            (53 * string_hash reason) mod bucket_count
       fun lookup [] _ = NONE
         | lookup ((saved, result) :: rest) item =
             if Portable.pointer_eq (saved, item) then SOME result
@@ -310,7 +316,7 @@ local
         let
           val bucket = tag item
         in
-          case lookup (Array.sub (buckets, bucket)) item of
+          case lookup (entries bucket) item of
             SOME result => result
           | NONE =>
               let
@@ -361,8 +367,7 @@ local
                         (BinderBlockProvenance (head, size, body'),
                          clear, true)
                       end
-                val _ = Array.update (buckets, bucket,
-                  (item, result) :: Array.sub (buckets, bucket))
+                val _ = put (bucket, (item, result) :: entries bucket)
               in result end
         end
     in #1 (summarize provenance) end

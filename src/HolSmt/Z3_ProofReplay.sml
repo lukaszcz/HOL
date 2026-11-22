@@ -896,24 +896,30 @@ local
 
   fun state_inst_cached_thm (s : state) (t : Term.term) : Thm.thm =
     let
-      val available = HOLset.union (#asserted_hyps s, #definition_hyps s)
+      fun unavailable hypothesis =
+        not (HOLset.member (#asserted_hyps s, hypothesis) orelse
+             HOLset.member (#definition_hyps s, hypothesis))
+      fun available thm =
+        not (Option.isSome (HOLset.find unavailable (Thm.hypset thm)))
       fun instantiate thm =
         let val thm = exact_inst thm t in
-          if HOLset.isSubset (Thm.hypset thm, available) then thm
+          if available thm then thm
           else raise ERR "state_inst_cached_thm" "unavailable hypothesis"
         end
       fun lookup_net () =
         Lib.tryfind instantiate (Net.match t (#thm_cache s))
-      val order = SmtSkeletonProve.new_semantic_order ()
-      fun exact_large (saved, thm) =
-        order (saved,t)=EQUAL andalso
-        HOLset.isSubset (Thm.hypset thm, available)
     in
       if not (List.null (#large_thm_cache s)) andalso
          SmtResource.term_nodes_up_to 16384 t > 16384 then
-        (case List.find exact_large (#large_thm_cache s) of
-           SOME (_, thm) => SmtSkeletonProve.exact_conclusion t thm
-         | NONE => lookup_net ())
+        let
+          val order = SmtSkeletonProve.new_semantic_order ()
+          fun exact_large (saved, thm) =
+            order (saved,t) = EQUAL andalso available thm
+        in
+          case List.find exact_large (#large_thm_cache s) of
+            SOME (_, thm) => SmtSkeletonProve.exact_conclusion t thm
+          | NONE => lookup_net ()
+        end
       else lookup_net ()
     end
 

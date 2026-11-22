@@ -2418,16 +2418,25 @@ local
     let
       val totalized =
         List.filter (#totalized term_sequence_eligibility) subterms
-      val totalized_subterms = query_subterms totalized
-      fun is_totalized_part tm =
-        List.exists (fn part => Term.aconv tm part) totalized_subterms
+      fun membership terms =
+        let val index = Susp.delay (fn () =>
+          HOLset.addList (Term.empty_tmset, terms ()))
+        in fn tm => HOLset.member (Susp.force index, tm) end
+      val (is_totalized_part, is_totalized_whole) =
+        case totalized of
+          [] => (Lib.K false, Lib.K false)
+        | [whole] =>
+            let val parts = Susp.delay (fn () => Library.subterms whole)
+            in (fn tm => List.exists (Term.aconv tm) (Susp.force parts),
+                Term.aconv whole)
+            end
+        | _ => (membership (fn () => query_subterms totalized),
+                membership (fn () => totalized))
       val supported =
         (#supported term_sequence_eligibility) is_totalized_part
       fun native_sequence_parts tm =
         List.all (#native_part term_sequence_eligibility)
           (Library.subterms tm)
-      fun is_totalized_whole tm =
-        List.exists (fn whole => Term.aconv tm whole) totalized
       val selects_seq = (#selects_seq term_sequence_eligibility)
         {native_parts=native_sequence_parts,
          is_totalized_whole=is_totalized_whole}
@@ -8490,7 +8499,7 @@ in
         val inventory = Susp.delay (fn () => query_subterms (concl :: asms))
         val sequence_emission = Susp.delay
           (fn () => native_sequence_subterms (Susp.force inventory))
-        val _ = preflight sequence_emission
+        val _ = preflight inventory sequence_emission
         val _ = reject_reglan_hol_equalities goal
         val tail = outbound_query_tail string_output_operations get_proof
       in
@@ -8545,7 +8554,7 @@ in
   in
 
     fun goal_to_SmtLib_translation_gen opts goal =
-      translate_with_preflight (fn _ => ()) opts goal
+      translate_with_preflight (fn _ => fn _ => ()) opts goal
 
     fun goal_to_SmtLib_gen opts goal =
       Lib.apfst translation_dicts (goal_to_SmtLib_translation_gen opts goal)
@@ -8556,12 +8565,22 @@ in
     fun goal_to_SmtLib_translation_for_solver
         {policy, dialect, apply_operator, get_proof, target} goal =
       let
-        fun preflight sequence_emission =
+        fun preflight inventory sequence_emission =
           case target of
             NONE => ()
           | SOME solver_target =>
-              check_goal_operator_availability_for_sequence
-                (Susp.force sequence_emission) solver_target goal
+              let
+                val sequence_emission = Susp.force sequence_emission
+                val constants = Susp.delay (fn () =>
+                  List.filter Term.is_const (Susp.force inventory))
+                fun occurs head = List.exists (fn constant =>
+                  Term.same_const constant head andalso
+                  counts_for_operator_availability constant)
+                  (Susp.force constants)
+              in
+                outbound_check_operator_availability
+                  {sequence_emission = sequence_emission} solver_target occurs
+              end
       in
         translate_with_preflight preflight
           (emit_options [with_request (AutomaticRegime dialect),
