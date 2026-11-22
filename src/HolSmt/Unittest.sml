@@ -412,6 +412,30 @@ fun num_binder_relativization_nested_mixed_success () =
            ?k :int.
              0 <= k /\ j <= &(Num k) /\ Num i <= Num k``)
 
+fun num_args_relativization_success () =
+  let
+    fun check (label, input, expected) =
+      let val thm = SmtLib.NUM_ARGS_TO_INT_CONV input
+      in
+        assert_no_hyps (label, thm);
+        assert_concl_alpha (label, thm, boolSyntax.mk_eq (input, expected))
+      end
+  in
+    check ("num argument relativization",
+      ``!P :num -> bool. P 1 ==> P 2``,
+      ``!P :int -> bool. P 1 ==> P 2``);
+    (* Only the positions every occurrence supplies are lifted. *)
+    check ("partial application num argument relativization",
+      ``!f :num -> num -> bool. f 1 = f 2``,
+      ``!f :int -> num -> bool. f 1 = f 2``);
+    check ("existential num argument relativization",
+      ``?f :'a -> num -> bool. !x. f x 3``,
+      ``?f :'a -> int -> bool. !x. f x 3``);
+    check ("bare occurrence num argument no-op",
+      ``!s :num -> bool. 2 IN s``,
+      ``!s :num -> bool. 2 IN s``)
+  end
+
 fun num_binder_relativization_non_num_noop_success () =
   assert_num_binder_conv
     ("non-num binder relativization no-op",
@@ -39538,6 +39562,8 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("num_args_relativization_success",
+      num_args_relativization_success),
     ("bag_count_relativization_success", bag_count_relativization_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),

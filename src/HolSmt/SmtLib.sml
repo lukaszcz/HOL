@@ -6909,6 +6909,92 @@ local
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
+  (* Arities of the free occurrences of f in tm: how many arguments each
+     is applied to, 0 for a bare one. *)
+  fun occurrence_arities f tm =
+  let
+    val (head, args) = boolSyntax.strip_comb tm
+    val here =
+      if Term.term_eq head f then [List.length args]
+      else if Term.is_abs head then
+        let val (bv, body) = Term.dest_abs head
+        in if Term.term_eq bv f then [] else occurrence_arities f body end
+      else []
+  in
+    List.foldl (fn (arg, acc) => occurrence_arities f arg @ acc) here args
+  end
+
+  (* Relativizes the num arguments of a bound function variable f: of its
+     first k argument types, k the fewest arguments any occurrence of f
+     takes, those that are num become int.  So
+       (!f. P f) <=> (!g. P (\xs. g ys))
+     with ys the xs, &x for each num one.  The inverse \zs. f ws (Num z
+     for each lifted one) proves the reverse direction by NUM_OF_INT.  A
+     bare occurrence of f (a set passed whole, say) leaves it alone, so
+     beta-reduction leaves no lifting abstraction behind. *)
+  fun num_args_to_int_once_conv tm =
+  let
+    val universal = boolSyntax.is_forall tm
+    val (f, body) =
+      if universal then boolSyntax.dest_forall tm
+      else boolSyntax.dest_exists tm
+    fun is_num ty = Type.compare (ty, numSyntax.num) = EQUAL
+    val (arg_tys, rng) = boolSyntax.strip_fun (Term.type_of f)
+    val _ = List.exists is_num arg_tys orelse
+      raise ERR "num_args_to_int_once_conv" "no num argument"
+    val k = List.foldl Int.min (List.length arg_tys)
+      (occurrence_arities f body)
+    val (lifted, rest) = Lib.split_after k arg_tys
+    val _ = List.exists is_num lifted orelse
+      raise ERR "num_args_to_int_once_conv" "no applied num argument"
+    val int_tys =
+      List.map (fn ty => if is_num ty then intSyntax.int_ty else ty) lifted
+    val g = Term.variant (Term.free_vars tm)
+      (Term.mk_var (Lib.fst (Term.dest_var f),
+         boolSyntax.list_mk_fun (int_tys, boolSyntax.list_mk_fun (rest, rng))))
+    val xs = List.map Term.genvar lifted
+    val zs = List.map Term.genvar int_tys
+    val lift = boolSyntax.list_mk_abs (xs, Term.list_mk_comb (g,
+      List.map (fn x =>
+        if is_num (Term.type_of x) then intSyntax.mk_injected x else x) xs))
+    val unlift = boolSyntax.list_mk_abs (zs, Term.list_mk_comb (f,
+      ListPair.map (fn (z, ty) =>
+        if is_num ty then intSyntax.mk_Num z else z) (zs, lifted)))
+    (* |- lift[unlift/g] = f *)
+    val round_trip =
+      Conv.EVERY_CONV [Conv.DEPTH_CONV Thm.BETA_CONV,
+        Rewrite.PURE_REWRITE_CONV [integerTheory.NUM_OF_INT],
+        Conv.DEPTH_CONV Drule.ETA_CONV]
+      (Term.subst [g |-> unlift] lift)
+    val _ = Term.term_eq (boolSyntax.rhs (Thm.concl round_trip)) f orelse
+      raise ERR "num_args_to_int_once_conv" "round trip"
+    val v = Term.genvar (Term.type_of f)
+    val template = Term.subst [f |-> v] body
+    val lifted_body = Term.subst [f |-> lift] body
+    val tm' = (if universal then boolSyntax.mk_forall
+      else boolSyntax.mk_exists) (g, lifted_body)
+    (* body[lift[unlift/g]/f] |- body and back *)
+    fun unlift_rule th = Thm.SUBST [v |-> round_trip] template th
+    fun lift_rule th = Thm.SUBST [v |-> Thm.SYM round_trip] template th
+    val (forward, backward) =
+      if universal then
+        (Thm.GEN g (Thm.SPEC lift (Thm.ASSUME tm)),
+         Thm.GEN f (unlift_rule (Thm.SPEC unlift (Thm.ASSUME tm'))))
+      else
+        (Thm.CHOOSE (f, Thm.ASSUME tm)
+           (Thm.EXISTS (tm', unlift) (lift_rule (Thm.ASSUME body))),
+         Thm.CHOOSE (g, Thm.ASSUME tm')
+           (Thm.EXISTS (tm, lift) (Thm.ASSUME lifted_body)))
+  in
+    Drule.IMP_ANTISYM_RULE (Thm.DISCH tm forward) (Thm.DISCH tm' backward)
+  end
+
+  fun NUM_ARGS_TO_INT_CONV tm =
+    Conv.THENC
+      (Conv.TOP_DEPTH_CONV num_args_to_int_once_conv,
+       Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
   val exp_one_rewrites = SmtLib_GraphNumericStock.exp_one_rewrites
   val INT_EXP_1 = SmtLib_GraphNumericStock.INT_EXP_1
   val INT_EXP_BASE_1 = SmtLib_GraphNumericStock.INT_EXP_BASE_1
@@ -7015,10 +7101,13 @@ local
 
   val num_transfer_rewrites = SmtLib_GraphNumericStock.rewrites
 
+  (* Argument lifting goes first: it then sees each function variable as
+     the goal binds it, so a bag's fresh codomain binder, whose occurrences
+     are all applied, is never lifted in place of a bare original. *)
   fun NUM_TO_INT_CONV tm =
-    Conv.THENC
-      (NUM_BINDERS_TO_INT_CONV,
-       simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
+    Conv.EVERY_CONV
+      [NUM_ARGS_TO_INT_CONV, NUM_BINDERS_TO_INT_CONV,
+       simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites] tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
   (* Mixed word goals retain HOL num. Give their numerals an integer image
@@ -8028,10 +8117,15 @@ local
       (case Lib.total Type.dom_rng (Term.type_of v) of
          SOME (_, rng) => Type.compare (rng, numSyntax.num) = EQUAL
        | NONE => false)
+    fun has_num_arg v =
+      Term.is_var v andalso
+      List.exists (fn ty => Type.compare (ty, numSyntax.num) = EQUAL)
+        (Lib.fst (boolSyntax.strip_fun (Term.type_of v)))
     val asm_fvs = List.concat (List.map Term.free_vars asms)
     fun free_in_asms v = List.exists (fn w => Term.aconv v w) asm_fvs
   in
-    List.filter (fn v => (is_num_var v orelse is_bag_var v) andalso
+    List.filter (fn v =>
+      (is_num_var v orelse is_bag_var v orelse has_num_arg v) andalso
       not (free_in_asms v)) (Term.free_vars concl)
   end
 
@@ -8639,6 +8733,7 @@ in
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
+  val NUM_ARGS_TO_INT_CONV = NUM_ARGS_TO_INT_CONV
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
   val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV

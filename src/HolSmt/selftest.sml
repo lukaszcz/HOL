@@ -85387,9 +85387,43 @@ val _ = run_postlude 440 "held-definition-hypothesis" (fn () =>
       Hol_pp.term_to_string concl ^ "; " ^ Hol_pp.thm_to_string thm)
   end)
 
+(* A function variable's num arguments are lifted to int with its num
+   binders, so arithmetic on them reaches the solver; left as num terms,
+   they had an opaque sort and both solvers answered sat. *)
+val _ = run_postlude 441 "num-function-arguments" (fn () =>
+  let
+    val goals = [
+      ([``n + 0 = n``],
+       ``a < b /\ b < a + 2 ==> ((P:num -> bool) (a + 1) <=> P b)``),
+      ([], ``a < b /\ b < c /\ c < a + 3 ==>
+             ((f:num -> num) (a + 1) = f b)``),
+      ([], ``3 * a + 2 * b = 12 /\ b = a + 1 ==>
+             ((f:num -> num) a = f 2)``)]
+    fun prove (name, configured, tac) (index, goal as (asms, concl)) =
+      if not configured then () else
+      let
+        val _ = testutils.tprint (name ^ " proves num function argument goal "
+          ^ Int.toString index)
+        val thm = Tactical.TAC_PROOF (goal, tac)
+      in
+        if Thm.concl thm ~~ concl andalso
+           List.all (fn h => List.exists (Term.aconv h) asms) (Thm.hyp thm)
+        then
+          (Library.check_oracle_tags (Option.getOpt (Thm.getCT (), "-"))
+             "num function arguments" thm;
+           testutils.OK ())
+        else testutils.die ("unexpected theorem: " ^ Hol_pp.thm_to_string thm)
+      end
+  in
+    List.app (fn solver =>
+      List.app (prove solver) (Lib.enumerate 1 goals))
+      [("Z3_TAC", Z3.is_configured (), HolSmtLib.Z3_TAC),
+       ("CVC_TAC", CVC.is_configured (), HolSmtLib.CVC_TAC)]
+  end)
+
 val () =
   let
-    val expected = 441
+    val expected = 442
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso
