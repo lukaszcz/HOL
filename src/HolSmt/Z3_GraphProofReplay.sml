@@ -1306,18 +1306,19 @@ struct
             else
               let
                 val actual = P.needed_sources_using block edge supply
+                val (recorded,definition_needed) = case recorded_law of
+                    NONE => ([],#needed actual)
+                  | SOME _ =>
+                      let val recorded = List.rev (!recorded_indices)
+                          val indices = Redblackset.addList
+                            (Redblackset.empty Int.compare,
+                             P.needed_source_occurrences block edge)
+                          val needed = List.mapPartial (fn (_,_,node,index) =>
+                            if Redblackset.member (indices,index) then SOME node
+                            else NONE) recorded
+                      in (recorded,needed) end
                 val ground_laws = if not use_ground then [] else
                   let
-                    val recorded = List.rev (!recorded_indices)
-                    val needed_indices = Redblackset.addList
-                      (Redblackset.empty Int.compare,
-                       P.needed_source_occurrences block edge)
-                    val definition_nodes = List.map
-                      (fn (_,_,node,_) => node) recorded
-                    val definition_needed = List.mapPartial
-                      (fn (_,_,node,index) =>
-                        if Redblackset.member (needed_indices,index)
-                        then SOME node else NONE) recorded
                     val prepare = case recorded_law of NONE =>
                         SmtReplayGroundDefinitions.prepare graph
                       | SOME _ => fn args =>
@@ -1325,7 +1326,9 @@ struct
                             {scope = #scope args,allocated = #allocated args,
                              sources = #sources args,
                              needed = definition_needed,
-                             definitions = definition_nodes,limit = #limit args}
+                             definitions = List.map
+                               (fn (_,_,node,_) => node) recorded,
+                             limit = #limit args}
                     val ground_plan = prepare
                       {scope = scope,allocated = List.filter (fn node =>
                          case G.view graph node of
@@ -1338,14 +1341,6 @@ struct
                     {check_type = SmtWordGraph.admit_primitive_type types} end
                 val _ = retain_reflexive ground_laws
                 val actual_laws = #laws actual @ ground_laws
-                val needed_indices = Redblackset.addList
-                  (Redblackset.empty Int.compare,
-                   P.needed_source_occurrences block edge)
-                val definition_needed = case recorded_law of NONE =>
-                    #needed actual
-                  | SOME _ => List.mapPartial (fn (_,_,node,index) =>
-                      if Redblackset.member (needed_indices,index)
-                      then SOME node else NONE) (List.rev (!recorded_indices))
                 val plan = definition_plan definition_needed
                 val checked = if use_variable_witnesses then
                     SOME (checked_variables plan actual_laws true)

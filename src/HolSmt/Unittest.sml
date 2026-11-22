@@ -37798,6 +37798,37 @@ let
         val (plan,_) = SmtWordGraph.graph_normalize_in
           (SmtWordGraph.new_context ()) graph scope source
       in assemble graph scope plan end)
+  val _ = check "Named assembly shares only exact schema recipes"
+    (fn () =>
+      let
+        val hole = Term.mk_var ("recipe_hole",Type.bool)
+        val operand = Term.mk_var ("recipe_operand",Type.bool)
+        val input = boolSyntax.mk_conj (boolSyntax.T,operand)
+        val (graph,scope,source) = fixture (boolSyntax.mk_disj (input,input))
+        val argument = #node (G.import graph scope cap operand)
+        val schema = C.checked_graph_schema graph scope
+          {theorem=Thm.CONJUNCT1 (Thm.SPEC hole boolTheory.AND_CLAUSES),
+           holes=[hole],operands=[argument],template_limit=cap}
+        fun leaf () = C.graph_schema_leaf graph scope
+          {schema=schema,observe=fn () => ()}
+        fun application source left right =
+          C.graph_application graph scope
+            {source=source,left=left,right=right,observe=fn () => ()}
+        val (partial,_) = case G.view graph source of
+            G.Application pair => pair | _ => raise Fail "disjunction"
+        val (head,_) = case G.view graph partial of
+            G.Application pair => pair | _ => raise Fail "partial disjunction"
+        val first = leaf ()
+        val partial_plan = application partial
+          (C.graph_identity graph scope {observe=fn () => ()} head) first
+        fun check_recipes count second =
+          let val plan = application source partial_plan second
+              val (_,stats) = C.with_schema_statistics graph scope
+                (fn () => assemble graph scope plan)
+          in assert (#schema_inst_calls stats = count,
+            "named assembly confused shared and independently checked leaves")
+          end
+      in check_recipes 1 first;check_recipes 2 (leaf ()) end)
   val _ = check "Built-in frontier reuse preserves typed operand aliases"
     (fn () =>
       let

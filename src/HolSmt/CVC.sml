@@ -106,7 +106,8 @@ structure CVC = struct
         (case SolverSpec.get_nonempty_env "CVC5" of
           SOME file => SOME file
         | NONE =>
-            if SolverSpec.command_available "cvc5" then SOME "cvc5" else NONE)
+            if SolverSpec.solver_command_available "cvc5" then SOME "cvc5"
+            else NONE)
 
   fun is_configured () = Option.isSome (configured_executable ());
 

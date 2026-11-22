@@ -230,13 +230,16 @@ local
         fun model text =
           (put output text; satTools.invokeSat backend T NONE NONE svm sva
                                                input)
+        fun gives text expected =
+          case model text of
+              SOME literals => ListPair.allEq (op ~~) (literals,expected)
+            | NONE => false
       in dimacsTools.with_cleanup
            (fn () => dimacsTools.clean_files [input, output])
            (fn () =>
-             (case model "SAT 3 -2 3 0" of
-                  SOME literals => ListPair.allEq (op ~~)
-                    (literals,[c,mk_neg d,c,mk_neg a,mk_neg b,mk_neg d])
-                | NONE => false) andalso
+             gives "SAT 3 -2 3 0"
+               [c,mk_neg d,c,mk_neg a,mk_neg b,mk_neg d] andalso
+             gives "SAT 3 2 3 0" [c,d,c,mk_neg a,mk_neg b] andalso
              ((ignore (model "SAT 20 -21 0"); false)
               handle HOL_ERR error => Feedback.message_of error =
                 "lookup_sat_numError: 20\n")) ()

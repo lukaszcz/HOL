@@ -42,13 +42,11 @@ in
   recurse Termtab.empty (strip_conj phi)
 end
 
-fun casesplit v th = let (*th is [assignments, cnf] |- current *)
-  val eqT = ASSUME (mk_eq(v, boolSyntax.T)) (* v = T |- v = T *)
-  val eqF = ASSUME (mk_eq(v, boolSyntax.F)) (* v = F |- v = F *)
-in
-  (REWRITE_RULE [eqT] th, REWRITE_RULE [eqF] th)
-    (* [assignments,v=T,cnf] |- cnf[T/v] ... *)
-end
+fun split_branch v value th =
+  REWRITE_RULE [ASSUME (mk_eq (v,value))] th
+
+fun casesplit v th =
+  (split_branch v boolSyntax.T th, split_branch v boolSyntax.F th)
 
 fun mk_satmap th = let
   val hyps = hypset th
@@ -77,12 +75,10 @@ fun search initial_th = let (* [ci] |- cnf *)
       Refutation th
     else let
         val v = find_splitting_var c
-        val (l,r) = casesplit v th
-          (*[assigns,v=T,ci]|- curr[T/v],[assigns,v=F,ci]|- curr[F/v]*)
       in
-        case recurse l of
+        case recurse (split_branch v boolSyntax.T th) of
           Refutation l_false =>
-          (case recurse r of
+          (case recurse (split_branch v boolSyntax.F th) of
                Refutation r_false =>
                Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
                (* [assignsr\v,assignsl\v,ci] |- F *)
@@ -140,17 +136,15 @@ fun DPLL_REFUTE lfn clauseth =
 end
 
 fun mk_model_thm cnfv lfn t f =
-    if isSome cnfv then
-      let
-        val fvs = List.map fst (RBM.listItems lfn)
-        val model = List.map (fn v => if is_T (f v) then v else mk_neg v) fvs
-        val model2 = mapfilter (fn l => let val x = hd(free_vars l)
-                                            val y = rbapply lfn x
-                                        in if is_var y then subst [x|->y] l
-                                           else failwith"" end) model
-      in satCheck model2 (mk_neg t) end else
-    let val fvs = free_vars t
-        val model = List.map (fn v => if is_T (f v) then v else mk_neg v) fvs
+    let
+      fun literal v positive = if positive then v else mk_neg v
+      val model =
+          if isSome cnfv then
+            List.rev (RBM.foldl (fn (v,source,rest) =>
+              let val positive = is_T (f v)
+              in if is_var source then literal source positive :: rest
+                 else rest end) [] lfn)
+          else List.map (fn v => literal v (is_T (f v))) (free_vars t)
     in satCheck model (mk_neg t) end
 
 fun DPLL_TAUT t = let

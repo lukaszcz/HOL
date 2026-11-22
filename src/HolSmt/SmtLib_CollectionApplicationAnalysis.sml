@@ -157,9 +157,11 @@ struct
             end)
     in List.exists (visit []) roots end
 
-  fun has_bound_application_with_memo operations memoize collection_terms =
+  fun has_bound_application_with_memo operations memoize collection_terms
+      roots =
+    not (List.null collection_terms) andalso
     scan_bound_application operations memoize
-      (fn term => member operations term collection_terms)
+      (fn term => member operations term collection_terms) roots
 
   fun has_bound_application_with operations is_marked roots =
     scan_bound_application operations

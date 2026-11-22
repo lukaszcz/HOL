@@ -2450,16 +2450,11 @@ local
      erase which exact side an equality-consuming route selected. *)
   fun sparse_equality left right = EqualityProvenance (left, right)
 
-  fun lookup_lexical_provenance environment name =
-    let
-      val key = provenance_key name
-      fun lookup [] = NONE
-        | lookup ((bound, provenance) :: rest) =
-            if provenance_key bound = key then SOME provenance
-            else lookup rest
-    in
-      lookup environment
-    end
+  fun extend_lexical_provenance bindings environment =
+    (* Keep the first binding when spellings resolve to the same key. *)
+    List.foldr (fn ((bound, provenance), saved) =>
+      Redblackmap.insert (saved, provenance_key bound, provenance))
+      environment bindings
 
   fun binder_names raw =
     case raw of
@@ -2508,7 +2503,7 @@ local
   and provenance_of_raw_in environment raw =
     case raw of
       RawAtom token =>
-        (case lookup_lexical_provenance environment token of
+        (case Redblackmap.peek (environment, provenance_key token) of
            SOME provenance => provenance
          | NONE =>
              (case lookup_term_provenance token of
@@ -2531,15 +2526,17 @@ local
           (case binder_names binders of
              SOME names => exact_binders head names
                (provenance_of_raw_in
-                 (List.map (fn name =>
-                    (provenance_key name, AtomicProvenance)) names @
-                  environment) body)
+                 (extend_lexical_provenance
+                   (List.map (fn name =>
+                      (provenance_key name, AtomicProvenance)) names)
+                   environment) body)
            | NONE => UnavailableProvenance
                ("unsupported " ^ head ^ " binder provenance"))
         else if head = "let" then
           (case let_bindings environment binders of
              SOME bindings =>
-               provenance_of_raw_in (bindings @ environment) body
+               provenance_of_raw_in
+                 (extend_lexical_provenance bindings environment) body
            | NONE => UnavailableProvenance
                "unsupported SMT-LIB let provenance")
         else exact_application head
@@ -2561,7 +2558,8 @@ local
         exact_application "<computed-head>"
           (List.map (provenance_of_raw_in environment) entries)
 
-  fun provenance_of_raw raw = provenance_of_raw_in [] raw
+  fun provenance_of_raw raw =
+    provenance_of_raw_in (Redblackmap.mkDict String.compare) raw
 
   (* Read exactly one CPC occurrence before elaborating it to HOL.  The raw
      occurrence tree retains every path to a nested conjunction and every

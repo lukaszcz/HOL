@@ -133,6 +133,22 @@ fun invoke_sat parse sat_solver infile =
     SOME (parse only_true (start_string,end_string) sat_res_ss)
  end
 handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
+
+fun reported_numbers limit numbers =
+  let
+    fun in_range n = n > 0 andalso n < limit
+  in
+    (* DIMACS headers can overstate the number of used variables. Keep the
+       sparse representation for small reports and for nonstandard indices. *)
+    if length numbers >= limit div 8 andalso List.all in_range numbers then
+      let
+        val present = Word8Array.array (limit,0w0)
+        val _ = List.app (fn n => Word8Array.update (present,n,0w1)) numbers
+      in fn n => in_range n andalso Word8Array.sub (present,n) <> 0w0 end
+    else
+      let val present = Redblackset.fromList Int.compare numbers
+      in fn n => Redblackset.member (present,n) end
+  end
 in
 
 fun invokeSat_result model =
@@ -145,10 +161,10 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
       let
         (* Keep the reported numbers verbatim for literal conversion.
            Only an exact DIMACS number excludes a variable from completion. *)
-        val reported = Redblackset.fromList Int.compare numbers
+        val reported = reported_numbers (Array.length sva) numbers
         val missing = dimacsTools.SVM.foldr
           (fn (_,(_,n),rest) =>
-            if Redblackset.member (reported,n) then rest else ~n :: rest)
+            if reported n then rest else ~n :: rest)
           [] (snd svm)
       in numbers @ missing end
     fun model only_true numbers =

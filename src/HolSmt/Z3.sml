@@ -43,7 +43,8 @@ structure Z3 = struct
         (case SolverSpec.get_nonempty_env "Z3" of
           SOME file => SOME file
         | NONE =>
-            if SolverSpec.command_available "z3" then SOME "z3" else NONE)
+            if SolverSpec.solver_command_available "z3" then SOME "z3"
+            else NONE)
 
   fun is_configured () = Option.isSome (configured_executable ());
 

@@ -292,9 +292,10 @@ fun to_cnf is_cnf tm =
                                end) ths
                            (~1,[],RBM.mkDict Term.compare,
                             RBM.mkDict Term.var_compare)
-                val defg = RBM.foldl (fn (t,nv,a) => (t,nv)::a) [] defs
-                val mdefs = filter (fn (r,_) => not (is_var r)) defg
-                val eqs = map (fn (r,l) => mk_eq(l,r)) mdefs
+                val eqs = RBM.foldl
+                  (fn (body,v,rest) =>
+                    if is_var body then rest else mk_eq (v,body) :: rest)
+                  [] defs
                 val vc = (n + 1)
             in (SOME cnfv,vc,eqs,tops,lfn) end
         val all_clauses = itlist (clausify tm lfn) eqs tops

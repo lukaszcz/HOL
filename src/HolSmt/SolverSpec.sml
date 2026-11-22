@@ -61,6 +61,26 @@ structure SolverSpec = struct
     handle exn =>
       if terminal_capture_exception exn then raise exn else false
 
+  fun executable_on_path name path =
+    let
+      fun executable directory =
+        let val file =
+          if directory = "" then name else OS.Path.concat (directory,name)
+        in
+          OS.FileSys.access (file,[OS.FileSys.A_EXEC]) andalso
+          Posix.FileSys.ST.isReg (Posix.FileSys.stat file)
+        end
+        handle OS.SysErr _ => false
+    in List.exists executable (String.fields (fn c => c = #":") path) end
+
+  (* The solver names are fixed shell words. A positive Unix filesystem
+     probe avoids starting a shell; let the shell resolve every miss. *)
+  fun solver_command_available name =
+    (Systeml.isUnix andalso
+      (case OS.Process.getEnv "PATH" of
+           SOME path => executable_on_path name path
+         | NONE => false)) orelse command_available name
+
   fun find_wall_timeout_command () =
     case !wall_timeout_command of
       SOME cached => cached

@@ -2168,11 +2168,12 @@ struct
                | [] => raise Subscript)
     in select 0 slots indices [] end
 
-  fun needed_sources_using (block as Block {graph,...}) edge witness =
+  fun needed_sources_using (block as Block {graph,leaves,...}) edge witness =
     let
-      val nodes = Vector.fromList (sources block)
+      val _ = active block
       fun classify (index,(needed,laws)) =
-        let val node = Vector.sub (nodes,index)
+        let val node = case Vector.sub (leaves,index) of Source node => node
+                  | _ => raise ERR "sources" "invalid recorded source leaf"
         in case witness (index,node) of NONE => (node :: needed,laws)
           | SOME proof =>
               if Portable.pointer_eq (Thm.concl proof,

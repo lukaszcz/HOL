@@ -15,6 +15,42 @@ struct
   fun put path text = SolverSpec.with_output_file path
     (fn stream => TextIO.output (stream,text))
 
+  fun path_lookup () =
+    if not Systeml.isUnix then () else temporary (fn dir =>
+    let
+      val () = remove dir
+      val () = OS.FileSys.mkDir dir
+      val binary = OS.Path.concat (dir,"z3")
+      val relative = OS.Path.mkRelative
+        {path=dir,relativeTo=OS.FileSys.getDir ()}
+      val found = SolverSpec.executable_on_path "z3"
+      fun check () =
+        let
+          val () = require "missing solver detected" (not (found dir))
+          val () = OS.FileSys.mkDir binary
+          val () = SolverSpec.complete_owned
+            (fn () => OS.FileSys.rmDir binary)
+            (fn () => require "directory treated as executable"
+              (not (found dir))) ()
+          open Posix.FileSys
+          val () = mkfifo (binary,S.ixusr)
+          val () = require "FIFO treated as executable" (not (found dir))
+          val () = remove binary
+          val () = put binary "#!/bin/sh\n"
+          val () = chmod (binary,S.irusr)
+          val () = require "non-executable solver detected" (not (found dir))
+          val () = chmod (binary,S.ixusr)
+          val () = require "execute-only solver detection disagrees with X_OK"
+            (found dir = OS.FileSys.access (binary,[OS.FileSys.A_EXEC]))
+          val () = remove binary
+          val () = symlink {old="/bin/sh",new=binary}
+        in require "executable solver missed on PATH"
+          (found dir andalso found relative andalso found (dir ^ "/none:" ^ dir))
+        end
+    in SolverSpec.complete_owned
+      (fn () => (remove binary; OS.FileSys.rmDir dir)) check ()
+    end)
+
   fun same_primary (Primary expected) (Primary actual) = expected=actual
     | same_primary (Fail expected) (Fail actual) = expected=actual
     | same_primary Interrupt Interrupt = true
@@ -285,7 +321,8 @@ struct
         ["writer","input","output","post","validate"]) [false,true]) () end
 
   fun run () =
-    (test "Solver cleanup preserves first exception" precedence;
+    (test "Solver PATH lookup recognizes executable files" path_lookup;
+     test "Solver cleanup preserves first exception" precedence;
      test "Solver stream ownership covers second acquisition" acquisition;
      test "Solver capture copy acquisition releases input" copy_acquisition;
      test "CPC capture preserves copied and existing contents" copy_contents;

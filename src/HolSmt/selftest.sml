@@ -59062,14 +59062,18 @@ in
                 | diamond n = let val child = diamond (n - 1)
                               in boolSyntax.mk_conj (child,child) end
               val depth = 65
-          in owned (diamond depth) [] (fn e =>
-            let val result = analyse e
-            in require "collection scan expanded shared graph subtrees"
-              (#visits result <= 4 * depth + 10 andalso
-               #bound_visits result <= depth + 5 andalso
-               not (#bound_application result) andalso
-               null (#computed_applications result) andalso
-               #node (hd (#roots result)) = #goal e) end) end)
+              val goal = diamond depth
+              fun check markers bound_visits = owned goal markers (fn e =>
+                let val result = analyse e
+                in require "unexpected collection scan on shared subtrees"
+                  (#visits result <= 4 * depth + 10 andalso
+                   bound_visits (#bound_visits result) andalso
+                   not (#bound_application result) andalso
+                   null (#computed_applications result) andalso
+                   #node (hd (#roots result)) = #goal e) end)
+          in check [] (fn visits => visits = 0);
+             check [set] (fn visits => 0 < visits andalso visits <= depth + 5)
+          end)
       val _ = test "Graph collection scan uses native polymorphic K rank"
         (fn () =>
           let val k = Term.mk_thy_const

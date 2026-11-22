@@ -65,14 +65,20 @@ fun replay_proof sat_trace check_sat_model is_proved sva nr in_name
 
 local
     fun transform_model cnfv lfn model =
-        let val model2 =
-            if isSome cnfv then
-                mapfilter (fn l => let val x = hd(free_vars l)
-                                       val y = rbapply lfn x
-                                   in if is_var y then subst [x|->y] l
-                                      else failwith"" end) model
-            else model
-        in model2 end
+        let
+          fun project literal =
+              let val negative = is_neg literal
+                  val v = if negative then dest_neg literal else literal
+              in
+                if not (is_var v) then NONE else
+                case RBM.peek (lfn,v) of
+                    SOME source =>
+                      if is_var source then
+                        SOME (if negative then mk_neg source else source)
+                      else NONE
+                  | NONE => NONE
+              end
+        in if isSome cnfv then List.mapPartial project model else model end
 in
 fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
                   check_sat_model svm sva in_name =

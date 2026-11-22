@@ -1594,12 +1594,36 @@ struct
         val root = collect conversion
     in {root = root,steps = List.rev (!rows)} end
 
-  fun graph_assemble graph block conversion =
-    let val memo = ref ([] : (graph_conversion * P.edge) list)
-        fun cached converted [] = NONE
-          | cached converted ((old,edge)::rest) =
-              if Portable.pointer_eq (converted,old) then SOME edge
-              else cached converted rest
+  (* Endpoints narrow the search. Distinct recipes with the same endpoints
+     still require exact object identity. Read the fields without invoking
+     policy guards, which belong to the executable assembly paths. *)
+  fun recipe_key (PolicyGraphConversion _) = NONE
+    | recipe_key (PolicySequenceGraphConversion _) = NONE
+    | recipe_key (RealizedGraphConversion {legacy,...}) = recipe_key legacy
+    | recipe_key current = SOME (G.node_id (graph_equality current))
+
+  fun recipe_memo () =
+    let
+      val memo = ref (Redblackmap.mkDict Int.compare)
+      fun apply current fresh = case recipe_key current of
+          NONE => fresh current
+        | SOME key =>
+            let val entries = Option.getOpt (Redblackmap.peek (!memo,key),[])
+            in case List.find
+                (fn (old,_) => Portable.pointer_eq (current,old)) entries of
+                SOME (_,value) => value
+              | NONE =>
+                  let val value = fresh current
+                      val _ = memo := Redblackmap.update (!memo,key,fn saved =>
+                        (current,value) :: Option.getOpt (saved,[]))
+                  in value end
+            end
+    in apply end
+
+  fun graph_assemble graph block (conversion as GraphConversion _) =
+        legacy_assemble graph block conversion
+    | graph_assemble graph block conversion =
+    let val memo = recipe_memo ()
         fun trans a b = P.compose block
               (fn [a,b] => SmtReplayRuleObservation.TRANS a b
                 | _ => raise Fail "recipe TRANS premises") [a,b]
@@ -1633,11 +1657,7 @@ struct
               constructor proof
               | _ => raise Fail "recipe named equality")
             [assemble converted,P.constructor block (graph_equality converted)]
-        and assemble converted = case cached converted (!memo) of
-              SOME edge => edge | NONE =>
-                let val edge = assemble_fresh converted
-                    val _ = memo := (converted,edge) :: !memo
-                in edge end
+        and assemble converted = memo converted assemble_fresh
         and assemble_fresh (converted as GraphConversion _) =
               legacy_assemble graph block converted
           | assemble_fresh (RealizedGraphConversion {legacy,...}) =
@@ -1677,28 +1697,24 @@ struct
                 (trans combined backwards)) end
     in assemble conversion end
 
-  fun graph_assemble_named graph block converted =
+  fun graph_assemble_named graph block (converted as GraphConversion _) =
+        assemble_finite_named graph block converted
+    | graph_assemble_named graph block converted =
     let
-      val seen = ref ([] : graph_conversion list)
-      fun inspect current =
-        if List.exists (fn old => Portable.pointer_eq (old,current)) (!seen)
-          then ()
-        else
-          (seen := current :: !seen;
-           case current of GraphConversion _ => ()
-           | ApplicationGraphConversion {left,right,...} =>
-               (inspect left;inspect right)
-           | SequenceGraphConversion {first,second,...} =>
-               (inspect first;inspect second)
-           | _ => raise ERR "graph_assemble_named"
-               "owned/realized conversion requires its policy assembler")
+      val memo = recipe_memo ()
+      fun inspect current = memo current inspect_fresh
+      and inspect_fresh (GraphConversion _) = ()
+        | inspect_fresh (ApplicationGraphConversion {left,right,...}) =
+            (inspect left;inspect right)
+        | inspect_fresh (SequenceGraphConversion {first,second,...}) =
+            (inspect first;inspect second)
+        | inspect_fresh _ = raise ERR "graph_assemble_named"
+            "owned/realized conversion requires its policy assembler"
       (* Reject nested policy/realized leaves before even an ordinary sibling
          can execute a native rule. Shared suffixes are inspected once. *)
       val _ = inspect converted
-    in case converted of GraphConversion _ =>
-        assemble_finite_named graph block converted
-      | _ => (ignore (P.checked block boolTheory.TRUTH);
-          graph_assemble graph block converted)
+    in ignore (P.checked block boolTheory.TRUTH);
+       graph_assemble graph block converted
     end
 
   (* A bounded constructor prefix is exposed on large nodes. All repeated

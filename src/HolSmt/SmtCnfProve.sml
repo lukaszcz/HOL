@@ -123,17 +123,19 @@ fun refute clauses_input =
       n+SmtResource.term_nodes_up_to 4097 clause) 0 source_clauses
     val _=if source_nodes*length assignments<=200000 then ()
       else decline "model-witness"
+    val decode=Term.subst inverse
+    val assign_values=Term.subst assignments
     val schemas=ref []
     fun check clause =
      let
       (* Every clause has at most the native guarded atom size. Check the
          complete typed alias-preserving proxy map before evaluating it. *)
       val schema=encode clause
-      val original=Term.subst inverse schema
+      val original=decode schema
       val _=schemas:=schema:: !schemas
       val _=if Term.aconv clause original then ()
         else raise Fail "native SAT model source roundtrip"
-      val instance=Term.subst assignments schema
+      val instance=assign_values schema
       val law=Drule.EQT_ELIM (Conv.QCONV (Rewrite.REWRITE_CONV []) instance)
       val _=if null (Thm.hyp law) andalso Term.aconv (Thm.concl law) instance
         then () else raise Fail "native SAT model validation"
