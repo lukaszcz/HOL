@@ -442,7 +442,14 @@ fun num_args_relativization_success () =
       ``!s :int -> bool. !i :int. 0 <= i ==> s i``);
     check_conv SmtLib.NUM_TO_INT_CONV ("lifted num existential argument",
       ``!P :num -> bool. ?n :num. P n``,
-      ``!P :int -> bool. ?i :int. 0 <= i /\ P i``)
+      ``!P :int -> bool. ?i :int. 0 <= i /\ P i``);
+    (* Only a function variable's argument cancels: both sides of this
+       keep the same encoding, so it is no rewrite that loops. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("guarded num under a constant",
+      ``!n :num. real_of_int (&n) = (&n :real)``,
+      ``!i :int. 0 <= i ==>
+          real_of_int (if i < 0 then -i else i) =
+          real_of_int (if i < 0 then -i else i)``)
   end
 
 fun num_binder_relativization_non_num_noop_success () =

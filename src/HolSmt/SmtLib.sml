@@ -7103,9 +7103,12 @@ local
 
   val num_transfer_rewrites = SmtLib_GraphNumericStock.rewrites
 
-  (* 0 <= i ==> body  or  0 <= i /\ body: rewrites &Num i to i in body by
-     NUM_TO_INT_GUARDED under the guard, before the total &Num i = ABS i
-     rewrite would turn it into an if-then-else. *)
+  (* 0 <= i ==> body  or  0 <= i /\ body: an argument &Num i of a function
+     variable in body becomes i by NUM_TO_INT_GUARDED under the guard,
+     before the total &Num i = ABS i rewrite would turn it into an
+     if-then-else.  Other occurrences of &Num i keep the total encoding:
+     cancelling only the int side of real_of_int (&n) = &n would leave a
+     rewrite that the solvers' goal simplification loops on. *)
   fun guarded_num_cancel_conv tm =
   let
     val is_imp = boolSyntax.is_imp_only tm
@@ -7116,8 +7119,15 @@ local
       raise ERR "guarded_num_cancel_conv" "no guard"
     val cancel = Thm.MP (Thm.SPEC i HolSmtTheory.NUM_TO_INT_GUARDED)
       (Thm.ASSUME guard)
+    (* the arguments of a function variable's application *)
+    fun arguments_conv t =
+      if Term.is_comb t andalso
+         Term.is_var (Lib.fst (boolSyntax.strip_comb t)) then
+        Conv.THENC (Conv.RATOR_CONV arguments_conv,
+          Conv.RAND_CONV (Conv.TRY_CONV (Conv.REWR_CONV cancel))) t
+      else raise Conv.UNCHANGED
     (* guard |- body = body' *)
-    val body_eq = Rewrite.PURE_REWRITE_CONV [cancel] body
+    val body_eq = Conv.DEPTH_CONV arguments_conv body
   in
     if is_imp then
       Drule.MATCH_MP boolTheory.IMP_CONG
