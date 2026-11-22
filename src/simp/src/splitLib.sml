@@ -228,6 +228,7 @@ fun const_key c =
    below can be handed back in the order a walk over the TypeBase leaves
    them in. *)
 type case_const = {order : int, ty : hol_type, arity : int}
+type case_index = {entries : case_const list Symtab.table, min_arity : int}
 
 (* Rebuilt whenever the TypeBase value changes, which is the pointer test
    [type_splits_of] makes against the tyinfo it derived from, applied to
@@ -235,22 +236,24 @@ type case_const = {order : int, ty : hol_type, arity : int}
    cannot be analysed is left out, which is the skip the group builder
    below used to make for it on every call. *)
 val case_const_index =
-  Sref.new (NONE : (TypeBasePure.typeBase *
-                    case_const list Symtab.table) option)
+  Sref.new (NONE : (TypeBasePure.typeBase * case_index) option)
 
 fun build_case_const_index typebase =
   let
-    fun add (tyinfo,(order,index)) =
+    fun add (tyinfo,(order,index as {entries,min_arity})) =
       let
         val head = TypeBasePure.case_const_of tyinfo
-        val entry =
-          {order=order, ty=TypeBasePure.ty_of tyinfo,
-           arity=length (#1 (strip_fun (type_of head)))}
+        val arity = length (#1 (strip_fun (type_of head)))
+        val entry = {order=order, ty=TypeBasePure.ty_of tyinfo, arity=arity}
       in
-        (order + 1, Symtab.cons_list (const_key head, entry) index)
+        (order + 1,
+         {entries=Symtab.cons_list (const_key head, entry) entries,
+          min_arity=if Symtab.is_empty entries then arity
+                    else Int.min (arity,min_arity)})
       end handle HOL_ERR _ => (order + 1, index)
   in
-    #2 (List.foldl add (0,Symtab.empty) (TypeBasePure.listItems typebase))
+    #2 (List.foldl add (0,{entries=Symtab.empty,min_arity=0})
+                   (TypeBasePure.listItems typebase))
   end
 
 fun case_const_index_of ctxt =
@@ -277,9 +280,9 @@ fun case_const_index_of ctxt =
    this on each simplification round without recording unrelated constants. *)
 fun goal_split_rule_groups_of ctxt terms =
   let
-    val index = case_const_index_of ctxt
-    fun collect arity ({order,ty,arity=min_arity} : case_const, found) =
-      if arity < min_arity orelse Option.isSome (Binarymap.peek (found,order))
+    val {entries,min_arity} = case_const_index_of ctxt
+    fun collect arity ({order,ty,arity=required} : case_const, found) =
+      if arity < required orelse Option.isSome (Binarymap.peek (found,order))
       then found
       else Binarymap.insert (found,order,ty)
     fun visit tm arity found =
@@ -287,9 +290,10 @@ fun goal_split_rule_groups_of ctxt terms =
         let val (f,x) = dest_comb tm
         in visit f (arity + 1) (visit x 0 found) end
       else if is_abs tm then visit (body tm) 0 found
-      else if is_const tm then
+      (* Constants below the smallest case arity cannot name a match. *)
+      else if arity >= min_arity andalso is_const tm then
         List.foldl (collect arity) found
-          (Symtab.lookup_list index (const_key tm))
+          (Symtab.lookup_list entries (const_key tm))
       else found
     val matched = List.foldl (fn (tm,found) => visit tm 0 found)
                     (Binarymap.mkDict Int.compare) terms
@@ -309,7 +313,8 @@ fun goal_split_rules terms =
 (* Two types are alpha-variants exactly when each is an instance of the
    other. *)
 fun same_type_shape (ty1, ty2) =
-  can (Type.match_type ty1) ty2 andalso can (Type.match_type ty2) ty1
+  ty1 = ty2 orelse
+  (can (Type.match_type ty1) ty2 andalso can (Type.match_type ty2) ty1)
 
 fun same_key (h1,h2) =
   same_const h1 h2 andalso same_type_shape (type_of h1, type_of h2)
@@ -369,9 +374,14 @@ fun fold_candidates candidates head collect packs =
         let
           val head_type = type_of head
           fun add ((key_head, rules), packs) =
-            if same_const key_head head andalso
-               can (Type.match_type (type_of key_head)) head_type
-            then foldl collect packs rules
+            if same_const key_head head then
+              let val key_type = type_of key_head
+              in
+                if key_type = head_type orelse
+                   can (Type.match_type key_type) head_type
+                then foldl collect packs rules
+                else packs
+              end
             else packs
         in
           foldl add packs entries
@@ -390,9 +400,35 @@ fun enter_path steps =
 fun matching (rule : split_rule) redex =
   can (match_term (#pattern rule)) redex
 
-fun scan candidates tm =
+fun pack_compare (p1 : split_pack, p2 : split_pack) =
+  case Int.compare (#binders p1, #binders p2) of
+      EQUAL =>
+        (case Int.compare (#depth p1, #depth p2) of
+             EQUAL => Int.compare (#visit p1, #visit p2)
+           | order => order)
+    | order => order
+
+fun scan best_only candidates tm =
   let
     val root_type = type_of tm
+    val best = ref (NONE : split_pack option)
+    val pruned = ref false
+
+    fun remember pack =
+      case !best of
+          NONE => best := SOME pack
+        | SOME earlier =>
+            if pack_compare (pack,earlier) = LESS then best := SOME pack
+            else ()
+
+    (* An earlier pack that references no binder already wins over every
+       pack at the same depth or deeper. Still scan leaves, so that a
+       rejection in a small term does not trigger a second traversal. *)
+    fun can_skip depth =
+      case !best of
+          NONE => false
+        | SOME {binders,depth=best_depth,...} =>
+            binders = 0 andalso best_depth <= depth
 
     (* Keep the path to the innermost binder referenced by the redex.
        Encode it only when trying to apply a rule. *)
@@ -430,8 +466,18 @@ fun scan candidates tm =
     (* At equal depth, preorder visits argument paths in lexicographic
        order. Index each successful pack, including multiple rules at one
        node, so sorting preserves their collection order on ties. *)
+    fun collect depth binders node head args arity (rule, acc) =
+      case mk_pack depth acc binders node head args arity rule of
+          SOME pack =>
+            (if best_only then remember pack else (); pack :: acc)
+        | NONE => acc
     fun walk depth steps (binders : binder_info list) node packs =
-      if is_abs node then
+      if is_const node then
+        fold_candidates candidates node (collect depth binders node node [] 0)
+                        packs
+      else if is_var node then packs
+      else if best_only andalso can_skip depth then (pruned := true; packs)
+      else if is_abs node then
         let
           val (var, body) = dest_abs node
           val body_path = Body :: steps
@@ -446,13 +492,11 @@ fun scan candidates tm =
         let
           val (head, args) = strip_comb node
           val arity = length args
-          fun collect (rule, acc) =
-            case mk_pack depth acc binders node head args arity rule of
-                SOME pack => pack :: acc
-              | NONE => acc
           val here =
             if is_const head then
-              fold_candidates candidates head collect packs
+              fold_candidates candidates head
+                              (collect depth binders node head args arity)
+                              packs
             else packs
           fun descend (arg, (i, packs)) =
             let
@@ -465,16 +509,9 @@ fun scan candidates tm =
         end
   in
     (* The pack comparator already recovers visit order on ties. *)
-    walk 0 [] [] tm []
+    let val packs = walk 0 [] [] tm []
+    in (!best,packs,!pruned) end
   end
-
-fun pack_compare (p1 : split_pack, p2 : split_pack) =
-  case Int.compare (#binders p1, #binders p2) of
-      EQUAL =>
-        (case Int.compare (#depth p1, #depth p2) of
-             EQUAL => Int.compare (#visit p1, #visit p2)
-           | order => order)
-    | order => order
 
 fun fresh_parts th =
   let
@@ -513,6 +550,22 @@ fun first_success packs tm =
   Lib.with_exn (Lib.tryfind (fn pack => apply_pack pack tm)) packs
                (ERR "SPLIT_CONV" "no applicable split rule")
 
+(* Use the best candidate found without sorting. If it is rejected,
+   restore the exhaustive fallback order and skip the failed candidate. *)
+fun split_first candidates tm =
+  case scan true candidates tm of
+      (NONE,_,_) => first_success [] tm
+    | (SOME best,packs,pruned) =>
+        case Lib.total (fn pack => apply_pack pack tm) best of
+            SOME th => th
+          | NONE =>
+              let
+                val all_packs =
+                  if pruned then #2 (scan false candidates tm) else packs
+              in
+                first_success (tl (Listsort.sort pack_compare all_packs)) tm
+              end
+
 fun split_conv cmap =
   let
     val candidates = candidate_entries cmap
@@ -521,8 +574,7 @@ fun split_conv cmap =
        otherwise applicable rule, while retaining one split per call. *)
   in
     if Symtab.is_empty cmap then first_success []
-    else fn tm => first_success (Listsort.sort pack_compare
-                                   (scan candidates tm)) tm
+    else split_first candidates
   end
 
 fun SPLIT_CONV thms = split_conv (index_theorems false thms)
@@ -545,9 +597,8 @@ fun clean_asm_eq th =
 fun asm_eq candidates asm =
   let
     val negated = mk_neg asm
-    val packs = Listsort.sort pack_compare (scan candidates negated)
   in
-    clean_asm_eq (first_success packs negated)
+    clean_asm_eq (split_first candidates negated)
   end
 
 fun split_asm_tac cmap =
