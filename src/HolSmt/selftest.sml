@@ -85395,11 +85395,11 @@ val _ = run_postlude 440 "held-definition-hypothesis" (fn () =>
 val _ = run_postlude 441 "num-function-arguments" (fn () =>
   let
     val goals = [
-      ([``n + 0 = n``],
+      ([``(n:num) + 0 = n``],
        ``a < b /\ b < a + 2 ==> ((P:num -> bool) (a + 1) <=> P b)``),
-      ([], ``a < b /\ b < c /\ c < a + 3 ==>
+      ([``(n:num) + 0 = n``], ``a < b /\ b < c /\ c < a + 3 ==>
              ((f:num -> num) (a + 1) = f b)``),
-      ([], ``3 * a + 2 * b = 12 /\ b = a + 1 ==>
+      ([``(n:num) + 0 = n``], ``3 * a + 2 * b = 12 /\ b = a + 1 ==>
              ((f:num -> num) a = f 2)``),
       ([``!x:num. x IN (s:num -> bool) ==> x IN (t:num -> bool)``,
         ``(s:num -> bool) (b:num)``], ``(t:num -> bool) (b:num)``)]
