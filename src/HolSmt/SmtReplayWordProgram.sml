@@ -75,6 +75,7 @@ let
  val memo=ref (Redblackmap.mkDict Int.compare)
  val definitions=ref ([]:term list)
  val aliases=ref ([]:(term*term) list)
+ val alias_count=ref 0
  fun abstract t=case Redblackmap.peek (!memo,id t) of SOME result=>result
    | NONE=>let
        val body=if Term.is_comb t then
@@ -86,30 +87,28 @@ let
          Redblackmap.find (!counts,id t)>1 andalso
          (ty=Type.bool orelse wordsSyntax.is_word_type ty)
        val result=if not chosen then body else
-         let val index=length (!aliases)
+         let val index= !alias_count
              val _=index<5000 orelse raise Declined
              val variable=hole (4000+index) ty
+             val _=alias_count:=index+1
              val _=aliases:=(variable,t):: !aliases
              val _=definitions:=boolSyntax.mk_eq (variable,body):: !definitions
          in variable end
        val _=memo:=Redblackmap.insert (!memo,id t,result)
      in result end
  val result=abstract source
- fun balanced []=boolSyntax.T
-   | balanced [t]=t
-   | balanced ts=let val n=length ts div 2
-       in boolSyntax.mk_conj (balanced (List.take (ts,n)),
-         balanced (List.drop (ts,n))) end
- val context=balanced (List.rev (!definitions))
+ val context=SmtCircuitSat.balanced_conjunction_term (List.rev (!definitions))
  val program=boolSyntax.mk_imp (context,result)
  val size=case SmtReplayImport.bounded_raw_size 8192 program of
      SOME n=>n | NONE=>raise Declined
  val input_substitutions=ListPair.map (fn (i,v)=>
      v |-> hole (10000+i) (Term.type_of v))
    (List.tabulate (length (!variables),fn i=>i),List.rev (!variables))
- val proposed=List.map #1 (!aliases) @ List.map #residue input_substitutions
- val _=not (List.exists (fn input=>List.exists
-   (Term.term_eq input) proposed) (!variables)) orelse raise Declined
+ val source_variables=HOLset.addList (HOLset.empty Term.compare,!variables)
+ fun clashes term=HOLset.member (source_variables,term)
+ val _=not (List.exists (clashes o #1) (!aliases) orelse
+            List.exists (clashes o #residue) input_substitutions)
+       orelse raise Declined
  val key=Term.subst input_substitutions program
  val raw=SmtReplayImport.bounded_raw_size 8192 key
  val _=Option.isSome raw orelse raise Declined
@@ -154,10 +153,6 @@ let
    val prepared=prepare_program hole source
    val {key,context,result,aliases,inputs,memo,cost,dag,id}=prepared
    val _=dag>256 orelse raise Declined
-   val _=not (List.exists (fn substitution=>
-       List.exists (fn (variable,_)=>
-         Term.term_eq (#redex substitution) variable) aliases) inputs)
-       orelse raise Declined
    val capture=SmtSkeletonProve.cache_signature ()
    val generic=SmtSkeletonProve.cached_sat_proof owner key cost
      (fn () =>let

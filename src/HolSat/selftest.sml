@@ -453,6 +453,27 @@ local
       measured (internal (config compound)) sat_only andalso
       measured (internal (set_term invalid base_config)) sat_only andalso
       sat_only (set_term F base_config))
+  val _ = control "balanced and asymmetric explicit CNF preserve clause order"
+    (fn () =>
+      let
+        val clauses = [``p:bool``, ``q \/ r``, ``~p``, ``s:bool``]
+        fun check goal =
+          let
+            val (_, count, _, projected) =
+                def_cnf.explicit_cnf NONE (mk_neg goal)
+            val pairs = Array.foldr (op ::) [] projected
+          in count = 4 andalso
+             ListPair.allEq
+               (fn (term,(clause,th)) =>
+                 term ~~ clause andalso clause ~~ concl th andalso
+                 (case hyp th of [source] => source ~~ goal | _ => false))
+               (clauses,pairs) andalso
+             measured (internal (config goal))
+               (fn conf => checked (mk_neg goal) (GEN_SAT_PROVE_ONLY conf))
+          end
+      in List.all check [``(p /\ (q \/ r)) /\ (~p /\ s)``,
+                         ``((p /\ (q \/ r)) /\ ~p) /\ s``]
+      end)
   val _ = control "proof-only missing-proof fallback preserves explicit CNF"
     (fn () => measured (set_proof missing (config cnf))
         (fn conf => checked (mk_neg cnf) (GEN_SAT_PROVE_ONLY conf)) andalso

@@ -90,26 +90,17 @@ struct
   fun prove_cnf (cnf, output) =
     let
       val denied = boolSyntax.mk_neg output
-      fun flatten pending accumulated =
-        case pending of
-          [] => List.rev accumulated
-        | theorem :: rest =>
-            (case Lib.total boolSyntax.dest_conj (Thm.concl theorem) of
-               SOME _ => flatten
-                 (SmtReplayRuleObservation.CONJUNCT1 theorem :: SmtReplayRuleObservation.CONJUNCT2 theorem :: rest)
-                 accumulated
-             | NONE => flatten rest (theorem :: accumulated))
-      val clauses = flatten [SmtReplayRuleObservation.ASSUME cnf] []
       (* DIMACS abstracts T and F as atoms.  Supply their checked values. *)
-      val constants =
-        [boolTheory.TRUTH, SmtReplayRuleObservation.D_EQF_ELIM (SmtReplayRuleObservation.REFL boolSyntax.F)]
-      val denied_proof = SmtReplayRuleObservation.ASSUME denied
-      val inventory = clauses @ (constants @ [denied_proof])
+      val not_false = boolSyntax.mk_neg boolSyntax.F
+      fun prove_not_false () = SmtReplayRuleObservation.D_EQF_ELIM
+        (SmtReplayRuleObservation.REFL boolSyntax.F)
       fun original () =
         let
-          val refutation_proof = List.foldr
-            (fn (clause, rest) => SmtReplayRuleObservation.CONJ clause rest)
-            denied_proof (clauses @ constants)
+          val refutation_proof = SmtReplayRuleObservation.CONJ
+            (SmtReplayRuleObservation.ASSUME cnf)
+            (SmtReplayRuleObservation.CONJ boolTheory.TRUTH
+              (SmtReplayRuleObservation.CONJ (prove_not_false ())
+                (SmtReplayRuleObservation.ASSUME denied)))
           val refutation = Thm.concl refutation_proof
           val no_refutation = HolSatLib.GEN_SAT_PROVE_ONLY
             (satConfig.set_flag_is_cnf true
@@ -125,15 +116,45 @@ struct
             (SmtReplayRuleObservation.NOT_ELIM no_refutation) refutation_proof
         end
       val contradiction =
-        case SmtCnfProve.prove
-            (Array.fromList (List.map Thm.concl inventory)) of
+        case SmtCnfProve.prove_conjunction
+            (cnf,[boolSyntax.T, not_false, denied]) of
           SmtCnfProve.Unknown => original ()
         | SmtCnfProve.Model _ => raise HolSatLib.SAT_satisfiable ()
         | SmtCnfProve.Refuted proof =>
             let
-              val used = Thm.hypset proof
-              val needed = List.filter
-                (fn law => HOLset.member (used, Thm.concl law)) inventory
+              val remaining = ref (Thm.hypset proof)
+              fun take term =
+                if HOLset.member (!remaining,term) then
+                  (remaining := HOLset.delete (!remaining,term); true)
+                else false
+              (* Select the first occurrence of each used hypothesis.
+                 Shared prefixes are projected once, in clause order. *)
+              fun select term =
+                if HOLset.isEmpty (!remaining) then NONE
+                else case Lib.total boolSyntax.dest_conj term of
+                    NONE => if take term then SOME (curry (op ::))
+                            else NONE
+                  | SOME (a,b) =>
+                    (case (select a,select b) of
+                        (NONE,NONE) => NONE
+                      | (SOME left,NONE) => SOME
+                          (left o SmtReplayRuleObservation.CONJUNCT1)
+                      | (NONE,SOME right) => SOME
+                          (right o SmtReplayRuleObservation.CONJUNCT2)
+                      | (SOME left,SOME right) =>
+                          SOME (fn law =>
+                            left (SmtReplayRuleObservation.CONJUNCT1 law) o
+                            right (SmtReplayRuleObservation.CONJUNCT2 law)))
+              val selected = select cnf
+              fun include_fact (term,fact) =
+                if take term then SOME (fact ()) else NONE
+              val facts = List.mapPartial include_fact
+                [(boolSyntax.T, fn () => boolTheory.TRUTH),
+                 (not_false, prove_not_false),
+                 (denied, fn () => SmtReplayRuleObservation.ASSUME denied)]
+              val needed = case selected of NONE => facts
+                | SOME project => project
+                    (SmtReplayRuleObservation.ASSUME cnf) facts
               (* Discharge every clause before introducing cnf or denied:
                  either hypothesis may also be a clause in the inventory. *)
               val closed = List.foldl

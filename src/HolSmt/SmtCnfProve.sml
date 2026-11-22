@@ -13,9 +13,10 @@ exception Satisfiable of thm;
 fun decline _ = raise Decline;
 datatype plan = Conflict of int | Force of int * int * plan
               | Split of int * plan * plan;
+val clause_limit = 2048;
 fun refute clauses_input =
  let
-  val _=if Array.length clauses_input<=2048 then () else decline "clauses"
+  val _=if Array.length clauses_input<=clause_limit then () else decline "clauses"
   val source_clauses=Array.vector clauses_input
   val variables=ref (Redblackmap.mkDict Term.compare)
   val reverse=ref (Redblackmap.mkDict Int.compare)
@@ -247,4 +248,19 @@ fun refute clauses_input =
 fun prove clauses = Refuted (refute clauses)
   handle Satisfiable witness => Model witness
        | Decline => Unknown;
+
+fun prove_conjunction (cnf,extra) =
+  let
+    (* Every pending subtree accounts for at least one clause. A split
+       increases that lower bound by one, and a leaf leaves it unchanged. *)
+    fun collect [] clauses _ =
+          prove (Array.fromList (List.revAppend (clauses,extra)))
+      | collect (term :: rest) clauses space =
+          case Lib.total boolSyntax.dest_conj term of
+              NONE => collect rest (term :: clauses) space
+            | SOME (left,right) =>
+                if space = 0 then Unknown
+                else collect (left :: right :: rest) clauses (space-1)
+    val space = clause_limit - List.length extra - 1
+  in if space < 0 then Unknown else collect [cnf] [] space end;
 end;

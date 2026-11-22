@@ -363,8 +363,8 @@ struct
     val _=if #raw actual= #raw future andalso
         #ann actual= #ann future then () else
       raise (#error operations) "actual CNF grammar differs"
-    (* These are EXACT public prove_cnf wrapper constructors: flatten
-       its actual CNF, add T/~F and ~target, then close implication.
+    (* The wrapper projects individual clauses for native proofs and
+       keeps the original CNF shape when adding T/~F and ~target.
        No bound on HolSat's private proof count/runtime is asserted. *)
     fun clauses [] result=List.rev result
       | clauses(term::rest) result=
@@ -380,9 +380,8 @@ struct
     val _=held_hyp_weight:=weight actual+weight denied_profile
     val _=admit actual val _=admit denied_profile
     val _=List.app admit clause_profiles
-    val refutation=List.foldr (fn(a,b)=>binary a b)
-      denied_profile
-      (clause_profiles@[truth,negative truth])
+    val refutation=binary actual
+      (binary truth (binary (negative truth) denied_profile))
     val _=admit refutation
     val _=admit(negative refutation)
     val _=admit(binary refutation truth)

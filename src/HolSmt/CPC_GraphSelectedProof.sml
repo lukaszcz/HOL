@@ -30,14 +30,30 @@ struct
       val root = A.root admission
       val obligations = A.obligations admission
       val all = A.roots admission
-      val _ = List.app (fn (serial,target) =>
-        if List.exists (fn source => source = target) canonical orelse
-           List.exists (fn entry => #serial entry = serial andalso
-             #source entry = target) equations then () else
-          raise ERR "command" "missing actual equation origin") obligations
+      val _ = if null obligations then () else
+        let
+          val canonical_index = List.foldl (fn (node,index) =>
+            Redblackmap.insert (index,G.node_id node,node))
+            (Redblackmap.mkDict Int.compare) canonical
+          val equation_index = Portable.HOLSusp.delay (fn () =>
+            List.foldl
+              (fn ({serial,source,...} : CPC_GraphDefinitionHistory.occurrence,
+                   index) =>
+                Redblackmap.update (index,(serial,G.node_id source),
+                  fn entries => source :: Option.getOpt (entries,[])))
+              (Redblackmap.mkDict (Lib.pair_compare (Int.compare,Int.compare)))
+              equations)
+          fun check_origin (serial,target) =
+            let val id = G.node_id target
+            in
+              if Redblackmap.peek (canonical_index,id) = SOME target orelse
+                 List.exists (fn source => source = target) (Option.getOpt
+                   (Redblackmap.peek
+                     (Portable.HOLSusp.force equation_index,(serial,id)),[]))
+              then () else raise ERR "command" "missing actual equation origin"
+            end
+        in List.app check_origin obligations end
       val count = length canonical
-      val proof_counts = ref
-        (Redblackmap.mkDict Int.compare : (int,int) Redblackmap.dict)
       fun prove ({name,constructor,premise} : C.discovery) =
         let
           (* One memo per discovery and one key per captured command
@@ -49,9 +65,6 @@ struct
               case Redblackmap.peek (!memo,serial) of SOME proof => proof
               | NONE =>
                 let
-                  val _ = proof_counts := Redblackmap.insert
-                    (!proof_counts,serial,1 + Option.getOpt
-                      (Redblackmap.peek (!proof_counts,serial),0))
                   val proof = case recipe fact of
                       A.Original index => premise index
                     | A.Pending index => premise (count+index)

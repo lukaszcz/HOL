@@ -38,6 +38,7 @@ struct
           (G.application graph scope (operator,left),right) end
       val known = ref (Redblackmap.mkDict String.compare)
       val obligations = ref ([] : (int * G.node) list)
+      val obligation_count = ref 0
       val independent = ref ([] : G.node list)
       val last = ref (NONE : fact option)
       val captured = ref 0
@@ -57,14 +58,23 @@ struct
           (step : Parser.graph_rule_step) of NONE => () | SOME value =>
             if #node value = target then () else
               raise ERR "command" "declared native endpoint differs"
+      (* Duplicate originals keep the first Source slot. *)
+      val canonical_index = Portable.HOLSusp.delay (fn () =>
+        #2 (List.foldl
+          (fn (node,(index,table)) =>
+            let val id = G.node_id node
+            in (index+1,if Redblackmap.inDomain (table,id) then table
+               else Redblackmap.insert (table,id,(node,index))) end)
+          (0,Redblackmap.mkDict Int.compare) canonical))
       fun original_index target =
-        let fun loop [] _ = NONE
-              | loop (source :: rest) index =
-                  if source = target andalso Portable.pointer_eq
-                      (G.representative graph source,
-                       G.representative graph target) then SOME index
-                  else loop rest (index+1)
-        in loop canonical 0 end
+        case Redblackmap.peek
+            (Portable.HOLSusp.force canonical_index,G.node_id target) of
+          SOME (source,index) =>
+            if source = target andalso Portable.pointer_eq
+                (G.representative graph source,
+                 G.representative graph target)
+            then SOME index else NONE
+        | NONE => NONE
       fun source_index target = case original_index target of
           SOME index => index
         | NONE => raise ERR "command"
@@ -85,7 +95,7 @@ struct
                   (case #args step of [Parser.GraphTerm value] =>
                     let val target = #node value
                         val _ = declared step target
-                        val index = length (!obligations)
+                        val index = !obligation_count
                         val serial = !captured
                         (* Keep the command occurrence even when its exact
                            target already has canonical original authority. *)
@@ -94,6 +104,7 @@ struct
                           | NONE =>
                               Pending index
                         val _ = obligations := (serial,target) :: !obligations
+                        val _ = obligation_count := index+1
                     in new_fact {node = target,recipe = recipe} end
                    | _ => raise Defer UnsupportedCommand)
                 else if handler = CPC_Proof.HRefl then

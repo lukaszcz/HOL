@@ -255,11 +255,14 @@ structure Z3 = struct
     else
       NONE
 
-  fun z3_translation get_proof version =
+  fun z3_translation_with_policy policy get_proof version =
     SmtLib.goal_to_SmtLib_translation_for_solver
-      {policy = z3_414_logic_policy version, dialect = SmtLib.Z3LambdaArray,
+      {policy = policy, dialect = SmtLib.Z3LambdaArray,
        apply_operator = SmtLib.ApplyUnderscore, get_proof = get_proof,
        target = SOME {solver = "Z3", version = version}}
+
+  fun z3_translation get_proof version =
+    z3_translation_with_policy (z3_414_logic_policy version) get_proof version
 
   fun goal_to_SmtLib_translation_for_version version =
     z3_translation false version
@@ -271,16 +274,24 @@ structure Z3 = struct
      rendered SMT-LIB text.  LogicFeatures combines a structural scan of the
      translated HOL terms with exact provenance from generated-forall emitters,
      without inspecting comments, symbols, or String literals. *)
-  fun checked_check_sat_command translation =
-    if SmtLib.translation_has_quantifiers translation then
+  fun proof_check_sat_command quantifiers =
+    if quantifiers then
       quantified_proof_check_sat_command
     else
       plain_check_sat_command
 
+  fun checked_check_sat_command translation =
+    proof_check_sat_command (SmtLib.translation_has_quantifiers translation)
+
   fun goal_to_SmtLib_with_get_proof_translation_for_version version goal =
     let
-      val (translation, strings) = z3_translation true version goal
-      val selected_check_sat = checked_check_sat_command translation
+      val has_quantifiers = ref false
+      fun policy (selection as
+          {features = SmtLib.LogicFeatures {quantifiers, ...}, ...}) =
+        (has_quantifiers := quantifiers; z3_414_logic_policy version selection)
+      val (translation, strings) =
+        z3_translation_with_policy policy true version goal
+      val selected_check_sat = proof_check_sat_command (!has_quantifiers)
       fun select_check_sat command =
         if command = plain_check_sat_command then selected_check_sat
         else command

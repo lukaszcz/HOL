@@ -1420,22 +1420,38 @@ local
   datatype set_backend = Z3Set | CVC5NativeSet | CVC5ArraySet
 
   val current_set_backend = ref Z3Set
-  val current_set_terms = ref ([] : Term.term list)
-  val current_raw_num_terms = ref ([] : Term.term list)
+  val empty_marked_terms = Redblackset.empty Term.compare
+  val current_set_terms = ref empty_marked_terms
+  val current_raw_num_terms = ref empty_marked_terms
+  val empty_collection_function_arguments :
+      (Term.term, (int, Term.term) Redblackmap.dict) Redblackmap.dict =
+    Redblackmap.mkDict Term.compare
   val current_collection_function_arguments =
-    ref ([] : (Term.term * int * Term.term) list)
+    ref empty_collection_function_arguments
+
+  fun index_collection_function_arguments arguments =
+    let
+      fun add ((function, index, argument), functions) =
+        let
+          val positions = case Redblackmap.peek (functions, function) of
+              SOME positions => positions
+            | NONE => Redblackmap.mkDict Int.compare
+        in
+          Redblackmap.insert (functions, function,
+            Redblackmap.insert (positions, index, argument))
+        end
+    in
+      (* Earlier arguments take precedence for each function and position. *)
+      List.foldr add empty_collection_function_arguments arguments
+    end
 
   fun contextual_collection_argument function index =
-    case List.find
-        (fn (other, other_index, _) =>
-          index = other_index andalso Term.aconv function other)
-        (!current_collection_function_arguments) of
-      SOME (_, _, argument) => SOME argument
+    case Redblackmap.peek (!current_collection_function_arguments, function) of
+      SOME positions => Redblackmap.peek (positions, index)
     | NONE => NONE
 
   fun has_contextual_collection_argument function =
-    List.exists (fn (other, _, _) => Term.aconv function other)
-      (!current_collection_function_arguments)
+    Redblackmap.inDomain (!current_collection_function_arguments, function)
 
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
@@ -1522,7 +1538,10 @@ local
     SmtLib_CollectionMarkers.collect set_marker_operations
       {propagate_bindings = true, visit_prefix = false}
 
-  fun is_marked_set_term tm = mem_aconv tm (!current_set_terms)
+  fun is_marked_set_term tm = Redblackset.member (!current_set_terms, tm)
+
+  fun is_marked_raw_number tm =
+    Redblackset.member (!current_raw_num_terms, tm)
 
   (* Bool and fixed-width word types have finite SMT-LIB domains.  A
      polymorphic word remains unsupported until its width is instantiated. *)
@@ -1541,7 +1560,7 @@ local
   datatype bag_backend = Z3ArrayBag | CVC5NativeBag | CVC5ArrayBag
 
   val current_bag_backend = ref Z3ArrayBag
-  val current_bag_terms = ref ([] : Term.term list)
+  val current_bag_terms = ref empty_marked_terms
   val current_bag_helpers = ref ([] : string list)
 
   fun bag_const name = Term.prim_mk_const {Thy = "bag", Name = name}
@@ -1619,7 +1638,7 @@ local
     SmtLib_CollectionMarkers.collect bag_marker_operations
       {propagate_bindings = false, visit_prefix = true}
 
-  fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
+  fun is_marked_bag_term tm = Redblackset.member (!current_bag_terms, tm)
 
   datatype 'term backend_view =
       BackendVariable | BackendConstant
@@ -2254,7 +2273,7 @@ local
   val term_collection_recognizers = collection_recognizers_with
     term_collection_recognition_operations
     {sequence_emission=fn () => !current_native_sequence_emission,
-     is_raw_number=fn current => mem_aconv current (!current_raw_num_terms)}
+     is_raw_number=is_marked_raw_number}
   val dest_string_nth_shape = #string_nth_shape term_collection_recognizers
   val dest_seq_extract_shape = #seq_extract_shape term_collection_recognizers
   val dest_seq_at_shape = #seq_at_shape term_collection_recognizers
@@ -3550,9 +3569,9 @@ local
   val current_feature_state : feature_state =
     {generated_forall=fn () => !current_generated_forall_emissions > 0,
      sequence_emission=fn () => !current_native_sequence_emission,
-     has_set_terms=fn () => not (List.null (!current_set_terms)),
+     has_set_terms=fn () => not (Redblackset.isEmpty (!current_set_terms)),
      native_set_backend=fn () => !current_set_backend = CVC5NativeSet,
-     has_bag_terms=fn () => not (List.null (!current_bag_terms)),
+     has_bag_terms=fn () => not (Redblackset.isEmpty (!current_bag_terms)),
      native_bag_backend=fn () => !current_bag_backend = CVC5NativeBag}
 
   fun infer_features_with_state state regime terms tydict tmdict =
@@ -4469,7 +4488,7 @@ local
       handle Feedback.HOL_ERR _ => t),
     is_marked_set_term = (is_marked_set_term),
     is_marked_bag_term = (is_marked_bag_term),
-    is_raw_number = (fn t => mem_aconv t (!current_raw_num_terms)),
+    is_raw_number = is_marked_raw_number,
     set_element_type = (set_element_type),
     bag_element_type = (bag_element_type),
     sequence_element_type = (sequence_element_type),
@@ -6621,6 +6640,8 @@ local
     val roots = t :: original_ts
     val ((set_terms,set_parameters),(bag_terms,bag_parameters)) =
       query_collection_closure roots inventory
+    val marked_sets = Redblackset.addList (empty_marked_terms, set_terms)
+    val marked_bags = Redblackset.addList (empty_marked_terms, bag_terms)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
@@ -6641,36 +6662,40 @@ local
        is_abstraction = Term.is_abs,
        dest_abs = Term.dest_abs,
        free_variables = Term.free_vars}
-    val computed_set_applications =
-      SmtLib_CollectionApplicationAnalysis.computed_applications
-        collection_operations set_terms subterms
-    val computed_bag_applications =
-      SmtLib_CollectionApplicationAnalysis.computed_applications
-        collection_operations bag_terms subterms
+    fun computed_applications marked =
+      if Redblackset.isEmpty marked then []
+      else SmtLib_CollectionApplicationAnalysis.computed_applications_with
+        collection_operations
+        (fn term => Redblackset.member (marked, term)) subterms
+    val computed_set_applications = computed_applications marked_sets
+    val computed_bag_applications = computed_applications marked_bags
     fun has_mixed_collection_argument collection_terms =
       SmtLib_CollectionApplicationAnalysis.has_mixed_argument_by
         collection_operations Term.compare Lib.I collection_terms subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
-    fun bound_collection_application collection_terms =
-      SmtLib_CollectionApplicationAnalysis.has_bound_application
-        collection_operations collection_terms roots
+    fun bound_collection_application marked =
+      not (Redblackset.isEmpty marked) andalso
+      SmtLib_CollectionApplicationAnalysis.has_bound_application_with
+        collection_operations
+        (fn term => Redblackset.member (marked, term)) roots
     val {set_backend=backend,bag_backend} =
       (#select term_backend_selection) target
         {goal=goal,sets=set_terms,bags=bag_terms,
          computed_set=not (List.null computed_set_applications),
          computed_bag=not (List.null computed_bag_applications),
-         bound_set=fn () => bound_collection_application set_terms,
-         bound_bag=fn () => bound_collection_application bag_terms,
+         bound_set=fn () => bound_collection_application marked_sets,
+         bound_bag=fn () => bound_collection_application marked_bags,
          mixed_set=fn () => has_mixed_collection_argument set_terms,
          mixed_bag=fn () => has_mixed_collection_argument bag_terms}
     val _ = current_set_backend := backend
-    val _ = current_set_terms := set_terms
-    val _ = current_raw_num_terms := raw_num_terms
+    val _ = current_set_terms := marked_sets
+    val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,
+      raw_num_terms)
     val _ = current_bag_backend := bag_backend
-    val _ = current_bag_terms := bag_terms
+    val _ = current_bag_terms := marked_bags
     val _ = current_collection_function_arguments :=
-      set_parameters @ bag_parameters @
-      computed_set_applications @ computed_bag_applications
+      index_collection_function_arguments (set_parameters @ bag_parameters @
+        computed_set_applications @ computed_bag_applications)
     val _ = current_bag_helpers := []
     (* Finiteness is a semantic fact of cvc5's native finite collection
        models, including beneath Boolean connectives. *)
@@ -6826,12 +6851,13 @@ local
         val _ = emitted_term_sorts := []
         val _ = emitted_datatypes := []
         val _ = current_set_backend := set_backend
-        val _ = current_set_terms := []
-        val _ = current_raw_num_terms := []
+        val _ = current_set_terms := empty_marked_terms
+        val _ = current_raw_num_terms := empty_marked_terms
         val _ = current_bag_backend := bag_backend
-        val _ = current_bag_terms := []
+        val _ = current_bag_terms := empty_marked_terms
         val _ = current_bag_helpers := []
-        val _ = current_collection_function_arguments := []
+        val _ = current_collection_function_arguments :=
+          empty_collection_function_arguments
         val active = ref true
         fun live () =
           if not (!active) then

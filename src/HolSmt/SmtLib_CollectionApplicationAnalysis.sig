@@ -23,6 +23,8 @@ sig
     ('term * int * 'term) list
   val computed_applications : 'term operations -> 'term list -> 'term list ->
     ('term * int * 'term) list
+  val computed_applications_with : 'term operations -> ('term -> bool) ->
+    'term list -> ('term * int * 'term) list
   val has_mixed_argument : 'term operations -> 'term list -> 'term list -> bool
   (* Key equality must agree with the supplied term equality. *)
   val has_mixed_argument_by : 'term operations -> ('key * 'key -> order) ->
@@ -44,4 +46,6 @@ sig
      The ordinary entry below deliberately uses no memoization. *)
   val has_bound_application : 'term operations -> 'term list -> 'term list ->
     bool
+  val has_bound_application_with : 'term operations -> ('term -> bool) ->
+    'term list -> bool
 end

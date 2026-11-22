@@ -249,11 +249,19 @@ fun cnf_atom_count clause_of clauses =
 fun explicit_cnf known_count tm =
     let
       val cnf = dest_neg tm
-      val clauses = strip_conj cnf
+      fun collect [] clauses = List.rev clauses
+        | collect (th :: rest) clauses =
+            let val clause = concl th in
+              if is_conj clause then
+                let val (left,right) = CONJ_PAIR th
+                in collect (left :: right :: rest) clauses end
+              else collect rest ((clause,th) :: clauses)
+            end
+      val clauses = collect [ASSUME cnf] []
       val count = case known_count of SOME count => count
-                                    | NONE => cnf_atom_count I clauses
+                                    | NONE => cnf_atom_count fst clauses
     in (NONE, count, RBM.mkDict Term.var_compare,
-        Array.fromList (zip clauses (CONJUNCTSR (ASSUME cnf)))) end
+        Array.fromList clauses) end
 
 fun to_cnf is_cnf tm =
     if is_cnf then explicit_cnf NONE tm else let

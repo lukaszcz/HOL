@@ -79,5 +79,53 @@ val _=case
   handle HolSatLib.SAT_satisfiable _=>true) of
  true=>() | false=>raise Fail "CNF model changed the legacy abstraction"
 
+fun check_circuit cnf output =
+  let val proof = SmtCircuitSat.prove_cnf (cnf,output) in
+    assert (Term.aconv (boolSyntax.mk_imp (cnf,output))) (Thm.concl proof);
+    assert null (Thm.hyp proof);
+    Library.check_oracle_tags "SmtCnfProveTests" "circuit" proof
+  end
+val unrelated = SmtCircuitSat.balanced_conjunction_term
+  (List.tabulate (128,fn _ => boolSyntax.mk_disj (q,r)))
+val contradiction = boolSyntax.mk_conj (p,boolSyntax.mk_neg p)
+val sparse = boolSyntax.mk_conj (unrelated,contradiction)
+val (_,sparse_stats) = SmtReplayRuleObservation.with_statistics
+  (fn () => check_circuit sparse q)
+(* The three projections follow the right branch to the two used leaves.
+   The other one-premise returns are the final CCONTR and DISCH. *)
+val _ = assert (fn n => n = 5) (#one_premise_returns sparse_stats)
+val not_true = boolSyntax.mk_neg boolSyntax.T
+val _ = check_circuit (boolSyntax.mk_conj
+  (boolSyntax.mk_conj (boolSyntax.T,not_true),not_true)) boolSyntax.T
+val duplicates = SmtCircuitSat.balanced_conjunction_term
+  (List.tabulate (128,fn _ => not_true))
+val (_,duplicate_stats) = SmtReplayRuleObservation.with_statistics
+  (fn () => check_circuit duplicates boolSyntax.T)
+(* Only the first duplicate is projected, along the leftmost seven edges.
+   The denied output is another duplicate and introduces no assumption. *)
+val _ = assert (fn n => n = 9) (#one_premise_returns duplicate_stats)
+val _ = assert (fn n => n = 1) (#zero_premise_returns duplicate_stats)
+(* Include the three trailing facts in the limit. The last fact is
+   necessary for refutation, so the accepted cases must keep it. *)
+val trailing = [boolSyntax.T,boolSyntax.mk_neg boolSyntax.F,boolSyntax.mk_neg p]
+fun check_limit (clause_count,accepted) =
+  let val cnf = SmtCircuitSat.balanced_conjunction_term
+        (List.tabulate (clause_count - List.length trailing,fn _ => p))
+  in
+    case SmtCnfProve.prove_conjunction (cnf,trailing) of
+        SmtCnfProve.Refuted proof =>
+          assert (fn yes => yes andalso
+            HOLset.member (Thm.hypset proof,List.last trailing)) accepted
+      | SmtCnfProve.Unknown => assert not accepted
+      | SmtCnfProve.Model _ => raise Fail "bounded CNF lost its trailing facts"
+  end
+val _ = List.app (ignore o check_limit) [(2047,true),(2048,true),(2049,false)]
+val fallback_cnf = boolSyntax.mk_conj
+  (boolSyntax.mk_conj (binder,p),boolSyntax.mk_conj (boolSyntax.mk_neg p,q))
+val (_,solver_stats) = satTools.with_solver_statistics
+  (fn () => check_circuit fallback_cnf r)
+val _ = assert (fn n => n > 0)
+  (#external_calls solver_stats + #internal_calls solver_stats)
+
 in OK () end
 end

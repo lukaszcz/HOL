@@ -21833,40 +21833,52 @@ local
                SOME command => [command]
              | NONE => raise ERR "replay_commands"
                  ("diagnostic step not found: " ^ wanted))
+      val command_count = List.length commands
       val _ = if trace_steps then
         (Feedback.HOL_MESG
-           ("CPC replay setup: commands=" ^
-            Int.toString (List.length commands));
+           ("CPC replay setup: commands=" ^ Int.toString command_count);
          TextIO.flushOut TextIO.stdOut)
         else ()
-      (* The liveness pass touches every certificate edge before replay
-         starts.  A functional map rebuilds a logarithmic search tree for
-         every edge, which becomes the dominant cost on large CPC proofs.
-         This proof-local mutable index records exactly the same use counts
-         while making the prepass linear in the number of edges. *)
-      val use_count_bucket_count = 65537
-      val use_counts = Array.array
-        (use_count_bucket_count, [] : (string * int ref) list)
-      fun use_count_hash id =
+      (* The liveness pass updates each counter in place. Short buckets
+         stay cheap on ordinary IDs; longer ones use exact tree lookup. *)
+      datatype use_count_bucket =
+          Entries of (string * int ref) list
+        | Tree of (string,int ref) Redblackmap.dict
+      (* A prime cap reduces collisions among sequential solver IDs. *)
+      val max_buckets = 262147
+      val bucket_count = 2 * Int.min (command_count,max_buckets div 2) + 1
+      val use_counts = Array.array (bucket_count,Entries [])
+      fun use_count_bucket id =
         let
+          val length = String.size id
+          val limit = Int.min (length,64)
           fun loop index hash =
-            if index = String.size id then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (id, index))) mod
-               use_count_bucket_count)
-        in loop 0 5381 end
+            if index = limit then hash
+            else loop (index + 1) (Word.+
+              (Word.* (hash,0w33),
+               Word.fromInt (Char.ord (String.sub (id,index)))))
+        in Word.toInt (Word.mod (loop 0 0w5381,Word.fromInt bucket_count)) end
+      fun find_count id (Entries entries) =
+            Option.map #2 (List.find (fn (saved,_) => saved = id) entries)
+        | find_count id (Tree entries) = Redblackmap.peek (entries,id)
       fun use_count_ref id =
         let
-          val bucket = use_count_hash id
-          val entries = Array.sub (use_counts, bucket)
+          val index = use_count_bucket id
+          val bucket = Array.sub (use_counts,index)
         in
-          case List.find (fn (saved, _) => saved = id) entries of
-            SOME (_, count) => count
+          case find_count id bucket of SOME count => count
           | NONE =>
-              let val count = ref 0 in
-                Array.update (use_counts, bucket, (id, count) :: entries);
-                count
-              end
+              let
+                val count = ref 0
+                val updated = case bucket of
+                    Entries entries =>
+                      let val all = (id,count) :: entries
+                      in if List.length entries < 8 then Entries all
+                         else Tree (Redblackmap.fromList String.compare all)
+                      end
+                  | Tree entries => Tree (Redblackmap.insert
+                      (entries,id,count))
+              in Array.update (use_counts,index,updated); count end
         end
       fun add_use id =
         let val count = use_count_ref id in count := !count + 1 end
@@ -21880,9 +21892,8 @@ local
          TextIO.flushOut TextIO.stdOut)
         else ()
       fun use_count id =
-        case List.find (fn (saved, _) => saved = id)
-          (Array.sub (use_counts, use_count_hash id)) of
-          SOME (_, count) => !count
+        case find_count id (Array.sub (use_counts,use_count_bucket id)) of
+          SOME count => !count
         | NONE => 0
       fun keep id = use_count id > 0
       fun discard_unreferenced state id =

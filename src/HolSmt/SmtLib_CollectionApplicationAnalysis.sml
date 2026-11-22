@@ -41,10 +41,10 @@ struct
           | NONE => NONE
     in find 0 ((#type_of operations) variable) end
 
-  fun computed_pairs (operations : 'term operations) collection_terms term =
+  fun computed_pairs_with (operations : 'term operations) is_marked term =
     case Lib.total (#dest_comb operations) term of
       SOME (function,argument) =>
-        if member operations argument collection_terms andalso
+        if is_marked argument andalso
            not (ordinary_symbol_application operations function) then
           List.mapPartial (fn variable =>
             Option.map (fn index => (variable,index,argument))
@@ -53,10 +53,17 @@ struct
         else []
     | NONE => []
 
+  fun computed_pairs operations collection_terms =
+    computed_pairs_with operations
+      (fn term => member operations term collection_terms)
+
+  fun computed_applications_with operations is_marked subterms =
+    List.concat (List.map (computed_pairs_with operations is_marked) subterms)
+
   fun computed_applications operations collection_terms subterms =
     if List.null collection_terms then []
-    else List.concat
-      (List.map (computed_pairs operations collection_terms) subterms)
+    else computed_applications_with operations
+      (fn term => member operations term collection_terms) subterms
 
   fun scan_mixed_argument (operations : 'term operations) observe subterms =
     let
@@ -124,8 +131,8 @@ struct
         scan_mixed_argument operations observe subterms
       end
 
-  fun has_bound_application_with_memo (operations : 'term operations)
-      memoize collection_terms roots =
+  fun scan_bound_application (operations : 'term operations)
+      memoize is_marked roots =
     let
       fun visit bound term =
         memoize bound term (fn () =>
@@ -138,13 +145,11 @@ struct
               val applies_bound =
                 List.exists (fn variable =>
                   (#same operations) (function,variable)) bound
-              val has_collection_argument =
-                List.exists (fn argument =>
-                  member operations argument collection_terms) arguments
+              val has_collection_argument = List.exists is_marked arguments
               fun computed_applies_bound () =
                 List.exists (fn (variable,_,_) =>
                   member operations variable bound)
-                  (computed_pairs operations collection_terms term)
+                  (computed_pairs_with operations is_marked term)
             in
               (applies_bound andalso has_collection_argument) orelse
               computed_applies_bound () orelse
@@ -152,8 +157,16 @@ struct
             end)
     in List.exists (visit []) roots end
 
+  fun has_bound_application_with_memo operations memoize collection_terms =
+    scan_bound_application operations memoize
+      (fn term => member operations term collection_terms)
+
+  fun has_bound_application_with operations is_marked roots =
+    scan_bound_application operations
+      (fn _ => fn _ => fn compute => compute ()) is_marked roots
+
   fun has_bound_application operations collection_terms roots =
     not (List.null collection_terms) andalso
-    has_bound_application_with_memo operations
-      (fn _ => fn _ => fn compute => compute ()) collection_terms roots
+    has_bound_application_with operations
+      (fn term => member operations term collection_terms) roots
 end
