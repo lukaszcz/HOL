@@ -1560,6 +1560,19 @@ val _ =
             ``~clasimp_bu_wrap v``)
          ``clasimp_bu_view v``)
 
+val _ =
+  check
+    ("a bottom-up fragment with an invalid rule declines reduction",
+     fn () =>
+       let
+         val term = ``~clasimp_bu_wrap v``
+         val fragment = clasimpLib.normalised_subject_fragment
+           [clasimp_bu_rule, boolTheory.TRUTH]
+         val simpset = simpLib.++ (lifted_srw_ss (), fragment)
+       in
+         aconv (clasimp_bu_reduce_ext simpset term) term
+       end)
+
 (* [simp_bottom_up] is the same order without the claset halves: a law the
    source declares [simp] and not [iff] may not seed the reasoner. *)
 fun with_simp_bottom_up name body =

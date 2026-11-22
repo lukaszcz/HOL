@@ -261,51 +261,45 @@ fun tyinfo_stem tyi =
   let val (thy, tyop) = TypeBasePure.ty_name_of tyi
   in tyinfo_prefix ^ thy ^ "_" ^ tyop end
 
-fun distinctness_contribution tyi =
-  case Lib.total TypeBasePure.constructors_of tyi of
-      SOME constructors =>
-        if length constructors < 2 then NONE
-        else
-          SOME
-            {name = tyinfo_stem tyi ^ "_distinct",
-             case_def = TypeBasePure.case_def_of tyi,
-             case_const = TypeBasePure.case_const_of tyi,
-             constructors = Vector.fromList constructors,
-             cases = Vector.fromList
-               (CONJUNCTS (TypeBasePure.case_def_of tyi)),
-             cache = ref (Redblackmap.mkDict
-               (Lib.pair_compare (Int.compare, Int.compare)))}
-    | NONE => NONE
-
-fun add_distinct_source key (source : distinct_source)
+fun add_distinct_source key case_def (make_source : unit -> distinct_source)
       (cs as CS {decls, wrappers, index, distinct}) =
-  case Redblackmap.peek (distinct, key) of
-      SOME {source = old, ...} =>
-        if aconv (concl (#case_def old)) (concl (#case_def source)) then cs
-        else
-          let
-            val (distinct', _) = Redblackmap.remove (distinct, key)
-          in
-            add_distinct_source key source
-              (CS {decls = decls, wrappers = wrappers, index = index,
-                   distinct = distinct'})
-          end
-    | NONE =>
-        let
-          val n = Vector.length (#constructors source)
-          val (first, decls') = reserve_decl_indices (n * n) decls
-        in
-          CS {decls = decls', wrappers = wrappers, index = index,
-              distinct = Redblackmap.insert
-                (distinct, key, {source = source, first = first})}
-        end
+  let
+    fun unchanged {source, ...} =
+      aconv (concl (#case_def source)) (concl case_def)
+  in
+    if Option.getOpt (Option.map unchanged
+      (Redblackmap.peek (distinct, key)), false) then cs
+    else
+      let
+        val source = make_source ()
+        val n = Vector.length (#constructors source)
+        val (first, decls') = reserve_decl_indices (n * n) decls
+      in
+        CS {decls = decls', wrappers = wrappers, index = index,
+            distinct = Redblackmap.insert
+              (distinct, key, {source = source, first = first})}
+      end
+  end
 
 fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
   let val key = TypeBasePure.ty_name_of tyi
   in
-    case distinctness_contribution tyi of
-        SOME source => add_distinct_source key source cs
-      | NONE =>
+    case Lib.total TypeBasePure.constructors_of tyi of
+        SOME (constructors as _ :: _ :: _) =>
+          let
+            val case_def = TypeBasePure.case_def_of tyi
+            fun make_source () =
+              {name = tyinfo_stem tyi ^ "_distinct",
+               case_def = case_def,
+               case_const = TypeBasePure.case_const_of tyi,
+               constructors = Vector.fromList constructors,
+               cases = Vector.fromList (CONJUNCTS case_def),
+               cache = ref (Redblackmap.mkDict
+                 (Lib.pair_compare (Int.compare, Int.compare)))}
+          in
+            add_distinct_source key case_def make_source cs
+          end
+      | _ =>
           if Redblackmap.inDomain (distinct, key) then
             CS {decls = decls, wrappers = wrappers, index = index,
                 distinct = #1 (Redblackmap.remove (distinct, key))}
@@ -479,7 +473,8 @@ fun merge_cs
       List.foldl (fn (decl, index) => add_decl decl index) index new_decls
   in
     Redblackmap.foldl
-      (fn (key, {source, ...}, cs) => add_distinct_source key source cs)
+      (fn (key, {source, ...}, cs) =>
+        add_distinct_source key (#case_def source) (fn () => source) cs)
       (CS {decls = decls', distinct = distinct,
            wrappers =
              (merge_alists safe_wrappers safe_wrappers2,

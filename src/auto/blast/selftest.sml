@@ -1222,6 +1222,19 @@ val _ =
          val newest_selected =
            blastRule.safeRules newest_cache cs [newest_var] concrete
 
+         val concrete_cache = blastRule.newCache traceUtil.silent
+         val concrete_var = ref NONE
+         val earlier_variable =
+           blastRule.safeRules concrete_cache clasetLib.empty_cs
+             [concrete_var] (Var concrete_var)
+         val later_concrete =
+           blastRule.safeRules concrete_cache cs [concrete_var] concrete
+         val concrete_bound =
+           unify (newState ()) ([], Var concrete_var, concrete)
+         val concrete_selected =
+           blastRule.safeRules concrete_cache clasetLib.empty_cs
+             [concrete_var] (Var concrete_var)
+
          val resolved_cache = blastRule.newCache traceUtil.silent
          val resolved_var = ref NONE
          val resolved_stored =
@@ -1235,6 +1248,9 @@ val _ =
          length concrete_rules = 1 andalso null variable_rules andalso
          newest_bound andalso null newest_selected andalso
          blastRule.hitCount newest_cache = 1 andalso
+         null earlier_variable andalso length later_concrete = 1 andalso
+         concrete_bound andalso length concrete_selected = 1 andalso
+         blastRule.hitCount concrete_cache = 1 andalso
          length resolved_stored = 1 andalso resolved_bound andalso
          length resolved_selected = 1 andalso
          blastRule.hitCount resolved_cache = 1

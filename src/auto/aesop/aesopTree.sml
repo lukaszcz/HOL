@@ -135,10 +135,11 @@ fun empty_dependencies () =
 (* [clasetMeta.norm] follows both term and type bindings transitively.
    Taking free metavariables after that walk therefore caches precisely the
    unassigned dependency frontier of the goal. *)
-fun dependencies_of store ({params, asl, w} : cgoal) =
+fun dependencies_with store normalize_formula normalize_type
+      ({params, asl, w} : cgoal) =
   let
     fun formula (tm, {terms, types} : dependencies) =
-      let val normalized = clasetMeta.norm store tm
+      let val normalized = normalize_formula tm
       in
         {terms =
            HOLset.addList
@@ -155,11 +156,14 @@ fun dependencies_of store ({params, asl, w} : cgoal) =
         (types,
          List.filter clasetMeta.is_tymeta
            (Type.type_vars
-             (clasetMeta.norm_type store (type_of parameter))))
+             (normalize_type (type_of parameter))))
     val types = List.foldl parameter_type formula_types params
   in
     {terms = terms, types = types}
   end
+
+fun dependencies_of store =
+  dependencies_with store (clasetMeta.norm store) (clasetMeta.norm_type store)
 
 fun sets_overlap (left, right) =
   let
@@ -958,9 +962,11 @@ fun install_rapp parent_id
           let
             val source_goal = goal tree source
             val cgoal = cgoal_under child_store (#cgoal source_goal)
+            (* This already normalized both the formulas and each
+               parameter's type in the child store. *)
+            val deps = dependencies_with child_store Lib.I Lib.I cgoal
           in
-            (cgoal, dependencies_of child_store cgoal,
-             SOME (original_goal tree source),
+            (cgoal, deps, SOME (original_goal tree source),
              #forwarded source_goal)
           end)
         copy_sources

@@ -2056,6 +2056,35 @@ val _ =
            boolSyntax.mk_neg irrelevant_premise],
           num_less public_x num_zero))
 
+val _ =
+  check
+    ("literal indexing closes with the first alpha-equivalent pair",
+     fn () =>
+       let
+         val positive = ``~P (\x : num. x)``
+         val negative = ``~(~P (\y : num. y))``
+         val later = Term.mk_var ("linarith_later_pair", Type.bool)
+         val misses =
+           List.tabulate
+             (16, fn i =>
+                boolSyntax.mk_neg
+                  (Term.mk_var ("linarith_unpaired_" ^ Int.toString i,
+                                Type.bool)))
+         val goal =
+           (misses @ [negative, boolSyntax.mk_neg later, later, positive],
+            num_less public_x num_zero)
+         val (goals, justify) = Tactical.VALID (linarithLib.LINARITH_TAC [])
+           goal (Context.snapshot ())
+       in
+         null goals andalso
+         (case Thm.hyp (justify []) of
+              [left, right] =>
+                (Term.aconv left positive andalso Term.aconv right negative)
+                orelse
+                (Term.aconv right positive andalso Term.aconv left negative)
+            | _ => false)
+       end)
+
 (* Connected assumption ordering has to retain a disjunction after a
    chain of literals no disjunct closes on its own, then search every
    branch without losing any of the chain. *)

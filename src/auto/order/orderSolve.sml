@@ -74,7 +74,9 @@ fun expand work (context : orderData.context) facts =
                 val _ = application work
                 val weak =
                   derive_path work (fn () => MATCH_MP order_strict_weak theorem)
-                val distinct = MATCH_MP order_strict_distinct theorem
+                val distinct =
+                  derive_path work
+                    (fn () => MATCH_MP order_strict_distinct theorem)
               in
                 (edge (x, y) weak :: edges, equalities,
                  (x, y, distinct) :: distinctions)
@@ -96,7 +98,7 @@ fun expand work (context : orderData.context) facts =
                 (edges', (x, y, theorem) :: equalities, distinctions)
               end
           | orderData.Distinct (x, y) =>
-              (edges, equalities, (x, y, theorem) :: distinctions)
+              (edges, equalities, (x, y, Proved theorem) :: distinctions)
       end
     val (edges, equalities, distinctions) =
       List.foldl one ([], [], []) facts
@@ -332,7 +334,8 @@ fun close work (context : orderData.context) (edges, equalities) =
     fun one (x, y, distinction) =
       let
         fun contradiction equality =
-          (application work; MP (NOT_ELIM distinction) equality)
+          (application work;
+           MP (NOT_ELIM (path_theorem distinction)) equality)
       in
         if aconv x y then SOME (contradiction (REFL x))
         else

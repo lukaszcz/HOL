@@ -666,7 +666,24 @@ fun find_cached find entries safe vars formula =
     newest (first, second)
   end
 
-fun cachedMeasured checkpoint (Cache {entries, hits, ...})
+(* Each bucket is newest first.  Visit the two buckets in stamp order so
+   an ordinary lookup can stop as soon as it finds a matching entry. *)
+fun find_newest_cached matches entries safe vars formula =
+  let
+    val (primary, fallback) = lookup_keys safe vars formula
+    val first = bucket entries primary
+    val second = case fallback of NONE => [] | SOME key => bucket entries key
+    fun find [] right = List.find matches right
+      | find left [] = List.find matches left
+      | find (left as (x : entry) :: xs) (right as (y : entry) :: ys) =
+          if #stamp x > #stamp y then
+            if matches x then SOME x else find xs right
+          else if matches y then SOME y else find left ys
+  in
+    find first second
+  end
+
+fun cachedWith measured checkpoint (Cache {entries, hits, ...})
       safe vars formula =
   let
     fun same ([], []) = true
@@ -678,12 +695,16 @@ fun cachedMeasured checkpoint (Cache {entries, hits, ...})
       #safe entry = safe andalso
       same (#vars entry, vars) andalso
       aconvMeasured checkpoint (#formula entry, formula)
-    val find = findMeasured checkpoint matches
+    val found =
+      if measured then
+        find_cached (findMeasured checkpoint matches) (!entries)
+          safe vars formula
+      else find_newest_cached matches (!entries) safe vars formula
   in
     (* Red-black lookup itself is indivisible.  Poll once for every member
        of the selected head bucket (and the variable-head fallback), rather
        than once for every entry in the whole search cache. *)
-    case find_cached find (!entries) safe vars formula of
+    case found of
         NONE => NONE
       | SOME entry =>
           (hits := !hits + 1;
@@ -1041,12 +1062,11 @@ fun copyRulesWith checkpoint eager_external_skolems
     mapMeasured checkpoint copy_rule rules
   end
 
-fun acquireWith (monitor as {candidate, conversion, checkpoint})
-      eager_external_skolems
+fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
       cache claset safe vars formula =
-  case cachedMeasured checkpoint cache safe vars formula of
+  case cachedWith measured checkpoint cache safe vars formula of
       SOME rules =>
-        copyRulesWith checkpoint eager_external_skolems
+        copyRulesWith checkpoint measured
           cache vars formula true rules
     | NONE =>
         let
@@ -1080,7 +1100,7 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint})
             else appendMeasured checkpoint early_rules late_rules
           val _ = checkpoint ()
           val templates =
-            copyRulesWith checkpoint eager_external_skolems
+            copyRulesWith checkpoint measured
               cache vars formula false rules
           val _ = remember cache safe vars formula templates
         in

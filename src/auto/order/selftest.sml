@@ -54,36 +54,52 @@ val long_order_facts =
       Thm.ASSUME (long_order_edge index (index + 1)))
 val long_order_target = long_order_edge 0 51
 
+fun unrelated_edges_unproved edge =
+  let
+    val target = long_order_edge 0 1
+    val direct = [Thm.ASSUME long_order_axiom, Thm.ASSUME target]
+    val unrelated =
+      List.tabulate
+        (23, fn i =>
+          Thm.ASSUME
+            (edge (List.nth (long_order_nodes, 2 * i + 2),
+                   List.nth (long_order_nodes, 2 * i + 3))))
+    fun count facts =
+      let
+        val meter = Count.mk_meter ()
+        val theorem = orderSolve.prove_with facts target
+          handle exn => (Count.counting_thms false; raise exn)
+        val {prims, ...} = Count.read meter
+        val _ = Count.counting_thms false
+      in
+        (theorem, prims)
+      end
+    val (_, bare) = count direct
+    val (theorem, loaded) = count (direct @ unrelated)
+  in
+    Term.aconv (Thm.concl theorem) target andalso
+    Lib.list_eq Term.aconv (Thm.hyp theorem) [target] andalso
+    (* Allow normalization work for the unused assumptions. *)
+    loaded <= bare + 4 * List.length unrelated
+  end
+
 val _ =
   check
     ("a direct order proof leaves unrelated equality edges unproved",
+     fn () => unrelated_edges_unproved boolSyntax.mk_eq)
+
+val _ =
+  check
+    ("a weak order proof leaves unrelated strict distinctions unproved",
      fn () =>
        let
-         val target = long_order_edge 0 1
-         val direct = [Thm.ASSUME long_order_axiom, Thm.ASSUME target]
-         val unrelated =
-           List.tabulate
-             (23, fn i =>
-               Thm.ASSUME
-                 (boolSyntax.mk_eq (List.nth (long_order_nodes, 2 * i + 2),
-                                    List.nth (long_order_nodes, 2 * i + 3))))
-         fun count facts =
-           let
-             val meter = Count.mk_meter ()
-             val theorem = orderSolve.prove_with facts target
-               handle exn => (Count.counting_thms false; raise exn)
-             val {prims, ...} = Count.read meter
-             val _ = Count.counting_thms false
-           in
-             (theorem, prims)
-           end
-         val (_, bare) = count direct
-         val (theorem, loaded) = count (direct @ unrelated)
+         val strict =
+           Term.mk_comb
+             (Term.prim_mk_const {Thy = "relation", Name = "STRORD"},
+              long_order_relation)
        in
-         Term.aconv (Thm.concl theorem) target andalso
-         Lib.list_eq Term.aconv (Thm.hyp theorem) [target] andalso
-         (* Allow normalization work for the unused assumptions. *)
-         loaded <= bare + 4 * List.length unrelated
+         unrelated_edges_unproved
+           (fn (x, y) => Term.list_mk_comb (strict, [x, y]))
        end)
 
 val _ =

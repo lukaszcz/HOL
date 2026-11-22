@@ -327,20 +327,46 @@ val carrier_nnf_rule =
 
 fun opposite_tac (assumptions, conclusion) ctxt =
   let
-    fun contradiction [] = NONE
-      | contradiction (assumption :: rest) =
+    fun proof (negative, positive) = MP (ASSUME negative) (ASSUME positive)
+    fun indexed_proof remaining =
+      let
+        fun pair negative =
+          Option.map (fn positive => (negative, positive))
+            (Lib.total boolSyntax.dest_neg negative)
+        val pairs = List.mapPartial pair remaining
+      in
+        if null pairs then NONE
+        else
+          let
+            val bodies =
+              List.foldl (fn ((_, body), set) => Termtab.insert_set body set)
+                Termtab.empty pairs
+            (* A complement can itself be a negative assumption. *)
+            fun collect (tm, matches) =
+              if Termtab.defined bodies tm then Termtab.insert_set tm matches
+              else matches
+            val matches = List.foldl collect Termtab.empty assumptions
+          in
+            Option.map proof
+              (List.find (fn (_, body) => Termtab.defined matches body) pairs)
+          end
+      end
+    (* A short run of direct scans avoids setup for immediate hits and
+       for contexts with only a few negative assumptions. *)
+    fun contradiction _ [] = NONE
+      | contradiction scans_left (assumption :: rest) =
           (case Lib.total boolSyntax.dest_neg assumption of
                SOME positive =>
                  if boolSyntax.tmem positive assumptions then
-                   SOME
-                     (MP (ASSUME assumption) (ASSUME positive))
-                 else contradiction rest
-             | NONE => contradiction rest)
+                   SOME (proof (assumption, positive))
+                 else if scans_left = 1 then indexed_proof rest
+                 else contradiction (scans_left - 1) rest
+             | NONE => contradiction scans_left rest)
   in
     if boolSyntax.tmem boolSyntax.F assumptions then
       Tactic.ACCEPT_TAC (ASSUME boolSyntax.F) (assumptions, conclusion) ctxt
     else
-      case contradiction assumptions of
+      case contradiction 16 assumptions of
           SOME theorem =>
             Tactic.CONTR_TAC theorem (assumptions, conclusion) ctxt
         | NONE => raise ERR "opposite_tac" "no immediate contradiction"

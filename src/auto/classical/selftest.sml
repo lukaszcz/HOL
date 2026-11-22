@@ -7598,6 +7598,36 @@ val _ =
          same_nodes (substitutions, selected_substitutions)
        end)
 
+val _ =
+  test
+    ("unifying contradiction prefers the first exact assumption",
+     fn () =>
+       let
+         val p = Term.mk_var ("contradiction_match_p", Type.bool)
+         val q = Term.mk_var ("contradiction_match_q", Type.bool)
+         val negative = boolSyntax.mk_neg p
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool} clasetMeta.empty
+         fun positive_positions asl =
+           let
+             val node = clasetGoal.create
+               {goals = [{params = [], asl = asl, w = q}],
+                store = store, level = 0}
+             val results = drain_exact
+               (clasetStep.blast_contradiction_step (node, 1))
+           in
+             List.mapPartial
+               (fn (record, _) =>
+                 case clasetStep.kind_of record of
+                     clasetStep.Contradiction (2, position) => SOME position
+                   | _ => NONE)
+               results
+           end
+       in
+         positive_positions [meta, negative, p, p] = [3] andalso
+         positive_positions [meta, negative] = [1]
+       end)
+
 (* Search work is reported to the shared meter, not just to the per-search
    counter the previous test reads. *)
 val _ =

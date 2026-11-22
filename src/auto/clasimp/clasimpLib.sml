@@ -2887,13 +2887,17 @@ exception bottom_up_context
    them only a body that is literally a variable applied to the bound one,
    so the rule would be silently inert on every other goal. *)
 fun ho_rewrite_reducer name rewrites =
-  OrdinaryTraverse.REDUCER
-    {name = SOME name,
-     initial = bottom_up_context,
-     addcontext = fn (context, _) => context,
-     apply = fn _ => fn term =>
-       Conv.FIRST_CONV
-         (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) rewrites) term}
+  let
+    (* Prepare the matchers once, at the first reduction attempt. *)
+    val conversion = Susp.delay (fn () =>
+      Conv.FIRST_CONV (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) rewrites))
+  in
+    OrdinaryTraverse.REDUCER
+      {name = SOME name,
+       initial = bottom_up_context,
+       addcontext = fn (context, _) => context,
+       apply = fn _ => fn term => Susp.force conversion term}
+  end
 
 fun ho_rewrite_fragment name rewrites =
   simpLib.name_ss name

@@ -98,8 +98,8 @@ val routes :
    ("METIS_TAC", metis_route)]
 
 (* One goal is tested against several supplied theorems, and a route's
-   ambient control run does not depend on the theorem.  Computing that
-   control once per goal is what makes the sweep affordable. *)
+   ambient control run does not depend on the theorem.  Once it succeeds,
+   the route cannot identify recognition by any theorem for that goal. *)
 fun recognition_route_with controls goal theorem =
   if benchLib.theorem_is_goal goal theorem then SOME "syntactic"
   else
@@ -112,6 +112,7 @@ fun recognition_route_with controls goal theorem =
               in cache := SOME value; value
               end
       fun recognises_by (_, route, cache) =
+        !cache <> SOME true andalso
         route [theorem] goal andalso not (control (route, cache))
     in
       case List.find recognises_by controls of

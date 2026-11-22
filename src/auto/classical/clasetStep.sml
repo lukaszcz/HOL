@@ -1838,13 +1838,14 @@ fun unifying_contradiction_results (node, pos) =
                 NONE => []
               | SOME {positive, created, store = major_store} =>
                   let
-                    val remaining =
-                      List.filter (fn (other_pos, _) =>
-                        other_pos <> major_pos) positioned
+                    val normalized_positive =
+                      normalize_term major_store positive
                     val exact =
-                      List.find (fn (_, candidate) =>
-                        closing_equal major_store positive candidate)
-                        remaining
+                      List.find (fn (candidate_pos, candidate) =>
+                        candidate_pos <> major_pos andalso
+                        aconv normalized_positive
+                          (normalize_term major_store candidate))
+                        positioned
                     val stores =
                       case exact of
                           SOME (positive_pos, candidate) =>
@@ -1852,12 +1853,14 @@ fun unifying_contradiction_results (node, pos) =
                         | NONE =>
                             List.mapPartial
                               (fn (positive_pos, candidate) =>
-                                Option.map
-                                  (fn store =>
-                                    (positive_pos, candidate, store))
-                                  (clasetUnify.unify major_store
-                                    unify_config (positive, candidate)))
-                              remaining
+                                if positive_pos = major_pos then NONE
+                                else
+                                  Option.map
+                                    (fn store =>
+                                      (positive_pos, candidate, store))
+                                    (clasetUnify.unify major_store
+                                      unify_config (positive, candidate)))
+                              positioned
 
                     fun make (positive_pos, candidate, store) =
                       contradiction_direct
