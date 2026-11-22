@@ -963,12 +963,13 @@ fun supplied_view_associations entries = List.mapPartial
 type source_set = simpLib.rewrite_source HOLset.set
 type source_index = (simpLib.rewrite_source,lhs_view_entry) Binarymap.dict
 type dependency_index = (KernelSig.kernelid,source_set) Binarymap.dict
+type rewrite_pattern_index = (simpLib.rewrite_source * hol_type) Net.net
 datatype lhs_view_table = LHSViewTable of
   {simpset : simpLib.simpset, base : view_base,
    sources : simpLib.rewrite_source list, entries : lhs_view_entry list,
    index : source_index,
    heads : dependency_index,
-   rewrite_patterns : simpLib.rewrite_source Net.net,
+   rewrite_patterns : rewrite_pattern_index Susp.susp,
    positions : abstraction_position HOLset.set,
    generation : int, derived : int, reused : int, rebuild : bool,
    normalization : int, full : simpLib.simpset Susp.susp,
@@ -984,14 +985,14 @@ val view_generation = ref 0
 val source_compare = simpLib.rewrite_source_compare
 val no_sources = HOLset.empty source_compare
 (* Net.match conservatively indexes the same first-order patterns as
-   REWR_CONV. Types and repeated variables are checked by the conversion. *)
+   REWR_CONV. Keep the type for the converse walk's compatibility check. *)
 fun rewrite_pattern_index sources = List.foldl
   (fn (source,index) =>
     let
       val theorem = Drule.SPEC_ALL (#2 (simpLib.source_rewrite source))
       val left = boolSyntax.lhs
         (#2 (boolSyntax.strip_imp_only (concl theorem)))
-    in Net.insert (left,source) index end) Net.empty sources
+    in Net.insert (left,(source,type_of left)) index end) Net.empty sources
 
 fun table_indices entries =
   let
@@ -1124,7 +1125,9 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
            normalization= #normalization old}
     val entries = map obtain sources
     val (index,heads) = table_indices entries
-    val rewrite_patterns = rewrite_pattern_index sources
+    (* Only converse detection needs this index. Most table consumers use
+       the views directly, and a prior converse binding can be reused. *)
+    val rewrite_patterns = Susp.delay (fn () => rewrite_pattern_index sources)
     val full = Susp.delay (fn () =>
       case supplied_view_associations entries of
           [] => ss
@@ -1317,15 +1320,11 @@ fun converse_sources caller_charge patterns sources =
            SOME found => found
          | NONE =>
              let
-               fun add (source,found) =
+               fun add ((source,pattern_type),found) =
                  let
-                   val theorem = Drule.SPEC_ALL
-                     (#2 (simpLib.source_rewrite source))
-                   val pattern = boolSyntax.lhs
-                     (#2 (boolSyntax.strip_imp_only (concl theorem)))
                    val _ = charge ()
                  in
-                   if Lib.can (Type.match_type (type_of pattern))
+                   if Lib.can (Type.match_type pattern_type)
                         (type_of tm) then HOLset.add (found,source)
                    else found
                  end
@@ -1412,7 +1411,7 @@ datatype supplied_converse_binding = SuppliedConverseBinding of
 type converse_inventory =
   {simpset : simpLib.simpset,generation : int,
    positions : abstraction_position HOLset.set,
-   patterns : simpLib.rewrite_source Net.net}
+   patterns : rewrite_pattern_index}
 
 fun make_supplied_converse_cache () =
   let
@@ -1613,9 +1612,11 @@ fun make_supplied_view_cache_core () =
               | NONE =>
                   let
                     val start = !charged
-                    val suspended = HOLset.listItems
-                      (converse_sources charge
-                        (#rewrite_patterns table) sources)
+                    val suspended =
+                      if null sources then []
+                      else HOLset.listItems
+                        (converse_sources charge
+                          (Susp.force (#rewrite_patterns table)) sources)
                     val entry =
                       {generation= #generation table,theorem=theorem,
                        positions=initial_positions,

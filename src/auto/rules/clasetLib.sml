@@ -554,8 +554,8 @@ fun pp_claset0
     fun has_spec safe kind (decl : decl) =
       #safe (#spec decl) = safe andalso #kind (#spec decl) = kind
 
-    fun decls_of safe kind =
-      List.filter (has_spec safe kind) (dest_decls decls)
+    val ordered = dest_decls decls
+    fun decls_of safe kind = List.filter (has_spec safe kind) ordered
 
     fun pp_decl ({name, orig, ...} : decl) =
       block CONSISTENT 0

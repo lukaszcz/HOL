@@ -674,14 +674,17 @@ fun decl_merge_order (d1 : decl, d2 : decl) =
     | _ =>
         (case compare_tag (#tag d1, #tag d2) of
             LESS => GREATER
-          | EQUAL => EQUAL
+          (* A negative reservation can reuse an index. Keep the
+             declaration-order tie break from the previous stable sort. *)
+          | EQUAL => decl_order (d1, d2)
           | GREATER => LESS)
 
 fun canonical_key th = concl (canonical_rule th)
 
-fun ordered_decls byconcl =
-  Listsort.sort decl_order
-    (Termtab.fold (fn (_, ds) => fn acc => ds @ acc) byconcl [])
+fun collect_decls byconcl =
+  Termtab.fold (fn (_, ds) => fn acc => ds @ acc) byconcl []
+
+fun ordered_decls byconcl = Listsort.sort decl_order (collect_decls byconcl)
 
 fun derived_decls byconcl =
   let
@@ -809,9 +812,9 @@ fun remove_decl name (decls as Decls {next, byconcl, byname, ...}) =
           ([decl], make_decls next byconcl' (Symtab.delete_safe name byname))
         end
 
-fun merge_decls (left, right) =
+fun merge_decls (left, Decls {byconcl, ...}) =
   let
-    val incoming = Listsort.sort decl_merge_order (dest_decls right)
+    val incoming = Listsort.sort decl_merge_order (collect_decls byconcl)
     fun add [] decls added = (List.rev added, decls)
       | add (decl :: rest) decls added =
           (case extend_decl decl decls of

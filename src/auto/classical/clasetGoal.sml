@@ -19,7 +19,7 @@ datatype node =
   Node of {goals : cgoal list,
            store : store,
            replay : replay_script,
-           size : {total : int, unchanged : bool} option ref,
+           size : {total : int, changed : goal Inttab.table} option ref,
            level : int,
            paths : int list list,
            marks : binding_marks,
@@ -64,29 +64,38 @@ fun norm_term store tm =
 
 val term_size = HolKernel.term_size
 
-fun cgoal_size size_of ({asl, w, ...} : cgoal) =
-  List.foldl
-    (fn (asm, total) => size_of asm + total)
-    (size_of w) asl
-
 fun goals_size store goals =
   let
-    val unchanged = ref true
-    fun normalized_size tm =
+    val total = ref 0
+    fun size_term tm =
       let
         val normalized = norm_term store tm
-        val _ =
-          if !unchanged andalso not (Portable.pointer_eq (tm, normalized))
-          then unchanged := false
-          else ()
       in
-        term_size normalized
+        total := !total + term_size normalized;
+        normalized
       end
-    val total =
-      List.foldl (fn (goal, total) => cgoal_size normalized_size goal + total)
-        0 goals
+    val size_assumptions =
+      Lib.delta_map (fn asm =>
+        let val normalized = size_term asm
+        in
+          if Portable.pointer_eq (asm, normalized) then Lib.SAME
+          else Lib.DIFF normalized
+        end)
+    fun one ({asl, w, ...} : cgoal, (pos, changed)) =
+      let
+        val w' = size_term w
+        val changed' =
+          case size_assumptions asl of
+              Lib.DIFF asl' => Inttab.update (pos, (asl', w')) changed
+            | Lib.SAME =>
+                if Portable.pointer_eq (w, w') then changed
+                else Inttab.update (pos, (asl, w')) changed
+      in
+        (pos + 1, changed')
+      end
+    val (_, changed) = List.foldl one (1, Inttab.empty) goals
   in
-    {total = total, unchanged = !unchanged}
+    {total = !total, changed = changed}
   end
 
 val empty_mark = {terms = [], types = []}
@@ -412,17 +421,16 @@ fun encode_list values =
     (fn (value, rest) => mk_disj (mk_conj (T, value), rest))
     F values
 
-fun render_cgoal (Node {size, store, ...}) ({asl, w, ...} : cgoal) =
-  (* Sizing already normalized all of these terms.  A flag suffices to
-     reuse the originals when normalization left them unchanged. *)
+fun render_cgoal (Node {size, store, ...}) pos ({asl, w, ...} : cgoal) =
   case !size of
-      SOME {unchanged = true, ...} => (asl, w)
-    | _ => (map (norm_term store) asl, norm_term store w)
+      SOME {changed, ...} =>
+        Option.getOpt (Inttab.lookup changed pos, (asl, w))
+    | NONE => (map (norm_term store) asl, norm_term store w)
 
-fun canonical_cgoal node (goal as {params, ...} : cgoal) =
+fun canonical_cgoal node index (goal as {params, ...} : cgoal) =
   let
     val params' = map (norm_term (store node)) params
-    val (asl, w) = render_cgoal node goal
+    val (asl, w) = render_cgoal node (index + 1) goal
     val body = mk_conj (encode_list asl, mk_conj (T, w))
   in
     list_mk_forall (params', body)
@@ -435,7 +443,7 @@ fun canonical_rendering
     | NONE =>
         let
           val computed =
-            encode_list (map (canonical_cgoal node) (goals node))
+            encode_list (Lib.mapi (canonical_cgoal node) (goals node))
           val _ = rendering := SOME computed
         in
           computed
@@ -459,7 +467,7 @@ fun render (node as Node {renders, ...}) pos =
           (* Unbound engine metavariables survive normalization as their
              marked frees.  HOL4 tactics consequently see rigid variables,
              not holes. *)
-          val rendered = render_cgoal node (goal_at node pos)
+          val rendered = render_cgoal node pos (goal_at node pos)
           val _ = renders := (pos, rendered) :: !renders
         in
           rendered

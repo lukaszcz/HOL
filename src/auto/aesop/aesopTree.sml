@@ -505,6 +505,10 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
     scan Proved clusters
   end
 
+fun search_exhausted (current : goal) =
+  is_normalised current andalso #safe_done current andalso
+  null (#unsafe_cursor current) andalso null (#postponed current)
+
 (* A copy carries the very obligation of its original under a store that
    has assigned more, so proving the copy proves the original.  Reading
    that back here is what lets a cluster be the plain conjunction its
@@ -516,9 +520,6 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
 fun derive_goal tree (current : goal) =
   let
     val id = #id current
-    val exhausted =
-      is_normalised current andalso #safe_done current andalso
-      null (#unsafe_cursor current) andalso null (#postponed current)
     fun scan [] all_stuck =
           if List.exists
                (Option.isSome o copy_support_path tree id)
@@ -534,7 +535,7 @@ fun derive_goal tree (current : goal) =
   in
     case #norm current of
         NormProved _ => Proved
-      | _ => scan (reverse_child_rapps tree id) exhausted
+      | _ => scan (reverse_child_rapps tree id) (search_exhausted current)
   end
 
 fun refresh_once (tree as Tree (fields as {goals, rapps, clusters, ...})) =
@@ -1052,13 +1053,11 @@ fun install_rapp parent_id
        else refresh_rapp_ancestors rid queued}
   end
 
-(* [update] rewrites the fields of an existing goal; it neither adds nor
-   removes one, and never touches the parent link, so the index stands. *)
-fun map_goal id update (tree as Tree (fields as {goals, ...})) =
+(* The goal's identity and parent link are unchanged, so the index stands. *)
+fun store_goal (current : goal) (Tree (fields as {goals, ...})) =
   Tree
     (upd_tree fields
-       (Fld #goals (Redblackmap.insert (goals, id, update (goal tree id))))
-       $$)
+       (Fld #goals (Redblackmap.insert (goals, #id current, current))) $$)
 
 fun replace_norm norm deps (goal : goal) : goal =
   upd_goal goal (Fld #norm norm) (Fld #deps deps) $$
@@ -1076,21 +1075,23 @@ fun set_normalised id {records, cgoal, store} tree =
       else dependencies_of store cgoal
   in
     refresh_goal id was_proved
-      (map_goal id
+      (store_goal
         (replace_norm
           (Normalised {records = records, cgoal = cgoal, store = store})
-          deps)
+          deps current)
         tree)
   end
 
 fun set_norm_proved id {records, store} tree =
-  refresh_goal id true
-    (map_goal id
-      (fn current =>
-        replace_norm
+  let val current = goal tree id
+  in
+    refresh_goal id true
+      (store_goal
+        (replace_norm
           (NormProved {records = records, store = store})
           (#deps current) current)
-      tree)
+        tree)
+  end
 
 fun replace_search_state {safe_done, unsafe_cursor, postponed}
       (goal : goal) : goal =
@@ -1099,12 +1100,18 @@ fun replace_search_state {safe_done, unsafe_cursor, postponed}
     (Fld #unsafe_cursor unsafe_cursor)
     (Fld #postponed postponed) $$
 
-(* The whole safe-phase transition costs one refresh.  Field updates never
-   change a derived state by themselves, and the state equations have a
-   unique solution for given structural fields, so refreshing after each
-   field separately would only repeat the same fixpoint. *)
+(* These fields enter the state equations only through exhaustion.
+   Advancing a cursor that still has candidates leaves the equations
+   unchanged, including those for goals with copies. *)
 fun set_search_state id fields tree =
-  refresh_goal id false (map_goal id (replace_search_state fields) tree)
+  let
+    val current = goal tree id
+    val updated = replace_search_state fields current
+    val next = store_goal updated tree
+  in
+    if search_exhausted current = search_exhausted updated then next
+    else refresh_goal id false next
+  end
 
 fun set_safe_done id value tree =
   let val {unsafe_cursor, postponed, ...} = goal tree id

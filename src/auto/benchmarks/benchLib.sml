@@ -610,14 +610,27 @@ fun prepare_statement_comparison goal =
     fun covered term =
       let val left = prepare statement_normal_form term
       in List.exists (same left) premises end
+    (* Beta and eta preserve a rigid head. An equality can expose a
+       different head when a truth equivalence is stripped. *)
+    fun different_head raw (expected, _) =
+      case (raw, expected) of
+          (SOME a, SOME b) =>
+            not (Term.same_const a boolSyntax.equality) andalso
+            not (Term.same_const a b)
+        | _ => false
   in
     fn statement =>
       let
-        val normal = beta_eta_normalise statement
-        val stripped = prepare_normal normal
-        (* Readings of an unchanged statement only remove syntax from
-           an already beta-eta-normal term. *)
-        val unchanged = Portable.pointer_eq (normal, statement)
+        val statement_head = rigid_head statement
+        val whole_possible = not (different_head statement_head whole)
+        val prepared =
+          Portable.HOLSusp.delay (fn () =>
+            let val normal = beta_eta_normalise statement
+            in
+              (prepare_normal normal, Portable.pointer_eq (normal, statement))
+            end)
+        fun whole_reading () = #1 (Portable.HOLSusp.force prepared)
+
         fun all_covered [] = true
           | all_covered (premises :: earlier) =
               all_covered earlier andalso List.all covered premises
@@ -626,20 +639,35 @@ fun prepare_statement_comparison goal =
              whole-goal comparison. Use exact identity since stripping a
              quantifier retains its binder name. *)
           if Portable.pointer_eq (term, statement) then
-            distinct_readings andalso same_stripped stripped conclusion andalso
+            distinct_readings andalso
+            not (different_head statement_head conclusion) andalso
+            same_stripped (whole_reading ()) conclusion andalso
             all_covered premises
           else
-            let
-              val left =
-                prepare_normal (if unchanged then term
-                                else beta_eta_normalise term)
+            let val head = rigid_head term
             in
-              same_stripped left whole orelse
-              (distinct_readings andalso same_stripped left conclusion andalso
-               all_covered premises)
+              if different_head head whole andalso
+                 (not distinct_readings orelse different_head head conclusion)
+              then false
+              else
+                let
+                  (* A reading of an unchanged statement only removes
+                     syntax. If the whole comparison skipped normalization,
+                     normalize the reading on its own. *)
+                  val unchanged =
+                    whole_possible andalso
+                    #2 (Portable.HOLSusp.force prepared)
+                  val left =
+                    prepare_normal
+                      (if unchanged then term else beta_eta_normalise term)
+                in
+                  same_stripped left whole orelse
+                  (distinct_readings andalso
+                   same_stripped left conclusion andalso all_covered premises)
+                end
             end
       in
-        same_stripped stripped whole orelse
+        (whole_possible andalso same_stripped (whole_reading ()) whole) orelse
         reading_exists matches [] statement
       end
   end

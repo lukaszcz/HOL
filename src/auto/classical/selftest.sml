@@ -1764,6 +1764,36 @@ val _ =
 
 val _ =
   test
+    ("sized renderings preserve goal and assumption positions",
+     fn () =>
+       let
+         val (m, store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} clasetMeta.empty
+         val bound = the_store (clasetMeta.bind (m, boolSyntax.T) store)
+         val node = clasetGoal.create
+           {goals =
+              [{params = [], asl = [goal_q], w = goal_p},
+               {params = [], asl = [goal_p, m, goal_q], w = m}],
+            store = bound, level = 0}
+         val expected = clasetGoal.create
+           {goals =
+              [{params = [], asl = [goal_q], w = goal_p},
+               {params = [], asl = [goal_p, boolSyntax.T, goal_q],
+                w = boolSyntax.T}],
+            store = clasetMeta.empty, level = 0}
+         fun same_goal ((asl, w), (asl', w')) =
+           Lib.list_eq Term.aconv asl asl' andalso Term.aconv w w'
+       in
+         clasetGoal.size node = 6 andalso
+         Term.aconv (clasetGoal.canonical_rendering node)
+           (clasetGoal.canonical_rendering expected) andalso
+         same_goal (clasetGoal.render node 1, clasetGoal.render expected 1)
+         andalso
+         same_goal (clasetGoal.render node 2, clasetGoal.render expected 2)
+       end)
+
+val _ =
+  test
     ("node equality and ordering use canonical alpha rendering",
      fn () =>
        let

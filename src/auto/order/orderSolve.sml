@@ -138,15 +138,10 @@ fun settle target path (ReachedList reached_nodes) =
 
 fun outgoing_edges edges =
   let
-    fun add ((index, edge : edge), outgoing) =
-      let
-        val source = #source edge
-        val old = Option.getOpt (Termtab.lookup outgoing source, [])
-      in
-        Termtab.update (source, (index, edge) :: old) outgoing
-      end
+    fun add (edge : edge, (index, outgoing)) =
+      (index + 1, Termtab.cons_list (#source edge, (index, edge)) outgoing)
   in
-    List.foldl add Termtab.empty (Lib.enumerate 0 edges)
+    #2 (List.foldl add (0, Termtab.empty) edges)
   end
 
 (* A scan can use a newly reached node at later edges in the same round.
@@ -199,17 +194,17 @@ fun indexed_rounds relax outgoing source nodes =
 (* Everything the source reaches, one path per node. A node is settled
    the first time it is reached. Ordinary calls construct proofs only
    along the paths a caller actually needs. *)
-fun reachable work transitive edges outgoing source =
-  case transitive of
+fun reachable work transitivity edges outgoing source =
+  case transitivity of
       NONE =>
         ReachedList
           (List.map (fn e => (#target e, #path e))
             (List.filter
               (fn e => (candidate work; aconv (#source e) source))
               edges))
-    | SOME transitive =>
+    | SOME instantiate =>
         let
-          val step = MATCH_MP order_weak_trans transitive
+          val step = instantiate ()
           (* Keep the same settlement and comparison order for metered
              calls.  Ordinary calls can index by alpha-equivalence. *)
           val empty =
@@ -219,7 +214,7 @@ fun reachable work transitive edges outgoing source =
           fun chain first second =
             let
               fun derive () =
-                MATCH_MP (MATCH_MP step (path_theorem first))
+                MATCH_MP (MATCH_MP (path_theorem step) (path_theorem first))
                   (path_theorem second)
             in
               application work;
@@ -266,7 +261,21 @@ fun reach_from work transitive edges =
     (* A contradiction can test several starting points on the same graph.
        Build the shared index only if one needs more than two scans. *)
     val outgoing = Portable.HOLSusp.delay (fn () => outgoing_edges edges)
-    fun compute source = reachable work transitive edges outgoing source
+    (* Share the rule across ordinary traversals, and instantiate it only
+       when a composed path is used. Metered traversals keep the original
+       eager instantiation for each source. *)
+    fun transitivity theorem =
+      let
+        fun derive () = MATCH_MP order_weak_trans theorem
+      in
+        case #max_nodes work of
+            NONE => (fn () => Proved (derive ()))
+          | SOME _ =>
+              let val step = derive_path work derive
+              in fn () => step end
+      end
+    val step = Option.map transitivity transitive
+    fun compute source = reachable work step edges outgoing source
     (* Crossing can use two sources. Limit retained reachability tables
        and keep each metered traversal observable. *)
     val from =

@@ -823,6 +823,20 @@ val _ =
 
 val _ =
   test
+    ("merge_decls preserves kind order when a reservation reuses an index",
+     Feedback.quiet_warnings (fn () =>
+       let
+         val unsafe = {kind = clasetRules.Intro, safe = false, prio = NONE}
+         val other = decl "unsafe_a" unsafe (#orig decl_a)
+         val (_, reused) = reserve_decl_indices ~1 (add decl_a empty_decls)
+         val right = add other reused
+         val (fresh, _) = merge_decls (empty_decls, right)
+       in
+         map #name fresh = ["a", "unsafe_a"]
+       end))
+
+val _ =
+  test
     ("dest_decls appends Forward and Norm after classical rule groups",
      fn () =>
        let
@@ -4408,6 +4422,31 @@ val _ =
                 searchBudget.Candidate) andalso
          #candidates (searchBudget.usage turn) = 2 andalso
          #candidates (searchBudget.usage invocation) = 2
+       end)
+
+val _ =
+  test
+    ("nested budget rejection leaves every counter unchanged",
+     fn () =>
+       let
+         fun limits n =
+           {candidates = SOME n, applications = NONE, normalization = NONE}
+         val root = searchBudget.create (limits 1)
+         val middle = searchBudget.child root (limits 1)
+         val leaf = searchBudget.child middle (limits 2)
+         fun charge budget = searchBudget.charge budget searchBudget.Candidate
+         fun counts () =
+           map (#candidates o searchBudget.usage) [root, middle, leaf]
+         fun refuses expected =
+           (charge leaf; false)
+           handle searchBudget.LimitReached (searchBudget.Candidate, used) =>
+             #candidates used = expected
+         val _ = charge root
+         val root_rejected = refuses 1 andalso counts () = [1, 0, 0]
+         val _ = searchBudget.extend root searchBudget.Candidate 1
+         val _ = charge leaf
+       in
+         root_rejected andalso refuses 1 andalso counts () = [2, 1, 1]
        end)
 
 val _ =

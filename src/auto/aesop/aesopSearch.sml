@@ -683,13 +683,6 @@ fun install_alternatives level budget id data tree =
     List.foldl install tree data
   end
 
-fun candidates_remain tree id =
-  let val goal = aesopTree.goal tree id
-  in
-    not (null (#unsafe_cursor goal)) orelse
-    not (null (#postponed goal))
-  end
-
 datatype unsafe_outcome =
     UnsafeContinue of tree
   | UnsafeRappSkipped of tree
@@ -756,13 +749,13 @@ fun unsafe_phase ctxt level budget cache {max_rapps, ...} id tree =
               install_alternatives level budget id applications tree
             val installed =
               aesopTree.set_search_state id
-                {safe_done = #safe_done (aesopTree.goal extended id),
+                {safe_done = #safe_done goal,
                  unsafe_cursor = unsafe, postponed = postponed}
                 extended
             val current = aesopTree.goal installed id
             val queued =
               if #state current = aesopTree.Unknown andalso
-                 candidates_remain installed id
+                 (not (null unsafe) orelse not (null postponed))
               then aesopTree.enqueue_goal id installed
               else installed
           in

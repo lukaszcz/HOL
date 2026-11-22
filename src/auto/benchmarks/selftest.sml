@@ -1349,6 +1349,13 @@ val _ =
             ``!l1 l2. LENGTH (l1 ++ l2) = LENGTH l1 + LENGTH l2``
             listTheory.APPEND))
 
+val _ =
+  check
+    ("A1 reads a beta-headed conjunct after rejecting rigid heads",
+     fn () =>
+       benchLib.theorem_is_goal ``n < SUC n``
+         (Thm.ASSUME ``!n. ~(n = 0) /\ (\m. m < SUC m) n``))
+
 (* A rule need not put its whole prefix in one place.  It can quantify
    what its premise speaks about, discharge it, and quantify again over
    what the conclusion adds -- [DIVISION] binds the divisor, asks it to
@@ -1401,6 +1408,13 @@ val _ =
        benchGuards.recognition_route subset_goal
          (Drule.EQT_INTRO (Drule.SPEC_ALL pred_setTheory.SUBSET_DEF)) =
        SOME "syntactic")
+
+val _ =
+  check
+    ("A1 reads a truth wrapper around a goal with a different head",
+     fn () =>
+       benchLib.theorem_is_goal ``n < SUC n``
+         (Thm.ASSUME ``(n < SUC n) = T``))
 
 val guarded_length_reverse =
   Drule.GEN_ALL

@@ -81,9 +81,9 @@ fun available budget kind =
              | SOME ancestor => available ancestor kind)
   end
 
-fun charge budget kind =
+fun charge (budget as Budget {parent, ...}) kind =
   let
-    fun check (current as Budget {parent, ...}) =
+    fun check_limit current =
       let val (used, limit) = counter current kind
       in
         (case limit of
@@ -92,12 +92,21 @@ fun charge budget kind =
                  raise LimitReached (kind, usage current)
                else ()
            | NONE => ());
-        case parent of
-            NONE => ()
-          | SOME ancestor => check ancestor
+        used
       end
-    fun increment (current as Budget {parent, ...}) =
-      let val (used, _) = counter current kind
+    fun check (current as Budget {parent, ...}) =
+      (ignore (check_limit current);
+       case parent of
+           NONE => ()
+         | SOME ancestor => check ancestor)
+    fun increment (Budget {parent, candidates, applications,
+                           normalization, ...}) =
+      let
+        val used =
+          case kind of
+              Candidate => candidates
+            | Application => applications
+            | Normalization => normalization
       in
         used := !used + 1;
         case parent of
@@ -105,8 +114,17 @@ fun charge budget kind =
           | SOME ancestor => increment ancestor
       end
   in
-    check budget;
-    increment budget
+    let val used = check_limit budget
+    in
+      case parent of
+          NONE => used := !used + 1
+        | SOME ancestor =>
+            (* Reject before writing anything, then charge from the
+               innermost budget outwards. *)
+            (check ancestor;
+             used := !used + 1;
+             increment ancestor)
+    end
   end
 
 fun extend (Budget {limits, ...}) kind extra =

@@ -659,25 +659,46 @@ fun disj_elim_tac_with work config (assumptions, conclusion) =
       List.partition
         (fn tm => (candidate work; boolSyntax.is_disj tm))
         assumptions
-    val _ =
-      if List.null disjunctions then
-        raise ERR "disj_elim_tac" "no disjunctive assumption"
-      else ()
-    val decomposed =
-      List.map
-        (fn tm =>
-          (normalization work; (tm, linarithDecomp.decomp tm)))
-        literals
-    fun score disjunction =
-      (candidate work;
-       (List.length
-         (List.filter (consistent_with work config decomposed)
-            (boolSyntax.strip_disj disjunction)),
-        disjunction))
-    fun cheaper (candidate as (count, _), best as (fewest, _)) =
-      if count < fewest then candidate else best
-    val scored = List.map score disjunctions
-    val (_, chosen) = List.foldl cheaper (hd scored) (tl scored)
+    (* Keep all score probes in budgeted runs and in the solver trace. *)
+    val full_scan =
+      Option.isSome (#budget work) orelse traceUtil.enabled (#level work) 2
+    fun select first rest =
+      let
+        val decomposed =
+          List.map
+            (fn tm =>
+              (normalization work; (tm, linarithDecomp.decomp tm)))
+            literals
+        val consistent = consistent_with work config decomposed
+        fun score stop disjunction =
+          let
+            fun count [] live = live
+              | count (disjunct :: remaining) live =
+                  if stop live then live
+                  else count remaining
+                    (if consistent disjunct then live + 1 else live)
+          in
+            candidate work;
+            count (boolSyntax.strip_disj disjunction) 0
+          end
+        fun cheaper (disjunction, best as (fewest, _)) =
+          if not full_scan andalso fewest = 0 then best
+          else
+            let
+              val live = score (fn n => not full_scan andalso n >= fewest)
+                disjunction
+            in
+              if live < fewest then (live, disjunction) else best
+            end
+      in
+        #2 (List.foldl cheaper (score (K false) first, first) rest)
+      end
+    val chosen =
+      case disjunctions of
+          [] => raise ERR "disj_elim_tac" "no disjunctive assumption"
+        | first :: rest =>
+            if null rest andalso not full_scan then first
+            else select first rest
     val (left, right) = boolSyntax.dest_disj chosen
     val common = List.filter (not o Term.aconv chosen) assumptions
     val goals =
