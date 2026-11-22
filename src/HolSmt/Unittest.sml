@@ -439,7 +439,10 @@ fun num_args_relativization_success () =
        not ABS of it. *)
     check_conv SmtLib.NUM_TO_INT_CONV ("lifted num binder argument",
       ``!(s :num -> bool) (b :num). s b``,
-      ``!s :int -> bool. !i :int. 0 <= i ==> s i``)
+      ``!s :int -> bool. !i :int. 0 <= i ==> s i``);
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num existential argument",
+      ``!P :num -> bool. ?n :num. P n``,
+      ``!P :int -> bool. ?i :int. 0 <= i /\ P i``)
   end
 
 fun num_binder_relativization_non_num_noop_success () =

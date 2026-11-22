@@ -248,12 +248,9 @@ Bugs fixed
     this leads to, including goals that use asserted function definitions
     and goals over sequences, sets and higher-order functions.
 
--   HolSmt's natural-number preprocessing now also moves the natural-number
-    arguments of function variables to integers.  A goal that applies an
-    uninterpreted `f : num -> 'a` to natural-number terms, such as
-    `a < b /\ b < a + 2 ==> f (a + 1) = f b`, used to reach the solver
-    with those arguments in an uninterpreted sort, and both solvers
-    answered `sat`; `Z3_TAC` and `CVC_TAC` now prove it.
+-   `Z3_TAC` and `CVC_TAC` now prove goals that apply a function variable
+    `f : num -> 'a` to natural-number terms, such as
+    `a < b /\ b < a + 2 ==> f (a + 1) = f b`; they used to fail on them.
 
 -   HolSmt's oracles no longer return false theorems about word division by
     zero.  `word_div` and `word_quot` were translated to `bvudiv` and
