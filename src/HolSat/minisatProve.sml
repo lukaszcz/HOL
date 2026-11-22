@@ -34,16 +34,9 @@ fun warn ss =
                 \HOLFlags.set_trace \"HolSatLib.warn\" 0; RET\n\n")
     else ()
 
-fun fallback check_sat_model clauseth lfn ntm =
-    satTools.observed_internal_solver (fn () =>
-      if check_sat_model then DPLL_TAUT (dest_neg ntm)
-      else case DPLL_REFUTE lfn clauseth of
-          SOME th => th
-        | NONE => raise SAT_satisfiable ())
-
-fun replay_proof sat_trace check_sat_model is_proved sva nr in_name
+fun replay_proof sat_trace is_proved sva nr in_name
                  solver vc
-                 clauseth lfn ntm proof =
+                 clauseth lfn ntm proof fallback =
     if is_proved then
         ((case getSolverPostExe solver of (* post-process proof, if required *)
              SOME post_exe => let
@@ -59,7 +52,7 @@ fun replay_proof sat_trace check_sat_model is_proved sva nr in_name
              SOME th => (sat_trace (fn () => "resolution replay done");
                          th)
            | NONE => (warn "Proof replay failed. Using internal prover.";
-                      fallback check_sat_model clauseth lfn ntm)))
+                      fallback ())))
                         (*triv prob/unknown err*)
     else mk_sat_oracle_thm([ntm],F)
 
@@ -81,7 +74,7 @@ local
         in if isSome cnfv then List.mapPartial project model else model end
 in
 fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
-                  check_sat_model svm sva in_name =
+                  check_sat_model svm sva in_name fallback =
     let val nr = Array.length clauseth
     in
       if access(getSolverExe solver,[A_EXEC]) then
@@ -105,14 +98,14 @@ fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
                    profile_stage "model-check" (satCheck model') ntm
                  else mk_sat_oracle_thm([],mk_imp(list_mk_conj model',ntm)) end
             | NONE    => (* returns ~t |- F *)
-                replay_proof sat_trace check_sat_model is_proved sva nr
-                             in_name solver vc clauseth lfn ntm NONE
+                replay_proof sat_trace is_proved sva nr
+                             in_name solver vc clauseth lfn ntm NONE fallback
         end
       else (* do not have execute access to solver binary, or it doesn't exist*)
         (if nr > !sat_limit then
            warn "SAT solver not found. Using slow internal prover."
          else ();
-         fallback check_sat_model clauseth lfn ntm)
+         fallback ())
     end
 end
 
@@ -241,17 +234,26 @@ fun GEN_SAT_WITH check_sat_model conf =
         val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
             profile_stage "initialise"
               (initialise check_sat_model infile is_cnf) tm
+        fun fallback () =
+          satTools.observed_internal_solver (fn () =>
+            if check_sat_model then
+              if is_cnf orelse isSome infile then DPLL_TAUT (dest_neg ntm)
+              else DPLL_TAUT_PREPARED (dest_neg ntm) cnfv lfn clauseth
+            else case DPLL_REFUTE lfn clauseth of
+                SOME th => th
+              | NONE => raise SAT_satisfiable ())
         fun solve () =
           let
             val _ = sat_trace (fn () =>
                       "CNF done variables=" ^ int_to_string vc ^
                       " clauses=" ^ int_to_string (Array.length clauseth))
             val th = if isSome proof
-                     then replay_proof sat_trace check_sat_model is_proved
+                     then replay_proof sat_trace is_proved
                             sva (Array.length clauseth) in_name solver vc
-                            clauseth lfn ntm proof
+                            clauseth lfn ntm proof fallback
                      else invoke_solver sat_trace solver lfn ntm clauseth
                             cnfv vc is_proved check_sat_model svm sva in_name
+                            fallback
             val res = profile_stage "finalise" (finalise is_cnf) th
             val _ = sat_trace (fn () => "finalise done")
           in res end

@@ -180,11 +180,19 @@ struct
             if wanted = held then prefix rest tail else
               raise ERR "assembler" "original Source changed"
       val _ = prefix originals (P.sources block)
-      val indices = ListPair.zip
-        (originals,List.tabulate (List.length originals,fn index => index))
-      fun index node = case List.find
-          (fn (source,_) => source = node) indices of
-          SOME (_,index) => index
+      fun remember_first (table,node,value) =
+        let val id = G.node_id node
+        in case Redblackmap.peek (table,id) of
+            SOME _ => table
+          | NONE => Redblackmap.insert (table,id,value)
+        end
+      val indices = Susp.delay (fn () => #2 (List.foldl
+        (fn (node,(index,table)) =>
+          (index+1,remember_first (table,node,index)))
+        (0,Redblackmap.mkDict Int.compare) originals))
+      fun index node = case Redblackmap.peek
+          (Susp.force indices,G.node_id node) of
+          SOME index => index
         | NONE => raise ERR "assembler" "original source is absent from block"
       fun source node = P.source block (index node)
       fun equality conversion =
@@ -216,6 +224,11 @@ struct
             [equality goal,source original,P.constructor block original,
              P.constructor block denied]
         end
+      (* Preserve the first conversion for a shared result. *)
+      val conversions = Susp.delay (fn () => List.foldl
+        (fn (conversion,table) =>
+          remember_first (table,C.graph_result conversion,conversion))
+        (Redblackmap.mkDict Int.compare) assumptions)
       val memo = ref (Redblackmap.mkDict Int.compare)
       fun assemble node =
         let
@@ -225,8 +238,7 @@ struct
             SOME edge => SOME edge
           | NONE =>
               let val edge =
-                case List.find (fn conversion =>
-                    C.graph_result conversion = node) assumptions of
+                case Redblackmap.peek (Susp.force conversions,G.node_id node) of
                   SOME conversion => SOME (assumption conversion)
                 | NONE => if node = denied then SOME (denied_goal ()) else NONE
                   val _ = Option.app (fn edge => memo := Redblackmap.insert

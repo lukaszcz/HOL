@@ -33,7 +33,9 @@ struct
                   let
                     val incoming = environment bounds
                     fun child (acc,(child_bounds,child)) =
-                      if environment child_bounds = incoming then
+                      if (List.null incoming andalso
+                          Portable.pointer_eq (bounds,child_bounds)) orelse
+                          environment child_bounds = incoming then
                         translate path region (acc,(child_bounds,child))
                       else
                         let

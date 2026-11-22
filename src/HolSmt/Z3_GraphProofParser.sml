@@ -205,45 +205,61 @@ struct
          This is syntax routing, never a semantic equality decision. It must
          be total even on malformed syntax: normal left-to-right parsing,
          not this lookahead, owns every diagnostic. *)
-      fun proof_result aliases raw =
+      datatype route =
+          Leaf
+        | Body of bool * route
+        | Bindings of (bool * route) option list * (bool * route)
+      fun proof_route aliases raw =
         let
           fun kind local_names (Atom name) =
-                (case Redblackmap.peek
+                ((case Redblackmap.peek
                     (local_names, P.proof_symbol_text name) of
                    SOME result => result
                  | NONE => case alias_value aliases name of
                      SOME (ProofId _) => true
                    | SOME (ProofLambda _) => true
-                   | _ => false)
+                   | _ => false),Leaf)
             | kind local_names (List [Atom "let", bindings, body]) =
-                let val values = List.map (fn (name, rhs) =>
-                      (P.proof_symbol_text name, kind local_names rhs))
-                      (case bindings of List entries => List.mapPartial
-                        (fn List [Atom name, rhs] => SOME (name, rhs)
-                          | _ => NONE) entries | _ => [])
-                in kind (List.foldl (fn ((name, value), names) =>
-                  Redblackmap.insert (names, name, value))
-                  local_names values) body end
+                let
+                  fun binding (List [Atom name, rhs]) =
+                        SOME (P.proof_symbol_text name, kind local_names rhs)
+                    | binding _ = NONE
+                  val values = case bindings of
+                      List entries => List.map binding entries | _ => []
+                  fun install (SOME (name, (proof, _)), names) =
+                        Redblackmap.insert (names, name, proof)
+                    | install (NONE, names) = names
+                  val body_route as (proof,_) =
+                    kind (List.foldl install local_names values) body
+                in (proof,Bindings (List.map (Option.map #2) values,body_route))
+                end
             | kind local_names (List (Atom "!" :: body :: _)) =
-                kind local_names body
+                let val child as (proof,_) = kind local_names body
+                in (proof,Body child) end
             | kind local_names (List [Atom "lambda", binders, body]) =
                 let fun shadow (List [Atom name, _], names) =
                           Redblackmap.insert
                             (names, P.proof_symbol_text name, false)
                       | shadow (_, names) = names
-                in kind (List.foldl shadow local_names
-                  (case binders of List entries => entries | _ => []))
-                  body end
+                    val child as (proof,_) = kind (List.foldl shadow local_names
+                      (case binders of List entries => entries | _ => [])) body
+                in (proof,Body child) end
             | kind local_names (List (head :: _)) =
                 let val name = case head of Atom name => name
                       | List (Atom "_" :: Atom name :: _) => name
                       | _ => ""
-                in name = "th-lemma" orelse Option.isSome
-                  (lookup_rule version (P.proof_symbol_text name)) end
-            | kind _ _ = false
+                in (name = "th-lemma" orelse Option.isSome
+                  (lookup_rule version (P.proof_symbol_text name)),Leaf) end
+            | kind _ _ = (false,Leaf)
         in kind (Redblackmap.mkDict String.compare) raw end
       fun parse_value session aliases raw =
-        case raw of
+        parse_routed session aliases NONE raw
+      and parse_routed session aliases route raw =
+        let fun classify () = case route of SOME known => known
+              | NONE => proof_route aliases raw
+            val body_route = case route of SOME (_,Body child) => SOME child
+              | _ => NONE
+        in case raw of
           Atom name => (case alias_value aliases name of
               SOME (value as ProofId _) => value
             | SOME (value as ProofLambda _) => value
@@ -304,14 +320,15 @@ struct
                Only a proof LET retains RHS occurrences in the proof alias
                table; in particular its asserted OR keeps its recorded
                boundary. Route before construction, never reparse values. *)
-            if proof_result aliases raw then
-              parse_let session aliases bindings body
-            else Term (term session aliases raw)
+            (case classify () of
+               (true,Bindings routes) => parse_let_using false parse_routed
+                 session aliases bindings body (SOME routes)
+             | _ => Term (term session aliases raw))
         | List (Atom "!" :: body :: _) =>
             (* Attributes are inert S-expressions, including proof names.
                Preserve the body's value kind; term occurrences still keep
                the annotation boundary used by clause/literal consumers. *)
-            (case parse_value session aliases body of
+            (case parse_routed session aliases body_route body of
                Term value => Term
                  {node = #node value, scope = #scope value,
                   binder_blocks = #binder_blocks value, source_syntax = NONE,
@@ -320,8 +337,9 @@ struct
                      token = "!", children = [#occurrence value]}}
              | value => value)
         | List [Atom "lambda", _, _] =>
-            if proof_result aliases raw then parse_lambda session aliases raw
-            else Term (term session aliases raw)
+            (case classify () of
+               (true,route) => parse_lambda session aliases raw route
+             | _ => Term (term session aliases raw))
         | List (head :: operands) =>
             let val (name, indices) = case head of
                   Atom name => (P.proof_symbol_text name, [])
@@ -341,24 +359,28 @@ struct
                 | NONE => Term (term session aliases raw)
             end
         | List [] => error "empty proof or term expression"
+        end
       and parse_outer session aliases raw = case raw of
           List [Atom "let", bindings, body] =>
             if List.length (list "outer_let" bindings) = 1 then
-              parse_let_using true parse_outer session aliases bindings body
+              parse_let_using true (fn session => fn aliases => fn _ =>
+                parse_outer session aliases) session aliases bindings body NONE
             else error "outer Z3 proof let expects one definition"
         | _ => parse_value session aliases raw
-      and parse_let session aliases bindings body =
-        parse_let_using false parse_value session aliases bindings body
-      and parse_let_using unique parse_body session aliases bindings body =
+      and parse_let_using unique parse_body session aliases bindings body
+          route =
         let
           val entries = list "let_bindings" bindings
           val _ = if null entries then error "empty let binding list" else ()
           (* RHSs all see the incoming environment, but validation remains
              left-to-right: a later bad name cannot replace an earlier RHS
              exception. Unused RHSs are still parsed and typechecked. *)
-          val values = List.map (fn entry =>
-            let val (name, rhs) = let_entry entry
-            in (name, parse_value session aliases rhs) end) entries
+          fun parse_entry (entry,route) =
+            let val (name,rhs) = let_entry entry
+            in (name,parse_routed session aliases route rhs) end
+          val values = case route of
+              SOME (routes,_) => ListPair.mapEq parse_entry (entries,routes)
+            | NONE => List.map (fn entry => parse_entry (entry,NONE)) entries
           val term_values = List.mapPartial (fn (name, value) =>
             case value of Term value => SOME (name, value) | _ => NONE) values
           val blocked = List.mapPartial (fn (name, value) =>
@@ -403,7 +425,16 @@ struct
                 HOLset.add (names, name_text)) end
           val (extended, _) = List.foldl install
             (aliases, HOLset.empty String.compare) values
-          val parsed = parse_body child extended body
+          fun agrees ((_,value),SOME (proof,_)) =
+                proof = (case value of Term _ => false | _ => true)
+            | agrees (_,NONE) = false
+          (* Keep routing subordinate to actual lexical bindings. A route
+             that disagrees with an elaborated RHS cannot classify the body. *)
+          val body_route = case route of SOME (routes,body_route) =>
+                if ListPair.allEq agrees (values,routes) then SOME body_route
+                else NONE
+            | NONE => NONE
+          val parsed = parse_body child extended body_route body
         in case parsed of
             Term value => Term
               {node = #node value, scope = #scope value,
@@ -416,9 +447,9 @@ struct
                     (#occurrence o #2) term_values @ [#occurrence value]}}
           | _ => parsed
         end
-      and parse_lambda session aliases raw =
+      and parse_lambda session aliases raw route =
         let
-          fun strip (List [Atom "lambda", binders, body]) entries sizes =
+          fun strip (List [Atom "lambda", binders, body]) route entries sizes =
                 let val entries_here = descriptors session binders
                     val _ = if null entries_here then
                       error "lambda requires at least one sorted variable"
@@ -428,11 +459,14 @@ struct
                         (HOLset.addList (HOLset.empty String.compare, keys))
                         = List.length keys then () else
                       error "duplicate lambda variable"
-                in strip body (entries_here :: entries)
+                    val child = case route of SOME (_,Body child) => SOME child
+                      | _ => NONE
+                in strip body child (entries_here :: entries)
                   (List.length entries_here :: sizes) end
-            | strip body entries sizes =
-                (List.concat (List.rev entries), List.rev sizes, body)
-          val (entries, sizes, raw_body) = strip raw [] []
+            | strip body route entries sizes =
+                (List.concat (List.rev entries), List.rev sizes, body,route)
+          val (entries,sizes,raw_body,body_route) =
+            strip raw (SOME (true,route)) [] []
           (* Flatten only the binder inventory, not its lexical shadowing.
              Hidden outer variables keep distinct Bound IDs, but cannot
              replace the rightmost spelling visible in the body. NUL keys
@@ -447,8 +481,10 @@ struct
             (HOLset.empty String.compare, [], 0) entries
           val binding = scope session lexical_entries
           val child = binding_session binding
-          val result = parse_value child
-            (shadow_aliases aliases entries) raw_body
+          (* Both shadowing operations use the decoded descriptor text,
+             including each repeated name in a flattened binder spine. *)
+          val result = parse_routed child
+            (shadow_aliases aliases entries) body_route raw_body
         in case result of
             ProofId id => ProofLambda (save
               (Bind {binding = binding, body = id, lambda_blocks = sizes}))

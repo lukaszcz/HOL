@@ -11812,6 +11812,10 @@ local
         (List.map boolSyntax.mk_neg (boolSyntax.strip_conj conjunction))
     in tautological_consequence premise target end
 
+  local
+    val negate_disjunction = Conv.REWR_CONV
+      (Thm.CONJUNCT2 (Drule.SPEC_ALL boolTheory.DE_MORGAN_THM))
+  in
   fun replay_not_or_elim args prems =
     let
       val premise = expect_one_premise "not_or_elim" prems
@@ -11821,19 +11825,33 @@ local
          handle Feedback.HOL_ERR _ =>
            numSyntax.dest_numeral (intSyntax.dest_injected index_term))
       val disjunction = boolSyntax.dest_neg (Thm.concl premise)
-      val selected = List.nth (boolSyntax.strip_disj disjunction, index)
-        handle Subscript => raise ERR "not_or_elim"
-          "CPC disjunction index is outside the premise"
+      fun outside () = raise ERR "not_or_elim"
+        "CPC disjunction index is outside the premise"
+      (* Match strip_disj's left-to-right leaf order and retain only the
+         path needed to project the selected negated leaf. *)
+      fun locate [] _ = outside ()
+        | locate ((term,path) :: pending) remaining =
+            case Lib.total boolSyntax.dest_disj term of
+              SOME (left,right) =>
+                locate ((left,Thm.CONJUNCT1 :: path) ::
+                        (right,Thm.CONJUNCT2 :: path) :: pending) remaining
+            | NONE => if remaining = 0 then List.rev path
+                      else locate pending (remaining - 1)
+      val path =
+        if index < 0 then outside () else locate [(disjunction,[])] index
     in
-      tautological_consequence premise (boolSyntax.mk_neg selected)
+      List.foldl (fn (project,theorem) =>
+        project (Conv.CONV_RULE negate_disjunction theorem)) premise path
     end
+  end
 
+  val double_negation = Thm.CONJUNCT1 boolTheory.NOT_CLAUSES
   fun replay_not_not_elim prems =
     let
       val premise = expect_one_premise "not_not_elim" prems
       val result = boolSyntax.dest_neg (boolSyntax.dest_neg (Thm.concl premise))
     in
-      tautological_consequence premise result
+      Thm.EQ_MP (Thm.SPEC result double_negation) premise
     end
 
   fun replay_and_intro (premise_steps : replayed_step list) =

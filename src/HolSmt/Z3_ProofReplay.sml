@@ -8109,24 +8109,42 @@ local
     let
       val _ = if Library.no_fastpath () then raise PURE_BOOLEAN_DECLINE else ()
       val maximum = SmtResource.max_skeleton_replay_dag_nodes
-      val buckets = Array.array (4093,[] : term list)
-      val count = ref 0
-      fun visit term =
-        let val bucket = SmtResource.pointer_bucket 4093 term in
-          if List.exists (fn old => Portable.pointer_eq (old,term))
-              (Array.sub (buckets,bucket)) then ()
-          else
-            (count := !count+1;
-             if !count>maximum then raise PURE_BOOLEAN_DECLINE else ();
-             if Term.is_var term then
-               (if Term.type_of term=Type.bool then ()
-                else raise PURE_BOOLEAN_DECLINE)
-             else case SmtSkeletonProve.skeleton_children term of
-                 NONE => raise PURE_BOOLEAN_DECLINE
-               | SOME children => List.app visit children;
-             Array.update (buckets,bucket,term :: Array.sub (buckets,bucket)))
-        end
-      val _ = visit target
+      fun children term =
+        if Term.is_var term then
+          if Term.type_of term=Type.bool then [] else raise PURE_BOOLEAN_DECLINE
+        else case SmtSkeletonProve.skeleton_children term of
+            NONE => raise PURE_BOOLEAN_DECLINE
+          | SOME operands => operands
+      exception Larger
+      val seen = ref []
+      val small_count = ref 0
+      fun visit_small term =
+        case SmtPointerTable.peek (!seen) term of
+          SOME () => ()
+        | NONE =>
+            if !small_count = Int.min (8,maximum) then raise Larger
+            else
+              (small_count := !small_count+1;
+               seen := (term,()) :: !seen;
+               List.app visit_small (children term))
+      fun visit_large () =
+        let
+          val buckets = Array.array (4093,[] : term list)
+          val count = ref 0
+          fun visit term =
+            let val bucket = SmtResource.pointer_bucket 4093 term in
+              if List.exists (fn old => Portable.pointer_eq (old,term))
+                  (Array.sub (buckets,bucket)) then ()
+              else
+                (count := !count+1;
+                 if !count>maximum then raise PURE_BOOLEAN_DECLINE else ();
+                 List.app visit (children term);
+                 Array.update (buckets,bucket,
+                   term :: Array.sub (buckets,bucket)))
+            end
+        in visit target end
+      (* Larger terms keep the post-order bucket updates of the full scan. *)
+      val _ = visit_small target handle Larger => visit_large ()
       val _ = if SmtResource.dag_nodes_up_to maximum target<=maximum then ()
         else raise PURE_BOOLEAN_DECLINE
       val theorem = profile "rewrite(entry)(pure-Boolean)"

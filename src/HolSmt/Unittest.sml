@@ -12641,6 +12641,24 @@ in
   check_oracle_tags "CPC disjunction De Morgan tail" theorem
 end
 
+fun cpc_not_or_elim_mixed_disjunction_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(assume @source (not (or (or p q) (or r (or p q))))) \
+    \(step @picked :rule not_or_elim :premises (@source) :args (3)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``~(p:bool)``,
+    "CPC not_or_elim selected the wrong disjunct");
+  assert ((case Thm.hyp theorem of
+      [premise] => premise ~~ ``~((p \/ q) \/ (r \/ (p \/ q)))``
+    | _ => false),
+    "CPC not_or_elim changed the negated disjunction hypothesis");
+  check_oracle_tags "CPC not_or_elim over a mixed disjunction" theorem
+end
+
 fun cpc_quant_var_elim_repeated_guard_replay_success () =
 let
   val proof = parse_cpc_proof_string
@@ -39962,6 +39980,8 @@ let
       cpc_bool_and_de_morgan_tail_replay_success),
     ("cpc_bool_or_de_morgan_tail_replay_success",
       cpc_bool_or_de_morgan_tail_replay_success),
+    ("cpc_not_or_elim_mixed_disjunction_replay_success",
+      cpc_not_or_elim_mixed_disjunction_replay_success),
     ("cpc_bool_or_taut2_replay_success",
       cpc_bool_or_taut2_replay_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",

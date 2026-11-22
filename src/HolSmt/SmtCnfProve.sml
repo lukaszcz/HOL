@@ -14,10 +14,8 @@ fun decline _ = raise Decline;
 datatype plan = Conflict of int | Force of int * int * plan
               | Split of int * plan * plan;
 val clause_limit = 2048;
-fun refute clauses_input =
+fun refute source_clauses =
  let
-  val _=if Array.length clauses_input<=clause_limit then () else decline "clauses"
-  val source_clauses=Array.vector clauses_input
   val variables=ref (Redblackmap.mkDict Term.compare)
   val reverse=ref (Redblackmap.mkDict Int.compare)
   fun primitive term =
@@ -247,16 +245,27 @@ fun refute clauses_input =
   val contradiction=replay initial_environment plan
  in contradiction end;
 
-fun prove clauses = Refuted (refute clauses)
+fun prove_vector clauses = Refuted (refute clauses)
   handle Satisfiable witness => Model witness
        | Decline => Unknown;
+
+fun prove clauses =
+  if Array.length clauses > clause_limit then Unknown
+  else prove_vector (Array.vector clauses);
+
+fun prove_clauses clauses =
+  let val count = Array.length clauses in
+    if count > clause_limit then Unknown
+    else prove_vector
+      (Vector.tabulate (count, fn i => #1 (Array.sub (clauses,i))))
+  end;
 
 fun prove_conjunction (cnf,extra) =
   let
     (* Every pending subtree accounts for at least one clause. A split
        increases that lower bound by one, and a leaf leaves it unchanged. *)
     fun collect [] clauses _ =
-          prove (Array.fromList (List.revAppend (clauses,extra)))
+          prove_vector (Vector.fromList (List.revAppend (clauses,extra)))
       | collect (term :: rest) clauses space =
           case Lib.total boolSyntax.dest_conj term of
               NONE => collect rest (term :: clauses) space

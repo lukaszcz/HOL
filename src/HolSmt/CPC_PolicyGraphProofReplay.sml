@@ -48,13 +48,15 @@ struct
         selected:P.policy_scope_slot list,output:int}
   type entry={serial:int,id:string,node:G.node,recipe:recipe,
     boundary:conjunction_boundary}
+  type registry={ordered:entry list,index:(string,entry)Redblackmap.dict,
+    has_scope:bool}
   datatype invocation=Invocation of
     {work:W.portfolio,native:NC.contract,graph:G.graph,root:G.scope,
      sources:S.sources,frame:Scope.receipt,preprocessing:GP.validation,
      packet:Q.graph_proof Packet.packet,worker:Native.owner,
      profiles:G.policy_opaque_profile list,check_type:Type.hol_type -> unit,
      phase:phase ref,cursor:int ref,remaining:Q.graph_command list ref,
-     known:entry list ref,stack:(entry list * int) list ref,
+     known:registry ref,stack:(registry * int) list ref,
      extras:(int * G.node * P.policy_scope_slot)list ref,
      facts:P.closed_fact list ref,
      block:P.block option ref,layout:P.policy_scope_layout option ref,
@@ -100,11 +102,10 @@ struct
     (active owner;case !block of SOME saved=>
        (P.validate_block_for work saved;saved)
      | NONE=>raise ERR "block" "missing actual current Block")
-  fun lookup owner wanted []=
-        raise ERR "registry"("unknown visible command "^wanted)
-    | lookup owner wanted((entry:entry)::rest)=
-        (tick owner;if #id entry=wanted then entry
-         else lookup owner wanted rest)
+  fun lookup(owner as Invocation{known,...})wanted=
+    (tick owner;case Redblackmap.peek(#index(!known),wanted)of
+        SOME entry=>entry
+      | NONE=>raise ERR "registry"("unknown visible command "^wanted))
   fun add_root owner node roots=
     if List.exists(fn held=>(tick owner;held=node))roots then roots
     else node::roots
@@ -308,8 +309,12 @@ struct
   fun replay_scopes(owner as Invocation{work,known,extras,block,layout,
       scoped_edges,edges,ordinal,...})additional=
     let
-      val recipes=action owner(fn()=>scope_recipes owner
-        (additional @ List.map(fn(entry:entry)=> #recipe entry)(!known)))
+      val recipes=action owner(fn()=>
+        let val {ordered,has_scope,...}= !known
+            (* Ordinary recipes can only reference visible commands. A pop
+               restores the outer registry and publishes an opaque recipe. *)
+            val visible=if has_scope then List.map #recipe ordered else []
+        in scope_recipes owner (additional @ visible) end)
       fun data(Scoped value)=value
         | data _=raise ERR "scope" "not an actual scoped recipe"
     in if List.null recipes then ()else
@@ -401,11 +406,14 @@ struct
         val worker=Native.begin_with_policy work native
           {packet=packet,preprocessing=preprocessing,
            profiles=profiles,check_type=check_type}
+        fun compare_ids pair=(W.spend_policy work 1;String.compare pair)
         val owner=Invocation{work=work,native=native,graph=graph,root=root,
           sources=sources,frame=frame,preprocessing=preprocessing,
           packet=packet,worker=worker,profiles=profiles,check_type=check_type,
           phase=ref Ready,cursor=ref 0,
-          remaining=ref(#commands(Packet.proof packet)),known=ref[],
+          remaining=ref(#commands(Packet.proof packet)),
+          known=ref{ordered=[],index=Redblackmap.mkDict compare_ids,
+            has_scope=false},
           stack=ref[],extras=ref[],facts=ref[],block=ref NONE,
           layout=ref NONE,scoped_edges=ref[],
           roots=ref[],ordinal=ref ordinal,edges=ref[],last=ref NONE,
@@ -430,37 +438,42 @@ struct
                  (G.node_scope graph(#node value))then #node value else
                raise ERR "next" "non-root declaration needs scoped handler")
           fun save id node recipe=
-            let val _=if List.exists(fn(entry:entry)=>
-                  #id entry=id)(!known)then
-                  raise ERR "next" "duplicate visible command ID"else ()
-                (* Conjunction boundaries come from this actual producing
-                   packet occurrence or the genuine ordered proof recipe.
-                   A semantic node ID alone cannot invent n-ary arity. *)
-                val boundary=action owner(fn()=>
-                  case command of Q.GraphAssume(_,value)=>
-                      ParsedBoundary(#occurrence value)
-                    | Q.GraphAssumePush(_,value)=>
+            let val {ordered,index,has_scope}= !known
+                val (result,updated)=action owner(fn()=>
+                  let
+                    val _=if Redblackmap.inDomain(index,id)then
+                      raise ERR "next" "duplicate visible command ID"
+                      else ()
+                    (* Conjunction boundaries come from this actual producing
+                       packet occurrence or the genuine ordered proof recipe.
+                       A semantic node ID alone cannot invent n-ary arity. *)
+                    val boundary=case command of Q.GraphAssume(_,value)=>
                         ParsedBoundary(#occurrence value)
-                    | Q.GraphStep{step,...}=>(case recipe of
-                        AndIntroduced{premises,...}=>
-                          let
-                            val actual=List.map(fn id=>
-                              lookup owner id(!known))(#premises step)
-                            fun joined((node,_),(held:entry))=
-                              if node= #node held then(node,#boundary held)
-                              else raise ERR "and_boundary"
-                                "different ordered producing premise"
-                            val children=ListPair.mapEq joined
-                              (premises,actual)
-                          in case children of [(_,child)]=>child
-                            | _=>IntroducedBoundary children end
-                      | DoubleNegationEliminated{boundary,...}=>
-                          boundary
-                      | AndEliminated{boundary,...}=>boundary
-                      | _=>MissingBoundary))
-                val result={serial=serial,id=id,node=node,recipe=recipe,
-                  boundary=boundary}:entry
-                val _=known:=result:: !known val _=last:=SOME result
+                      | Q.GraphAssumePush(_,value)=>
+                          ParsedBoundary(#occurrence value)
+                      | Q.GraphStep{step,...}=>(case recipe of
+                          AndIntroduced{premises,...}=>
+                            let
+                              val actual=List.map (lookup owner)
+                                (#premises step)
+                              fun joined((node,_),(held:entry))=
+                                if node= #node held then(node,#boundary held)
+                                else raise ERR "and_boundary"
+                                  "different ordered producing premise"
+                              val children=ListPair.mapEq joined
+                                (premises,actual)
+                            in case children of [(_,child)]=>child
+                              | _=>IntroducedBoundary children end
+                        | DoubleNegationEliminated{boundary,...}=>boundary
+                        | AndEliminated{boundary,...}=>boundary
+                        | _=>MissingBoundary)
+                    val result={serial=serial,id=id,node=node,recipe=recipe,
+                      boundary=boundary}:entry
+                  in (result,Redblackmap.insert(index,id,result)) end)
+                val scoped=case recipe of Scoped _=>true | _=>has_scope
+                val _=known:={ordered=result::ordered,index=updated,
+                  has_scope=scoped}
+                val _=last:=SOME result
             in {serial=serial,id=id,node=node}end
           val answer=case command of Q.GraphAssume(id,value)=>
               let val node=located value
@@ -495,7 +508,7 @@ struct
                 val(outer,offset)=case !stack of saved::_=>saved
                   | []=>raise ERR "scope" "pop without actual push"
                 val premise=case #premises step of [id]=>
-                      action owner(fn()=>lookup owner id(!known))
+                      action owner(fn()=>lookup owner id)
                   | _=>raise ERR "scope" "pop needs one visible body premise"
                 val rows= !extras
                 val _=if List.length rows=offset+1 then ()else
@@ -564,7 +577,7 @@ struct
                 (* The legacy rule ignores its argument list. Only the
                    actual single premise and optional result are semantic. *)
                 val premise=case #premises step of [id]=>
-                      action owner(fn()=>lookup owner id(!known))
+                      action owner(fn()=>lookup owner id)
                   | _=>raise ERR "not_not_elim"
                       "expected one visible premise"
                 val declared=Option.map located(#conclusion step)
@@ -650,7 +663,7 @@ struct
                         "negative actual conjunction index"
                   | _=>raise ERR "and_elim" "expected one recorded index"
                 val premise=case #premises step of [id]=>
-                      action owner(fn()=>lookup owner id(!known))
+                      action owner(fn()=>lookup owner id)
                   | _=>raise ERR "and_elim" "expected one visible premise"
                 val(path,boundary)=action owner(fn()=>
                   let
@@ -757,7 +770,7 @@ struct
                 val _=if null(#args step)then ()else
                   raise ERR "and_intro" "unexpected introduction arguments"
                 val premises=action owner(fn()=>
-                  List.map(fn id=>lookup owner id(!known))(#premises step))
+                  List.map (lookup owner) (#premises step))
                 val _=if null premises then raise ERR "and_intro"
                   "expected nonempty ordered premises"else()
                 (* The target's actual right-associated AND ports must
@@ -811,7 +824,7 @@ struct
                   raise ERR "eq_resolve" "unexpected equality rule arguments"
                 val(first,second)=case #premises step of [a,b]=>
                       action owner(fn()=>
-                        (lookup owner a(!known),lookup owner b(!known)))
+                        (lookup owner a,lookup owner b))
                   | _=>raise ERR "eq_resolve" "expected two ordered premises"
                 (* Immutable real graph ports are checked before evaluating
                    either potentially cold premise, callbacks or refreeze.
@@ -868,7 +881,7 @@ struct
                   raise ERR "next"
                     "native handler programme has not been migrated"
                 val premise=case #premises step of [id]=>
-                      action owner(fn()=>lookup owner id(!known))
+                      action owner(fn()=>lookup owner id)
                   | _=>raise ERR "next" "instantiate needs one premise"
                 val declared=Option.map located(#conclusion step)
                 fun argument(Q.GraphTerm value)=located value
@@ -924,11 +937,11 @@ struct
       end))handle primary=>(W.close expected;raise primary))
   fun step_with_policy_for expected owner id=
     ((expected_owner expected owner;protect owner(fn()=>
-      let val Invocation{known,phase,...}=owner
+      let val Invocation{phase,...}=owner
           val _=if !phase=Ready then ()else
             raise ERR "step" "invocation consumed or reentrant"
           val _=phase:=Running
-          val entry=action owner(fn()=>lookup owner id(!known))
+          val entry=action owner(fn()=>lookup owner id)
           val edge=evaluate owner(#recipe entry)
           val answer={block=current owner,node= #node entry,edge=edge}
           val _=phase:=Ready

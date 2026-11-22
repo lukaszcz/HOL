@@ -71,12 +71,20 @@ struct
     let
       val _ = active validation
       val original = V.assembler base block
+      val indexed = Susp.delay (fn () => List.foldl
+        (fn ((source,proof),table) =>
+          let val id = G.node_id source
+          in case Redblackmap.peek (table,id) of
+              SOME _ => table
+            | NONE => Redblackmap.insert (table,id,proof)
+          end)
+        (Redblackmap.mkDict Int.compare) facts)
       val memo = ref (Redblackmap.mkDict Int.compare)
       fun added node = case Redblackmap.peek (!memo,G.node_id node) of
           SOME edge => SOME edge
-        | NONE => case List.find (fn (source,_) => source = node) facts of
+        | NONE => case Redblackmap.peek (Susp.force indexed,G.node_id node) of
             NONE => NONE
-          | SOME (_,proof) =>
+          | SOME proof =>
               let
                 val equality = P.compose block
                   (fn [fact,constructor] => Thm.EQ_MP constructor fact

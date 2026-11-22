@@ -10,8 +10,7 @@ fun block n=boolSyntax.list_mk_disj (List.tabulate (3,fn i=>
 val clauses=List.tabulate (8,block);
 fun classify expected inputs =
  let val inventory=Array.fromList (List.map (fn c=>(c,Thm.ASSUME c)) inputs)
-     val result=SmtCnfProve.prove (Array.tabulate (Array.length inventory,
-       fn i=> #1 (Array.sub (inventory,i))))
+     val result=SmtCnfProve.prove_clauses inventory
  in case result of SmtCnfProve.Refuted proof=>
      (assert (fn x=>not x) expected;
       assert (Term.aconv boolSyntax.F) (Thm.concl proof);

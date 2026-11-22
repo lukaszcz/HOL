@@ -619,6 +619,12 @@ struct
         "(let ((p (asserted true))) (! p :pattern ((p)) :qid p))" tt
       fun ur terms result = rule "unit-resolution" result terms
       val _ = positive "plain proof grammar" "(asserted true)" tt
+      val routed_lets = Lib.funpow 24 (fn body =>
+        "(let ((p (! " ^ body ^ " :qid k))) p)")
+        "(asserted true)"
+      val _ = positive "nested LET RHSs route through annotations"
+        ("(unit-resolution " ^ routed_lets ^ " (asserted false) false)")
+        (ur [tt,ff] boolSyntax.F)
       val _ = positive "term alias keeps OR semantics"
         "(let ((a (or true false))) (asserted a))"
         (asserted ``T \/ F``)
@@ -866,6 +872,11 @@ struct
         "(unit-resolution (let ((\"bad\" missing) (a true))\
         \ (asserted true)) (asserted false) false)"
         [bad_name] ["missing"]
+      val _ = first_error "cached nested route keeps left-to-right errors"
+        ("(unit-resolution (let ((p " ^
+         "(let ((a missing) (b (lambda bad (asserted true)))) " ^
+         "(asserted true)))) (! p :qid p)) (asserted false) false)")
+        ["missing"] ["lambda_binders"]
       val _ = List.app (fn rhs => negative "string let names reject"
         ("(unit-resolution (let ((\"bad\" " ^ rhs ^ "))\
          \ (asserted true)) (asserted false) false)"))

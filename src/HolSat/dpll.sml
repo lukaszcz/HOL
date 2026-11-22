@@ -97,14 +97,17 @@ fun CoreDPLL initial =
         Refutation th => Unsat th
       | Assignment th => mk_satmap th
 
-fun doCNF neg_tm =
+fun prepareDPLL (cnfv,lfn,clauseth) =
     (* clauses is (ci,[~t] |- ci') pairs, where ci' is expanded ci *)
-    let val (cnfv,vc,lfn,clauseth) = to_cnf false neg_tm
-        val clauses = Array.foldr (fn ((c,th),l) => (c,th)::l) [] clauseth
+    let val clauses = Array.foldr (op ::) [] clauseth
         val cnf_thm = List.foldl (fn ((c,_),cnf) => CONJ (ASSUME c) cnf)
                                  (*[ci] |- cnf*)
                                  (ASSUME (fst (hd clauses))) (tl clauses)
     in (cnfv,cnf_thm,lfn,clauses) end
+
+fun doCNF neg_tm =
+    let val (cnfv,_,lfn,clauseth) = to_cnf false neg_tm
+    in prepareDPLL (cnfv,lfn,clauseth) end
 
 fun undoCNF lfn clauses th = (* th is [ci] |-  F *)
     let
@@ -147,14 +150,16 @@ fun mk_model_thm cnfv lfn t f =
           else List.map (fn v => literal v (is_T (f v))) (free_vars t)
     in satCheck model (mk_neg t) end
 
-fun DPLL_TAUT t = let
-  val (cnfv,cnf_thm,lfn,clauses) = doCNF (mk_neg t)
-                                         (* cnf_thm is [ci] |- dCNF(~t) *)
-in
+local
+fun dpll_taut t (cnfv,cnf_thm,lfn,clauses) =
   case CoreDPLL cnf_thm of
       Unsat cnf_entails_F =>  (* [ci] |- F *)
         undoCNF lfn clauses cnf_entails_F (* [~t] |- F *)
     | Sat f => mk_model_thm cnfv lfn t f (* |- model ==> ~t *)
+in
+fun DPLL_TAUT t = dpll_taut t (doCNF (mk_neg t))
+fun DPLL_TAUT_PREPARED t cnfv lfn clauseth =
+    dpll_taut t (prepareDPLL (cnfv,lfn,clauseth))
 end
 
 (* implementation of DPLL ends *)

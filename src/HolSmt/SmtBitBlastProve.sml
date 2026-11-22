@@ -39,14 +39,12 @@ fun prove source =
  if not (boolean_eligible source) then Unknown else
  let
   val (_,_,lfn,clauses)=def_cnf.to_cnf false (boolSyntax.mk_neg source)
-  val inventory=Array.tabulate (Array.length clauses,
-    fn i=> #1 (Array.sub (clauses,i)))
- in case SmtCnfProve.prove inventory of SmtCnfProve.Unknown=>Unknown
+ in case SmtCnfProve.prove_clauses clauses of SmtCnfProve.Unknown=>Unknown
   | SmtCnfProve.Model _=>NotTaut
   | SmtCnfProve.Refuted proof=>
      let val used=Thm.hypset proof
-         val needed=List.filter (fn (c,_)=>HOLset.member (used,c))
-           (Array.foldr (op ::) [] clauses)
+         val needed=Array.foldr (fn (pair as (clause,_),rest)=>
+           if HOLset.member (used,clause) then pair::rest else rest) [] clauses
      in Taut (Thm.CCONTR source (dpll.undoCNF lfn needed proof)) end
  end handle def_cnf.to_cnf_unsat theorem=>
    Taut (Thm.CCONTR source (Drule.UNDISCH (Thm.NOT_ELIM theorem)));

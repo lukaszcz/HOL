@@ -4506,8 +4506,10 @@ struct
               let val selected = case owned_work of NONE =>
                       List.map (fn hypothesis => Redblackmap.find
                         (indices,G.node_id hypothesis)) local_assumptions
-                    | SOME _ => List.tabulate (List.length local_assumptions,
-                        fn index => List.length canonical_sources + index)
+                    | SOME _ =>
+                        let val prefix_size = List.length canonical_sources
+                        in List.tabulate (List.length local_assumptions,
+                            fn index => prefix_size + index) end
                   val result = case owned_work of NONE =>
                       P.discharge_sources block
                         {indices = selected,body = node root,edge = edge}

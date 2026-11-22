@@ -106,12 +106,13 @@ struct
      | NONE=>raise ERR "registry" "premise is not a completed command")
   (* Normalization is part of the same shared registry classifier. *)
   fun plan_packet(owner as Invocation
-      {graph,root,sources,packet,preprocessing,frames,mode,...})=
+      {work,graph,root,sources,packet,preprocessing,frames,mode,...})=
     let
       val proof=Packet.proof packet
       val marks=ref(Redblackmap.mkDict Z.compare_id)
       val ordered=ref([]:(Z.proof_id * plan)list)
       val endpoints=ref(Redblackmap.mkDict Z.compare_id)
+      fun compare_ids(pair)=(W.spend_policy work 1;Int.compare pair)
       val roots=ref(Redblackset.empty Int.compare)
       val root_nodes=ref([]:G.node list)
       fun step id=(tick owner;case Redblackmap.peek(#steps proof,id)of
@@ -146,20 +147,46 @@ struct
         if Redblackset.member(!roots,G.node_id target)then ()else
           (roots:=Redblackset.add(!roots,G.node_id target);
            root_nodes:=target:: !root_nodes)
+      (* Index the prefix as it is searched, keeping the first slot for
+         duplicate Sources. Early hits need no traversal of the suffix. *)
+      fun source_lookup prefix denied=
+        let val seen=ref(Redblackmap.mkDict compare_ids)
+            val cursor=ref NONE
+            fun find target=
+              let
+                val _=tick owner
+                val key=G.node_id target
+                fun seek(index,held::rest,goal)=
+                      let val _=tick owner
+                          val id=G.node_id held
+                          val _=if Redblackmap.inDomain(!seen,id)then ()
+                            else seen:=Redblackmap.insert(!seen,id,(held,index))
+                          val pending=(index+1,rest,goal)
+                          val _=cursor:=SOME pending
+                      in if held=target then SOME index else seek pending end
+                  | seek(index,[],SOME goal)=seek(index,[goal],NONE)
+                  | seek(_,[],NONE)=NONE
+              in case Redblackmap.peek(!seen,key)of
+                  SOME(held,index)=>if held=target then SOME index else NONE
+                | NONE=>case !cursor of
+                    SOME pending=>seek pending
+                  | NONE=>
+                      let val pending=(0,prefix(),SOME(denied()))
+                          val _=cursor:=SOME pending
+                      in seek pending end
+              end
+        in find end
+      val processed_slot=source_lookup
+        (fn()=>GP.processed_assumptions preprocessing)
+        (fn()=>GP.processed_denied_goal preprocessing)
+      val original=source_lookup (fn()=>S.assumption_nodes sources)
+        (fn()=>S.denied_goal_node sources)
+      fun processed target=Option.isSome(processed_slot target)
+      fun original_slot target=case original target of SOME index=>index
+        | NONE=>raise ERR "packet"
+            "hypothesis outside actual original Source prefix"
       fun finish id=
         let
-          fun processed target=List.exists
-            (fn held=>(tick owner;held=target))
-            (GP.processed_assumptions preprocessing @
-             [GP.processed_denied_goal preprocessing])
-          fun original_slot target=
-            let fun original index []=raise ERR "packet"
-                      "hypothesis outside actual original Source prefix"
-                  | original index (held::rest)=
-                      (tick owner;if held=target then index
-                       else original (index+1) rest)
-            in original 0 (S.assumption_nodes sources @
-              [S.denied_goal_node sources]) end
           val (target,plan)=Z3_SharedReplayPlan.classify
             {observer=Z3_SharedReplayPlan.silent_observer,
              prior=node,located=located,processed=processed,
@@ -178,11 +205,12 @@ struct
            | NONE=>(marks:=Redblackmap.insert(!marks,id,1);
                walk(List.map Visit(dependencies id) @ Finish id::rest)))
       val _=walk[Visit(#root proof)]
-    in(List.rev(!ordered),List.rev(!root_nodes))end
+    in(List.rev(!ordered),List.rev(!root_nodes),roots)end
   (* Occurrence factories own actions, so packet planning finishes first.
      Only actual resolution premises/targets acquire these witnesses. *)
   fun prepare_resolution_occurrences(owner as Invocation
-      {work,frame,packet,roots,occurrences,targets,raw_batches,...})ordered=
+      {work,frame,packet,roots,occurrences,targets,raw_batches,...})
+      root_ids ordered=
     let
       val proof=Packet.proof packet
       fun parsed id=
@@ -194,12 +222,14 @@ struct
           | Z.Alias other=>parsed other
           | Z.Bind _=>raise ERR "unit-resolution"
               "proof-bind needs its actual scoped programme"
+      fun add_root node=
+        let val _=tick owner val id=G.node_id node in
+          if Redblackset.member(!root_ids,id)then ()else
+            (tick owner;root_ids:=Redblackset.add(!root_ids,id);
+             roots:=node:: !roots)
+        end
       fun retain saved=action owner(fn()=>
-        let val required=C.roots_with_policy_for work saved
-            fun add node=
-              if List.exists(fn held=>(tick owner;held=node))(!roots)then ()
-              else(tick owner;roots:=node:: !roots)
-        in List.app add required end)
+        List.app add_root(C.roots_with_policy_for work saved))
       fun source id=
         case action owner(fn()=>
           (tick owner;Redblackmap.peek(!occurrences,id)))of
@@ -230,11 +260,9 @@ struct
                  target=parsed_target}
               val _=active owner
             in action owner(fn()=>
-              let val required=C.raw_roots_with_policy_for work saved
-                  fun add node=if List.exists(fn held=>
-                      (tick owner;held=node))(!roots)then ()else
-                    (tick owner;roots:=node:: !roots)
-                  val _=List.app add required val _=tick owner
+              let val _=List.app add_root
+                    (C.raw_roots_with_policy_for work saved)
+                  val _=tick owner
               in raw_batches:=Redblackmap.insert(!raw_batches,id,saved)end)
             end
         | prepare _=()
@@ -419,13 +447,13 @@ struct
           targets=ref(Redblackmap.mkDict Z.compare_id),
           ordinal=ref ordinal,edges=ref(Redblackmap.mkDict Z.compare_id),
           frames=ref[root],epoch=Type.type_epoch(),symbols=Term.term_epoch()}
-        val(ordered,needed)=action owner(fn()=>plan_packet owner)
+        val(ordered,needed,root_ids)=action owner(fn()=>plan_packet owner)
         val Invocation{plans,remaining,roots,phase,...}=owner
         val _=plans:=List.foldl(fn((id,value),dict)=>
           Redblackmap.insert(dict,id,value))(Redblackmap.mkDict Z.compare_id)
             ordered
         val _=roots:=needed val _=remaining:=ordered
-        val _=prepare_resolution_occurrences owner ordered
+        val _=prepare_resolution_occurrences owner root_ids ordered
         val _=rebuild owner
         val _=active owner val _=phase:=Ready
       in owner end)handle primary=>(W.close work;raise primary))
