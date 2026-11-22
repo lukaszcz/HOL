@@ -793,9 +793,10 @@ fun remove_present_frags names ss =
    [arith] facts.  A clasimp-derived value supplies its core, which is
    that simpset without the layer; any other simpset's base is the strip.
    The base is delayed, so that a cache hit forces neither the core nor
-   the strip.  A clasimp-derived value's base is the strip of its core:
-   the core keeps whatever linear-arithmetic procedures srw_ss itself
-   carries.  The strip returns its argument where it has none. *)
+   the strip.  A clasimp-derived value's base is the strip of its core
+   with the bottom-up layer: the core keeps whatever linear-arithmetic
+   procedures srw_ss itself carries.  The strip returns its argument where
+   it has none. *)
 type view_base = simpLib.simpset Susp.susp
 
 fun strip_view_procedures ss =
@@ -1804,37 +1805,28 @@ fun working_simpset_for (SuppliedViewBinding {table,...}) =
    base. *)
 fun owned_working_simpset base ss = cached_working_simpset base ss
 
-(* The derived value is a function of the srw_ss and of the context's
-   [arith] facts.  The srw_ss state keys the stored memo through the
-   derived-value mechanism.  Inside it, the core is derived once, when
-   first needed, and each fact list builds only the facts layer on it.
-   The lists, compared element-wise by identity, key a memo of the four
-   most recent, so going back to an earlier fact list answers the value it
-   had, working state and LHS views included: one derivation per
-   (srw_ss, facts) pair for as long as a window alternates among a few
-   lists.  The bound is 4 because each entry keeps a full simpset with its
-   working state and view tables alive, and the observed alternation uses
-   two fact lists.  The views of every layer derive from the strip of the
-   core, so they do not depend on arithmetic. *)
-fun derive_clasimp_value core facts =
-  let val full = clasimp_with_facts (Susp.force core) facts
-      val base = Susp.delay (fn () => strip_view_procedures (Susp.force core))
-  in {full = full,
-      positions = positions_of_sources
-        (#1 (simpLib.rewrite_sources full [])),
-      working = owned_working_simpset base full}
-  end
+(* The bottom-up declarations are one srw_ss fragment ([bottom_up_fragment]
+   below).  The simpsets this layer derives from srw_ss take it as a layer
+   of their own, added after what they derive from the rest of srw_ss, so
+   that a declaration, which changes that fragment alone, does not repeat
+   the derivation.  [layered_srw_derivation {base, layered}] memoises
+   [base] of the lift of srw_ss without the fragment on that srw_ss's
+   history without the fragment, and [layered] of that and of the
+   fragment's lift on the fragment's identity: [layered derived add]
+   receives the delayed [base] and [add], which adds the layer to a
+   simpset (or leaves it, when srw_ss carries no declaration).
 
-(* The derivation reads an srw_ss through simpExtLib.lift_simpset, which
-   reads its history, limit and exclusions and nothing else, so two srw_ss
-   states that agree on those derive the same value.  A bottom-up
-   declaration and its retraction are two such states: the retraction
-   removes the fragment the declaration added and leaves every other
-   history item as it was.  A bounded memo on the history answers the
-   value of the earlier state again, LHS views included. *)
-fun srw_history ss =
-  let val {history, limit, excluded} = OrdinarySimp.dest_simpset ss
-  in (history, limit, excluded) end
+   The lift reads the history, limit and exclusions of srw_ss and nothing
+   else, so two srw_ss states that agree on them, the fragment aside,
+   derive the same base.  History items are compared by identity and
+   deletions by their names.  Going back to a recent state -- a
+   retraction is one, its predecessor being the state before the
+   declaration -- answers what that state had. *)
+val bottom_up_fragment_name = "clasimp-bottom-up"
+
+fun bottom_up_addition (OrdinarySimp.ADDFRAG fragment) =
+      OrdinarySimp.frag_name fragment = SOME bottom_up_fragment_name
+  | bottom_up_addition _ = false
 
 fun same_history_item (OrdinarySimp.ADDFRAG f, OrdinarySimp.ADDFRAG g) =
       Portable.pointer_eq (f, g)
@@ -1850,17 +1842,78 @@ fun same_srw_history ((history, limit, excluded),
   length history = length history' andalso
   ListPair.all same_history_item (history, history')
 
-val clasimp_value_by_history =
-  memoUtil.bounded_memo 4
-    (fn (recorded, _) => fn (key, _) => same_srw_history (recorded, key))
-    (fn (_, ss) =>
-       memoUtil.bounded_memo 4 (Lib.list_eq (Lib.curry Portable.pointer_eq))
-         (derive_clasimp_value
-            (Susp.delay (fn () => clasimp_core (simpExtLib.lift_simpset ss)))))
+fun same_layer (NONE, NONE) = true
+  | same_layer (SOME f, SOME g) = Portable.pointer_eq (f, g)
+  | same_layer _ = false
+
+fun layered_srw_derivation {base, layered} =
+  let
+    fun add_layer NONE ss = ss
+      | add_layer (SOME layer) ss = simpLib.++ (ss, layer)
+    val by_history =
+      memoUtil.bounded_memo 4
+        (fn (recorded, _) => fn (key, _) => same_srw_history (recorded, key))
+        (fn (_, srw) =>
+           let
+             val derived = Susp.delay (fn () =>
+               base (simpExtLib.lift_simpset_without
+                       [bottom_up_fragment_name] srw))
+           in
+             memoUtil.bounded_memo 4 (fn a => fn b => same_layer (a, b))
+               (fn layer => layered derived (add_layer layer))
+           end)
+  in
+    fn srw =>
+      let
+        val {history, limit, excluded} = OrdinarySimp.dest_simpset srw
+        val (additions, rest) = List.partition bottom_up_addition history
+        val layer =
+          case additions of
+              OrdinarySimp.ADDFRAG fragment :: _ =>
+                SOME (simpExtLib.lift_ssfrag fragment)
+            | _ => NONE
+      in
+        by_history ((rest, limit, excluded), srw) layer
+      end
+  end
+
+(* The derived value is a function of the srw_ss and of the context's
+   [arith] facts.  The core is derived once for srw_ss without its
+   bottom-up layer, when first needed; the layer goes on top of it, and
+   each fact list builds only the facts layer on that.  The lists,
+   compared element-wise by identity, key a memo of the four most recent,
+   so going back to an earlier fact list answers the value it had,
+   working state and LHS views included.  The bound is 4 because each
+   entry keeps a full simpset with its working state and view tables
+   alive, and the observed alternation uses two fact lists.  The views
+   derive from the strip of the core with the bottom-up layer, so they
+   follow the declarations and do not depend on arithmetic. *)
+fun derive_clasimp_value core base facts =
+  let val full = clasimp_with_facts (Susp.force core) facts
+  in {full = full,
+      positions = positions_of_sources
+        (#1 (simpLib.rewrite_sources full [])),
+      working = owned_working_simpset base full}
+  end
+
+val clasimp_value_of_srw =
+  layered_srw_derivation
+    {base = fn lifted =>
+       let val core = clasimp_core lifted
+       in (core, Susp.delay (fn () => strip_view_procedures core)) end,
+     layered = fn derived => fn add =>
+       let
+         val core = Susp.delay (fn () => add (#1 (Susp.force derived)))
+         val base = Susp.delay (fn () =>
+           add (Susp.force (#2 (Susp.force derived))))
+       in
+         memoUtil.bounded_memo 4 (Lib.list_eq (Lib.curry Portable.pointer_eq))
+           (derive_clasimp_value core base)
+       end}
 
 val {get = _, get_of = clasimp_derived_of} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
-    (fn ss => fn _ => clasimp_value_by_history (srw_history ss, ss))
+    (fn ss => fn _ => clasimp_value_of_srw ss)
     (fn _ => {full = simpLib.empty_ss, positions = no_positions,
               working = owned_working_simpset
                           (Susp.delay (fn () => simpLib.empty_ss))
@@ -2818,8 +2871,6 @@ fun iff_finaliser {thyname} deltas db =
 
 exception bottom_up_context
 
-val bottom_up_fragment_name = "clasimp-bottom-up"
-
 (* A reducer rewriting with [rewrites] as the simplifier matches its own
    rewrites.  Isabelle's laws of this kind are higher-order patterns --
    [all_simps] reads a body as [P x] -- and a first-order matcher offers
@@ -2868,8 +2919,9 @@ val simp_bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
    them replaces it there, so a context's srw_ss carries that context's
    declarations: a proof reads them from the context it runs in, the
    reducer reads nothing ambient, and every cache keyed on the simpset
-   follows them.  The extension engine sees the fragment through
-   simpExtLib.lift_simpset.
+   follows them.  The simpsets derived here take the fragment as a layer
+   of their own ([layered_srw_derivation]); plain extension-engine
+   simpsets see it through simpExtLib.lift_simpset.
 
    Replacing removes the fragment from the srw_ss history, which
    diminish_srw_ss does, and adds its successor.  Deleting it with -*

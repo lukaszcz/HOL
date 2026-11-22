@@ -201,6 +201,43 @@ val _ =
        aconv attribute_before attribute_lhs andalso
        aconv attribute_after attribute_rhs)
 
+(* The bottom-up declarations reach aesop's simpset as a layer of their
+   own on top of what it derives from the rest of srw_ss: a declaration
+   adds that layer, and its retraction takes it away again. *)
+val aesop_bu_wrap_def =
+  Definition.new_definition
+    ("aesop_bu_wrap_def", ``aesop_bu_wrap (n:num) = (n = 0)``)
+
+val aesop_bu_view_def =
+  Definition.new_definition
+    ("aesop_bu_view_def", ``aesop_bu_view (n:num) = ~(n = 0)``)
+
+val aesop_bu_rule =
+  SelfTestTactical.prove
+    (``!n. ~aesop_bu_wrap n <=> aesop_bu_view n``,
+     Rewrite.REWRITE_TAC [aesop_bu_wrap_def, aesop_bu_view_def])
+
+val _ =
+  check
+    ("a [simp_bottom_up] declaration reaches the aesop simpset and " ^
+     "its retraction leaves it",
+     fn () =>
+       let
+         val name = "aesop_simp_bottom_up_test"
+         val subject = ``~aesop_bu_wrap v``
+         val undeclared = rewrite_rhs (aesopData.aesop_ss ()) subject
+         val _ = boolLib.save_thm (name ^ "[simp_bottom_up]", aesop_bu_rule)
+         val declared =
+           rewrite_rhs (aesopData.aesop_ss ()) subject
+           handle e => (clasimpLib.remove_simp_bottom_up name; raise e)
+         val _ = clasimpLib.remove_simp_bottom_up name
+         val retracted = rewrite_rhs (aesopData.aesop_ss ()) subject
+       in
+         aconv undeclared subject andalso
+         aconv declared ``aesop_bu_view v`` andalso
+         aconv retracted subject
+       end)
+
 val _ =
   check
     ("aesop simpset leaves conditional splitting to safe rules",

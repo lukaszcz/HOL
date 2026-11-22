@@ -39,6 +39,18 @@ sig
   (* The conditional-rewrite depth of this layer's simpsets. *)
   val cond_depth : int
 
+  (* A derivation from srw_ss that takes the bottom-up declarations as a
+     layer of their own, so that a declaration does not repeat it.
+     [base] is applied to the lift of srw_ss without that layer and
+     memoised on the rest of srw_ss; [layered derived add] is memoised on
+     the layer, and [add] puts the layer on a simpset.  Exported so that
+     the simpsets derived elsewhere in this layer (aesop) share it. *)
+  val layered_srw_derivation :
+    {base : simpExtLib.simpset -> 'b,
+     layered : 'b Susp.susp ->
+               (simpExtLib.simpset -> simpExtLib.simpset) -> 'a} ->
+    simpLib.simpset -> 'a
+
   val clasimp_ss : unit -> simpExtLib.simpset
 
   (* The simpset of that context's srw_ss and [arith] set; clasimp_ss ()

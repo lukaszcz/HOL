@@ -25,7 +25,7 @@ fun aesop_simp_rewrites_of ctxt =
    to search.  The unsafe solver is set per context, in aesop_derived_of
    below. *)
 fun aesop_base ss =
-  simpExtLib.lift_simpset ss
+  ss
   |> clasimpLib.weaken_cond_congruence
   |> simpExtLib.set_cond_depth clasimpLib.cond_depth
   |> (fn ss' => simpExtLib.++ (ss', simpExtLib.lift_ssfrag boolSimps.ETA_ss))
@@ -35,19 +35,22 @@ fun aesop_base ss =
    [arith] facts.  The srw_ss state keys the stored value through the
    derived-value mechanism, independently of clasimp's derivation, so
    restoring a context that changes srw_ss restores the exact simpset.
-   The rewrites, compared by identity (an immutable value a context
-   owns), and the facts, compared element-wise by identity, key a
-   single-entry memo inside it: a window that changes only [arith] or
+   The base is derived from srw_ss without its bottom-up declarations,
+   which go on top of it as a layer of their own
+   (clasimpLib.layered_srw_derivation), so a declaration does not derive
+   it again.  The rewrites, compared by identity (an immutable value a
+   context owns), and the facts, compared element-wise by identity, key a
+   single-entry memo on that: a window that changes only [arith] or
    [aesop_simp] replaces the entry, and an equal but new simpset is built
    after the restore.  Linarith is aesop's only unsafe solver, and
    set_unsafe_solvers replaces rather than appends: a solver installed in
    the base must not precede aesop's choice during safe normalisation's
    side-condition traversal. *)
-val {get = _, get_of = aesop_derived_of} =
-  BasicProvers.make_simpset_derived_value
-    "aesopData.aesop_ss"
-    (fn ss => fn _ =>
-       let val base = aesop_base ss
+val aesop_value_of_srw =
+  clasimpLib.layered_srw_derivation
+    {base = aesop_base,
+     layered = fn derived => fn add =>
+       let val base = Susp.delay (fn () => add (Susp.force derived))
        in
          memoUtil.keyed_memo
            (fn (rewrites, facts) => fn (rewrites', facts') =>
@@ -55,11 +58,17 @@ val {get = _, get_of = aesop_derived_of} =
               Lib.list_eq (Lib.curry Portable.pointer_eq) facts facts')
            (fn (rewrites, facts) =>
               (case rewrites of
-                   [] => base
-                 | _ => simpExtLib.++ (base, simpExtLib.rewrites rewrites))
+                   [] => Susp.force base
+                 | _ => simpExtLib.++ (Susp.force base,
+                                       simpExtLib.rewrites rewrites))
               |> simpExtLib.set_unsafe_solvers
                    [linarithLib.linarith_solver_with_facts facts])
-       end)
+       end}
+
+val {get = _, get_of = aesop_derived_of} =
+  BasicProvers.make_simpset_derived_value
+    "aesopData.aesop_ss"
+    (fn ss => fn _ => aesop_value_of_srw ss)
     (fn _ => simpExtLib.empty_ss)
 
 fun aesop_ss_of ctxt =
