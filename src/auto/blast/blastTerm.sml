@@ -483,16 +483,16 @@ struct
 
   fun varOccur v =
     let
-      fun occs _ [] = false
-        | occs level (term :: terms) =
-            occ level term orelse occs level terms
-      and occ level (Var w) =
-            v = w orelse
-            (case !w of
-                 NONE => false
-               | SOME term => occ level term)
-        | occ level (Skolem (_, args)) =
-            occs level (map Var args)
+      fun occ_vars _ [] = false
+        | occ_vars level (w :: ws) =
+            occ_var level w orelse occ_vars level ws
+      and occ_var level w =
+        v = w orelse
+        (case !w of
+             NONE => false
+           | SOME term => occ level term)
+      and occ level (Var w) = occ_var level w
+        | occ level (Skolem (_, args)) = occ_vars level args
         | occ level (Bound i) = level <= i
         | occ level (Abs (_, body)) = occ (level + 1) body
         | occ level (f $ x) = occ level x orelse occ level f

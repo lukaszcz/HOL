@@ -301,12 +301,14 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
       | positives (p :: ps) kept = negatives p ps neg kept
     and negatives p ps [] kept = positives ps kept
       | negatives p ps (n :: ns) kept =
-          let val row as Lineq (_, _, coeffs, just) = derive p n
+          let val row as Lineq (_, _, _, just) = derive p n
           in
-            (* Independent rows are already nontrivial.  The next
-               round would pick the first contradictory constant row. *)
-            if is_contradictory row andalso List.all ai_zero coeffs then
-              PairContradiction just
+            (* Independent rows are already nontrivial. Classify each
+               new row before indexing it, so constant rows need neither
+               a key nor another pass at the start of the next round. *)
+            if is_trivial_with work row then
+              if is_contradictory row then PairContradiction just
+              else negatives p ps ns kept
             else negatives p ps ns (keep (row, kept))
           end
   in
@@ -328,11 +330,13 @@ fun trace (work : work) message = traceUtil.trace (#level work) 2 message
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
    refute rather than the search giving up early. *)
-fun elim_rows_with (work : work) offset ineqs =
+fun elim_rows_with (work : work) offset nontrivial ineqs =
   let
     val (triv, nontriv) =
-      List.partition
-        (fn row => (candidate work; is_trivial_with work row)) ineqs
+      if nontrivial then ([], ineqs)
+      else
+        List.partition
+          (fn row => (candidate work; is_trivial_with work row)) ineqs
     fun report_pivot kind v =
       trace work (fn () => kind ^ " pivot " ^ Int.toString (offset + v))
     (* A leading pivot becomes zero in every remaining row and can be
@@ -362,7 +366,7 @@ fun elim_rows_with (work : work) offset ineqs =
                     dependent @ independent
               in
                 report_pivot "equation" v;
-                next drop_column others
+                next drop_column false others
               end
           | NONE =>
               let
@@ -386,7 +390,8 @@ fun elim_rows_with (work : work) offset ineqs =
                         report_pivot "inequality" v;
                         case eliminate_pairs work drop_column
                                independent pos neg of
-                            PairRows rows => next drop_column rows
+                            PairRows rows =>
+                              next drop_column (not (#metered work)) rows
                           | PairContradiction just => SOME just
                       end
               end
@@ -397,12 +402,12 @@ fun elim_rows_with (work : work) offset ineqs =
       | NONE =>
         (* The metered path retains the original classification charges. *)
         if #metered work andalso not (List.null triv) then
-          elim_rows_with work offset nontriv
+          elim_rows_with work offset false nontriv
         else if List.null nontriv then NONE
         else pivot ()
   end
 
-fun elim_with work rows = elim_rows_with work 0 rows
+fun elim_with work rows = elim_rows_with work 0 false rows
 
 fun scale m rat =
   let

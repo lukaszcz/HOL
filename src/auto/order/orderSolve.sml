@@ -17,9 +17,6 @@ fun candidate (work : work) = #candidate (#meter work) ()
 fun application (work : work) = #application (#meter work) ()
 fun normalization (work : work) = #normalization (#meter work) ()
 
-fun facts_of (work : work) = orderData.facts_of (#meter work)
-fun facts_of_all (work : work) = orderData.facts_of_all (#meter work)
-
 (* A strict step is taken apart on the way in: [STRORD R x y] is [R x y]
    together with [x <> y], and nothing else about it is used.  So the
    graph carries weak edges only, chaining is transitivity alone, and the
@@ -53,12 +50,17 @@ fun search work f [] = NONE
 fun expand work (context : orderData.context) facts =
   let
     val {reflexive, ...} = #axioms context
-    fun weak_of_equal reflexivity equality =
+    val intro =
+      Option.map
+        (fn theorem => Portable.HOLSusp.delay
+          (fn () => MATCH_MP order_weak_of_equal theorem))
+        reflexive
+    fun weak_of_equal introduce equality =
       derive_path work
         (fn () =>
           let val theorem = equality () in
             application work;
-            MATCH_MP (MATCH_MP order_weak_of_equal reflexivity) theorem
+            MATCH_MP (Portable.HOLSusp.force introduce) theorem
           end)
     fun edge (x, y) path = {source = x, target = y, path = path}
     fun one (fact : orderData.fact, (edges, equalities, distinctions)) =
@@ -84,7 +86,7 @@ fun expand work (context : orderData.context) facts =
           | orderData.Equal (x, y) =>
               let
                 val edges' =
-                  case reflexive of
+                  case intro of
                       NONE => edges
                     | SOME r =>
                         let
@@ -446,7 +448,8 @@ fun attempt work context theorems term =
     val _ = normalization work
     val equation = orderData.reduce context term
     val target = rhs (concl equation)
-    val supplied = facts_of_all work context theorems
+    val read = orderData.facts_of (#meter work) context
+    val supplied = List.concat (List.map read theorems)
     fun carry theorem = EQ_MP (SYM equation) theorem
   in
     case bounded_graph work (expand work context supplied) of
@@ -462,8 +465,7 @@ fun attempt work context theorems term =
                          SOME body =>
                            (body, fn r => NOT_INTRO (DISCH body r))
                        | NONE => (mk_neg target, fn r => CCONTR target r)
-                   val negated =
-                     facts_of work context (ASSUME assumption)
+                   val negated = read (ASSUME assumption)
                    val refutation_graph =
                      case #max_nodes work of
                          (* Keep the order of charges in the metered path. *)

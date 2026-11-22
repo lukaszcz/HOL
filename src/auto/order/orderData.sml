@@ -241,54 +241,67 @@ fun has_order_axiom theorems =
 fun negated_rule_with meter rule {reflexive, total, ...} =
   case (reflexive, total) of
       (SOME r, SOME t) =>
-        (application meter; SOME (MATCH_MP (MATCH_MP rule r) t))
-    | _ => NONE
+        let
+          val pending =
+            Portable.HOLSusp.delay (fn () => MATCH_MP (MATCH_MP rule r) t)
+        in
+          (* Each use retains its original charge and cutoff point. *)
+          fn () => (application meter; SOME (Portable.HOLSusp.force pending))
+        end
+    | _ => (fn () => NONE)
 
-fun classify_with meter (context : context) theorem =
+fun classify_with meter (context : context) =
   let
-    val relation = #relation context
-    val (domain, _) = Type.dom_rng (type_of relation)
-    val statement = concl theorem
-    fun at_domain tm = Type.compare (type_of tm, domain) = EQUAL
-    fun equation tm =
-      case Lib.total dest_eq tm of
-          SOME (left, right) =>
-            if at_domain left then SOME (left, right) else NONE
-        | NONE => NONE
+    val not_weak = negated_rule_with meter order_not_weak (#axioms context)
+    val not_strict = negated_rule_with meter order_not_strict (#axioms context)
+    fun classify theorem =
+      let
+        val relation = #relation context
+        val (domain, _) = Type.dom_rng (type_of relation)
+        val statement = concl theorem
+        fun at_domain tm = Type.compare (type_of tm, domain) = EQUAL
+        fun equation tm =
+          case Lib.total dest_eq tm of
+              SOME (left, right) =>
+                if at_domain left then SOME (left, right) else NONE
+            | NONE => NONE
+      in
+        case dest_weak relation statement of
+            SOME (x, y) => SOME {literal = Weak (x, y), theorem = theorem}
+          | NONE =>
+        case dest_strict relation statement of
+            SOME (x, y) => SOME {literal = Strict (x, y), theorem = theorem}
+          | NONE =>
+        case equation statement of
+            SOME (x, y) => SOME {literal = Equal (x, y), theorem = theorem}
+          | NONE =>
+        case Lib.total dest_neg statement of
+            NONE => NONE
+          | SOME body =>
+        case dest_weak relation body of
+            SOME (x, y) =>
+              (case not_weak () of
+                   SOME rule =>
+                     (application meter;
+                      SOME {literal = Strict (y, x),
+                            theorem = MATCH_MP rule theorem})
+                 | NONE => NONE)
+          | NONE =>
+        case dest_strict relation body of
+            SOME (x, y) =>
+              (case not_strict () of
+                   SOME rule =>
+                     (application meter;
+                      SOME {literal = Weak (y, x),
+                            theorem = MATCH_MP rule theorem})
+                 | NONE => NONE)
+          | NONE =>
+        case equation body of
+            SOME (x, y) => SOME {literal = Distinct (x, y), theorem = theorem}
+          | NONE => NONE
+      end
   in
-    case dest_weak relation statement of
-        SOME (x, y) => SOME {literal = Weak (x, y), theorem = theorem}
-      | NONE =>
-    case dest_strict relation statement of
-        SOME (x, y) => SOME {literal = Strict (x, y), theorem = theorem}
-      | NONE =>
-    case equation statement of
-        SOME (x, y) => SOME {literal = Equal (x, y), theorem = theorem}
-      | NONE =>
-    case Lib.total dest_neg statement of
-        NONE => NONE
-      | SOME body =>
-    case dest_weak relation body of
-        SOME (x, y) =>
-          (case negated_rule_with meter order_not_weak (#axioms context) of
-               SOME rule =>
-                 (application meter;
-                  SOME {literal = Strict (y, x),
-                        theorem = MATCH_MP rule theorem})
-             | NONE => NONE)
-      | NONE =>
-    case dest_strict relation body of
-        SOME (x, y) =>
-          (case negated_rule_with meter order_not_strict (#axioms context) of
-               SOME rule =>
-                 (application meter;
-                  SOME {literal = Weak (y, x),
-                        theorem = MATCH_MP rule theorem})
-             | NONE => NONE)
-      | NONE =>
-    case equation body of
-        SOME (x, y) => SOME {literal = Distinct (x, y), theorem = theorem}
-      | NONE => NONE
+    classify
   end
 
 fun literal_of_term (context : context) tm =
@@ -334,11 +347,16 @@ fun reduce (context : context) tm = Conv.QCONV (#reduction context) tm
 
 fun normalise context theorem = CONV_RULE (reduce context) theorem
 
-fun facts_of meter context theorem =
-  (normalization meter;
-   List.mapPartial
-     (fn atom => (candidate meter; classify_with meter context atom))
-     (conjuncts_with meter (normalise context theorem)))
+fun facts_of meter context =
+  let
+    val classify = classify_with meter context
+  in
+    fn theorem =>
+      (normalization meter;
+       List.mapPartial
+         (fn atom => (candidate meter; classify atom))
+         (conjuncts_with meter (normalise context theorem)))
+  end
 
 fun facts_of_all meter context theorems =
   List.concat (List.map (facts_of meter context) theorems)

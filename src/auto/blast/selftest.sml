@@ -314,6 +314,23 @@ val _ =
 
 val _ =
   test
+    ("occurs check follows assigned Skolem dependencies under binders",
+     fn () =>
+       let
+         val target = ref NONE
+         val alias = ref (SOME (Var target))
+         val binder = ref (SOME (Bound 0))
+         val name = "occurs"
+         val state = newState ()
+       in
+         not (unify state ([], Var target, Skolem (name, [alias])))
+         andalso unassigned target andalso trailSize state = 0
+         andalso varOccur target (Skolem (name, [binder]))
+         andalso not (varOccur target (Abs ("x", Skolem (name, [binder]))))
+       end)
+
+val _ =
+  test
     ("rule-local variables are assigned off-trail in preference",
      fn () =>
        let

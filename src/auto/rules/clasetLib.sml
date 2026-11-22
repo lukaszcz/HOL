@@ -1591,7 +1591,7 @@ fun matching_pairs_with charge goal_terms patterns =
         patterns)
   end
 
-fun matching_pairs_indexed goal_terms =
+fun match_indexed_sites goal_terms =
   let
     (* Prepend from the right to preserve the original order within a head. *)
     val sites =
@@ -1607,17 +1607,19 @@ fun matching_pairs_indexed goal_terms =
               (map (matchable_subterms_with (fn _ => ()) (fn _ => true))
                  goal_terms)))
   in
-    fn [] => []
-     | patterns =>
-         let val index = Portable.HOLSusp.force sites
-         in
-           List.concat
-             (map
-               (fn (head, pattern) =>
-                 map (fn site => (pattern, site))
-                   (Option.getOpt (Redblackmap.peek (index, head), [])))
-               patterns)
-         end
+    (* Match within each bucket without collecting the candidate pairs. *)
+    fn match =>
+      fn [] => []
+       | patterns =>
+           let val index = Portable.HOLSusp.force sites
+           in
+             List.concat
+               (map
+                 (fn (head, pattern) =>
+                   List.mapPartial (fn site => match (pattern, site))
+                     (Option.getOpt (Redblackmap.peek (index, head), [])))
+                 patterns)
+           end
   end
 
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
@@ -1817,7 +1819,7 @@ fun distinct_type_substitutions substitutions =
   end
 
 fun polymorphic_instances_with charge prepare_substitutions
-      get_goal_variables matching_pairs fact original_types =
+      get_goal_variables match_sites fact original_types =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
     val specialized =
@@ -1897,8 +1899,7 @@ fun polymorphic_instances_with charge prepare_substitutions
                   else NONE
                 end)
         val substitutions =
-          prepare_substitutions
-            (List.mapPartial instance_of (matching_pairs patterns))
+          prepare_substitutions (match_sites instance_of patterns)
         fun add_instance (types, kept) =
           let
             val _ = charge searchBudget.Normalization
@@ -1926,13 +1927,13 @@ fun polymorphic_instances_with charge prepare_substitutions
   end
 
 fun goal_type_instances_with charge prepare_substitutions
-      get_goal_variables matching_pairs fact =
+      get_goal_variables match_sites fact =
   (charge searchBudget.Normalization;
    case type_vars_in_term (Thm.concl fact) of
        [] => [fact]
      | original_types =>
          polymorphic_instances_with charge prepare_substitutions
-           get_goal_variables matching_pairs fact original_types)
+           get_goal_variables match_sites fact original_types)
 
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
    back-to-front to leave them in declaration order.  Order is observable:
@@ -1947,20 +1948,23 @@ fun insert_facts_tac_with budget facts =
        val terms = target :: assumptions
        val variables = Portable.HOLSusp.delay (fn () => goal_variables terms)
        fun get_goal_variables () = Portable.HOLSusp.force variables
-       val (charge, matching_pairs, prepare_substitutions) =
+       val (charge, match_sites, prepare_substitutions) =
          case budget of
              NONE =>
-               (fn _ => (), matching_pairs_indexed terms,
+               (fn _ => (), match_indexed_sites terms,
                 distinct_type_substitutions)
            | SOME owned =>
                let val charge = searchBudget.charge owned
-               in (charge, matching_pairs_with charge terms, Lib.I) end
+                   fun match_sites match patterns =
+                     List.mapPartial match
+                       (matching_pairs_with charge terms patterns)
+               in (charge, match_sites, Lib.I) end
        val instances =
          List.rev
            (List.concat
              (map
                (goal_type_instances_with charge prepare_substitutions
-                 get_goal_variables matching_pairs)
+                 get_goal_variables match_sites)
                facts))
        fun assume fact inner ctxt =
          (charge searchBudget.Application;

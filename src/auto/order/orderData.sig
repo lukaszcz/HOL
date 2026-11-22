@@ -63,6 +63,7 @@ sig
   val literal_of_term : context -> term -> literal option
   val is_literal : context -> term -> bool
 
+  (* A reader shares derived rules across the theorems it reads. *)
   val facts_of : meter -> context -> thm -> fact list
   val facts_of_all : meter -> context -> thm list -> fact list
 end

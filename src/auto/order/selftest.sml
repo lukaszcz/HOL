@@ -54,6 +54,16 @@ val long_order_facts =
       Thm.ASSUME (long_order_edge index (index + 1)))
 val long_order_target = long_order_edge 0 51
 
+fun count_primitives f x =
+  let
+    val meter = Count.mk_meter ()
+    val result = f x handle exn => (Count.counting_thms false; raise exn)
+    val {prims, ...} = Count.read meter
+    val _ = Count.counting_thms false
+  in
+    (result, prims)
+  end
+
 fun unrelated_edges_unproved edge =
   let
     val target = long_order_edge 0 1
@@ -65,15 +75,7 @@ fun unrelated_edges_unproved edge =
             (edge (List.nth (long_order_nodes, 2 * i + 2),
                    List.nth (long_order_nodes, 2 * i + 3))))
     fun count facts =
-      let
-        val meter = Count.mk_meter ()
-        val theorem = orderSolve.prove_with facts target
-          handle exn => (Count.counting_thms false; raise exn)
-        val {prims, ...} = Count.read meter
-        val _ = Count.counting_thms false
-      in
-        (theorem, prims)
-      end
+      count_primitives (fn facts => orderSolve.prove_with facts target) facts
     val (_, bare) = count direct
     val (theorem, loaded) = count (direct @ unrelated)
   in
@@ -100,6 +102,59 @@ val _ =
        in
          unrelated_edges_unproved
            (fn (x, y) => Term.list_mk_comb (strict, [x, y]))
+       end)
+
+val _ =
+  check
+    ("negative order facts share the instantiated totality rules",
+     fn () =>
+       let
+         val [context] = orderData.contexts searchBudget.free_charger
+           [Thm.ASSUME long_order_axiom]
+         val strict =
+           Term.mk_comb
+             (Term.prim_mk_const {Thy = "relation", Name = "STRORD"},
+              long_order_relation)
+         fun fact i =
+           let
+             val edge =
+               if i mod 2 = 0 then long_order_edge i (i + 1)
+               else Term.list_mk_comb
+                 (strict, [List.nth (long_order_nodes, i),
+                           List.nth (long_order_nodes, i + 1)])
+           in
+             Thm.ASSUME (boolSyntax.mk_neg edge)
+           end
+         val facts = List.tabulate (30, fact)
+         fun count read =
+           count_primitives
+             (fn read => map (fn fact : orderData.fact => #theorem fact)
+               (List.concat (map read facts)))
+             read
+         val budget = searchBudget.unbounded ()
+         val (ordinary, cached) =
+           count (orderData.facts_of (searchBudget.charger budget) context)
+         fun read_fresh theorem =
+           orderData.facts_of searchBudget.free_charger context theorem
+         val (reference, uncached) = count read_fresh
+         fun same (left, right) =
+           Term.aconv (Thm.concl left) (Thm.concl right) andalso
+           Lib.list_eq Term.aconv (Thm.hyp left) (Thm.hyp right)
+         val {applications, candidates, normalization} =
+           searchBudget.usage budget
+         val limited =
+           searchBudget.create
+             {applications = SOME 4, candidates = NONE, normalization = NONE}
+         val cut_on_cached_rule =
+           (ignore (orderData.facts_of_all (searchBudget.charger limited)
+              context facts); false)
+           handle searchBudget.LimitReached (searchBudget.Application, usage) =>
+             #applications usage = 4 andalso #candidates usage = 3
+       in
+         length ordinary = length facts andalso
+         ListPair.allEq same (ordinary, reference) andalso cached < uncached
+         andalso applications = 60 andalso candidates = 30
+         andalso normalization = 60 andalso cut_on_cached_rule
        end)
 
 val _ =

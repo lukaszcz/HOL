@@ -453,7 +453,20 @@ fun defined_head theorem =
   end
   handle HOL_ERR _ => NONE
 
-type comparison_statement = term * (unit -> term)
+type 'a susp = 'a Portable.HOLSusp.susp
+type symmetry_term = term * term susp
+type stripped_reading = term option * symmetry_term
+type premise_groups = symmetry_term list susp list
+
+datatype citation_reading =
+    WholeCitation
+  | CitationPart of term option * stripped_reading susp
+
+type prepared_citation =
+  {statement : term, head : term option,
+   whole : stripped_reading susp,
+   readings : (premise_groups * citation_reading) seq.seq}
+type comparison_statement = prepared_citation * (unit -> term)
 
 (* Each ambient sweep compares the same goal against many theorems. *)
 val goal_comparison :
@@ -554,53 +567,85 @@ fun contentless term =
    loses it.  Moving a prefix out past a premise is an equivalence, so
    this adds readings without admitting any statement the rule does not
    make. *)
+fun prepare_symmetry normal_form term =
+  (term, Portable.HOLSusp.delay (fn () => normal_form term))
+
+(* PRE cannot be used as a rigid head because its symmetry normal form
+   changes its head. *)
+fun rigid_head term =
+  if Term.is_comb term then rigid_head (Term.rator term)
+  else if Term.is_const term andalso not (Term.same_const term predecessor)
+  then SOME term
+  else NONE
+
+fun prepare_stripped term =
+  (rigid_head term, prepare_symmetry statement_symmetry_normal_form term)
+
+fun prepare_normal term =
+  prepare_stripped (strip_normal_truth_equivalence term)
+
+fun statement_parts term =
+  boolSyntax.strip_imp_only (forall_body term)
+
+fun prepare_citation statement : prepared_citation =
+  let
+    open Portable.HOLSusp
+    fun normal_reading term =
+      delay (fn () => prepare_normal (beta_eta_normalise term))
+
+    (* The lazy traversal preserves conjunct and nested-prefix order and
+       stops at the first matching reading. Premises are shared across
+       conjuncts and prepared only once a conclusion matches. *)
+    fun read inherited term rest =
+      let
+        val (premises, conclusion) = statement_parts term
+        val inherited =
+          if null premises then inherited
+          else delay (fn () =>
+            map (prepare_symmetry statement_normal_form) premises) ::
+            inherited
+        val rest =
+          if not (null premises) andalso boolSyntax.is_forall conclusion
+          then seq.delay (fn () => read inherited conclusion rest)
+          else rest
+      in
+        case total boolSyntax.dest_conj conclusion of
+            SOME (left, right) =>
+              read inherited left
+                (seq.delay (fn () => read inherited right rest))
+          | NONE =>
+              let
+                val reading =
+                  if Portable.pointer_eq (conclusion, statement)
+                  then WholeCitation
+                  else CitationPart
+                    (rigid_head conclusion, normal_reading conclusion)
+              in
+                seq.cons (inherited, reading) rest
+              end
+      end
+  in
+    {statement = statement, head = rigid_head statement,
+     whole = normal_reading statement,
+     readings = seq.delay (fn () => read [] statement seq.empty)}
+  end
+
 fun prepare_statement_comparison goal =
   let
+    open Portable.HOLSusp
     val goal = strip_truth_equivalence goal
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
-    fun prepare normal_form term =
-      (term, Portable.HOLSusp.delay (fn () => normal_form term))
-    (* Stripping a truth equivalence first reduces beta and eta redexes
-       throughout the term and then selects at most a subterm. *)
-    fun rigid_head term =
-      if Term.is_comb term then rigid_head (Term.rator term)
-      else if Term.is_const term andalso not (Term.same_const term predecessor)
-      then SOME term
-      else NONE
-    fun prepare_stripped term =
-      (rigid_head term, prepare statement_symmetry_normal_form term)
-    fun prepare_normal term =
-      prepare_stripped (strip_normal_truth_equivalence term)
     fun same (left, left_normal) (right, right_normal) =
       Term.aconv left right orelse variants left right orelse
-      Term.aconv (Portable.HOLSusp.force left_normal)
-                 (Portable.HOLSusp.force right_normal)
-    (* Mutual matching preserves rigid heads. The symmetry normal form
-       also preserves them here, after beta and eta reduction and with PRE
-       excluded because its normalization can change the head. *)
+      Term.aconv (force left_normal) (force right_normal)
+    (* Mutual matching and the symmetry normal form preserve rigid heads
+       here, after beta and eta reduction and with PRE excluded. *)
     fun same_stripped (left_head, left) (right_head, right) =
       (case (left_head, right_head) of
            (SOME a, SOME b) => Term.same_const a b
          | _ => true) andalso same left right
-    fun parts term = boolSyntax.strip_imp_only (forall_body term)
-    (* Keep premise groups shared across the conjuncts and check them in
-       outer-to-inner order only if the conclusion matches. *)
-    fun reading_exists matches inherited term =
-      let
-        val (premises, conclusion) = parts term
-        val inherited =
-          if null premises then inherited else premises :: inherited
-      in
-        (case total boolSyntax.dest_conj conclusion of
-             SOME (left, right) =>
-               reading_exists matches inherited left orelse
-               reading_exists matches inherited right
-           | NONE => matches (inherited, conclusion)) orelse
-        (not (null premises) andalso boolSyntax.is_forall conclusion andalso
-         reading_exists matches inherited conclusion)
-      end
-    val (goal_premises, goal_body) = parts goal
+    val (goal_premises, goal_body) = statement_parts goal
     val whole = prepare_stripped goal
     (* Stripping the prefix and premises preserves the beta-eta normal
        form obtained for the whole goal. *)
@@ -608,10 +653,8 @@ fun prepare_statement_comparison goal =
     val distinct_readings = not (Portable.pointer_eq (stripped_body, goal))
     val conclusion =
       if distinct_readings then prepare_stripped stripped_body else whole
-    val premises = map (prepare statement_normal_form) goal_premises
-    fun covered term =
-      let val left = prepare statement_normal_form term
-      in List.exists (same left) premises end
+    val premises = map (prepare_symmetry statement_normal_form) goal_premises
+    fun covered premise = List.exists (same premise) premises
     (* Beta and eta preserve a rigid head. An equality can expose a
        different head when a truth equivalence is stripped. *)
     fun different_head raw (expected, _) =
@@ -621,56 +664,35 @@ fun prepare_statement_comparison goal =
             not (Term.same_const a b)
         | _ => false
   in
-    fn statement =>
+    fn ({head, whole = citation, readings, ...} : prepared_citation) =>
       let
-        val statement_head = rigid_head statement
-        val whole_possible = not (different_head statement_head whole)
-        val prepared =
-          Portable.HOLSusp.delay (fn () =>
-            let val normal = beta_eta_normalise statement
-            in
-              (prepare_normal normal, Portable.pointer_eq (normal, statement))
-            end)
-        fun whole_reading () = #1 (Portable.HOLSusp.force prepared)
-
+        val whole_possible = not (different_head head whole)
         fun all_covered [] = true
           | all_covered (premises :: earlier) =
-              all_covered earlier andalso List.all covered premises
-        fun matches (premises, term) =
-          (* A reading that kept the whole citation already failed the
-             whole-goal comparison. Use exact identity since stripping a
-             quantifier retains its binder name. *)
-          if Portable.pointer_eq (term, statement) then
-            distinct_readings andalso
-            not (different_head statement_head conclusion) andalso
-            same_stripped (whole_reading ()) conclusion andalso
-            all_covered premises
-          else
-            let val head = rigid_head term
-            in
+              all_covered earlier andalso List.all covered (force premises)
+        fun matches (premises, WholeCitation) =
+              distinct_readings andalso
+              not (different_head head conclusion) andalso
+              same_stripped (force citation) conclusion andalso
+              all_covered premises
+          | matches (premises, CitationPart (head, prepared)) =
               if different_head head whole andalso
                  (not distinct_readings orelse different_head head conclusion)
               then false
               else
-                let
-                  (* A reading of an unchanged statement only removes
-                     syntax. If the whole comparison skipped normalization,
-                     normalize the reading on its own. *)
-                  val unchanged =
-                    whole_possible andalso
-                    #2 (Portable.HOLSusp.force prepared)
-                  val left =
-                    prepare_normal
-                      (if unchanged then term else beta_eta_normalise term)
-                in
+                let val left = force prepared in
                   same_stripped left whole orelse
                   (distinct_readings andalso
                    same_stripped left conclusion andalso all_covered premises)
                 end
-            end
+        fun matches_reading readings =
+          case seq.cases readings of
+              NONE => false
+            | SOME (reading, rest) =>
+                matches reading orelse matches_reading rest
       in
-        (whole_possible andalso same_stripped (whole_reading ()) whole) orelse
-        reading_exists matches [] statement
+        (whole_possible andalso same_stripped (force citation) whole) orelse
+        matches_reading readings
       end
   end
 
@@ -685,17 +707,20 @@ fun prepare_goal_comparison goal =
                  else prepare_statement_comparison term)
         end)
   in
-    fn (statement, expand_statement) =>
-      ordinary statement orelse
+    fn (citation, expand_statement) =>
+      ordinary citation orelse
       (not (List.null (!definitional_context)) andalso
        let
          val unfolded_statement = expand_statement ()
+         val statement = #statement citation
          val (unfolded_goal, compare) = Portable.HOLSusp.force expanded
        in
          not (Term.aconv unfolded_statement statement andalso
               Term.aconv unfolded_goal goal) andalso
          not (contentless unfolded_statement) andalso
-         compare unfolded_statement
+         compare
+           (if Portable.pointer_eq (unfolded_statement, statement)
+            then citation else prepare_citation unfolded_statement)
        end)
   end
 
@@ -716,7 +741,8 @@ fun compare_with_goal goal =
 fun theorem_is_goal goal theorem =
   let val statement = Thm.concl theorem
   in
-    compare_with_goal goal (statement, fn () => unfolded statement)
+    compare_with_goal goal
+      (prepare_citation statement, fn () => unfolded statement)
   end
 
 fun withheld_primitives goal =
@@ -858,7 +884,7 @@ fun ambient_statement heads theorem : comparison_statement =
     val mentions =
       Portable.HOLSusp.delay (fn () => mentions_definition heads statement)
   in
-    (statement, fn () =>
+    (prepare_citation statement, fn () =>
       if Portable.HOLSusp.force mentions then unfold statement else statement)
   end
 

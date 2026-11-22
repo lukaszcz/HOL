@@ -435,22 +435,34 @@ fun add_support_path lookup insert path required =
 
 fun select_copy_supports_with add_path tree goals initial_required =
   let
-    fun choose _ [] _ = NONE
-      | choose original (copy :: rest) (goals, required) =
-          (case Option.mapPartial (fn path => add_path path required)
-                  (copy_support_path tree original copy) of
-               SOME required' =>
-                 (case support goals required' of
-                      SOME result => SOME result
-                    | NONE => choose original rest (goals, required))
-             | NONE => choose original rest (goals, required))
-    and support [] required = SOME required
-      | support (id :: rest) required =
-          if independently_proved tree (goal tree id) then support rest required
+    fun choose paths support required =
+      case seq.cases paths of
+          NONE => NONE
+        | SOME (path, rest) =>
+            (case add_path path required of
+                 NONE => choose rest support required
+               | SOME required' =>
+                   (case support required' of
+                        SOME result => SOME result
+                      | NONE => choose rest support required))
+
+    (* Backtracking changes the required applications. The available
+       paths depend only on the tree, so share each lazy path sequence and
+       its continuation across retries. *)
+    fun prepare [] = SOME
+      | prepare (id :: rest) =
+          if independently_proved tree (goal tree id) then prepare rest
           else
-            choose id (List.rev (reverse_copy_goals tree id)) (rest, required)
+            let
+              val paths = seq.mapPartial (copy_support_path tree id)
+                (seq.fromList (List.rev (reverse_copy_goals tree id)))
+              val support = Portable.HOLSusp.delay (fn () => prepare rest)
+            in
+              choose paths
+                (fn required => Portable.HOLSusp.force support required)
+            end
   in
-    support goals initial_required
+    prepare goals initial_required
   end
 
 fun select_copy_supports tree =

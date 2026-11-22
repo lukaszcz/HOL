@@ -30,8 +30,8 @@ datatype node =
               the node's goals and store, and every rule query of an
               expansion asks for both, so each is computed once per
               position. *)
-           renders : (int * (term list * term)) list ref,
-           spellings : (int * spellings) list ref}
+           renders : (term list * term) Inttab.table ref,
+           spellings : spellings Inttab.table ref}
 
 fun norm_term store tm =
   let
@@ -150,8 +150,8 @@ fun check_marks goal_count marks =
 fun make_node goals goal_count store replay level paths marks avoids =
   Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
         size = ref NONE, level = level, paths = paths, marks = marks,
-        avoids = avoids, rendering = ref NONE, renders = ref [],
-        spellings = ref []}
+        avoids = avoids, rendering = ref NONE, renders = ref Inttab.empty,
+        spellings = ref Inttab.empty}
 
 fun root_paths goals =
   let
@@ -476,22 +476,22 @@ fun compare (left, right) =
   | order => order
 
 fun render (node as Node {renders, ...}) pos =
-  case List.find (fn (cached, _) => cached = pos) (!renders) of
-      SOME (_, rendered) => rendered
+  case Inttab.lookup (!renders) pos of
+      SOME rendered => rendered
     | NONE =>
         let
           (* Unbound engine metavariables survive normalization as their
              marked frees.  HOL4 tactics consequently see rigid variables,
              not holes. *)
           val rendered = render_cgoal node pos (goal_at node pos)
-          val _ = renders := (pos, rendered) :: !renders
+          val _ = renders := Inttab.update (pos, rendered) (!renders)
         in
           rendered
         end
 
 fun lookup_spellings (node as Node {spellings, ...}) pos =
-  case List.find (fn (cached, _) => cached = pos) (!spellings) of
-      SOME (_, forms) => forms
+  case Inttab.lookup (!spellings) pos of
+      SOME forms => forms
     | NONE =>
         let
           val (asl, w) = render node pos
@@ -502,7 +502,7 @@ fun lookup_spellings (node as Node {spellings, ...}) pos =
                spelling clasetNorm.crossed_conv tm,
                spelling clasetNorm.applied_conv tm]
           val computed = {conclusion = forms w, assumptions = map forms asl}
-          val _ = spellings := (pos, computed) :: !spellings
+          val _ = spellings := Inttab.update (pos, computed) (!spellings)
         in
           computed
         end

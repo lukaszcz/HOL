@@ -4562,10 +4562,12 @@ val joined_fixture_result =
         val repeated_measured = inspect "REPEATED_SITES" repeated_sites
         val repeated_ordinary =
           shapes (inserted clasetLib.INSERT_FACTS_TAC fact repeated_sites)
-        val alternatives =
-          inspect "ALTERNATIVES"
-            [``join_p (0:num)``, ``join_p T``, ``join_q T``,
-             ``join_r ([]:num list)``]
+        val alternative_sites =
+          [``join_p (0:num)``, ``join_p T``, ``join_q T``,
+           ``join_r ([]:num list)``]
+        val alternatives = inspect "ALTERNATIVES" alternative_sites
+        val alternatives_ordinary =
+          shapes (inserted clasetLib.INSERT_FACTS_TAC fact alternative_sites)
         val conflict =
           inspect "CONFLICT" [``join_p (0:num)``, ``join_p T``]
         val binders = fst (strip_forall (concl fact))
@@ -4606,6 +4608,7 @@ val joined_fixture_result =
               ["bool", "fresh", "fresh"],
               ["num", "bool", "num list"],
               ["bool", "bool", "num list"]] andalso
+           alternatives_ordinary = alternatives andalso
            repeated_ordinary = three andalso repeated_measured = three andalso
            two = renamed_two andalso cutoff
       end);
