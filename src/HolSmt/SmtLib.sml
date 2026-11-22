@@ -6965,17 +6965,19 @@ local
       Conv.EVERY_CONV [Conv.DEPTH_CONV Thm.BETA_CONV,
         Rewrite.PURE_REWRITE_CONV [integerTheory.NUM_OF_INT],
         Conv.DEPTH_CONV Drule.ETA_CONV]
-      (Term.subst [g |-> unlift] lift)
+      (Term.subst [{redex = g, residue = unlift}] lift)
     val _ = Term.term_eq (boolSyntax.rhs (Thm.concl round_trip)) f orelse
       raise ERR "num_args_to_int_once_conv" "round trip"
     val v = Term.genvar (Term.type_of f)
-    val template = Term.subst [f |-> v] body
-    val lifted_body = Term.subst [f |-> lift] body
+    val template = Term.subst [{redex = f, residue = v}] body
+    val lifted_body = Term.subst [{redex = f, residue = lift}] body
     val tm' = (if universal then boolSyntax.mk_forall
       else boolSyntax.mk_exists) (g, lifted_body)
     (* body[lift[unlift/g]/f] |- body and back *)
-    fun unlift_rule th = Thm.SUBST [v |-> round_trip] template th
-    fun lift_rule th = Thm.SUBST [v |-> Thm.SYM round_trip] template th
+    fun unlift_rule th =
+      Thm.SUBST [{redex = v, residue = round_trip}] template th
+    fun lift_rule th =
+      Thm.SUBST [{redex = v, residue = Thm.SYM round_trip}] template th
     val (forward, backward) =
       if universal then
         (Thm.GEN g (Thm.SPEC lift (Thm.ASSUME tm)),
