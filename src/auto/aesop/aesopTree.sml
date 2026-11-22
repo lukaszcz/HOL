@@ -716,37 +716,73 @@ fun assigned_between parent_store child_store =
 
 fun components children =
   let
-    (* Every remaining goal missed the earlier layers. Compare it only
-       with the dependencies of the layer just added. *)
-    fun close selected frontier remaining =
+    fun dependent (child : goal) = not (dependencies_empty (#deps child))
+    fun singleton_groups children = map (fn child => [child]) children
+    fun indexed children =
       let
-        val (added, untouched) =
-          Lib.partition
-            (fn (child : goal) => dependencies_overlap frontier (#deps child))
-            remaining
+        val vertices = map (fn child => (child, ref false)) children
+        val shared = ref false
+        fun add_to_index vertex (dependency, table) =
+          case Redblackmap.peek (table, dependency) of
+              NONE => Redblackmap.insert (table, dependency, ref [vertex])
+            | SOME bucket =>
+                (shared := true; bucket := vertex :: !bucket; table)
+        fun index_child (vertex as (child : goal, _), (terms, types)) =
+          (HOLset.foldl (add_to_index vertex) terms (#terms (#deps child)),
+           HOLset.foldl (add_to_index vertex) types (#types (#deps child)))
+        val (terms, types) =
+          List.foldl index_child
+            (Redblackmap.mkDict clasetMeta.meta_compare,
+             Redblackmap.mkDict Type.compare) vertices
+
+        fun discover ((child, reached), layer) =
+          if !reached then layer else (reached := true; child :: layer)
+        fun consume index (dependency, layer) =
+          case Redblackmap.peek (index, dependency) of
+              NONE => layer
+            | SOME bucket =>
+                let
+                  val neighbours = !bucket
+                  val _ = bucket := []
+                in
+                  List.foldl discover layer neighbours
+                end
+        fun expand (child : goal, layer) =
+          HOLset.foldl (consume types)
+            (HOLset.foldl (consume terms) layer (#terms (#deps child)))
+            (#types (#deps child))
+
+        (* Process each metavariable's bucket once. Fresh goal IDs ascend
+           in insertion order, so sorting each new layer by ID preserves
+           the order in which the goals were installed. *)
+        fun compare_ids (left : goal, right : goal) =
+          Int.compare (#id left, #id right)
+        fun close [] selected = List.rev selected
+          | close layer selected =
+              close
+                (Listsort.sort compare_ids (List.foldl expand [] layer))
+                (List.revAppend (layer, selected))
+        fun partition [] groups = List.rev groups
+          | partition ((child : goal, reached) :: rest) groups =
+              if not (dependent child) then
+                partition rest ([child] :: groups)
+              else if !reached then partition rest groups
+              else
+                (reached := true;
+                 partition rest (close [child] [] :: groups))
       in
-        if null added then (List.rev selected, untouched)
-        else
-          let
-            fun collect ((child : goal), (selected, combined)) =
-              (child :: selected, dependencies_union combined (#deps child))
-            val (selected', frontier') =
-              List.foldl collect (selected, empty_dependencies ()) added
-          in
-            close selected' frontier' untouched
-          end
+        if !shared then partition vertices []
+        else singleton_groups children
       end
 
-    fun partition [] groups = List.rev groups
-      | partition ((child : goal) :: rest) groups =
-          if dependencies_empty (#deps child) then
-            partition rest ([child] :: groups)
-          else
-            let val (group, remaining) = close [child] (#deps child) rest
-            in partition remaining (group :: groups)
-            end
+    (* Zero or one dependent child cannot share a metavariable. *)
+    fun can_share [] = false
+      | can_share (child :: rest) =
+          if dependent child then List.exists dependent rest
+          else can_share rest
   in
-    partition children []
+    if can_share children then indexed children
+    else singleton_groups children
   end
 
 fun goal_with_cluster cluster_id (goal : goal) : goal =

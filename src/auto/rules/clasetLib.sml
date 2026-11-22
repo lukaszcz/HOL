@@ -68,14 +68,18 @@ val empty_cs =
 
 fun rule_brl kind th = (is_elim kind, th)
 
+fun rule_pattern kind (form : canonical) =
+  {pat = rule_index_of kind form, patvars = #patvars form}
+
+fun theorem_pattern kind th = rule_pattern kind (canonical_form_of kind th)
+
 fun indexed_brl is_elim index th =
   let
     val kind = if is_elim then Elim else Intro
     val form = canonical_form_of kind th
-    val pat = rule_index_of kind form
     val tag = {weight = subgoals_of_form is_elim form, index = index}
   in
-    ({pat = pat, patvars = #patvars form}, (tag, (is_elim, th)))
+    (rule_pattern kind form, (tag, (is_elim, th)))
   end
 
 fun insert_brl is_elim index th (inet, enet) =
@@ -96,17 +100,30 @@ fun insert_rl kind index (rl : rl) netpair =
       | SOME th' => insert_brl true (2 * index) th' netpair'
   end
 
-fun delete_rl kind index ((_, swapped) : rl) (inet, enet) =
+fun filter_indexed by_pattern kind th keep net =
+  if by_pattern then clasetNet.filter_at (theorem_pattern kind th) keep net
+  else clasetNet.vfilter keep net
+
+fun delete_brl by_pattern kind index th net =
+  let
+    fun keep ({index = index', ...} : tag, _) = index' <> index
+  in
+    filter_indexed by_pattern kind th keep net
+  end
+
+fun delete_rl by_pattern kind index ((th, swapped) : rl) (inet, enet) =
   let
     val swapped_index = 2 * index
     val main_index = swapped_index + 1
-    fun keep ({index = index', ...}, _) =
-      index' <> swapped_index andalso index' <> main_index
     val elim = is_elim kind
+    val enet =
+      case swapped of
+          NONE => enet
+        | SOME swapped_th =>
+            delete_brl by_pattern Elim swapped_index swapped_th enet
   in
-    (if elim then inet else clasetNet.vfilter keep inet,
-     if elim orelse Option.isSome swapped then clasetNet.vfilter keep enet
-     else enet)
+    if elim then (inet, delete_brl by_pattern Elim main_index th enet)
+    else (delete_brl by_pattern Intro main_index th inet, enet)
   end
 
 (* Norm rules are not indexed: the normalisation phase takes the whole list
@@ -117,9 +134,8 @@ fun insert_aesop_decl (decl : decl)
   let
     val {name, spec, tag, orig, info} = decl
     val kind = #kind spec
-    val form = canonical_form_of kind orig
     val indexed =
-      ({pat = rule_index_of kind form, patvars = #patvars form},
+      (theorem_pattern kind orig,
        {tag = tag,
         rule = {name = name, spec = spec, thm = orig, info = info}})
   in
@@ -129,17 +145,18 @@ fun insert_aesop_decl (decl : decl)
       {target = target, hyp = clasetNet.insert indexed hyp}
   end
 
-fun delete_aesop_decl (decl : decl)
+fun delete_aesop_decl by_pattern (decl : decl)
   ({target, hyp} : aesop_index) =
   let
-    val {index, ...} = #tag decl
+    val {spec, tag = {index, ...}, orig, ...} = decl
+    val kind = #kind spec
     fun keep ({tag = {index = index', ...}, ...} : aentry) =
       index <> index'
   in
-    if #kind (#spec decl) = Intro then
-      {target = clasetNet.vfilter keep target, hyp = hyp}
+    if kind = Intro then
+      {target = filter_indexed by_pattern kind orig keep target, hyp = hyp}
     else
-      {target = target, hyp = clasetNet.vfilter keep hyp}
+      {target = target, hyp = filter_indexed by_pattern kind orig keep hyp}
   end
 
 (* Norm rules never enter the four classical netpairs, so the claset keeps
@@ -199,7 +216,9 @@ fun update_decl update_rl update_aesop update_norm (decl : decl)
   end
 
 val add_decl = update_decl insert_rl insert_aesop_decl insert_norm_decl
-val delete_decl = update_decl delete_rl delete_aesop_decl delete_norm_decl
+fun delete_decl by_pattern =
+  update_decl (delete_rl by_pattern) (delete_aesop_decl by_pattern)
+    delete_norm_decl
 
 fun make_rule_decl spec (name, th) =
   let
@@ -430,13 +449,17 @@ val add_sdests = add_rules sdest_spec
 fun remove_rule name (CS {decls, wrappers, index, distinct}) =
   let
     val (old_decls, decls') = remove_decl name decls
+    (* A small index is cheap to scan without reconstructing the rule's key.
+       Use the key as the declaration table grows to limit traversal. *)
+    fun delete (decl, index) = delete_decl (decl_count decls > 64) decl index
   in
     CS {decls = decls', wrappers = wrappers,
-        distinct = Redblackmap.filter
-          (fn {source, ...} => #name source <> name) distinct,
-        index =
-          List.foldl (fn (decl, index) => delete_decl decl index)
-            index old_decls}
+        distinct =
+          if String.isPrefix tyinfo_prefix name then
+            Redblackmap.filter (fn {source, ...} => #name source <> name)
+              distinct
+          else distinct,
+        index = List.foldl delete index old_decls}
   end
 
 fun merge_alists left right =

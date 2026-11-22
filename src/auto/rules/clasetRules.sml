@@ -728,6 +728,8 @@ fun get_decls (Decls {byconcl, ...}) th =
 
 fun find_decl (Decls {byname, ...}) name = Symtab.lookup byname name
 
+fun decl_count (Decls {byname, ...}) = Symtab.size byname
+
 fun decl_name_member decls name = Option.isSome (find_decl decls name)
 
 fun dest_decls (Decls {byconcl, ...}) = ordered_decls byconcl

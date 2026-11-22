@@ -136,6 +136,29 @@ fun insert ({pat, patvars}, value) net =
     enter (stored_labels patvars pat) net
   end
 
+fun is_empty (NODE (tips, edges)) = null tips andalso null edges
+
+fun filter_at {pat, patvars} keep net =
+  let
+    fun filter [] (NODE (tips, edges)) =
+          NODE (List.filter keep tips, edges)
+      | filter (label :: labels) (NODE (tips, edges)) =
+          let
+            fun descend [] = []
+              | descend ((entry as (key, child)) :: rest) =
+                  if key = label then
+                    let val child' = filter labels child
+                    in
+                      if is_empty child' then rest else (key, child') :: rest
+                    end
+                  else entry :: descend rest
+          in
+            NODE (tips, descend edges)
+          end
+  in
+    filter (stored_labels patvars pat) net
+  end
+
 (* Exact-only paths can return their result without copying the tips.
    Measured walks still charge for each candidate in the left branch. *)
 fun join left [] = left
@@ -226,16 +249,14 @@ fun unifyMeasured checkpoint query net =
 
 fun vfilter pred net =
   let
-    fun keep (NODE (tips, edges)) =
-      not (List.null tips) orelse not (List.null edges)
     fun filt (NODE (tips, edges)) =
       let
         fun filt_edges [] = []
           | filt_edges ((label, node) :: rest) =
               let val node' = filt node
               in
-                if keep node' then (label, node') :: filt_edges rest
-                else filt_edges rest
+                if is_empty node' then filt_edges rest
+                else (label, node') :: filt_edges rest
               end
       in
         NODE (List.filter pred tips, filt_edges edges)

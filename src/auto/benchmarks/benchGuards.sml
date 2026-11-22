@@ -214,33 +214,38 @@ fun ambient_candidates entry =
           "COND", "@"])
     val available = HOLset.union (term_constants goal, logical)
     val excluded = map #name (#excl entry)
+    fun included name = not (List.exists (equal name) excluded)
+    fun unavailable (_, tm) =
+      if is_const tm andalso
+         not (HOLset.member (available, #1 (dest_const tm))) then SOME ()
+      else NONE
     fun within theorem =
-      List.all
-        (fn constant =>
-          HOLset.member (available, #1 (dest_const constant)))
-        (find_terms is_const (concl theorem))
+      not (Option.isSome (gen_find_term unavailable (concl theorem)))
     val rules =
-      map
+      List.mapPartial
         (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
-          {name = name, theorem = thm})
+          if included name andalso within thm then
+            SOME {name = name, theorem = thm}
+          else NONE)
         (clasetLib.all_rules (clasetLib.the_claset ()))
+    fun named_rewrites theorem =
+      if within theorem then
+        List.mapPartial
+          (fn location =>
+            let val name = location_name location in
+              if included name then SOME {name = name, theorem = theorem}
+              else NONE
+            end)
+          (DB.revlookup theorem)
+      else []
     val rewrites =
       List.concat
-        (map
-          (fn theorem =>
-            map
-              (fn location =>
-                {name = location_name location, theorem = theorem})
-              (DB.revlookup theorem))
+        (map named_rewrites
           (List.concat
             (map simpExtLib.frag_rewrites
               (simpExtLib.ssfrags_of (clasimpLib.clasimp_ss ())))))
   in
-    distinct_by_name
-      (List.filter
-        (fn {name, theorem} =>
-          not (List.exists (equal name) excluded) andalso within theorem)
-        (rules @ rewrites))
+    distinct_by_name (rules @ rewrites)
   end
 
 fun ambient_findings entry =

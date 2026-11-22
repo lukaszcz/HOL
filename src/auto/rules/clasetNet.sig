@@ -6,6 +6,9 @@ sig
   val empty : 'a net
   val insert : {pat : term, patvars : term HOLset.set} * 'a ->
                'a net -> 'a net
+  (* Filter only values entered under the given pattern's labels. *)
+  val filter_at : {pat : term, patvars : term HOLset.set} ->
+                  ('a -> bool) -> 'a net -> 'a net
   val match : term -> 'a net -> 'a list
   val unify : {q : term, qvars : term HOLset.set} -> 'a net -> 'a list
   (* The callback may raise to interrupt a measured traversal; the net is

@@ -1539,7 +1539,7 @@ val (cluster_root, cluster_tree1) =
 val cluster_install =
   install_tree_rapp cluster_tree1 cluster_root aesopRule.RSafe
     "clusters" cluster_store3
-    [cluster_g1, cluster_g3, fifo_goal, cluster_g2, cluster_g4] []
+    [cluster_g1, cluster_g3, fifo_goal, cluster_g2, cluster_g4, cluster_g1] []
 val [cluster_id1, cluster_id2, cluster_id3] =
   #clusters (aesopTree.rapp (#tree cluster_install)
     (#rapp cluster_install))
@@ -1549,10 +1549,11 @@ val _ =
     ("aesop tree clusters keep ground singletons and dependency layers",
      fn () =>
        let
-         val [first, last, ground, bridge, separate] = #goals cluster_install
+         val [first, last, ground, bridge, separate, same_layer] =
+           #goals cluster_install
          fun goals id = #goals (aesopTree.cluster (#tree cluster_install) id)
        in
-         goals cluster_id1 = [first, bridge, last] andalso
+         goals cluster_id1 = [first, bridge, same_layer, last] andalso
          goals cluster_id2 = [ground] andalso
          goals cluster_id3 = [separate]
        end)

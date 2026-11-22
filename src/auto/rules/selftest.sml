@@ -2167,6 +2167,49 @@ val _ =
 
 val _ =
   test
+    ("clasetLib removes and re-adds one rule on shared index paths",
+     fn () =>
+       let
+         val spec = {kind = clasetRules.Intro, safe = false, prio = NONE}
+         val norm = {kind = clasetRules.Norm, safe = false, prio = NONE}
+         fun add name = add_derived_rule spec (name, intro_pq)
+         fun check padding =
+           let
+             fun pad (i, cs) =
+               add_derived_rule norm
+                 ("padding" ^ Int.toString i, boolTheory.TRUTH) cs
+             val base = List.foldl pad empty_cs
+               (List.tabulate (padding, Lib.I))
+             val original = add "third" (add "second" (add "first" base))
+             val removed = remove_rule "second" original
+             val readded = add "second" removed
+             fun classical select cs =
+               let
+                 val part = select cs
+                 fun indices entries =
+                   map (fn i => i + 2 * padding) (candidate_indices entries)
+               in
+                 (indices (match_intro_candidates part ``p /\ q``),
+                  indices (match_elim_candidates part ``~(p /\ q)``))
+               end
+             fun aesop cs =
+               map #name (aesop_target_rules cs {q = x, qvars = tmset [x]})
+             fun shared_paths part =
+               classical part original = ([~5, ~3, ~1], [~6, ~4, ~2])
+               andalso classical part removed = ([~5, ~1], [~6, ~2])
+               andalso classical part readded = ([~7, ~5, ~1], [~8, ~6, ~2])
+           in
+             shared_paths unsafe_part andalso shared_paths dup_part andalso
+             aesop original = ["third", "second", "first"] andalso
+             aesop removed = ["third", "first"] andalso
+             aesop readded = ["second", "third", "first"]
+           end
+       in
+         check 0 andalso check 128
+       end)
+
+val _ =
+  test
     ("clasetLib wrappers update by name and preserve choice semantics",
      fn () =>
        let

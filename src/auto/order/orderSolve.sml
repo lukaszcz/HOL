@@ -29,7 +29,21 @@ fun facts_of_all (work : work) = orderData.facts_of_all (#meter work)
    identifies them and the edge's own distinction denies it -- and it
    spares the procedure three further chaining cases. *)
 
-type edge = {source : term, target : term, theorem : thm}
+datatype path =
+    Proved of thm
+  | Pending of thm Portable.HOLSusp.susp
+
+fun path_theorem (Proved theorem) = theorem
+  | path_theorem (Pending pending) = Portable.HOLSusp.force pending
+
+(* Ordinary graph searches need proofs only along the selected paths.
+   Metered calls construct them at the original charged operations. *)
+fun derive_path (work : work) derive =
+  case #max_nodes work of
+      NONE => Proved (derive ())
+    | SOME _ => Pending (Portable.HOLSusp.delay derive)
+
+type edge = {source : term, target : term, path : path}
 
 fun search work f [] = NONE
   | search work f (x :: xs) =
@@ -39,10 +53,14 @@ fun search work f [] = NONE
 fun expand work (context : orderData.context) facts =
   let
     val {reflexive, ...} = #axioms context
-    fun weak_of_equal reflexivity theorem =
-      (application work;
-       MATCH_MP (MATCH_MP order_weak_of_equal reflexivity) theorem)
-    fun edge (x, y) theorem = {source = x, target = y, theorem = theorem}
+    fun weak_of_equal reflexivity equality =
+      derive_path work
+        (fn () =>
+          let val theorem = equality () in
+            application work;
+            MATCH_MP (MATCH_MP order_weak_of_equal reflexivity) theorem
+          end)
+    fun edge (x, y) path = {source = x, target = y, path = path}
     fun one (fact : orderData.fact, (edges, equalities, distinctions)) =
       let
         val _ = candidate work
@@ -50,11 +68,12 @@ fun expand work (context : orderData.context) facts =
       in
         case #literal fact of
             orderData.Weak (x, y) =>
-              (edge (x, y) theorem :: edges, equalities, distinctions)
+              (edge (x, y) (Proved theorem) :: edges, equalities, distinctions)
           | orderData.Strict (x, y) =>
               let
                 val _ = application work
-                val weak = MATCH_MP order_strict_weak theorem
+                val weak =
+                  derive_path work (fn () => MATCH_MP order_strict_weak theorem)
                 val distinct = MATCH_MP order_strict_distinct theorem
               in
                 (edge (x, y) weak :: edges, equalities,
@@ -67,8 +86,9 @@ fun expand work (context : orderData.context) facts =
                       NONE => edges
                     | SOME r =>
                         let
-                          val forward = weak_of_equal r theorem
-                          val backward = weak_of_equal r (SYM theorem)
+                          val forward = weak_of_equal r (fn () => theorem)
+                          val backward =
+                            weak_of_equal r (fn () => SYM theorem)
                         in
                           edge (y, x) backward :: edge (x, y) forward :: edges
                         end
@@ -98,13 +118,6 @@ fun within_node_limit maximum edges =
   in
     scan (0, HOLset.empty Term.compare) edges
   end
-
-datatype path =
-    Proved of thm
-  | Pending of thm Portable.HOLSusp.susp
-
-fun path_theorem (Proved theorem) = theorem
-  | path_theorem (Pending pending) = Portable.HOLSusp.force pending
 
 datatype reachability =
     ReachedList of (term * path) list
@@ -190,7 +203,7 @@ fun reachable work transitive edges outgoing source =
   case transitive of
       NONE =>
         ReachedList
-          (List.map (fn e => (#target e, Proved (#theorem e)))
+          (List.map (fn e => (#target e, #path e))
             (List.filter
               (fn e => (candidate work; aconv (#source e) source))
               edges))
@@ -206,11 +219,11 @@ fun reachable work transitive edges outgoing source =
           fun chain first second =
             let
               fun derive () =
-                MATCH_MP (MATCH_MP step (path_theorem first)) second
+                MATCH_MP (MATCH_MP step (path_theorem first))
+                  (path_theorem second)
             in
-              case #max_nodes work of
-                  NONE => (application work; Proved (derive ()))
-                | SOME _ => Pending (Portable.HOLSusp.delay derive)
+              application work;
+              derive_path work derive
             end
           fun relax (e, (known, changed)) =
             (candidate work;
@@ -218,11 +231,11 @@ fun reachable work transitive edges outgoing source =
                Option.isSome (reached work known (#target e))
              then (known, changed)
              else if aconv (#source e) source then
-               (settle (#target e) (Proved (#theorem e)) known, true)
+               (settle (#target e) (#path e) known, true)
              else
                (case reached work known (#source e) of
                     SOME path =>
-                      (settle (#target e) (chain path (#theorem e)) known,
+                      (settle (#target e) (chain path (#path e)) known,
                        true)
                   | NONE => (known, changed)))
           (* A changing round settles a new target from the finite
