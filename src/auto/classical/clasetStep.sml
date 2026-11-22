@@ -2150,7 +2150,7 @@ fun first_result sequence =
 
 fun safe_steps_at_with charge step collect cs node pos initial =
   let
-    val initial_count = length (clasetGoal.goals node)
+    val initial_count = clasetGoal.goal_count node
 
     fun next current =
       (charge searchBudget.Candidate;
@@ -2162,7 +2162,7 @@ fun safe_steps_at_with charge step collect cs node pos initial =
     fun repeat (record, current) acc =
       let val collected = collect ((pos, record, current), acc)
       in
-        if length (clasetGoal.goals current) < initial_count then
+        if clasetGoal.goal_count current < initial_count then
           (collected, current)
         else
           case next current of
@@ -2181,7 +2181,7 @@ fun safe_saturation_with steps cs node initial =
   let
     fun first_goal current acc =
       let
-        val count = length (clasetGoal.goals current)
+        val count = clasetGoal.goal_count current
         fun inspect pos =
           if pos > count then NONE
           else

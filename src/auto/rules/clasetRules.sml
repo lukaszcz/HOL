@@ -686,7 +686,7 @@ fun collect_decls byconcl =
 
 fun ordered_decls byconcl = Listsort.sort decl_order (collect_decls byconcl)
 
-fun derived_decls byconcl =
+fun derived_decls ordered =
   let
     fun add (decl : decl, table) =
       let
@@ -701,24 +701,31 @@ fun derived_decls byconcl =
           table keys
       end
   in
-    List.foldr add Termtab.empty (ordered_decls byconcl)
+    List.foldr add Termtab.empty ordered
   end
 
 datatype decls =
   Decls of {next : int, byconcl : decl list Termtab.table,
             byname : decl Symtab.table,
+            ordered : decl list Portable.HOLSusp.susp,
             derived : decl list Termtab.table Portable.HOLSusp.susp}
 
 fun make_decls next byconcl byname =
-  Decls {next = next, byconcl = byconcl, byname = byname,
-         derived = Portable.HOLSusp.delay (fn () => derived_decls byconcl)}
+  let
+    open Portable.HOLSusp
+    val ordered = delay (fn () => ordered_decls byconcl)
+  in
+    Decls {next = next, byconcl = byconcl, byname = byname, ordered = ordered,
+           derived = delay (fn () => derived_decls (force ordered))}
+  end
 
 val empty_decls =
   make_decls ~1 Termtab.empty Symtab.empty
 
-fun reserve_decl_indices count (Decls {next, byconcl, byname, derived}) =
+fun reserve_decl_indices count
+      (Decls {next, byconcl, byname, ordered, derived}) =
   (next, Decls {next = next - count, byconcl = byconcl, byname = byname,
-                derived = derived})
+                ordered = ordered, derived = derived})
 
 fun make_decl {name, spec, weight, info, orig} =
   {name = name, spec = spec, tag = {weight = weight, index = 0},
@@ -735,7 +742,7 @@ fun decl_count (Decls {byname, ...}) = Symtab.size byname
 
 fun decl_name_member decls name = Option.isSome (find_decl decls name)
 
-fun dest_decls (Decls {byconcl, ...}) = ordered_decls byconcl
+fun dest_decls (Decls {ordered, ...}) = Portable.HOLSusp.force ordered
 
 (* Replay uses exact derived conclusions, with the same precedence as
    [dest_decls]. It still checks hypotheses and variant priority. *)

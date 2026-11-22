@@ -49,7 +49,7 @@ fun replace_validation old_count pos child_count step_validation
 fun accept_safe_transition
       ((pos, record, next), {node, validation} : run_state) =
   let
-    val old_count = length (clasetGoal.goals node)
+    val old_count = clasetGoal.goal_count node
     val child_count = clasetGoal.child_count node next
     val validation' =
       replace_validation old_count pos child_count
@@ -140,7 +140,7 @@ fun expand_at step cs pos node =
    goals all stand settled is expanded as it was before. *)
 fun expand_settled_first step cs node =
   let
-    val count = length (clasetGoal.goals node)
+    val count = clasetGoal.goal_count node
     fun choose pos =
       if pos > count then 1
       else if clasetGoal.stands_on_unknown node pos then choose (pos + 1)

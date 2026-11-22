@@ -1500,6 +1500,46 @@ val _ =
 
 val _ =
   check
+    ("ambient exclusions follow definition and claset changes",
+     fn () =>
+       without_definitions
+         (fn () =>
+           let
+             val name = "unit$wrapped_ambient"
+             val theorem = Tactical.prove (wrapped_goal, bossLib.metis_tac [])
+             val claset = clasetLib.add_rule analogue_spec
+               (name, theorem) clasetLib.empty_cs
+             (* The declaration may curry the theorem's conjunctive
+                premise. Unfold the form the ambient sweep reads. *)
+             val declaration =
+               case clasetLib.rules_of claset of
+                   [(_, (_, stored))] => stored
+                 | _ => raise Fail "expected one ambient test declaration"
+             val goal = Thm.concl
+               (Rewrite.PURE_REWRITE_RULE
+                 [parityTranslationTheory.source_lexord_def] declaration)
+             val entry : benchLib.corpus_goal =
+               {id = "unit-wrapped-ambient", goal = goal,
+                source_method = "simp", recipe = #recipe solved_goal,
+                excl = [], provenance = provenance, representative = true}
+             fun has_exclusion () =
+               List.exists (equal name o #name) (#excl (prepared entry))
+             fun check_sources () =
+               (benchLib.set_definitional_context
+                  [parityTranslationTheory.source_of_char_def];
+                not (has_exclusion ()) andalso
+                (benchLib.set_definitional_context
+                   [parityTranslationTheory.source_lexord_def];
+                 has_exclusion () andalso
+                 not (clasetLib.with_claset clasetLib.empty_cs
+                   has_exclusion ()) andalso
+                 has_exclusion ()))
+           in
+             clasetLib.with_claset claset check_sources ()
+           end))
+
+val _ =
+  check
     ("definition unfolding refreshes explicit and implicit rewrites",
      fn () =>
        without_definitions

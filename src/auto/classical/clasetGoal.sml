@@ -17,6 +17,7 @@ type spellings = {conclusion : term list, assumptions : term list list}
 
 datatype node =
   Node of {goals : cgoal list,
+           goal_count : int,
            store : store,
            replay : replay_script,
            size : {total : int, changed : goal Inttab.table} option ref,
@@ -139,19 +140,18 @@ fun register_fresh bound avoids store =
     attempt (HOLset.listItems avoids)
   end
 
-fun make_node goals store replay level paths marks avoids =
-  if length goals <> length marks orelse length goals <> length paths then
+(* A caller can supply marks through [set_binding_marks]. *)
+fun check_marks goal_count marks =
+  if length marks = goal_count then ()
+  else
     raise mk_HOL_ERR "clasetGoal" "make_node"
       "search bookkeeping does not correspond to the open goals"
-  else
-    let
-      val store' = register_params goals store
-    in
-      Node {goals = goals, store = store', replay = replay,
-            size = ref NONE, level = level, paths = paths,
-            marks = marks, avoids = avoids, rendering = ref NONE,
-            renders = ref [], spellings = ref []}
-    end
+
+fun make_node goals goal_count store replay level paths marks avoids =
+  Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
+        size = ref NONE, level = level, paths = paths, marks = marks,
+        avoids = avoids, rendering = ref NONE, renders = ref [],
+        spellings = ref []}
 
 fun root_paths goals =
   let
@@ -170,21 +170,23 @@ fun root_paths goals =
    [clasetNorm.align_conclusion]. *)
 fun reduced term = rhs (concl (clasetNorm.goal_reduce_conv term))
 
-fun from_goal (asl, w) =
-  let val cgoals = [{params = [], asl = map reduced asl, w = reduced w}]
+fun create {goals, store, level} =
+  let val count = length goals
   in
-    make_node cgoals clasetMeta.empty (clasetReplay.empty 1) 0
-      (root_paths cgoals) (fresh_marks cgoals)
-      (avoid_goals cgoals Term.empty_tmset)
+    make_node goals count (register_params goals store)
+      (clasetReplay.empty count) level (root_paths goals) (fresh_marks goals)
+      (avoid_goals goals Term.empty_tmset)
   end
 
-fun create {goals, store, level} =
-  make_node goals store (clasetReplay.empty (length goals)) level
-    (root_paths goals) (fresh_marks goals) (avoid_goals goals Term.empty_tmset)
+fun from_goal (asl, w) =
+  create
+    {goals = [{params = [], asl = map reduced asl, w = reduced w}],
+     store = clasetMeta.empty, level = 0}
 
 fun goals (Node {goals, ...}) = goals
+fun goal_count (Node {goal_count, ...}) = goal_count
 fun child_count parent child =
-  Int.max (0, length (goals child) - length (goals parent) + 1)
+  Int.max (0, goal_count child - goal_count parent + 1)
 fun store (Node {store, ...}) = store
 fun replay (Node {replay, ...}) = replay
 fun replay_length node = clasetReplay.length (replay node)
@@ -207,30 +209,37 @@ fun fresh_eigen node bound =
   register_fresh bound (avoids node) (store node)
 
 fun set_store store'
-  (Node {goals, replay, level, paths, marks, avoids, ...}) =
-  make_node goals store' replay level paths marks avoids
+  (node as Node {goals, goal_count, store, replay, level, paths, marks,
+                 avoids, ...}) =
+  (check_marks goal_count marks;
+   if Portable.pointer_eq (store, store') then node
+   else
+     make_node goals goal_count (register_params goals store')
+       replay level paths marks avoids)
 
 fun set_level level'
-  (Node {goals, store, replay, size, paths, marks, avoids,
+  (Node {goals, goal_count, store, replay, size, paths, marks, avoids,
          rendering, renders, spellings, ...}) =
   (* Goals and store are unchanged, so their cached derivatives remain
      valid. *)
-  Node {goals = goals, store = store, replay = replay, size = size,
-        level = level', paths = paths, marks = marks, avoids = avoids,
-        rendering = rendering, renders = renders, spellings = spellings}
+  Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
+        size = size, level = level', paths = paths, marks = marks,
+        avoids = avoids, rendering = rendering, renders = renders,
+        spellings = spellings}
 
 fun set_binding_marks marks'
-  (Node {goals, store, replay, size, level, paths, avoids,
+  (Node {goals, goal_count, store, replay, size, level, paths, avoids,
          rendering, renders, spellings, ...}) =
-  Node {goals = goals, store = store, replay = replay, size = size,
-        level = level, paths = paths, marks = marks', avoids = avoids,
-        rendering = rendering, renders = renders, spellings = spellings}
+  Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
+        size = size, level = level, paths = paths, marks = marks',
+        avoids = avoids, rendering = rendering, renders = renders,
+        spellings = spellings}
 
 fun record_step record
-  (Node {goals, store, replay, size, level, paths, marks, avoids,
+  (Node {goals, goal_count, store, replay, size, level, paths, marks, avoids,
          rendering, renders, spellings}) =
   Node
-    {goals = goals, store = store,
+    {goals = goals, goal_count = goal_count, store = store,
      replay = clasetReplay.append replay record, size = size,
      level = level, paths = paths, marks = marks, avoids = avoids,
      rendering = rendering, renders = renders, spellings = spellings}
@@ -276,13 +285,20 @@ fun replace_goal node {pos, children, store = store'} =
     val old_marks = binding_marks node
     val inherited_path = nth1 "replace_goal" old_paths pos
     val inherited_mark = nth1 "replace_goal" old_marks pos
+    val children_count = length children
     val goals' = splice1 "replace_goal" old_goals pos children
     val paths' = splice1 "replace_goal" old_paths pos
-      (child_paths inherited_path (length children))
+      (child_paths inherited_path children_count)
     val marks' = splice1 "replace_goal" old_marks pos
-      (List.tabulate (length children, fn _ => inherited_mark))
+      (List.tabulate (children_count, fn _ => inherited_mark))
+    val count' = goal_count node - 1 + children_count
+    val _ = check_marks count' marks'
+    (* The shared store already owns every inherited goal parameter. *)
+    val register =
+      if Portable.pointer_eq (store node, store') then children else goals'
   in
-    make_node goals' store' (replay node) (level node) paths' marks'
+    make_node goals' count' (register_params register store')
+      (replay node) (level node) paths' marks'
       (avoid_goals children (avoids node))
   end
 
@@ -450,7 +466,7 @@ fun canonical_rendering
         end
 
 fun equal (left, right) =
-  size left = size right andalso
+  goal_count left = goal_count right andalso size left = size right andalso
   aconv (canonical_rendering left) (canonical_rendering right)
 
 fun compare (left, right) =

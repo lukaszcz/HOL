@@ -56,7 +56,7 @@ fun raw_application ctxt (rule : rule) node =
     | _ =>
         (case aesopTree.unique_rule_result_in ctxt rule node of
              SOME ([record], next) =>
-               if length (clasetGoal.goals next) > 1 then Inapplicable
+               if clasetGoal.goal_count next > 1 then Inapplicable
                else Applied {record = record, node = next}
            | _ => Inapplicable)
 

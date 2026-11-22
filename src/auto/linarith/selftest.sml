@@ -1114,6 +1114,28 @@ val _ =
             SOME just => List.all (rests_on just) [0, 1, 2]
           | NONE => false))
 
+val _ =
+  check
+    ("row construction keeps the first coefficient on each side",
+     fn () =>
+       let
+         val negative =
+           fm_le ([(fm_x, fm_rat 2), (fm_x, fm_rat 1)], fm_rat 0)
+             ([(fm_x, fm_rat 1), (fm_x, fm_rat 3)], fm_rat 0)
+         val positive =
+           fm_le (no_atoms, fm_rat 1) (fm_scaled_x 1, fm_rat 0)
+         val rows = [SOME negative, SOME positive]
+         val items = ListPair.zip ([boolSyntax.T, boolSyntax.F], rows)
+       in
+         (case fm_refute rows of
+              SOME (Added (Asm 1, Asm 0)) => true
+            | _ => false) andalso
+         (case fm_budgeted (searchBudget.unbounded ()) items of
+              CertificateFound
+                {justifications = [Added (Asm 1, Asm 0)], ...} => true
+            | _ => false)
+       end)
+
 fun const_decomp lhs rel discrete =
   Decomp {
     lhs = [], lhs_const = Arbrat.fromInt lhs,

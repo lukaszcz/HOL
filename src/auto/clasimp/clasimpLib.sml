@@ -3273,29 +3273,61 @@ fun transport_name cs from =
    an equivalence of which the rule is one direction. *)
 fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
   let
+    fun rule_body theorem =
+      boolSyntax.strip_imp_only (concl (Drule.SPEC_ALL theorem))
+    fun equation theorem = boolSyntax.dest_eq (#2 (rule_body theorem))
+    fun index_rewrite (rewrite, (statements, directions)) =
+      let
+        val statements = HOLset.add (statements, concl rewrite)
+        val directions =
+          let val (left, right) = equation rewrite
+          in HOLset.add (HOLset.add (directions, (left, right)), (right, left))
+          end
+          handle HOL_ERR _ => directions
+      in
+        (statements, directions)
+      end
+    (* Index the same raw fragment entries the history filter reads.
+       Most candidates have no source to exclude. *)
+    val inventory = Susp.delay (fn () =>
+      List.foldl
+        (fn (fragment, index) =>
+          List.foldl index_rewrite index (simpLib.frag_rewrites fragment))
+        (Term.empty_tmset,
+         HOLset.empty (Lib.pair_compare (Term.compare, Term.compare)))
+        (simpLib.ssfrags_of ss))
+    fun may_exclude statement result premises =
+      case rules of
+          _ :: _ :: _ =>
+            let val (statements, directions) = Susp.force inventory
+            in
+              HOLset.member (statements, statement) orelse
+              List.exists (fn premise =>
+                HOLset.member (directions, (result, premise))) premises
+            end
+        | _ => true
+    val ambient = Susp.delay (fn () => normal_form policy ss)
     fun conversion theorem =
       let
         val statement = concl theorem
-        val (premises, result) =
-          boolSyntax.strip_imp_only (concl (Drule.SPEC_ALL theorem))
+        val (premises, result) = rule_body theorem
         fun own_direction rewrite =
           let
-            val (_, rewrite_body) =
-              boolSyntax.strip_imp_only (concl (Drule.SPEC_ALL rewrite))
-            val (left, right) = boolSyntax.dest_eq rewrite_body
+            val (left, right) = equation rewrite
           in
             (aconv result left andalso boolSyntax.tmem right premises)
             orelse
             (aconv result right andalso boolSyntax.tmem left premises)
           end
           handle HOL_ERR _ => false
-        val without_self =
-          filter
-            (fn (_, rewrite) =>
-              not (aconv (concl rewrite) statement) andalso
-              not (own_direction rewrite)) ss
       in
-        normal_form policy without_self
+        if may_exclude statement result premises then
+          normal_form policy
+            (filter
+              (fn (_, rewrite) =>
+                not (aconv (concl rewrite) statement) andalso
+                (null premises orelse not (own_direction rewrite))) ss)
+        else Susp.force ambient
       end
     fun add ((spec, (_, theorem)), state as (added, from)) =
       let

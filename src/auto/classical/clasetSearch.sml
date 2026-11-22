@@ -54,7 +54,7 @@ fun expansion_trace level driver count node =
    traceUtil.trace level 2
      (fn () =>
        driver ^ " expansion " ^ Int.toString count ^
-       ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^
+       ", goals=" ^ Int.toString (clasetGoal.goal_count node) ^
        ", size=" ^ Int.toString (clasetGoal.size node));
    traceUtil.trace level 3
      (fn () => driver ^ " candidate: " ^ show_node node))

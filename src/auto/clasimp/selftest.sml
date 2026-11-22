@@ -6799,6 +6799,16 @@ fun bound_transport_fixture () =
         val searched = closes
           (pipeline false clasetLib.SearchFacts basis [conditional] search)
           ([``bt_q (bt_h x)``],``bt_r x``)
+        val further_bridge = proof ``!x. bt_q x = bt_r x``
+        val direct_rule = proof ``!x. bt_p x ==> bt_q x``
+        val other_rule = proof ``!x. bt_h x ==> bt_r x``
+        val own_source_excluded = closes
+          (pipeline false clasetLib.SafeFacts
+            (simpLib.++ (basis, simpLib.rewrites [further_bridge]))
+            [clasetLib.SIntro direct_rule, clasetLib.SIntro other_rule]
+            (fn _ => fn cs => fn _ =>
+              NTactical.DETERM (classicalLib.CS_FAST_TAC cs)))
+          ([``bt_p x``], ``bt_r x``)
         val safe_roles = ref false
         val _ = residual (pipeline false clasetLib.SafeFacts basis
           [conditional] (fn _ => fn cs => fn _ =>
@@ -6857,7 +6867,7 @@ fun bound_transport_fixture () =
                       searched,!roles,
                       !safe_roles,marker_closed,private_use,exhausted,
                       !same_binding,viewed_plain,once_runtime,no_origin,
-                      cutoff,cutoff_restores]
+                      cutoff,cutoff_restores,own_source_excluded]
         val _ = print ("BOUND_TRANSPORT_RESULTS " ^
           String.concatWith " " (map Bool.toString checks) ^ "\n")
       in List.all I checks end

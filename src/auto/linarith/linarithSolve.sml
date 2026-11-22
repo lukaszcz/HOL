@@ -481,20 +481,58 @@ fun scatter_with work ({width, column} : atom_index) poly =
     List.app place (List.rev poly); row
   end
 
-fun mklineq_with work index (item, asm_index) =
+datatype coefficient =
+    Absent
+  | LeftCoefficient of Arbint.int
+  | Difference of Arbint.int
+
+fun differences ({width, column} : atom_index) lhs rhs =
   let
-    val _ = normalization work
-    val (m, {lhs, lhs_const, rel, rhs, rhs_const,
-             discrete, negated}) = integ item
-    val lhs_coeffs = scatter_with work index lhs
-    val rhs_coeffs = scatter_with work index rhs
-    val diff =
+    val coefficients = Array.array (width, Absent)
+    fun place insert (tm, c) =
+      case Termtab.lookup column tm of
+          NONE => ()
+        | SOME i => insert i c (Array.sub (coefficients, i))
+    fun left i c Absent = Array.update (coefficients, i, LeftCoefficient c)
+      | left _ _ _ = ()
+    fun right _ _ (Difference _) = ()
+      | right i c (LeftCoefficient l) =
+          Array.update (coefficients, i, Difference (Arbint.- (c, l)))
+      | right i c Absent = Array.update (coefficients, i, Difference c)
+    fun coefficient i =
+      case Array.sub (coefficients, i) of
+          Absent => zero
+        | LeftCoefficient c => Arbint.~ c
+        | Difference c => c
+  in
+    (* Read each side in occurrence order. Its first entry for a column
+       wins, and only columns on both sides need a subtraction. *)
+    List.app (place left) lhs;
+    List.app (place right) rhs;
+    List.tabulate (width, coefficient)
+  end
+
+fun differences_with (work : work) index lhs rhs =
+  if #metered work then
+    let
+      val lhs_coeffs = scatter_with work index lhs
+      val rhs_coeffs = scatter_with work index rhs
+    in
       List.tabulate
         (#width index,
          fn i =>
             (candidate work;
              Arbint.- (Array.sub (rhs_coeffs, i),
                        Array.sub (lhs_coeffs, i))))
+    end
+  else differences index lhs rhs
+
+fun mklineq_with work index (item, asm_index) =
+  let
+    val _ = normalization work
+    val (m, {lhs, lhs_const, rel, rhs, rhs_const,
+             discrete, negated}) = integ item
+    val diff = differences_with work index lhs rhs
     val c = Arbint.- (lhs_const, rhs_const)
     val just = Asm asm_index
     fun lineq (constant, ty, cs, why) =

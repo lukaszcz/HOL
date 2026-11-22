@@ -196,7 +196,7 @@ fun indexed_rounds relax outgoing source nodes =
 (* Everything the source reaches, one path per node. A node is settled
    the first time it is reached. Ordinary calls construct proofs only
    along the paths a caller actually needs. *)
-fun reachable work transitivity edges outgoing source =
+fun reachable work transitivity edges outgoing observe source =
   case transitivity of
       NONE =>
         ReachedList
@@ -222,18 +222,19 @@ fun reachable work transitivity edges outgoing source =
               application work;
               derive_path work derive
             end
+          fun settle_edge target path known =
+            (observe (target, path); (settle target path known, true))
           fun relax (e, (known, changed)) =
             (candidate work;
              if aconv (#target e) source orelse
                Option.isSome (reached work known (#target e))
              then (known, changed)
              else if aconv (#source e) source then
-               (settle (#target e) (#path e) known, true)
+               settle_edge (#target e) (#path e) known
              else
                (case reached work known (#source e) of
                     SOME path =>
-                      (settle (#target e) (chain path (#path e)) known,
-                       true)
+                      settle_edge (#target e) (chain path (#path e)) known
                   | NONE => (known, changed)))
           (* A changing round settles a new target from the finite
              edge list. *)
@@ -277,18 +278,42 @@ fun reach_from work transitive edges =
               in fn () => step end
       end
     val step = Option.map transitivity transitive
-    fun compute source = reachable work step edges outgoing source
+    fun traverse observe source =
+      reachable work step edges outgoing observe source
+    val compute = traverse (fn _ => ())
     (* Crossing can use two sources. Limit retained reachability tables
        and keep each metered traversal observable. *)
     val from =
       case #max_nodes work of
           NONE => compute
         | SOME _ => memoUtil.bounded_memo 2 aconv compute
-  in
-    fn source =>
+    fun reach source =
       let val known = from source
       in reached work known
       end
+    fun reach_one source target =
+      case (#max_nodes work, step) of
+          (SOME _, SOME _) =>
+            let
+              (* A weak literal needs only its first path. Scheduling and
+                 settlement are the same as for a full traversal. *)
+              exception Found of path
+              fun observe (node, path) =
+                if aconv node target then raise Found path else ()
+            in
+              (ignore (traverse observe source); NONE)
+              handle Found path => SOME path
+            end
+        | (SOME _, NONE) =>
+            search work
+              (fn edge =>
+                if aconv (#source edge) source andalso
+                   aconv (#target edge) target
+                then SOME (#path edge) else NONE)
+              edges
+        | (NONE, _) => reach source target
+  in
+    {reach = reach, reach_one = reach_one}
   end
 
 (* The two chains that meet on a distinction. *)
@@ -330,7 +355,7 @@ fun stated work equalities (x, y) =
 
 fun close work (context : orderData.context) (edges, equalities) =
   let
-    val reach = reach_from work (#transitive (#axioms context)) edges
+    val {reach, ...} = reach_from work (#transitive (#axioms context)) edges
     fun one (x, y, distinction) =
       let
         fun contradiction equality =
@@ -366,13 +391,13 @@ fun prove_literal work context
       (edges, equalities, distinctions) target =
   let
     val {reflexive, transitive, ...} = #axioms (context : orderData.context)
-    val reach = reach_from work transitive edges
+    val {reach, reach_one} = reach_from work transitive edges
     fun weak (x, y) =
       if aconv x y then
         Option.map
           (fn r => MATCH_MP (MATCH_MP order_weak_of_equal r) (REFL x))
           reflexive
-      else Option.map path_theorem (reach x y)
+      else Option.map path_theorem (reach_one x y)
   in
     case target of
         orderData.Weak pair => weak pair

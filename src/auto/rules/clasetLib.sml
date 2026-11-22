@@ -534,9 +534,8 @@ fun rules_for_derived_concl (CS {decls, ...}) conclusion =
 
 (* The name/theorem view of a retrieved declaration: what a caller that has
    no use for the canonicalisation sees, in the [rules_of] shape. *)
-fun forget_info ({spec, name, thm, ...} : aesop_rule) = (spec, (name, thm))
-
-fun rules_of cs = map forget_info (all_rules cs)
+fun rules_of (CS {decls, ...}) =
+  map (fn {spec, name, orig, ...} => (spec, (name, orig))) (dest_decls decls)
 
 fun norm_rules (CS {index = {norm_decls, ...}, ...}) =
   map rule_of_decl norm_decls

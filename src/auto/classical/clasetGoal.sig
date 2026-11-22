@@ -26,6 +26,7 @@ sig
   val create : {goals : cgoal list, store : store, level : int} -> node
 
   val goals : node -> cgoal list
+  val goal_count : node -> int
   (* Number of children which replaced the selected parent goal. *)
   val child_count : node -> node -> int
   val store : node -> store

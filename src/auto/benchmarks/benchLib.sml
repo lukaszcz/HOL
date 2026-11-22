@@ -453,8 +453,11 @@ fun defined_head theorem =
   end
   handle HOL_ERR _ => NONE
 
+type comparison_statement = term * (unit -> term)
+
 (* Each ambient sweep compares the same goal against many theorems. *)
-val goal_comparison : (term * (term -> bool)) option ref = ref NONE
+val goal_comparison :
+    (term * (comparison_statement -> bool)) option ref = ref NONE
 
 fun set_definitional_context theorems =
   (goal_comparison := NONE;
@@ -464,9 +467,8 @@ fun set_definitional_context theorems =
      HOLset.addList
        (HOLset.empty String.compare, List.mapPartial defined_head theorems))
 
-fun mentions_definition term =
+fun mentions_definition heads term =
   let
-    val heads = !definitional_heads
     fun mentions current =
       case Term.dest_term current of
           CONST {Name, ...} => HOLset.member (heads, Name)
@@ -501,7 +503,7 @@ fun unfold term =
 
 fun unfolded term =
   if List.null (!definitional_context) orelse
-     not (mentions_definition term)
+     not (mentions_definition (!definitional_heads) term)
   then term
   else unfold term
 
@@ -683,11 +685,11 @@ fun prepare_goal_comparison goal =
                  else prepare_statement_comparison term)
         end)
   in
-    fn statement =>
+    fn (statement, expand_statement) =>
       ordinary statement orelse
       (not (List.null (!definitional_context)) andalso
        let
-         val unfolded_statement = unfolded statement
+         val unfolded_statement = expand_statement ()
          val (unfolded_goal, compare) = Portable.HOLSusp.force expanded
        in
          not (Term.aconv unfolded_statement statement andalso
@@ -697,20 +699,24 @@ fun prepare_goal_comparison goal =
        end)
   end
 
-fun theorem_is_goal goal theorem =
+fun compare_with_goal goal =
   let
     fun fresh () =
       let val compare = prepare_goal_comparison goal
       in goal_comparison := SOME (goal, compare); compare
       end
-    val compare =
-      case !goal_comparison of
-          SOME (previous, compare) =>
-            (* The stripped reading retains the binder's variable name. *)
-            if Portable.pointer_eq (goal, previous) then compare else fresh ()
-        | NONE => fresh ()
   in
-    compare (Thm.concl theorem)
+    case !goal_comparison of
+        SOME (previous, compare) =>
+          (* The stripped reading retains the binder's variable name. *)
+          if Portable.pointer_eq (goal, previous) then compare else fresh ()
+      | NONE => fresh ()
+  end
+
+fun theorem_is_goal goal theorem =
+  let val statement = Thm.concl theorem
+  in
+    compare_with_goal goal (statement, fn () => unfolded statement)
   end
 
 fun withheld_primitives goal =
@@ -843,11 +849,52 @@ fun validate_raw_goals family goals =
          String.concatWith "; " circular)
   end
 
+(* A stable ambient snapshot repeats the same statements across goals.
+   Definition presence depends on the installed definitions, while the
+   unfolding itself still uses the current implicit rewrites. *)
+fun ambient_statement heads theorem : comparison_statement =
+  let
+    val statement = Thm.concl theorem
+    val mentions =
+      Portable.HOLSusp.delay (fn () => mentions_definition heads statement)
+  in
+    (statement, fn () =>
+      if Portable.HOLSusp.force mentions then unfold statement else statement)
+  end
+
+fun same_ambient_source (previous, definitions) (current, next) =
+  Portable.pointer_eq (previous, current) andalso
+  Portable.pointer_eq (definitions, next)
+
+val ambient_claset_statements =
+  memoUtil.keyed_memo same_ambient_source
+    (fn (claset, heads) =>
+      map (fn (_, (name, theorem)) =>
+        ({name = name, theorem = theorem}, ambient_statement heads theorem))
+        (clasetLib.rules_of claset))
+
+val ambient_simpset_statements =
+  memoUtil.keyed_memo same_ambient_source
+    (fn (simpset, heads) =>
+      List.concat
+        (map
+          (map (fn theorem => (theorem, ambient_statement heads theorem)) o
+           simpLib.frag_rewrites)
+          (simpLib.ssfrags_of simpset)))
+
+fun select_analogues goal statements =
+  let val compare = compare_with_goal goal
+  in
+    List.mapPartial
+      (fn (entry, statement) =>
+        if compare statement then SOME entry else NONE)
+      statements
+  end
+
 fun simpset_analogues goal =
-  List.filter (theorem_is_goal goal)
-    (List.concat
-      (map simpLib.frag_rewrites
-        (simpLib.ssfrags_of (clasimpLib.clasimp_ss ()))))
+  select_analogues goal
+    (ambient_simpset_statements
+      (clasimpLib.clasimp_ss (), !definitional_heads))
 
 fun named_rewrite theorem =
   map
@@ -925,14 +972,10 @@ fun prepare_goal recipe
       {id = id, goal = goal, source_method = source_method,
        recipe = recipe, excl = [], provenance = provenance,
        representative = representative}
-    fun is_analogue ({thm, ...} : clasetLib.aesop_rule) =
-      theorem_is_goal goal thm
     val ambient =
-      map
-        (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
-          {name = name, theorem = thm})
-        (List.filter is_analogue
-          (clasetLib.all_rules (clasetLib.the_claset ())))
+      select_analogues goal
+        (ambient_claset_statements
+          (clasetLib.the_claset (), !definitional_heads))
     val candidates =
       ambient @ List.concat (map named_rewrite (simpset_analogues goal))
     fun add_exclusion (candidate : exclusion, exclusions) =
@@ -1136,12 +1179,13 @@ fun with_facts args tactic =
 fun predicate_abstraction_core
       (goal as (_, target)) =
   let
-    fun trace text =
-      if OS.Process.getEnv "HOLBENCHPATTERNTRACE" = SOME "1" then
-        TextIO.print (text ^ "\n")
+    val tracing = OS.Process.getEnv "HOLBENCHPATTERNTRACE" = SOME "1"
+    fun trace prefix term =
+      if tracing then
+        TextIO.print (prefix ^ Parse.term_to_string term ^ "\n")
       else
         ()
-    val _ = trace ("pattern target: " ^ Parse.term_to_string target)
+    val _ = trace "pattern target: " target
     val (predicate, _) = dest_comb target
     val (_, predicate_range) = dom_rng (type_of predicate)
     val _ =
@@ -1155,9 +1199,7 @@ fun predicate_abstraction_core
           Rewrite.REWRITE_RULE [pred_setTheory.SPECIFICATION]
             (SPEC predicate assumption)
         val (_, result) = boolSyntax.strip_imp_only (concl instantiated)
-        val _ =
-          trace ("pattern candidate: " ^
-            Parse.term_to_string result)
+        val _ = trace "pattern candidate: " result
       in
         if aconv result target then
           Tactical.THEN
@@ -1351,7 +1393,7 @@ fun across_correspondence entry args =
    inside the engines.  The test reads the goal's own shape against the
    rewrites the method named, as [preprocess_fires] below decides its
    pass. *)
-fun reading_is_supplied goal args =
+fun reading_is_supplied goal rewrites =
   let
     val statement = forall_body goal
     fun readings theorem =
@@ -1360,32 +1402,28 @@ fun reading_is_supplied goal args =
       clasimpLib.states_a_reading theorem andalso
       Lib.can (fn subject => Conv.REWR_CONV theorem subject) statement
   in
-    List.exists (List.exists applies o readings)
-      (List.mapPartial simp_arg args)
+    List.exists (List.exists applies o readings) rewrites
   end
 
-fun set_equality_pass simpset goal args =
-  let
-    (* What the invocation states on the membership is what its simpset
-       and its own rewrites state between them.  Isabelle's [iff]
-       declarations reach a goal here as arguments rather than in the
-       simpset the corpus starts from, and [mem_Sigma_iff] -- the whole
-       of what a [Sigma] has stated on its membership -- is one of
-       those. *)
-    val stated =
-      simpLib.++ (simpset,
-                  simpLib.rewrites (List.mapPartial simp_arg args))
-    val reads_as_membership = clasimpLib.reads_as_membership stated
-    fun take_to_membership term =
-      if reads_as_membership term then hurdUtils.SET_EQ_CONV term
-      else raise ERR "set_equality_pass" "the equation is read applied"
-  in
-    if reading_is_supplied goal args then Tactical.ALL_TAC
-    else
+fun set_equality_pass simpset goal rewrites =
+  if reading_is_supplied goal rewrites then Tactical.ALL_TAC
+  else
+    let
+      (* What the invocation states on membership comes from both its
+         simpset and its supplied rewrites. Isabelle's [iff] declarations
+         such as [mem_Sigma_iff] reach this pass as arguments. *)
+      val stated =
+        if null rewrites then simpset
+        else simpLib.++ (simpset, simpLib.rewrites rewrites)
+      val reads_as_membership = clasimpLib.reads_as_membership stated
+      fun take_to_membership term =
+        if reads_as_membership term then hurdUtils.SET_EQ_CONV term
+        else raise ERR "set_equality_pass" "the equation is read applied"
+    in
       Tactical.TRY
         (Tactic.CONV_TAC
            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV take_to_membership)))
-  end
+    end
 
 fun tactic_for simpset goal Simp args exclusions =
       let
@@ -1405,24 +1443,21 @@ fun tactic_for simpset goal Simp args exclusions =
           processed_clasimp simpset
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
             (all_class_args args @ simp_controls goal exclusions)
-        val prepare =
-          Tactical.THEN
-            (set_equality_pass simpset goal args,
-             simpLib.FULL_SIMP_TAC simpset
-               (List.mapPartial simp_arg args @
-                simp_controls goal exclusions))
+        val simps = List.mapPartial simp_arg args
+        val set_equality = set_equality_pass simpset goal simps
       in
         with_facts args
           (Tactical.ORELSE
             (predicate_abstraction_tac,
              if null args then
-               Tactical.THEN
-                 (set_equality_pass simpset goal args, automatic)
+               Tactical.THEN (set_equality, automatic)
              else
                Tactical.THEN
-                 (prepare,
-                  Tactical.ORELSE
-                    (predicate_abstraction_tac, automatic))))
+                 (Tactical.THEN
+                    (set_equality,
+                     simpLib.FULL_SIMP_TAC simpset
+                       (simps @ simp_controls goal exclusions)),
+                  Tactical.ORELSE (predicate_abstraction_tac, automatic))))
       end
   | tactic_for simpset goal Blast args exclusions =
       let
@@ -1472,8 +1507,8 @@ fun tactic_for simpset goal Simp args exclusions =
              Tactical.ORELSE
                (accept_supplied,
                 Tactical.THEN (Tactic.EQ_TAC, accept_supplied)))
-        val simplify =
-          simpLib.SIMP_TAC simpset (simps @ simp_controls goal exclusions)
+        val controls_for_simp = simp_controls goal exclusions
+        val simplify = simpLib.SIMP_TAC simpset (simps @ controls_for_simp)
         (* Isabelle's [blast] never simplifies, so the pass below is
            the [unfolding] the method asked for and nothing else: it
            runs unconditionally exactly where there is a rewrite to run
@@ -1522,14 +1557,12 @@ fun tactic_for simpset goal Simp args exclusions =
             (Conv.THENC
               (Conv.TRY_CONV
                  (Conv.ONCE_DEPTH_CONV set_eq_conv),
-               simpLib.SIMP_CONV simpset
-                 (rewrites @ simp_controls goal exclusions)))
-        val normalise_rule = normalise_with simps
-        fun normalised_by rewrites theorem =
-          case Lib.total (Conv.CONV_RULE (normalise_with rewrites)) theorem of
+               simpLib.SIMP_CONV simpset (rewrites @ controls_for_simp)))
+        fun normalised_by conversion theorem =
+          case Lib.total (Conv.CONV_RULE conversion) theorem of
               SOME normalised => normalised
             | NONE => theorem
-        val normalised_theorem = normalised_by simps
+        val normalised_theorem = normalised_by (normalise_with simps)
         fun rule_kind (IntroAdd (strength, _)) =
               SOME (clasetRules.Intro, strength)
           | rule_kind (ElimAdd (strength, _)) =
@@ -1589,7 +1622,7 @@ fun tactic_for simpset goal Simp args exclusions =
                     (fn rewrite =>
                       not (aconv (Thm.concl rewrite) (Thm.concl theorem)))
                     simps
-                val rewritten = normalised_by others theorem
+                val rewritten = normalised_by (normalise_with others) theorem
               in
                 if aconv (Thm.concl theorem) (Thm.concl rewritten) then []
                 else [FactAdd {name = name, theorem = rewritten}]
@@ -1632,12 +1665,12 @@ fun tactic_for simpset goal Simp args exclusions =
       end
   | tactic_for simpset goal Force args exclusions =
       let
+        val simps = List.mapPartial simp_arg args
         val prepare =
           Tactical.THEN
-            (set_equality_pass simpset goal args,
+            (set_equality_pass simpset goal simps,
              simpLib.FULL_SIMP_TAC simpset
-               (List.mapPartial simp_arg args @
-                simp_controls goal exclusions))
+               (simps @ simp_controls goal exclusions))
       in
         with_facts args
           (Tactical.THEN
@@ -1648,7 +1681,7 @@ fun tactic_for simpset goal Simp args exclusions =
   | tactic_for simpset goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
-          (set_equality_pass simpset goal args,
+          (set_equality_pass simpset goal (List.mapPartial simp_arg args),
            processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls goal exclusions)))
   | tactic_for _ _ Safe args exclusions =

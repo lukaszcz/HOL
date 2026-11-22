@@ -116,6 +116,24 @@ fun long_budget limits = searchBudget.create limits
 
 val _ =
   check
+    ("a weak goal uses the first path before a later direct edge",
+     fn () =>
+       let
+         val target = long_order_edge 0 2
+         val support =
+           [long_order_axiom, long_order_edge 0 1, long_order_edge 1 2]
+         val facts = map Thm.ASSUME (support @ [target])
+         val theorem = orderSolve.prove_with facts target
+       in
+         Term.aconv (Thm.concl theorem) target andalso
+         length (Thm.hyp theorem) = length support andalso
+         List.all
+           (fn tm => List.exists (Term.aconv tm) (Thm.hyp theorem))
+           support
+       end)
+
+val _ =
+  check
     ("reverse-chain reachability keeps the original first proof path",
      fn () =>
        let
