@@ -17,8 +17,9 @@ sig
   (* Closed law witnesses in source occurrence order for unpriced graphs. *)
   val unpriced_witnesses :
     plan -> (SmtReplayGraph.node * Thm.thm) list option
-  (* Assemble the replay spelling from its original permitted occurrence
-     and a closed beta/eta equality; never assume the extra replay Source. *)
+  (* The block's assembler lazily validates on first use. Assemble the
+     replay spelling from its original occurrence and a closed beta/eta
+     equality; never assume the extra replay Source. *)
   val assemble : plan -> SmtReplayProof.block -> SmtReplayGraph.node ->
     SmtReplayProof.edge
 end

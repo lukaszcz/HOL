@@ -3814,6 +3814,49 @@ in
     "get-option query was not recorded in the state snapshot")
 end
 
+fun parse_file_repeated_check_sat_snapshots () =
+let
+  val {queries, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(define-fun id ((p Bool)) Bool p)\n" ^
+       "(assert a)\n" ^
+       "(check-sat)\n" ^
+       "(check-sat-assuming (a))\n" ^
+       "(push 1)\n" ^
+       "(assert false)\n" ^
+       "(check-sat)\n" ^
+       "(pop 1)\n" ^
+       "(check-sat)\n" ^
+       "(reset-assertions)\n" ^
+       "(check-sat)\n")
+  open SmtLib_Parser
+in
+  case queries of
+    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat pushed,
+     QueryCheckSat popped, QueryCheckSat reset] =>
+      (assert (Portable.pointer_eq (#assertions first, #assertions repeated),
+         "repeated check copied the assertions");
+       assert (List.length (#local_definitions first) = 1 andalso
+         Portable.pointer_eq
+           (#local_definitions first, #local_definitions repeated),
+         "repeated check failed to reuse the local definitions");
+       assert (null (#assumptions first) andalso
+         List.exists (term_is_var_named "a") (#assumptions repeated),
+         "repeated check did not record its assumptions");
+       assert (case #assertions pushed of
+           [outer, inner] => term_is_var_named "a" outer andalso
+             Term.term_eq inner boolSyntax.F
+         | _ => false, "check after push lost an assertion");
+       assert (case #assertions popped of
+           [outer] => term_is_var_named "a" outer
+         | _ => false, "check after pop used stale assertions");
+       assert (null (#assertions reset),
+         "check after reset used stale assertions"))
+  | _ => die "unexpected sequence of check-sat queries"
+end
+
 fun parse_file_define_fun_fragment_scope_success () =
 let
   val {assertions, local_definitions, queries, ...} =
@@ -39730,6 +39773,8 @@ let
     ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
     ("parse_file_reset_state", parse_file_reset_state),
     ("parse_file_query_commands_success", parse_file_query_commands_success),
+    ("parse_file_repeated_check_sat_snapshots",
+      parse_file_repeated_check_sat_snapshots),
     ("parse_file_define_fun_fragment_scope_success",
       parse_file_define_fun_fragment_scope_success),
     ("parse_file_define_fun_body_fragment_violation_success",

@@ -127,12 +127,19 @@ fun undoCNF lfn clauses th = (* th is [ci] |-  F *)
    CNF with compound atoms.  Do not re-clausify it or reconstruct a model. *)
 fun DPLL_REFUTE lfn clauseth =
     let
-        val clauses = Array.foldr (op ::) [] clauseth
-        val initial = List.foldr
-          (fn ((clause,_),th) => CONJ (ASSUME clause) th) TRUTH clauses
+        val compact = RBM.numItems lfn <> 0
+        (* Balancing preserves left-to-right clause order for unit selection.
+           Without substitution, each premise already proves its clause. *)
+        val initial =
+            if compact then
+              ASSUME (minisatResolve.balanced_array
+                boolSyntax.T fst boolSyntax.mk_conj clauseth)
+            else minisatResolve.balanced_clause_proof clauseth
     in
       case search initial of
-        Refutation th => SOME (undoCNF lfn clauses th)
+        Refutation th =>
+          SOME (if compact then minisatResolve.finish_compact_cnf
+                  (concl initial) lfn clauseth th else th)
       | Assignment _ => NONE
     end
 

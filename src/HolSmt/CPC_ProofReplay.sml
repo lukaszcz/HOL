@@ -15500,34 +15500,6 @@ local
             trace_chain ("structural extras " ^
               Int.toString (List.length structural_extras))
           else ()
-          fun structural_deep_literals term =
-            if boolSyntax.is_disj term then
-              let val (left, right) = boolSyntax.dest_disj term
-              in structural_deep_literals left @
-                 structural_deep_literals right end
-            else
-              case Lib.total boolSyntax.dest_neg term of
-                SOME body =>
-                  if boolSyntax.is_disj body then
-                    let val (left, right) = boolSyntax.dest_disj body
-                    in structural_deep_literals
-                         (boolSyntax.mk_neg left) @
-                       structural_deep_literals
-                         (boolSyntax.mk_neg right) end
-                  else if boolSyntax.is_conj body then
-                    let val (left, right) = boolSyntax.dest_conj body
-                    in structural_deep_literals
-                         (boolSyntax.mk_neg left) @
-                       structural_deep_literals
-                         (boolSyntax.mk_neg right) end
-                  else [term]
-              | NONE => [term]
-          val structural_deep_extras = List.filter
-            (fn literal => not (List.exists
-              (structural_literal_equal literal) target_literals))
-            (List.concat (List.map structural_deep_literals
-              structural_extras))
-          val _ = trace_chain "deep extras complete"
           fun atomic_boolean_literal term =
             if boolSyntax.is_disj term orelse boolSyntax.is_conj term then false
             else case Lib.total boolSyntax.dest_neg term of
@@ -15550,6 +15522,36 @@ local
                  boolSyntax.is_conj body orelse boolSyntax.is_neg body
              | NONE => boolSyntax.is_disj term orelse
                  boolSyntax.is_conj term)
+          fun deep_extras_supported () =
+            let
+              (* Count literal occurrences in clause order. Shared children
+                 can contribute several occurrences to the limit. *)
+              fun walk [] _ = true
+                | walk (term :: rest) remaining =
+                    let
+                      fun leaf () =
+                        if List.exists (structural_literal_equal term)
+                            target_literals then walk rest remaining
+                        else remaining > 0 andalso
+                          supported_deep_literal term andalso
+                          walk rest (remaining - 1)
+                      fun negated (left,right) =
+                        walk (boolSyntax.mk_neg left ::
+                          boolSyntax.mk_neg right :: rest) remaining
+                    in case Lib.total boolSyntax.dest_disj term of
+                        SOME (left,right) => walk (left :: right :: rest)
+                          remaining
+                      | NONE =>
+                          (case Lib.total boolSyntax.dest_neg term of
+                             SOME body =>
+                               if boolSyntax.is_disj body then
+                                 negated (boolSyntax.dest_disj body)
+                               else if boolSyntax.is_conj body then
+                                 negated (boolSyntax.dest_conj body)
+                               else leaf ()
+                           | NONE => leaf ())
+                    end
+            in walk structural_extras 64 end
           val _ = unused_prems := annotated_remaining
           val supported_result = List.foldl
             (fn (theorem, accumulated) =>
@@ -15578,18 +15580,13 @@ local
           fun deep_disjunction_alignment () =
             let
               val _ = trace_chain "deep disjunction alignment"
-              fun deep_literals term =
-                if boolSyntax.is_disj term then
-                  let val (left, right) = boolSyntax.dest_disj term
-                  in deep_literals left @ deep_literals right end
-                else [term]
               fun find_pivot theorem premise =
                 let val premise_literals =
-                  deep_literals (Thm.concl premise)
+                  boolSyntax.strip_disj (Thm.concl premise)
                 in List.find
                   (fn literal => List.exists
                     (literal_equal (complement literal)) premise_literals)
-                  (deep_literals (Thm.concl theorem))
+                  (boolSyntax.strip_disj (Thm.concl theorem))
                 end
               fun resolve_remaining theorem [] kept =
                     (theorem, List.rev kept)
@@ -15945,8 +15942,8 @@ local
             List.null (!unused_prems) andalso
             not (List.null structural_extras) andalso
             List.all atomic_boolean_literal target_literals andalso
-            List.length structural_deep_extras <= 64 andalso
-            List.all supported_deep_literal structural_deep_extras
+            deep_extras_supported ()
+          val _ = trace_chain "deep extras complete"
           val _ = trace_chain ("Boolean DAG eligible " ^
             Bool.toString boolean_dag_eligible)
           fun semantic_extras_empty () =
@@ -23489,7 +23486,7 @@ in
       val checked_count = ref 0
       fun trace_checked message =
         if trace then
-          (Feedback.HOL_MESG ("CPC checked closure: " ^ message);
+          (Feedback.HOL_MESG ("CPC checked closure: " ^ message ());
            TextIO.flushOut TextIO.stdOut)
         else ()
       fun shallow_shape depth term =
@@ -23516,9 +23513,8 @@ in
                   (take 4 arguments)) ^ ")"
             end
         end
-      val _ = trace_checked
-        ("hypotheses=" ^ Int.toString
-          (List.length (HOLset.listItems extra)))
+      val _ = trace_checked (fn () =>
+        "hypotheses=" ^ Int.toString (HOLset.numItems extra))
       val dependency_memo = ref ([] : (Term.term * Thm.thm) list)
       fun prove_exact_hyp proof result =
         let
@@ -23583,13 +23579,12 @@ in
       fun discharge (hypothesis, result) = Timeout.apply
         SmtResource.max_hypothesis_entailment_time (fn () =>
         let
-          val _ = checked_count := !checked_count + 1
-          val ordinal = Int.toString (!checked_count)
-          val _ = trace_checked ("begin=" ^ ordinal ^ " nodes=" ^
-            Int.toString (SmtResource.dag_nodes_up_to 1025 hypothesis))
-          val _ = if trace then
-            trace_checked ("shape=" ^ shallow_shape 3 hypothesis)
-            else ()
+          val _ = trace_checked (fn () =>
+            (checked_count := !checked_count + 1;
+             "begin=" ^ Int.toString (!checked_count) ^ " nodes=" ^
+             Int.toString (SmtResource.dag_nodes_up_to 1025 hypothesis)))
+          val _ = trace_checked (fn () =>
+            "shape=" ^ shallow_shape 3 hypothesis)
           fun replay_checked () =
             let
               val proof = replay_trust_admitted_mode false
@@ -23637,14 +23632,15 @@ in
                  checked_then_generalized)
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
-          val _ = trace_checked ("done=" ^ ordinal)
+          val _ = trace_checked (fn () =>
+            "done=" ^ Int.toString (!checked_count))
         in discharged end) ()
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else
-            (trace_checked
-               ("deferred: " ^ Feedback.message_of holerr);
+            (trace_checked (fn () =>
+               "deferred: " ^ Feedback.message_of holerr);
              result)
     in
       HOLset.foldl discharge theorem extra

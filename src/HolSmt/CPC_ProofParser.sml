@@ -3442,10 +3442,8 @@ local
     | "sets-minus-self" => position = 2
     | _ => false
 
-  fun parse_step dicts_ref version known_ids record_unsupported get_token =
+  fun parse_step dicts_ref version known_ids record_unsupported id get_token =
     let
-      val id = cpc_id_key "parse_step" "command ID" (get_token ())
-      val _ = ensure_fresh_id "parse_step" id known_ids
       val first = get_token ()
       (* CPC serializes the conclusion before [:rule].  Buffer exactly one
          raw term so rule dispatch can happen before SMT semantic parsing.
@@ -3944,40 +3942,57 @@ local
       | NONE => (id, SOME (parse_supported ()))
     end
 
-  fun register_command_signature seen_steps kind id tokens =
+  datatype command_signature =
+      RecordedTokens of string list
+    | NormalizedTokens of string list
+
+  fun register_command_signature seen_steps kind id reversed_tokens =
     let
-    fun same_tokens left right =
-      ListPair.allEq (op =) (left, right)
-    fun normalize_premise_ids tokens =
+      fun normalize recorded =
+        let
+          fun normal acc [] = List.rev acc
+            | normal acc (":premises" :: "(" :: rest) =
+                premises ("(" :: ":premises" :: acc) rest
+            | normal acc (token :: rest) = normal (token :: acc) rest
+          and premises acc [] = List.rev acc
+            | premises acc (")" :: rest) = normal (")" :: acc) rest
+            | premises acc (_ :: rest) =
+                premises ("@premise" :: acc) rest
+        in normal [] (List.rev recorded) end
+      fun duplicate () =
+        raise ERR "parse_commands" ("duplicate CPC command ID " ^ id)
+      fun check known =
+        if ListPair.allEq (op =) (normalize reversed_tokens, known) then ()
+        else duplicate ()
+    in
+      case Redblackmap.peek (!seen_steps, id) of
+        (* Share the recorder's list until an ID is actually reused. *)
+        NONE => seen_steps := Redblackmap.insert
+          (!seen_steps, id, (kind, RecordedTokens reversed_tokens))
+      | SOME (known_kind, known) =>
+          if kind <> known_kind then duplicate ()
+          else case known of
+              NormalizedTokens tokens => check tokens
+            | RecordedTokens recorded =>
+                let val tokens = normalize recorded
+                    val _ = check tokens
+                in seen_steps := Redblackmap.insert
+                  (!seen_steps, id, (kind, NormalizedTokens tokens))
+                end
+    end
+
+  fun command_tokens seen scoped kind id next =
+    (* A top-level ID remains live through every subsequent scope. Only
+       record it if it must match an earlier definition in a closed scope. *)
+    if scoped orelse Redblackmap.inDomain (!seen, id) then
       let
-        fun normal acc [] = List.rev acc
-          | normal acc (":premises" :: "(" :: rest) =
-              premises ("(" :: ":premises" :: acc) rest
-          | normal acc (token :: rest) = normal (token :: acc) rest
-        and premises acc [] = List.rev acc
-          | premises acc (")" :: rest) = normal (")" :: acc) rest
-          | premises acc (_ :: rest) =
-              premises ("@premise" :: acc) rest
-      in
-        normal [] tokens
-      end
-    fun register_step_signature kind id tokens =
-      let
-        (* [tokens] starts with the raw command-ID token.  Use its already
-           validated semantic key so normalized-identical scoped reuse is
-           independent of equivalent quoted/unquoted spelling. *)
-        val signature_tokens =
-          kind :: id :: normalize_premise_ids (List.tl tokens)
-      in
-        case Redblackmap.peek (!seen_steps, id) of
-          NONE => seen_steps :=
-            Redblackmap.insert (!seen_steps, id, signature_tokens)
-        | SOME known_tokens =>
-            if same_tokens signature_tokens known_tokens then ()
-            else raise ERR "parse_commands"
-              ("duplicate CPC command ID " ^ id)
-      end
-    in register_step_signature kind id tokens end
+        val consumed = ref []
+        fun record () =
+          let val token = next ()
+          in consumed := token :: !consumed; token end
+        fun check () = register_command_signature seen kind id (!consumed)
+      in (record, check) end
+    else (next, fn () => ())
 
   fun parse_commands dicts_ref version known_ids scope_snapshots
       seen_steps record_unsupported get_token stop acc =
@@ -3988,19 +4003,16 @@ local
       fun recurse acc =
         parse_commands dicts_ref version known_ids scope_snapshots
           seen_steps record_unsupported get_token stop acc
-      val register_step_signature = register_command_signature seen_steps
-      fun parse_recorded_step kind =
+      fun parse_checked_step kind =
         let
-          val consumed = ref ([] : string list)
-          fun recording_token () =
-            let val token = get_token () in
-              consumed := token :: !consumed;
-              token
-            end
-          val result as (id, _) =
+          val id = cpc_id_key "parse_step" "command ID" (get_token ())
+          val _ = ensure_fresh_id "parse_step" id known_ids
+          val (next, check) = command_tokens seen_steps
+            (not (null (!scope_snapshots))) kind id get_token
+          val result =
             parse_step dicts_ref version known_ids record_unsupported
-              recording_token
-          val _ = register_step_signature kind id (List.rev (!consumed))
+              id next
+          val _ = check ()
         in
           result
         end
@@ -4083,7 +4095,7 @@ local
                       end
                   | "step" =>
                       let
-                        val (id, step) = parse_recorded_step "step"
+                        val (id, step) = parse_checked_step "step"
                         val _ = add_id id
                       in
                         case step of
@@ -4092,7 +4104,7 @@ local
                       end
                   | "step-pop" =>
                       let
-                        val (id, step) = parse_recorded_step "step-pop"
+                        val (id, step) = parse_checked_step "step-pop"
                         val _ = close_scope id
                       in
                         case step of
@@ -4187,9 +4199,7 @@ local
       val _ = cpc_source_term_symbols := source_keys (#2 dicts)
       val known_ids = ref (HOLset.empty String.compare)
       val scope_snapshots = ref ([] : string HOLset.set list)
-      val seen_steps = ref
-        (Redblackmap.mkDict String.compare :
-          (string, string list) Redblackmap.dict)
+      val seen_steps = ref (Redblackmap.mkDict String.compare)
       val pending = ref (NONE : (string * string) option)
       fun record_unsupported diagnostic =
         case !pending of
@@ -5671,9 +5681,7 @@ end
         (#symbol_key terms)
       val known = ref (HOLset.empty String.compare)
       val snapshots = ref ([] : string HOLset.set list)
-      val seen = ref
-        (Redblackmap.mkDict String.compare :
-          (string, string list) Redblackmap.dict)
+      val seen = ref (Redblackmap.mkDict String.compare)
       val pending = ref (NONE : (string * string) option)
       val ended = ref false
       val _ = Library.expect_token "(" (token ())
@@ -5854,11 +5862,10 @@ end
         end
       fun step kind =
         let
-          val consumed = ref ([] : string list)
-          fun next () = let val text = token () in
-            consumed := text :: !consumed; text end
-          val name = id (next ())
+          val name = id (token ())
           val _ = fresh name
+          val (next, check) = command_tokens seen (not (null (!snapshots)))
+            kind name token
           val first = next ()
           val conclusion = if first = ":rule" then NONE else
             SOME (read_raw_term (Library.undo_look_ahead [first] next))
@@ -5916,8 +5923,7 @@ end
                 in attrs saw_premises true premises raws end
             | attribute => error ("unknown CPC step attribute " ^ attribute)
           val (premises, args) = attrs false false [] []
-          val _ = register_command_signature seen kind name
-            (List.rev (!consumed))
+          val _ = check ()
           val _ = if kind = "step-pop" then close name else add name
         in case rare_unsupported_diagnostic rule_name of
             SOME diagnostic =>
@@ -5947,6 +5953,7 @@ end
               error ("second CPC proof wrapper or trailing token '" ^
                 P.proof_symbol_text text ^ "'")
             val _ = ended := true
+            val _ = seen := Redblackmap.mkDict String.compare
         in case !pending of NONE => NONE
           | SOME (rule, diagnostic) => raise ERR rule diagnostic end
       fun next () = if !ended then NONE else

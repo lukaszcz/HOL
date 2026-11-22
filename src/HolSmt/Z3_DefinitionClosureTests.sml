@@ -10,6 +10,8 @@ struct
   structure Z = Z3_GraphProofParser
   structure Q = SmtLib_GraphProof
   structure P = Z3_DefinitionProjection
+  structure Proof = SmtReplayProof
+  structure Reconcile = Z3_GraphSourceReconcile
   val limit = 10000
   fun require message yes = if yes then () else raise Fail message
   fun refuses action = (action ();false) handle Feedback.HOL_ERR _ => true
@@ -156,6 +158,50 @@ struct
        andalso HOLset.equal (Thm.hypset theorem,
          HOLset.addList (Term.empty_tmset,[assumption])) andalso
        clean theorem andalso !calls=1) end
+
+  fun reconciliation_assembler () =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val child = G.new_scope graph scope []
+      val term = ``closure_source:bool``
+      val sources = S.new graph scope limit
+        {goal=term,assumptions=[term]}
+      val source = hd (S.assumption_nodes sources)
+      val unknown = imported graph scope ``closure_unrecorded:bool``
+      val plan = Reconcile.prepare graph scope
+        {sources=sources,replay=[source],views=[],
+         admission={raw_limit=limit,binder_limit=limit,
+           step_limit=limit,check_type=fn _ => ()}}
+      val rows = Reconcile.sources plan
+      fun freeze sources = Proof.prepare_needed_sources graph
+        {scope=scope,roots=rows,sources=sources,template_limit=limit}
+      fun rejects expected action =
+        (action ();false)
+        handle Feedback.HOL_ERR error => Feedback.message_of error = expected
+      val wrong = Reconcile.assemble plan (freeze (rev rows))
+      val _ = require "block prefix must precede replay Source lookup"
+        (rejects "reconciliation block changed original occurrence portfolio"
+          (fn () => ignore (wrong unknown)))
+      val block = freeze rows
+      val assemble = Reconcile.assemble plan block
+      val _ = assemble source
+      val (_,cached) = G.with_node_statistics graph scope
+        (fn () => assemble source)
+      val _ = require "stable block repeated reconciliation node validation"
+        (#node_accesses cached = 0)
+      val _ = G.close_scope graph child
+      val (edge,retired) = G.with_node_statistics graph scope
+        (fn () => assemble source)
+      val _ = require "scope retirement did not refresh reconciliation checks"
+        (#node_accesses retired > 0)
+      val proof = Proof.realize block source edge
+      val _ = require "reconciled Source lost the original hypothesis"
+        (Term.aconv (Thm.concl proof) term andalso clean proof andalso
+         (case Thm.hyp proof of [hyp] => Term.aconv hyp term | _ => false))
+    in require "block retirement must precede replay Source lookup"
+      (rejects "block already realized" (fn () => ignore (assemble unknown)))
+    end
 
   fun legacy_controls () =
     let
@@ -347,6 +393,8 @@ struct
   fun run () =
     (tprint "Bounded projection preserves isolation, Hyp, tags and fallback";
      projection_controls ();OK ();
+     tprint "Reconciled Source assembler rechecks invalidated blocks";
+     reconciliation_assembler ();OK ();
      tprint "Definition closure preserves discarded binders and acyclic DAGs";
      no_new_refusals ();OK ();
      tprint "Complete ground definitions retain checked legacy families";

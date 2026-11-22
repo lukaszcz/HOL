@@ -481,6 +481,21 @@ local
     (fn () => measured (set_proof missing (config cnf))
         (fn conf => checked (mk_neg cnf) (GEN_SAT_PROVE_ONLY conf)) andalso
       measured (set_proof missing (config compound)) sat_only)
+  val _ = control "proof-only fallback handles empty, unit and non-unit CNF"
+    (fn () =>
+      let
+        val nonunit =
+          ``((p \/ q) /\ (~p \/ q)) /\ ((p \/ ~q) /\ (~p \/ ~q))``
+        fun refute goal = measured (internal (config goal))
+            (fn conf => checked (mk_neg goal) (GEN_SAT_PROVE_ONLY conf))
+      in
+        not (isSome (dpll.DPLL_REFUTE
+          (Redblackmap.mkDict Term.var_compare) (Array.fromList []))) andalso
+        refute F andalso measured (internal (config invalid)) sat_only andalso
+        refute nonunit andalso
+        measured (internal (set_term valid base_config))
+          (fn conf => checked valid (GEN_SAT_PROVE_ONLY conf))
+      end)
   val _ = control "ordinary missing-proof checked UNSAT/model contracts"
     (fn () => measured
         (set_flag_is_cnf false (set_proof missing
