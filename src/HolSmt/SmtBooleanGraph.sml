@@ -55,6 +55,26 @@ struct
            hash (depth - 1) (Term.rand tm) * 67 + 11) mod bucket_count
         else if Term.is_abs tm then 5 else hash 0 tm
 
+  local
+    datatype 'a bucket =
+        Small of (Term.term * 'a) * (Term.term * 'a) list
+      | Indexed of (Term.term * 'a) *
+          (word,(Term.term * 'a) list) Redblackmap.dict
+
+    (* Follow two operand paths, so shared subtrees are never unfolded.
+       Abstractions stop the walk and cannot expose bound-variable names. *)
+    fun spine_key term =
+      let
+        fun sample first depth current =
+          if Term.is_comb current then
+            let
+              val (operator,operand) = Term.dest_comb current
+              val next = if first andalso Term.is_comb operator
+                         then Term.rand operator else operand
+            in sample first (depth + 0w1) next end
+          else depth * 0w16381 + Word.fromInt (hash 0 current)
+      in sample true 0w0 term * 0w65599 + sample false 0w0 term end
+  in
   fun new {chunk_depth, stops, stop_conversion, leaf, unfold} =
     let
       val memo = ref (Redblackmap.mkDict Int.compare)
@@ -65,15 +85,47 @@ struct
         ([] : (Term.term * Term.term * Thm.thm option) list)
       val substitutions = ref
         ([] : {redex : Term.term, residue : Term.term} list)
-      fun peek table tm =
-        case List.find (fn (saved, _) => same saved tm)
-            (Option.getOpt (Redblackmap.peek (!table, hash 4 tm), [])) of
-          SOME (_, result) => SOME result
-        | NONE => NONE
-      fun insert table tm result =
-        let val key = hash 4 tm in
-          table := Redblackmap.insert (!table, key, (tm, result) ::
-            Option.getOpt (Redblackmap.peek (!table, key), []))
+      fun find _ [] = NONE
+        | find tm ((saved,result) :: rest) =
+            if same saved tm then SOME result else find tm rest
+      fun add (entry as (term,_),index) =
+        Redblackmap.insertWith (fn (entries,_) => entry :: entries)
+          (index,spine_key term,[entry])
+      fun seek index tm =
+        case Redblackmap.peek (index,spine_key tm) of
+            NONE => NONE
+          | SOME entries => find tm entries
+      (* Build the secondary index only after a lookup crosses twelve
+         entries. Homogeneous graphs can accumulate large buckets while
+         finding their shared operands in the newest entry. *)
+      fun scan_small table key first entries tm =
+        let
+          fun scan _ [] = NONE
+            | scan 0 _ =
+                let
+                  val index = List.foldr add (Redblackmap.mkDict Word.compare)
+                    (first :: entries)
+                  val _ = table := Redblackmap.insert (!table,key,
+                    Indexed (first,index))
+                in seek index tm end
+            | scan limit ((saved,result) :: rest) =
+                if same saved tm then SOME result else scan (limit - 1) rest
+        in scan 11 entries end
+      fun peek table key tm =
+        case Redblackmap.peek (!table,key) of
+            NONE => NONE
+          | SOME (Small (first as (saved,result),rest)) =>
+              if same saved tm then SOME result
+              else scan_small table key first rest tm
+          | SOME (Indexed ((last,result),index)) =>
+              if Portable.pointer_eq (last,tm) then SOME result
+              else seek index tm
+      fun insert table key tm result =
+        let
+          val entry = (tm,result)
+          fun extend (Small (first,rest),_) = Small (entry,first :: rest)
+            | extend (Indexed (_,index),_) = Indexed (entry,add (entry,index))
+        in table := Redblackmap.insertWith extend (!table,key,Small (entry,[]))
         end
       fun variable tm =
         let val result = Term.genvar Type.bool in
@@ -85,11 +137,12 @@ struct
           val canonical = leaf tm
           val _ = same canonical tm orelse
             raise ERR "new" "opaque leaf canonicalization changed its term"
-        in case peek leaves canonical of
+          val key = hash 4 canonical
+        in case peek leaves key canonical of
             SOME result => result
           | NONE =>
               let val result = variable canonical in
-                insert leaves canonical result;
+                insert leaves key canonical result;
                 leaf_count := !leaf_count + 1;
                 result
               end
@@ -104,7 +157,8 @@ struct
         end
       fun circuit_depth depth tm =
         (observe #focus_visits;
-         case peek memo tm of
+         let val key = hash 4 tm in
+         case peek memo key tm of
           SOME result => (observe #cache_hits;result)
         | NONE =>
             let val _ = observe #cache_misses
@@ -157,16 +211,18 @@ struct
                     internal (boolSyntax.mk_cond
                       (child condition, child yes, child no)) end
                 else converted unfold
-              val _ = insert memo tm result
+              val _ = insert memo key tm result
               val _ = nodes := !nodes + 1
               val _ = observe #first_insertions
-            in result end)
+            in result end
+         end)
     in
       {circuit = circuit_depth 0,
        definitions = fn () => List.rev (!definitions),
        substitutions = fn () => !substitutions,
        counts = fn () => {nodes = !nodes, leaves = !leaf_count}}
     end
+  end
 
   (* Convert only admitted graph definitions.  The output is a graph root,
      including a gate for an implication; a compound formula must not be

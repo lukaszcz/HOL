@@ -211,6 +211,10 @@ sig
      fold:(('node * 'node) * 'node list -> 'node list) -> 'node list ->
        ('node * 'node) list -> 'node list,error:string -> exn} ->
     'node -> 'node list -> bool
+  (* Endpoint keys must identify nodes exactly within the relation data. *)
+  val exact_relation_path :
+    {visit:unit -> unit,relation:''node -> (''kind * (''node * ''node)) option,
+     key:''node -> int,error:string -> exn} -> ''node -> ''node list -> bool
   val congruence_rewrite :
     {replacement:'node -> 'output option,lookup:'node -> 'output option,
      publish:'node * 'output -> unit,

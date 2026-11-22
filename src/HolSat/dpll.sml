@@ -17,9 +17,7 @@ fun count_vars ds acc =
     | lit::lits => let
         val v = dest_neg lit handle HOL_ERR _ => lit
       in
-        case Termtab.lookup acc v of
-          NONE => count_vars lits (Termtab.update (v,1) acc)
-        | SOME n => count_vars lits (Termtab.update (v,n + 1) acc)
+        count_vars lits (Termtab.map_default (v,0) (fn n => n + 1) acc)
       end
 
 fun getBiggest acc =
@@ -29,15 +27,20 @@ fun getBiggest acc =
                      (boolSyntax.T, 0))
 
 (* The first unit we see, or the var that occurs most often *)
-fun find_splitting_var phi = let
-  val clauses = strip_conj phi
-in
-  case List.find (not o is_disj) clauses of
-      SOME lit => (dest_neg lit handle HOL_ERR _ => lit)
-    | NONE =>
-        getBiggest (List.foldl (fn (clause, acc) =>
-          count_vars (strip_disj clause) acc) Termtab.empty clauses)
-end
+fun find_splitting_var phi =
+  let
+    fun count (clause,acc) = count_vars (strip_disj clause) acc
+    fun scan clause pending visited =
+        case total dest_conj clause of
+            SOME (left,right) => scan left (right :: pending) visited
+          | NONE =>
+              if is_disj clause then
+                case pending of
+                    next :: rest => scan next rest (clause :: visited)
+                  | [] => getBiggest (List.foldl count Termtab.empty
+                            (List.rev (clause :: visited)))
+              else (dest_neg clause handle HOL_ERR _ => clause)
+  in scan phi [] [] end
 
 fun split_branch v value th =
   REWRITE_RULE [ASSUME (mk_eq (v,value))] th

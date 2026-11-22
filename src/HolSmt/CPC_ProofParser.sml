@@ -158,22 +158,27 @@ local
                 Portable.pointer_eq (left, right) orelse
                 ((Term.is_var left orelse Term.is_const left) andalso
                  same_intern_candidate right left)
-              fun follow fuel (source, saved) =
+              (* Consume the bucket spine only as far as the match descends. *)
+              fun follow entries spare (source, saved) =
                 same_child source saved orelse
-                (fuel > 0 andalso Term.is_comb source andalso
-                 Term.is_comb saved andalso
-                 let
-                   val (fl, xl) = Term.dest_comb source
-                   val (fr, xr) = Term.dest_comb saved
-                 in
-                   if same_child fl fr then follow (fuel - 1) (xl, xr)
-                   else same_child xl xr andalso follow (fuel - 1) (fl, fr)
-                 end)
+                (case entries of
+                   _ :: rest => descend rest spare (source, saved)
+                 | [] => spare > 0 andalso
+                     descend [] (spare - 1) (source, saved))
+              and descend entries spare (source, saved) =
+                Term.is_comb source andalso Term.is_comb saved andalso
+                let
+                  val (fl, xl) = Term.dest_comb source
+                  val (fr, xr) = Term.dest_comb saved
+                in
+                  if same_child fl fr then follow entries spare (xl, xr)
+                  else same_child xl xr andalso follow entries spare (fl, fr)
+                end
               val entries = Array.sub (!cpc_term_intern, bucket)
             in
               case entries of
                 saved :: _ =>
-                  if follow (List.length entries + 8) (candidate, saved) then
+                  if follow entries 8 (candidate, saved) then
                     SOME saved else NONE
               | [] => NONE
             end

@@ -1400,41 +1400,51 @@ struct
   (***************************************************************************)
 
   (* Does [ty], a function component, or a native sequence element type
-     satisfy [pred]?  Do not descend through arbitrary constructor arguments:
-     word widths and similar phantom parameters are not SMT value sorts. *)
-  fun type_contains pred ty =
-    pred ty orelse
-    (case Lib.total Type.dest_type ty of
-       SOME ("fun", [dom, rng]) =>
-         type_contains pred dom orelse type_contains pred rng
-     | SOME ("list", [element]) => type_contains pred element
-     | _ => false)
+     satisfy [pred]? Other arguments, such as word widths, do not contribute
+     features here. The built-in predicates need only test a shared child
+     once. Preserve occurrence-by-occurrence calls for arbitrary predicates. *)
+  local
+    fun contains skip_duplicate pred root =
+      let
+        fun visit ty = pred ty orelse
+          (case Lib.total Type.dest_type ty of
+             SOME ("fun", [dom, rng]) => visit dom orelse
+               (not (skip_duplicate andalso Portable.pointer_eq (dom, rng))
+                andalso visit rng)
+           | SOME ("list", [element]) => visit element
+           | _ => false)
+      in visit root end
+  in
+  fun type_contains pred ty = contains false pred ty
+  fun type_contains_pure pred ty = contains true pred ty
 
   fun type_contains_int ty =
-    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
+    type_contains_pure (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
 
   fun type_contains_real ty =
-    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
+    type_contains_pure (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL)
+      ty
 
   fun type_contains_word ty =
-    type_contains (Lib.can wordsSyntax.dest_word_type) ty
+    type_contains_pure wordsSyntax.is_word_type ty
 
   (* HOL's own :string, i.e. a char list.  Used by the logic-fragment checker
      to keep a parsed char-list string out of the datatype classification; the
      SMT String sort is 'type_contains_string' below. *)
   fun type_contains_native_string ty =
-    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
-      ty
+    type_contains_pure
+      (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL) ty
 
   (* The SMT-LIB String sort, i.e. smtstring$smtstr.  HOL's :string is
      deliberately not included: it is never emitted as an SMT String. *)
   fun type_contains_string ty =
-    type_contains
+    type_contains_pure
       (fn candidate =>
         case Lib.total Type.dest_thy_type candidate of
           SOME {Thy = "smtstring", Tyop = "smtstr", Args = []} => true
         | _ => false)
       ty
+  end
 
   (* 'tm' is exactly the constant 'c' (same name and theory) *)
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c

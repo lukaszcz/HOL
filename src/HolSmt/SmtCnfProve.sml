@@ -123,14 +123,12 @@ fun refute source_clauses =
       else decline "model-witness"
     val decode=Term.subst inverse
     val assign_values=Term.subst assignments
-    val schemas=ref []
     fun check clause =
      let
       (* Every clause has at most the native guarded atom size. Check the
          complete typed alias-preserving proxy map before evaluating it. *)
       val schema=encode clause
       val original=decode schema
-      val _=schemas:=schema:: !schemas
       val _=if Term.aconv clause original then ()
         else raise Fail "native SAT model source roundtrip"
       val instance=assign_values schema
@@ -138,20 +136,11 @@ fun refute source_clauses =
       val _=if null (Thm.hyp law) andalso Term.aconv (Thm.concl law) instance
         then () else raise Fail "native SAT model validation"
       val _=Library.check_oracle_tags "SmtCnfProve" "model" law
-     in law end
-    val proofs=Vector.foldr (fn (clause,rest)=>check clause::rest)
-      [] source_clauses
-    fun conjunction []=boolTheory.TRUTH
-      | conjunction [law]=law
-      | conjunction laws=let val half=length laws div 2
-        in Thm.CONJ (conjunction (List.take (laws,half)))
-             (conjunction (List.drop (laws,half))) end
-    fun balanced []=boolSyntax.T
-      | balanced [term]=term
-      | balanced terms=let val half=length terms div 2
-        in boolSyntax.mk_conj (balanced (List.take (terms,half)),
-             balanced (List.drop (terms,half))) end
-    val schema=balanced (!schemas)
+     in (schema,law) end
+    val checked = Array.fromList (Vector.foldr
+      (fn (clause,rest) => check clause :: rest) [] source_clauses)
+    val schema = minisatResolve.balanced_array boolSyntax.T fst
+      boolSyntax.mk_conj checked
     val variables=List.map #redex assignments
     val quantified=boolSyntax.list_mk_exists (variables,schema)
     fun steps target []=[]
@@ -160,7 +149,8 @@ fun refute source_clauses =
         in (target,residue)::
           steps (Term.subst [redex |-> residue] body) rest end
     val witness=List.foldr (fn ((target,choice),law)=>
-      Thm.EXISTS (target,choice) law) (conjunction proofs)
+      Thm.EXISTS (target,choice) law)
+      (minisatResolve.balanced_clause_proof checked)
       (steps quantified assignments)
     val _=if null (Thm.hyp witness) andalso
       Term.aconv (Thm.concl witness) quantified then ()

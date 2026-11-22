@@ -465,8 +465,12 @@ local
          !dimacsTools.tmp_name = previous
       end)
   val _ = control "DPLL chooses the first unit before counting literals"
-    (fn () => dpll.find_splitting_var
-      ``((p \/ q) /\ ~(r:bool)) /\ s`` ~~ ``r:bool``)
+    (fn () => List.all (fn formula =>
+      dpll.find_splitting_var formula ~~ ``r:bool``)
+      [``((p \/ q) /\ ~r) /\ s``, ``(p \/ q) /\ (~r /\ s)``])
+  val _ = control "DPLL keeps frequency counts and tie order without units"
+    (fn () => dpll.find_splitting_var ``(q \/ p) /\ (~q \/ r)`` ~~ ``q:bool``
+      andalso dpll.find_splitting_var ``(q \/ p) /\ (s \/ r)`` ~~ ``p:bool``)
   val _ = control "balanced and asymmetric explicit CNF preserve clause order"
     (fn () =>
       let

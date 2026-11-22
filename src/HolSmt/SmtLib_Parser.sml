@@ -4844,9 +4844,8 @@ local
 
   fun typechecked_query_snapshots () =
     let
-      (* Query commands retain the immutable frame stack. Share the flattened
-         lists between checks. The script loop drops the cache whenever a
-         command changes the frame stack. *)
+      (* Share the flattened lists between checks. Dictionary changes can
+         replace the top frame without changing any snapshot payload. *)
       val previous = ref NONE
       fun snapshot state =
         case !previous of
@@ -4869,13 +4868,23 @@ local
             transfer_hypotheses = transfer_hypotheses
           }
         end
+      fun same_payloads (old_frame :: old_rest, new_frame :: new_rest) =
+            Portable.pointer_eq (old_rest, new_rest) andalso
+            Portable.pointer_eq (typecheck_frame_assertions old_frame,
+              typecheck_frame_assertions new_frame) andalso
+            Portable.pointer_eq (typecheck_frame_local_definitions old_frame,
+              typecheck_frame_local_definitions new_frame) andalso
+            Portable.pointer_eq (typecheck_frame_finite_sets old_frame,
+              typecheck_frame_finite_sets new_frame)
+        | same_payloads _ = false
       fun discard_retired (old: typecheck_state option,
                            next: typecheck_state option) =
         case (!previous, old, next) of
           (NONE, _, _) => ()
         | (SOME _, SOME {frames = before_frames, ...},
                    SOME {frames = after_frames, ...}) =>
-            if Portable.pointer_eq (before_frames, after_frames) then ()
+            if Portable.pointer_eq (before_frames, after_frames) orelse
+               same_payloads (before_frames, after_frames) then ()
             else previous := NONE
         | _ => previous := NONE
     in

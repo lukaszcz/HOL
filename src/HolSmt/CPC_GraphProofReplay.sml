@@ -1557,20 +1557,13 @@ struct
                           "nonmatching graph transitivity chain"
                       end
                   fun existing_path work (target:F.term) = action (fn () =>
-                    let
-                      (* Callback-free DAG search inside the guarded
-                         action; each visit still debits live SAME Work. *)
-                      fun observe () = W.spend work 1
-                    in CPC_SharedReplayPlan.relation_path
-                      {visit=observe,relation=R.relation graph,
-                       map_partial=fn action=>fn nodes=>
-                         List.mapPartial action nodes,
-                       same_kind=op =,same=op =,key=G.node_id,
-                       empty=fn()=>Redblackset.empty Int.compare,
-                       member=Redblackset.member,add=Redblackset.add,
-                       push=fn(node,rest)=>node::rest,
-                       fold=List.foldl,error=ERR "trans"}
-                      (#node target) premise_nodes end)
+                    (* relation reads endpoints from this graph's owned nodes,
+                       for which the integer IDs are exact keys. *)
+                    CPC_SharedReplayPlan.exact_relation_path
+                      {visit=fn () => W.spend work 1,
+                       relation=R.relation graph,key=G.node_id,
+                       error=ERR "trans"}
+                      (#node target) premise_nodes)
                 in case #conclusion step of
                     SOME target => (case owned_work of NONE =>
                         located_fact graph scope target

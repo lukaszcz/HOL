@@ -3823,6 +3823,7 @@ let
        "(define-fun id ((p Bool)) Bool p)\n" ^
        "(assert a)\n" ^
        "(check-sat)\n" ^
+       "(declare-fun unused (Bool) Bool)\n" ^
        "(check-sat-assuming (a))\n" ^
        "(push 1)\n" ^
        "(assert false)\n" ^
@@ -3832,6 +3833,26 @@ let
        "(reset-assertions)\n" ^
        "(check-sat)\n")
   open SmtLib_Parser
+  val {queries = finite_queries, ...} = typecheck_script_string_with_options
+    {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
+    ("(set-logic ALL)\n" ^
+     "(declare-const s (Set Int))\n(check-sat)\n" ^
+     "(declare-const flag Bool)\n(check-sat)\n" ^
+     "(declare-const b (Bag Int))\n(check-sat)\n" ^
+     "(push 1)\n(declare-const t (Set Int))\n(check-sat)\n" ^
+     "(pop 1)\n(check-sat)\n")
+  val () = case finite_queries of
+      [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat extended,
+       QueryCheckSat pushed, QueryCheckSat popped] =>
+        (assert (Portable.pointer_eq (#transfer_hypotheses first,
+             #transfer_hypotheses repeated),
+           "dictionary-only change copied finite hypotheses");
+         assert (List.map (List.length o #transfer_hypotheses)
+             [first, extended, pushed, popped] = [1, 2, 3, 2] andalso
+           ListPair.allEq (fn (left, right) => Term.aconv left right)
+             (#transfer_hypotheses extended, #transfer_hypotheses popped),
+           "check-sat did not refresh scoped finite hypotheses"))
+    | _ => die "unexpected sequence of finite check-sat queries"
 in
   case queries of
     [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat pushed,
@@ -23281,11 +23302,36 @@ let
   (* Each call of [shared] builds its own objects. *)
   val copies = within_mutator_seconds 2 SmtDatatypeProve.term_types
     (boolSyntax.mk_conj (shared 40, shared 40))
+  fun products 0 = (numSyntax.num, [numSyntax.num])
+    | products n =
+        let
+          val (child, descendants) = products (n - 1)
+          val ty = Type.mk_type ("prod", [child, child])
+        in (ty, ty :: descendants) end
+  val (left_ty, chain) = products 40
+  val (right_ty, _) = products 40
+  val initial = [right_ty, Type.bool, right_ty]
+  val closure = within_mutator_seconds 2
+    (SmtDatatypeProve.type_closure left_ty) initial
+  fun apply name ty = Term.mk_comb
+    (Term.mk_var ("P_" ^ name, Type.--> (ty, Type.bool)), Term.mk_var (name, ty))
+  val right = apply "y" right_ty
+  val single = within_mutator_seconds 2 SmtDatatypeProve.term_types right
+  val both = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (boolSyntax.mk_conj (apply "x" left_ty, right))
 in
   assert (List.length types = List.length (occurrences (shared 1)),
     "term_types changed its types on a shared term");
   assert (copies = types,
-    "term_types changed its types on two equal copies")
+    "term_types changed its types on two equal copies");
+  assert (not (Portable.pointer_eq (left_ty, right_ty)),
+    "fixture needs independently built equal types");
+  assert (ListPair.allEq Portable.pointer_eq
+      (closure, List.rev (List.tl chain) @ initial),
+    "type_closure changed its order or replaced an initial type");
+  assert (List.length single = List.length chain + 2 andalso
+      ListPair.allEq Portable.pointer_eq (List.drop (both, 2), single),
+    "term_types did not deduplicate independently built shared types")
 end
 
 (* The sequence prover takes a step with APPEND or LENGTH, either alone. *)
@@ -25683,6 +25729,28 @@ fun shared 0 = ``seed:bool``
   | shared n = let val child = shared (n - 1)
     in boolSyntax.mk_conj (child, child) end;
 val _ = check true (boolSyntax.mk_imp (shared 16, ``seed:bool``));
+val _ =
+  let
+    val graph = SmtBooleanGraph.new
+      {chunk_depth = NONE, stops = [], stop_conversion = fn _ => NONE,
+       leaf = I, unfold = fn _ => NONE}
+    val circuit = #circuit graph
+    val seed = ``seed:bool``
+    fun prefix 0 atom = atom
+      | prefix n atom = boolSyntax.mk_conj (prefix (n - 1) atom, seed)
+    val original = ``!x:num. opaque x``
+    val renamed = ``!y:num. opaque y``
+    val different = ``!y:num. other y``
+    val names = Vector.tabulate (32,fn n => circuit (prefix n original))
+    val distinct = circuit (prefix 31 different)
+  in
+    Vector.appi (fn (n,name) => assert
+      (Portable.pointer_eq (name,circuit (prefix n renamed)),
+       "Boolean graph lost alpha-equivalent prefixes in a crowded bucket"))
+      names;
+    assert (not (Term.aconv (Vector.sub (names,31)) distinct),
+      "Boolean graph reused an inequivalent prefix in a crowded bucket")
+  end;
 in () end
 
 fun circuit_cnf_checked_success () =
@@ -33893,11 +33961,45 @@ let
   val nested_int = listSyntax.mk_list_type intSyntax.int_ty
   val nested_real = listSyntax.mk_list_type
     (listSyntax.mk_list_type realSyntax.real_ty)
+  fun shared combine 0 = Type.bool
+    | shared combine depth =
+        let val child = shared combine (depth - 1)
+        in combine (child, child) end
+  fun prod (left, right) = Type.mk_type ("prod", [left, right])
+  val funs = shared Type.--> 40
+  val prods = shared prod 40
+  val fp = ``:smt_rounding``
+  fun false_flag () = false
+  val state : SmtLib.outbound_feature_state =
+    {generated_forall = false_flag, sequence_emission = false_flag,
+     has_set_terms = false_flag, native_set_backend = false_flag,
+     has_bag_terms = false_flag, native_bag_backend = false_flag}
+  fun has_fp ty =
+    let
+      val SmtLib.LogicFeatures {floating_point, ...} =
+        SmtLib.outbound_infer_features_with_state state SmtLib.FirstOrder
+          [Term.mk_var ("feature_probe", ty)]
+          (Redblackmap.mkDict Type.compare)
+          (Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare)))
+    in floating_point end
+  val calls = ref 0
+  val _ = Library.type_contains (fn _ => (calls := !calls + 1; false))
+    (Type.--> (Type.bool, Type.bool))
 in
   assert (Library.type_contains_int nested_int,
     "nested list element did not contribute its Int feature");
   assert (Library.type_contains_real nested_real,
-    "nested list element did not contribute its Real feature")
+    "nested list element did not contribute its Real feature");
+  assert (within_mutator_seconds 2 Library.type_contains_int
+      (Type.--> (funs, nested_int)) andalso
+      not (Library.type_contains_int (prod (prods, nested_int))),
+    "function and sequence traversal changed its Int feature");
+  assert (has_fp (prod (Type.bool, fp))
+      andalso within_mutator_seconds 2 has_fp (Type.--> (funs, fp))
+      andalso not (within_mutator_seconds 2 has_fp funs)
+      andalso not (has_fp Type.alpha),
+    "datatype traversal changed its floating-point feature");
+  assert (!calls = 3, "generic type_contains skipped an occurrence")
 end
 
 fun binder_opening_resource_success () =

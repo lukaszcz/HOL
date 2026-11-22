@@ -1370,7 +1370,7 @@ local
       | NONE => Redblackmap.find (tydict, ty)
 
   (* structural term/type helpers shared via Library (see Library.sml) *)
-  val type_contains = Library.type_contains
+  val type_contains = Library.type_contains_pure
   val type_contains_word = Library.type_contains_word
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
@@ -1385,9 +1385,17 @@ local
   fun type_is_binary_ieee_float ty =
     type_has_name "binary_ieee" "float" ty
   fun type_contains_fp ty =
-    type_is_smtfp ty orelse
-    (List.exists type_contains_fp (Lib.snd (Type.dest_type ty))
-      handle Feedback.HOL_ERR _ => false)
+    let
+      fun visit ty = type_is_smtfp ty orelse
+        ((case #2 (Type.dest_type ty) of
+           [] => false
+         | first :: rest => visit first orelse remaining first rest)
+         handle Feedback.HOL_ERR _ => false)
+      and remaining _ [] = false
+        | remaining previous (child :: rest) =
+            (not (Portable.pointer_eq (previous, child)) andalso visit child)
+            orelse remaining child rest
+    in visit ty end
   (* smtstr only, which is exactly the set of types that 'builtin_types' maps
      to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
@@ -2552,30 +2560,26 @@ local
       | NONE => try_whole ()
     end
 
-  fun insert_builtin_record (record, records) =
-    if List.exists
-        (fn EncodedSymbol {hol_term, smt_symbol, arity} =>
-              (case record of
-                 EncodedSymbol {hol_term = hol_term',
-                   smt_symbol = smt_symbol', arity = arity'} =>
-                   Term.compare (hol_term, hol_term') = EQUAL andalso
-                   smt_symbol = smt_symbol' andalso arity = arity'
-               | _ => false)
-          | _ => false) records
-    then records
-    else record :: records
-
   fun encoded_symbol_records terms =
     let
-      fun add (tm, records) =
+      val empty = Redblackset.empty (Lib.pair_compare (Term.compare,
+        Lib.pair_compare (String.compare, Int.compare)))
+      fun add (tm, state as (seen, records)) =
         case builtin_encoding tm of
-          SOME (symbol, arity) =>
-            insert_builtin_record
-              (EncodedSymbol {hol_term = Lib.fst (boolSyntax.strip_comb tm),
-                smt_symbol = symbol, arity = arity}, records)
-        | NONE => records
+          SOME (encoding as (symbol, arity)) =>
+            let
+              val head = Lib.fst (boolSyntax.strip_comb tm)
+              val key = (head, encoding)
+            in
+              if Redblackset.member (seen, key) then state
+              else (Redblackset.add (seen, key),
+                EncodedSymbol {hol_term = head, smt_symbol = symbol,
+                  arity = arity} :: records)
+            end
+        | NONE => state
+      fun add_root (tm, state) = List.foldl add state (subterms tm)
     in
-      List.foldl add [] (List.concat (List.map subterms terms))
+      Lib.snd (List.foldl add_root (empty, []) terms)
     end
 
   fun features_to_string (LogicFeatures {
@@ -3391,7 +3395,7 @@ local
           val strings =
             emitted_types type_contains_string orelse
             emitted_types
-              (Library.type_contains
+              (type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
             List.exists (fn tm => (test_constant is_string_const)
               (Lib.fst (strip_comb tm))) all_subterms
@@ -3445,7 +3449,7 @@ local
             in
               (test_constant is_native_string_const) rator orelse
               type_contains_string (type_of tm) orelse
-              Library.type_contains
+              type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)
                 (type_of tm)
             end

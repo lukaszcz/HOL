@@ -324,28 +324,80 @@ struct
   fun equality_resolve_with_aliases relation operations premises=
     AliasEqualityResolve.equality_resolve_using equality_provenance
       relation operations premises
-  (* Same native declared-target graph search. Keys are supplied only as
-     local visited DATA; endpoint equality is always supplied separately. *)
-  fun relation_path {visit,relation,map_partial,same_kind,same,key,
-      empty,member,add,push,fold,error} target premises =
-    let val _=visit()
-        val (kind,(left,right))=case relation target of SOME pair=>pair
-          | NONE=>raise error "declared target is not a relation"
-        val edges=map_partial(fn incoming=>
-          (visit();case relation incoming of SOME(actual,pair)=>
-             if same_kind(actual,kind)then SOME pair else NONE
-           | NONE=>NONE))premises
-        fun search [] _=false
-          | search(current::pending)seen=
-              (visit();if same(current,right)then true
-               else if member(seen,key current)then search pending seen
-               else let val seen=add(seen,key current)
-                        val next=fold(fn((a,b),rest)=>
-                          (visit();if same(a,current)then push(b,rest)
-                           else if same(b,current)then push(a,rest)else rest))
-                          pending edges
-                    in search next seen end)
-    in search(push(left,[]))(empty())end
+  fun relation_path_using schedule {visit,relation,map_partial,same_kind,
+      same,key,empty,member,add,push,fold,error} target premises =
+    let
+      val _ = visit ()
+      val (kind,(left,right)) = case relation target of
+          SOME pair => pair
+        | NONE => raise error "declared target is not a relation"
+      val edges = map_partial (fn incoming =>
+        (visit (); case relation incoming of
+           SOME (actual,pair) => if same_kind (actual,kind) then SOME pair
+             else NONE
+         | NONE => NONE)) premises
+      fun scan (current,pending) = fold (fn ((a,b),rest) =>
+        (visit ();
+         if same (a,current) then push (b,rest)
+         else if same (b,current) then push (a,rest) else rest)) pending edges
+      val expand = schedule edges scan
+      fun search [] _ = false
+        | search (current::pending) seen =
+            (visit ();
+             if same (current,right) then true
+             else if member (seen,key current) then search pending seen
+             else
+               let val seen = add (seen,key current)
+               in search (expand (current,pending)) seen end)
+    in search (push (left,[])) (empty ()) end
+
+  (* The fallback uses keys only for visited nodes. Endpoint equality stays
+     caller-supplied, including comparisons that can demand alias proofs. *)
+  fun relation_path operations = relation_path_using (fn _ => fn scan => scan)
+    operations
+
+  (* The caller supplies exact node keys in one authenticated graph. *)
+  fun exact_relation_path {visit,relation,key,error} =
+    let
+      fun compare keys = (visit (); Int.compare keys)
+      fun schedule edges scan =
+        let
+          fun enough_edges 0 _ = true
+            | enough_edges _ [] = false
+            | enough_edges remaining (_::rest) =
+                enough_edges (remaining - 1) rest
+          fun add from to table =
+            (visit (); Redblackmap.insertWith (fn (nodes,_) => to :: nodes)
+              (table,key from,[to]))
+          fun connect ((left,right),table) =
+            let val table = add left right table in
+              if left = right then table else add right left table
+            end
+          val index = Susp.delay (fn () =>
+            if enough_edges 48 edges then SOME
+              (List.foldl connect (Redblackmap.mkDict compare) edges)
+            else NONE)
+          val scans = ref 0
+        in
+          (* A wide premise set can still reach the target in a few hops. *)
+          fn args as (current,pending) =>
+            if !scans < 16 then (scans := !scans + 1; scan args)
+            else case Susp.force index of
+              NONE => scan args
+            | SOME indexed =>
+                (visit ();
+                 case Redblackmap.peek (indexed,key current) of
+                   NONE => pending
+                 | SOME adjacent =>
+                     (List.app (fn _ => visit ()) adjacent; adjacent @ pending))
+        end
+    in relation_path_using schedule
+      {visit=visit,relation=relation,map_partial=List.mapPartial,
+       same_kind=op =,same=op =,key=key,
+       empty=fn () => Redblackset.empty Int.compare,
+       member=Redblackset.member,add=Redblackset.add,
+       push=op ::,fold=List.foldl,error=error}
+    end
   (* This is the original replacement-first, then memo, App-only rewrite.
      The Value specialization returns constructor DATA instead of syntax;
      it must match that DATA against its authentic declared target. *)

@@ -11,6 +11,7 @@ struct
   structure F = SmtLib_GraphFrontend
   structure P = SmtLib_Parser
   structure R = CPC_GraphProofReplay
+  structure Plan = CPC_SharedReplayPlan
   val maximum = 512
   val goal = ``SUC (task37_n:num) = SUC task37_n``
   fun require message yes = if yes then () else raise Fail message
@@ -201,8 +202,58 @@ struct
     end
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
+  fun exact_transitivity_path () =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val count = 512
+      val ty = SmtRegLanProve.reglan_ty
+      val variables = Vector.tabulate (count + 2,fn i =>
+        G.variable graph scope G.RigidSource
+          (Term.mk_var ("cpc_trans_" ^ Int.toString i,ty)))
+      fun graph_relation tm =
+        let val head = G.constant graph scope tm
+        in fn (left,right) => G.application graph scope
+          (G.application graph scope (head,Vector.sub (variables,left)),
+           Vector.sub (variables,right))
+        end
+      val equality = graph_relation
+        (Term.inst [{redex=Type.alpha,residue=ty}] boolSyntax.equality)
+      val equivalence = graph_relation SmtRegLanProve.equiv_tm
+      val chain = List.tabulate (count,fn i =>
+        if i mod 2 = 0 then equality (i,i+1) else equality (i+1,i))
+      val premises = chain @ [equality (3,3),hd chain,
+        equivalence (count,count+1)]
+      val relation = SmtReplayRules.relation graph
+      fun measure search target =
+        let val visits = ref 0
+            val reachable = search (fn () => visits := !visits + 1)
+              target premises
+        in (reachable,!visits) end
+      fun legacy visit = Plan.relation_path
+        {visit=visit,relation=relation,map_partial=List.mapPartial,
+         same_kind=op =,same=op =,key=G.node_id,
+         empty=fn () => Redblackset.empty Int.compare,
+         member=Redblackset.member,add=Redblackset.add,
+         push=op ::,fold=List.foldl,error=Fail}
+      fun indexed visit = Plan.exact_relation_path
+        {visit=visit,relation=relation,key=G.node_id,error=Fail}
+      fun check endpoint expected =
+        let val target = equality (0,endpoint)
+            val (before_reachable,before_visits) = measure legacy target
+            val (after_reachable,after_visits) = measure indexed target
+        in
+          require "indexed CPC transitivity changed exact reachability"
+            (after_reachable = expected andalso
+             before_reachable = after_reachable);
+          require "indexed CPC transitivity repeated full premise scans"
+            (after_visits < before_visits div 3)
+        end
+    in check count true; check (count+1) false end
   fun run () =
-    (test "CPC fitting law drops all unused original Sources"
+    (test "CPC indexed transitivity matches exact reachability and kind"
+       exact_transitivity_path;
+     test "CPC fitting law drops all unused original Sources"
        (positive false Closed);
      test "CPC wider law drops all unused original Sources"
        (positive true Closed);

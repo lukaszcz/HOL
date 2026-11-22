@@ -22030,31 +22030,34 @@ local
      checked normalization bridge, never an assumption drop. *)
   fun remove_extra_hyps (asl, g, thm) =
     let
-      val expected = HOLset.addList (Term.empty_tmset,
-        boolSyntax.mk_neg g :: asl)
-      val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
       val context = boolSyntax.mk_neg g :: asl
+      val expected = HOLset.addList (Term.empty_tmset, context)
+      val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
+      fun delay_context prove = Susp.delay (fn () =>
+        List.map (fn assumption => Susp.delay (fn () => prove assumption))
+          context)
       (* Match assumptions only after both sides pass through the same proved
          canonical conversion.  In particular, this absorbs cvc5's SMT-LIB
          ceiling-as-negated-floor spelling without a dedicated bridge rung. *)
+      val canonical_context = delay_context
+        (SmtReplayCanon.cpc_canon_rule o Thm.ASSUME)
       fun prove_canonical_hyp hyp =
         let
           val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
           fun match assumption =
             case SmtReplayCanon.transport_hypothesis hyp_canon
-                   (SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)) of
+                   (Susp.force assumption) of
               NONE =>
                 raise ERR "remove_extra_hyps"
                   "canonical assumption did not match extra hypothesis"
-            | SOME theorem =>
-                (profile_event "CPC(canon:assumption-interface)"; theorem)
+              | SOME theorem =>
+                  (profile_event "CPC(canon:assumption-interface)"; theorem)
         in
-          Lib.tryfind match context
+          Lib.tryfind match (Susp.force canonical_context)
         end
-      val array_set_context = List.map
-        (fn assumption => Susp.delay (fn () =>
-          Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
-            (Thm.ASSUME assumption))) context
+      val array_set_context = delay_context (fn assumption =>
+        Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
+          (Thm.ASSUME assumption))
       fun prove_array_set_hyp hyp =
         let
           val _ = List.exists contains_array_set_echo (hyp :: context) orelse
@@ -22077,7 +22080,7 @@ local
             | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
-            Lib.tryfind match array_set_context
+            Lib.tryfind match (Susp.force array_set_context)
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
