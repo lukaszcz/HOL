@@ -12,8 +12,8 @@ sig
   val match : term -> 'a net -> 'a list
   val unify : {q : term, qvars : term HOLset.set} -> 'a net -> 'a list
   (* The callback may raise to interrupt a measured traversal; the net is
-     persistent, so every checkpoint is safe.  Ordinary queries instantiate
-     the same traversal with a no-op callback. *)
+     persistent, so every checkpoint is safe.  The result has the same
+     order as an ordinary query. *)
   val unifyMeasured :
     (unit -> unit) ->
     {q : term, qvars : term HOLset.set} -> 'a net -> 'a list

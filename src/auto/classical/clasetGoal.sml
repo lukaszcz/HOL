@@ -492,22 +492,31 @@ fun marked_types terms =
 
 fun variable_name variable = fst (dest_var variable)
 
+fun lift_with_frees _ _ [] = []
+  | lift_with_frees input_frees params new_goals =
+      let
+        val known = Term.FVL params input_frees
+        fun lift_child (child_asl, child_w) =
+          let
+            val new_params =
+              List.filter
+                (fn variable => not (HOLset.member (known, variable)))
+                (free_varsl (child_w :: child_asl))
+          in
+            ({params = params @ new_params,
+              asl = child_asl, w = child_w}, new_params)
+          end
+      in
+        map lift_child new_goals
+      end
+
 fun lift_children node pos new_goals =
   let
     val (asl, w) = render node pos
     val {params, ...} = goal_at node pos
-    val input_frees = free_varsl (params @ (w :: asl))
-    fun lift_child (child_asl, child_w) =
-      let
-        val new_params =
-          List.filter (fn variable => not (tmem variable input_frees))
-            (free_varsl (child_w :: child_asl))
-      in
-        ({params = params @ new_params,
-          asl = child_asl, w = child_w}, new_params)
-      end
   in
-    map lift_child new_goals
+    if null new_goals then []
+    else lift_with_frees (FVLset (w :: asl)) params new_goals
   end
 
 fun unrender node pos (result as (new_goals, validation)) =
@@ -518,16 +527,18 @@ fun unrender node pos (result as (new_goals, validation)) =
       List.concat
         (map (fn (child_asl, child_w) => child_w :: child_asl)
           new_goals)
-    val received_terms = marked_terms input_terms
+    val input_frees = FVLset input_terms
     val received_types = marked_types input_terms
-    val returned_terms = marked_terms output_terms
     val returned_types = marked_types output_terms
+    fun unknown_marker tm =
+      clasetMeta.is_meta tm andalso not (HOLset.member (input_frees, tm))
     val known_markers =
-      List.all (fn tm => tmem tm received_terms) returned_terms
+      not (Option.isSome (HOLset.find unknown_marker (FVLset output_terms)))
       andalso
       List.all (fn ty => Lib.mem ty received_types) returned_types
 
-    val lifted = lift_children node pos new_goals
+    val {params, ...} = goal_at node pos
+    val lifted = lift_with_frees input_frees params new_goals
     val output_params = List.concat (map #2 lifted)
     val known_variables = avoids node
     val globally_fresh =
@@ -545,8 +556,9 @@ fun unrender node pos (result as (new_goals, validation)) =
                 replace_goal node
                   {pos = pos, children = map #1 lifted, store = store'}
             in
-              if List.null received_terms andalso
-                 List.null received_types
+              if List.null received_types andalso
+                 not (Option.isSome
+                   (HOLset.find clasetMeta.is_meta input_frees))
               then SOME next
               else
                 let

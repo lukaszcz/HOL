@@ -547,15 +547,6 @@ fun alias_findings () =
 (* A6 -- goal-term hash pin                                            *)
 (* ------------------------------------------------------------------ *)
 
-fun type_signature ty =
-  if Type.is_vartype ty then "'" ^ Type.dest_vartype ty
-  else
-    let val {Tyop, Thy, Args} = Type.dest_thy_type ty
-    in
-      Thy ^ "$" ^ Tyop ^ "(" ^
-      String.concatWith "," (map type_signature Args) ^ ")"
-    end
-
 fun bound_index variable bound =
   let
     fun search _ [] = NONE
@@ -566,22 +557,49 @@ fun bound_index variable bound =
     search 0 bound
   end
 
-fun signature_of bound term =
-  case Term.dest_term term of
-      Term.VAR (name, ty) =>
-        (case bound_index term bound of
-             SOME index => "b" ^ Int.toString index
-           | NONE => "v" ^ name ^ ":" ^ type_signature ty)
-    | Term.CONST {Name, Thy, Ty} =>
-        "c" ^ Thy ^ "$" ^ Name ^ ":" ^ type_signature Ty
-    | Term.COMB (rator, rand) =>
-        "(" ^ signature_of bound rator ^ " " ^
-        signature_of bound rand ^ ")"
-    | Term.LAMB (variable, body) =>
-        "\\" ^ type_signature (Term.type_of variable) ^ "." ^
-        signature_of (variable :: bound) body
+(* Emit the serialization in order so each consumer sees the same
+   bytes without copying the serialized children of each application. *)
+fun emit_signature emit goal =
+  let
+    fun emit_type ty =
+      if Type.is_vartype ty then emit ("'" ^ Type.dest_vartype ty)
+      else
+        let val {Tyop, Thy, Args} = Type.dest_thy_type ty
+        in
+          emit (Thy ^ "$" ^ Tyop ^ "(");
+          (case Args of
+               [] => ()
+             | first :: rest =>
+                 (emit_type first;
+                  List.app (fn arg => (emit ","; emit_type arg)) rest));
+          emit ")"
+        end
 
-fun goal_signature term = signature_of [] term
+    fun emit_term bound term =
+      case Term.dest_term term of
+          Term.VAR (name, ty) =>
+            (case bound_index term bound of
+                 SOME index => emit ("b" ^ Int.toString index)
+               | NONE => (emit ("v" ^ name ^ ":"); emit_type ty))
+        | Term.CONST {Name, Thy, Ty} =>
+            (emit ("c" ^ Thy ^ "$" ^ Name ^ ":"); emit_type Ty)
+        | Term.COMB (rator, rand) =>
+            (emit "("; emit_term bound rator; emit " ";
+             emit_term bound rand; emit ")")
+        | Term.LAMB (variable, body) =>
+            (emit "\\"; emit_type (Term.type_of variable); emit ".";
+             emit_term (variable :: bound) body)
+  in
+    emit_term [] goal
+  end
+
+fun goal_signature term =
+  let
+    val chunks = ref []
+    val _ = emit_signature (fn chunk => chunks := chunk :: !chunks) term
+  in
+    String.concat (List.rev (!chunks))
+  end
 
 (* FNV-1a over the concatenated signatures, rendered as hexadecimal. *)
 val fnv_offset : Word.word = 0wx811C9DC5
@@ -593,18 +611,20 @@ fun fnv_step (character, hash) =
     (Word.* (Word.xorb (hash, Word.fromInt (Char.ord character)), fnv_prime),
      fnv_mask)
 
-fun fnv text = CharVector.foldl fnv_step fnv_offset text
-
 fun family_hash goals =
   let
-    val text =
-      String.concatWith "\n"
-        (map
-          (fn (entry : benchLib.corpus_goal) =>
-            #id entry ^ "=" ^ goal_signature (#goal entry))
-          goals)
+    val hash = ref fnv_offset
+    fun emit chunk = hash := CharVector.foldl fnv_step (!hash) chunk
+    fun emit_goal ({id, goal, ...} : benchLib.corpus_goal) =
+      (emit id; emit "="; emit_signature emit goal)
+    val _ =
+      case goals of
+          [] => ()
+        | first :: rest =>
+            (emit_goal first;
+             List.app (fn entry => (emit "\n"; emit_goal entry)) rest)
   in
-    Word.fmt StringCvt.HEX (fnv text)
+    Word.fmt StringCvt.HEX (!hash)
   end
 
 end

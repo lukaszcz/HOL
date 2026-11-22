@@ -567,37 +567,36 @@ struct
       val mark = !ntrail
 
       fun update (term as Var v, other) =
-            if aconv (term, other) then ()
-            else if varOccur v other then raise UNIFY
-            else if mem_var (v, vars) then v := SOME other
+            if aconv (term, other) then true
+            else if varOccur v other then false
+            else if mem_var (v, vars) then (v := SOME other; true)
             else if is_Var other andalso
                     mem_var (dest_Var other, vars)
-            then dest_Var other := SOME term
+            then (dest_Var other := SOME term; true)
             else
               (v := SOME other;
                trail := v :: !trail;
-               ntrail := !ntrail + 1)
-        | update _ = raise UNIFY
+               ntrail := !ntrail + 1;
+               true)
+        | update _ = false
 
       fun unifyAux (t, u) =
         case (wkNorm t, wkNorm u) of
             (nt as Var _, nu) => update (nt, nu)
           | (nu, nt as Var _) => update (nt, nu)
           | (Const (a, ats), Const (b, bts)) =>
-              if a = b then unifysAux (ats, bts) else raise UNIFY
+              a = b andalso unifysAux (ats, bts)
           | (Abs (_, t'), Abs (_, u')) => unifyAux (t', u')
           | (f $ t', g $ u') =>
-              (unifyAux (f, g); unifyAux (t', u'))
-          | (nt, nu) =>
-              if aconv (nt, nu) then () else raise UNIFY
+              unifyAux (f, g) andalso unifyAux (t', u')
+          | (nt, nu) => aconv (nt, nu)
 
-      and unifysAux ([], []) = ()
+      and unifysAux ([], []) = true
         | unifysAux (t :: ts, u :: us) =
-            (unifyAux (t, u); unifysAux (ts, us))
-        | unifysAux _ = raise UNIFY
+            unifyAux (t, u) andalso unifysAux (ts, us)
+        | unifysAux _ = false
     in
-      (unifyAux (left, right); true)
-      handle UNIFY => (clearTo state mark; false)
+      unifyAux (left, right) orelse (clearTo state mark; false)
     end
 
   fun unifyMeasuredWith cleanup checkpoint state (vars, left, right) =

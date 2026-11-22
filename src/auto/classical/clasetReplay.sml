@@ -68,17 +68,18 @@ datatype replay_outcome =
 
 fun make_record fields = StepRecord fields
 
-fun new_free_names (asl, w) goals =
-  let
-    val old_frees = free_varsl (w :: asl)
-    fun names (child_asl, child_w) =
-      map (fst o dest_var)
-        (List.filter
-          (fn variable => not (tmem variable old_frees))
-          (free_varsl (child_w :: child_asl)))
-  in
-    map names goals
-  end
+fun new_free_names _ [] = []
+  | new_free_names (asl, w) goals =
+      let
+        val old_frees = FVLset (w :: asl)
+        fun names (child_asl, child_w) =
+          map (fst o dest_var)
+            (List.filter
+              (fn variable => not (HOLset.member (old_frees, variable)))
+              (free_varsl (child_w :: child_asl)))
+      in
+        map names goals
+      end
 fun kind_of (StepRecord {kind, ...}) = kind
 fun target_of (StepRecord {target, ...}) = target
 fun consumed_of (StepRecord {consumed, ...}) = consumed

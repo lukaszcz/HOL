@@ -200,15 +200,9 @@ fun match tm net =
     walk [(tm, [])] net
   end
 
-fun concat_map_unmeasured f [] = []
-  | concat_map_unmeasured f (item :: items) =
-      join (f item) (concat_map_unmeasured f items)
-
 fun unify_with checkpoint append measured {q, qvars} net =
   let
-    fun concat_map f items =
-      if measured then concatMapMeasured checkpoint f items
-      else concat_map_unmeasured f items
+    fun concat_map f items = concatMapMeasured checkpoint f items
     fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
 
     fun skip_one_m (NODE (_, edges)) =
@@ -224,6 +218,23 @@ fun unify_with checkpoint append measured {q, qvars} net =
         concat_map skip_edge edges
       end
 
+    (* Skipping an application adds one pending operand after consuming
+       the application itself; an abstraction leaves its body pending.
+       Visit completed subterms in edge order without building a list of
+       intermediate nodes at each application. *)
+    fun skip_unmeasured visit pending (node as NODE (_, edges)) results =
+      if pending = 0 then
+        (case visit node of [] => results | tips => tips :: results)
+      else
+        List.foldl
+          (fn ((label, child), sofar) =>
+            skip_unmeasured visit
+              (case label of Cmb => pending + 1
+                           | Lam => pending
+                           | _ => pending - 1)
+              child sofar)
+          results edges
+
     fun walk [] (NODE (tips, _)) = (checkpoint (); tips)
       | walk ((tm0, bvars) :: rest) node =
           let
@@ -232,7 +243,9 @@ fun unify_with checkpoint append measured {q, qvars} net =
           in
             if is_var tm andalso not (bound tm bvars) andalso
                HOLset.member (qvars, tm) then
-              concat_map (walk rest) (skip_one_m node)
+              if measured then concat_map (walk rest) (skip_one_m node)
+              else List.foldl (fn (tips, results) => join tips results) []
+                     (skip_unmeasured (walk rest) 1 node [])
             else
               follow checkpoint append walk (tm, bvars) rest node
           end

@@ -96,7 +96,7 @@ fun scale_row n ty =
     raise ERR "multiply_ineq" "negative multiplier on an inequality"
   else fn c => Arbint.* (n, c)
 
-fun elim_var_with (work : work)
+fun elim_var_with (work : work) drop_column
       (Lineq (k1, ty1, coeffs1, just1), c1)
       (Lineq (k2, ty2, coeffs2, just2), c2) =
   let
@@ -133,8 +133,13 @@ fun elim_var_with (work : work)
             (scale p1 scale1 coeffs1, scale p2 scale2 coeffs2)
         end
       else
-        ListPair.mapEq (fn (a, b) => Arbint.+ (scale1 a, scale2 b))
-          (coeffs1, coeffs2)
+        let
+          fun add (a, b) = Arbint.+ (scale1 a, scale2 b)
+        in
+          ListPair.mapEq add
+            (if drop_column then (List.tl coeffs1, List.tl coeffs2)
+             else (coeffs1, coeffs2))
+        end
   in
     Lineq (Arbint.+ (scale1 k1, scale2 k2), find_add_type (ty1, ty2),
            coeffs, Added (mk_multiplied p1 just1, mk_multiplied p2 just2))
@@ -203,14 +208,21 @@ fun pivot_equation_with (work : work) rows =
 
 (* Keep each dependent row's coefficient for the sign partition and
    for every elimination pair that uses that row. *)
-fun partition_pivot_with work v rows =
+fun partition_pivot_with work v drop_column rows =
   let
-    fun split (row as Lineq (_, _, cs, _), (independent, dependent)) =
+    fun split (row as Lineq (k, ty, cs, just), (independent, dependent)) =
       let
         val _ = candidate work
         val c = List.nth (cs, v)
       in
-        if ai_zero c then (row :: independent, dependent)
+        if ai_zero c then
+          let
+            val remaining =
+              if drop_column then Lineq (k, ty, List.tl cs, just)
+              else row
+          in
+            (remaining :: independent, dependent)
+          end
         else (independent, (row, c) :: dependent)
       end
     val (independent, dependent) = List.foldl split ([], []) rows
@@ -271,10 +283,10 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
 
 datatype pair_result = PairRows of lineq list | PairContradiction of injust
 
-fun eliminate_pairs (work : work) independent pos neg =
+fun eliminate_pairs (work : work) drop_column independent pos neg =
   let
     fun derive p n =
-      (application work; elim_var_with work p n)
+      (application work; elim_var_with work drop_column p n)
 
     fun keep (row, acc as (seen, rev_rows)) =
       let val key = row_key row
@@ -316,11 +328,19 @@ fun trace (work : work) message = traceUtil.trace (#level work) 2 message
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
    refute rather than the search giving up early. *)
-fun elim_with (work : work) ineqs =
+fun elim_rows_with (work : work) offset ineqs =
   let
     val (triv, nontriv) =
       List.partition
         (fn row => (candidate work; is_trivial_with work row)) ineqs
+    fun report_pivot kind v =
+      trace work (fn () => kind ^ " pivot " ^ Int.toString (offset + v))
+    (* A leading pivot becomes zero in every remaining row and can be
+       dropped without copying any independent coefficient list. Keep
+       interior columns and the original metered scans. *)
+    fun drop_leading v = v = 0 andalso not (#metered work)
+    fun next drop_column =
+      elim_rows_with work (if drop_column then offset + 1 else offset)
     fun pivot () =
       let
         val (eqs, noneqs) =
@@ -331,16 +351,18 @@ fun elim_with (work : work) ineqs =
         case pivot_equation_with work eqs of
             SOME (v, eq, other_eqs) =>
               let
+                val drop_column = drop_leading v
                 val (independent, dependent) =
-                  partition_pivot_with work v (other_eqs @ noneqs)
+                  partition_pivot_with work v drop_column (other_eqs @ noneqs)
                 val others =
                   List.map
                     (fn row =>
-                      (application work; elim_var_with work eq row))
+                      (application work;
+                       elim_var_with work drop_column eq row))
                     dependent @ independent
               in
-                trace work (fn () => "equation pivot " ^ Int.toString v);
-                elim_with work others
+                report_pivot "equation" v;
+                next drop_column others
               end
           | NONE =>
               let
@@ -353,17 +375,18 @@ fun elim_with (work : work) ineqs =
                     NONE => NONE
                   | SOME (_, v) =>
                       let
+                        val drop_column = drop_leading v
                         val (independent, dependent) =
-                          partition_pivot_with work v nontriv
+                          partition_pivot_with work v drop_column nontriv
                         val (pos, neg) =
                           List.partition
                             (fn (_, c) => (candidate work; ai_pos c))
                             dependent
                       in
-                        trace work
-                          (fn () => "inequality pivot " ^ Int.toString v);
-                        case eliminate_pairs work independent pos neg of
-                            PairRows rows => elim_with work rows
+                        report_pivot "inequality" v;
+                        case eliminate_pairs work drop_column
+                               independent pos neg of
+                            PairRows rows => next drop_column rows
                           | PairContradiction just => SOME just
                       end
               end
@@ -374,10 +397,12 @@ fun elim_with (work : work) ineqs =
       | NONE =>
         (* The metered path retains the original classification charges. *)
         if #metered work andalso not (List.null triv) then
-          elim_with work nontriv
+          elim_rows_with work offset nontriv
         else if List.null nontriv then NONE
         else pivot ()
   end
+
+fun elim_with work rows = elim_rows_with work 0 rows
 
 fun scale m rat =
   let

@@ -407,6 +407,29 @@ val _ =
          (unify {q = ``\z : bool. z``, qvars = tmset []}
             (one x (tmset [x]))))
 
+val _ =
+  test
+    ("clasetNet wildcard traversal preserves edge and tip order",
+     fn () =>
+       let
+         val f = ``f : bool -> bool -> bool``
+         fun pair a b = list_mk_comb (f, [a, b])
+         val entries =
+           [(p, q, [], 1), (x, q, [x], 2),
+            (``!z : bool. z /\ p``, q, [], 3), (p, q, [], 4),
+            (``p /\ q``, p, [], 5)]
+         val net =
+           List.foldl
+             (fn ((a, b, vars, i), net) =>
+               insert ({pat = pair a b, patvars = tmset vars}, i) net)
+             empty entries
+         val query = {q = pair x q, qvars = tmset [x]}
+         val expected = [4, 1, 2, 3]
+       in
+         unify query net = expected andalso
+         unifyMeasured (fn () => ()) query net = expected
+       end)
+
 (* Isabelle keys an abstraction as a wildcard in [Pure/net.ML] "to cover
    eta-conversion", and the engines here need the same rule: blast's
    [wkNorm] contracts [!z. p /\ z] to [$! ($/\ p)], and the stored

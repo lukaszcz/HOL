@@ -65,10 +65,24 @@ fun dest_strict relation tm =
 (* Discovering the contexts a goal supplies                            *)
 (* ------------------------------------------------------------------ *)
 
-val expand_order_axioms =
-  PURE_REWRITE_RULE
-    [PreOrder, Order, WeakOrder, StrongOrder,
-     LinearOrder, StrongLinearOrder, WeakLinearOrder]
+val order_definitions =
+  [PreOrder, Order, WeakOrder, StrongOrder,
+   LinearOrder, StrongLinearOrder, WeakLinearOrder]
+
+val order_names =
+  List.map
+    (#Name o dest_thy_const o rator o lhs o snd o strip_forall o concl)
+    order_definitions
+
+fun names_order names tm =
+  case dest_term tm of
+      COMB (rator, rand) =>
+        names_order names rator orelse names_order names rand
+    | LAMB (_, body) => names_order names body
+    | CONST {Thy = "relation", Name, ...} => Lib.mem Name names
+    | _ => false
+
+val expand_order_axioms = PURE_REWRITE_RULE order_definitions
 
 val expand_weak_order = PURE_REWRITE_RULE [WeakOrder]
 
@@ -102,11 +116,16 @@ fun dest_axiom theorem =
 
 fun axioms_of_with meter theorems =
   let
+    (* The named-order rewrites all need their defining constant.
+       Ordinary relational facts can go straight to conjunct collection. *)
     fun atoms theorem =
       (normalization meter;
        List.mapPartial
          (fn atom => (candidate meter; dest_axiom atom))
-         (conjuncts_with meter (expand_order_axioms theorem)))
+         (conjuncts_with meter
+           (if names_order order_names (concl theorem) then
+              expand_order_axioms theorem
+            else theorem)))
   in
     List.concat (List.map atoms theorems)
   end
@@ -209,23 +228,11 @@ fun contexts meter theorems =
   List.mapPartial (context_of_with meter)
     (group_with meter (axioms_of_with meter theorems))
 
-val order_names =
-  axiom_names @
-  ["PreOrder", "Order", "WeakOrder", "StrongOrder",
-   "LinearOrder", "StrongLinearOrder", "WeakLinearOrder"]
-
-fun names_order tm =
-  case dest_term tm of
-      COMB (rator, rand) => names_order rator orelse names_order rand
-    | LAMB (_, body) => names_order body
-    | CONST _ =>
-        (case Lib.total dest_thy_const tm of
-             SOME {Thy = "relation", Name, ...} => Lib.mem Name order_names
-           | _ => false)
-    | VAR _ => false
+val all_order_names = axiom_names @ order_names
 
 fun has_order_axiom theorems =
-  List.exists (fn theorem => names_order (concl theorem)) theorems
+  List.exists (fn theorem => names_order all_order_names (concl theorem))
+    theorems
 
 (* ------------------------------------------------------------------ *)
 (* Reading a fact                                                      *)

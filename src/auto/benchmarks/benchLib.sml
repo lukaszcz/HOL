@@ -330,31 +330,47 @@ fun rename_free term =
   end
 
 fun symmetry_normalise term =
-  if boolSyntax.is_conj term then
-    boolSyntax.list_mk_conj
-      (Listsort.sort Term.compare
-        (map symmetry_normalise (boolSyntax.strip_conj term)))
-  else if boolSyntax.is_disj term then
-    boolSyntax.list_mk_disj
-      (Listsort.sort Term.compare
-        (map symmetry_normalise (boolSyntax.strip_disj term)))
-  else if boolSyntax.is_eq term then
-    let
-      val (left, right) = boolSyntax.dest_eq term
-      val left = symmetry_normalise left
-      val right = symmetry_normalise right
-    in
-      if Term.compare (left, right) = GREATER then
-        boolSyntax.mk_eq (right, left)
-      else boolSyntax.mk_eq (left, right)
-    end
-  else
-    case Term.dest_term term of
-        COMB (rator, rand) =>
-          Term.mk_comb (symmetry_normalise rator, symmetry_normalise rand)
-      | LAMB (variable, body) =>
-          Term.mk_abs (variable, symmetry_normalise body)
-      | _ => term
+  case Term.dest_term term of
+      COMB (operator, operand) =>
+        let
+          fun ordinary () =
+            let
+              val operator' = symmetry_normalise operator
+              val operand' = symmetry_normalise operand
+            in
+              if Portable.pointer_eq (operator, operator') andalso
+                 Portable.pointer_eq (operand, operand')
+              then term
+              else Term.mk_comb (operator', operand')
+            end
+          fun sorted strip rebuild =
+            rebuild (Listsort.sort Term.compare
+              (map symmetry_normalise (strip term)))
+        in
+          if Term.is_comb operator then
+            let val (head, left) = Term.dest_comb operator
+            in
+              if Term.same_const head boolSyntax.conjunction then
+                sorted boolSyntax.strip_conj boolSyntax.list_mk_conj
+              else if Term.same_const head boolSyntax.disjunction then
+                sorted boolSyntax.strip_disj boolSyntax.list_mk_disj
+              else if Term.same_const head boolSyntax.equality then
+                let
+                  val left' = symmetry_normalise left
+                  val right' = symmetry_normalise operand
+                in
+                  case Term.compare (left', right') of
+                      GREATER => boolSyntax.mk_eq (right', left')
+                    | _ => boolSyntax.mk_eq (left', right')
+                end
+              else ordinary ()
+            end
+          else ordinary ()
+        end
+    | LAMB (variable, body) =>
+        (* dest_term may choose a fresh binder to avoid capture. *)
+        Term.mk_abs (variable, symmetry_normalise body)
+    | _ => term
 
 (* Isabelle has no predecessor constant -- src/HOL/Nat.thy writes the
    predecessor as [n - 1] throughout -- so a translated goal spells an

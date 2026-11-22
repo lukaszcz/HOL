@@ -8792,3 +8792,36 @@ val _ =
                    #candidates usage = 0
                | Feedback.HOL_ERR _ => false)
        end)
+
+val _ =
+  test
+    ("lifting empty results still checks the goal position",
+     fn () =>
+       let val node = clasetGoal.from_goal ([], boolSyntax.T)
+       in
+         null (clasetGoal.lift_children node 1 []) andalso
+         ((ignore (clasetGoal.lift_children node 2 []); false)
+          handle Feedback.HOL_ERR _ => true)
+       end)
+
+val _ =
+  test
+    ("rendered variable membership distinguishes types and keeps order",
+     fn () =>
+       let
+         val typed = mk_var ("typed", Type.bool)
+         val other_typed = mk_var ("typed", Type.alpha)
+         val fresh = mk_var ("fresh", Type.bool)
+         val eq = boolSyntax.mk_eq (other_typed, other_typed)
+         val parent = ([], typed)
+         val child = ([fresh], eq)
+         val node = clasetGoal.from_goal parent
+         val expected = free_varsl [eq, fresh]
+       in
+         case clasetGoal.lift_children node 1 [child] of
+             [(_, names)] =>
+               ListPair.allEq (uncurry Term.aconv) (names, expected) andalso
+               clasetReplay.new_free_names parent [child] =
+                 [map (fst o dest_var) expected]
+           | _ => false
+       end)

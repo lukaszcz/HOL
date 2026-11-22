@@ -635,25 +635,34 @@ fun rule_abstraction_positions theorem positions =
       else if is_comb tm then
         let
           val (head, args) = strip_comb tm
-          val argument = rand tm
-          val selected =
-            if is_const head andalso is_abs argument then
+          val constant = is_const head
+          fun selected argument =
+            if is_abs argument then
               let
                 val (v, body) = dest_abs argument
                 val pattern = if is_comb body then rator body else body
               in
                 is_comb body andalso aconv (rand body) v andalso
                 is_var pattern andalso not (aconv pattern v) andalso
-                not (boolSyntax.tmem pattern (bound @ fixed))
+                not (boolSyntax.tmem pattern bound) andalso
+                not (boolSyntax.tmem pattern fixed)
               end
             else false
-          val next =
-            if selected then
-              let val {Name, ...} = Term.dest_thy_constid head
-              in HOLset.add (found, (Name, length args)) end
-            else found
+          (* Visit the outermost argument first, as in the walk down
+             successive rators. Each is at a different partial arity. *)
+          fun walk [] _ found = collect bound head found
+            | walk (argument :: rest) arity found =
+                let
+                  val next =
+                    if constant andalso selected argument then
+                      let val {Name, ...} = Term.dest_thy_constid head
+                      in HOLset.add (found, (Name, arity)) end
+                    else found
+                in
+                  walk rest (arity - 1) (collect bound argument next)
+                end
         in
-          collect bound (rator tm) (collect bound argument next)
+          walk (List.rev args) (length args) found
         end
       else found
     fun statement tm found =
