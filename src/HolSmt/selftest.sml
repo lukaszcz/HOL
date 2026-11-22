@@ -730,6 +730,11 @@ val graph_expect_thm = expect_thm
     (``(x:int) + y = 0 <=> x = 0 /\ y = 0``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``((x:int) + y = 0) = (x = ~y)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Z3 is sent AUFNIRA (quantifier, arrays, 3 * a); its proof's Int
+       sums and products must parse as Int, not reach the Real sugar. *)
+    (``(!x. 0 <= (f:int -> int) x) /\ 3 * (a:int) + 2 * b = 12 /\
+       b = a + 1 ==> (g:int -> 'a) a = g 2``, [thm_Z3p, thm_CVCp]),
+
     (``(x:int) - 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(x:int) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:int) - y - z = x - (y + z)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
