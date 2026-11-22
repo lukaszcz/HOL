@@ -33,6 +33,14 @@ local
     handle Feedback.HOL_ERR _ =>
       one_int_to_real (t1, t2)
 
+  (* An int-to-real entry declines when its operands do not type after the
+     conversion (two Int operands, say), so that the theories' own entries
+     for that symbol get to parse them. *)
+  fun coerced convert mk args =
+    mk (convert args)
+    handle Feedback.HOL_ERR err =>
+      raise SmtLib_Theories.ParseDecline (Feedback.HOL_ERR err)
+
   fun mk_smt_rdiv (left, right) =
     Term.list_mk_comb
       (Term.prim_mk_const {Thy = "HolSmt", Name = "smt_rdiv"},
@@ -173,15 +181,15 @@ in
          SMT-LIB standard yet. *)
 
       Library.dict_from_list [
-        ("=", chainable (boolSyntax.mk_eq o one_int_to_real)),
-        ("-", leftassoc (realSyntax.mk_minus o one_int_to_real)),
-        ("+", leftassoc (realSyntax.mk_plus o one_int_to_real)),
-        ("*", leftassoc (realSyntax.mk_mult o one_int_to_real)),
-        ("/", leftassoc (mk_smt_rdiv o two_ints_to_real)),
-        ("<=", chainable (realSyntax.mk_leq o one_int_to_real)),
-        ("<", chainable (realSyntax.mk_less o one_int_to_real)),
-        (">=", chainable (realSyntax.mk_geq o one_int_to_real)),
-        (">", chainable (realSyntax.mk_greater o one_int_to_real))
+        ("=", chainable (coerced one_int_to_real boolSyntax.mk_eq)),
+        ("-", leftassoc (coerced one_int_to_real realSyntax.mk_minus)),
+        ("+", leftassoc (coerced one_int_to_real realSyntax.mk_plus)),
+        ("*", leftassoc (coerced one_int_to_real realSyntax.mk_mult)),
+        ("/", leftassoc (coerced two_ints_to_real mk_smt_rdiv)),
+        ("<=", chainable (coerced one_int_to_real realSyntax.mk_leq)),
+        ("<", chainable (coerced one_int_to_real realSyntax.mk_less)),
+        (">=", chainable (coerced one_int_to_real realSyntax.mk_geq)),
+        (">", chainable (coerced one_int_to_real realSyntax.mk_greater))
       ]]
     val metadata = union_metadata [Core.metadata, Reals_Ints.metadata,
       ArraysEx.metadata]
