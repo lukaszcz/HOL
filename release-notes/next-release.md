@@ -248,6 +248,10 @@ Bugs fixed
     this leads to, including goals that use asserted function definitions
     and goals over sequences, sets and higher-order functions.
 
+-   `Z3_TAC` and `CVC_TAC` now prove goals that apply a function variable
+    `f : num -> 'a` to natural-number terms, such as
+    `a < b /\ b < a + 2 ==> f (a + 1) = f b`; they used to fail on them.
+
 -   HolSmt's oracles no longer return false theorems about word division by
     zero.  `word_div` and `word_quot` were translated to `bvudiv` and
     `bvsdiv`, which return all ones (or 1) at a zero divisor where HOL gives

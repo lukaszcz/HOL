@@ -412,6 +412,46 @@ fun num_binder_relativization_nested_mixed_success () =
            ?k :int.
              0 <= k /\ j <= &(Num k) /\ Num i <= Num k``)
 
+fun num_args_relativization_success () =
+  let
+    fun check_conv conv (label, input, expected) =
+      let val thm = conv input
+      in
+        assert_no_hyps (label, thm);
+        assert_concl_alpha (label, thm, boolSyntax.mk_eq (input, expected))
+      end
+    val check = check_conv SmtLib.NUM_ARGS_TO_INT_CONV
+  in
+    check ("num argument relativization",
+      ``!P :num -> bool. P 1 ==> P 2``,
+      ``!P :int -> bool. P 1 ==> P 2``);
+    (* Only the positions every occurrence supplies are lifted. *)
+    check ("partial application num argument relativization",
+      ``!f :num -> num -> bool. f 1 = f 2``,
+      ``!f :int -> num -> bool. f 1 = f 2``);
+    check ("existential num argument relativization",
+      ``?f :'a -> num -> bool. !x. f x 3``,
+      ``?f :'a -> int -> bool. !x. f x 3``);
+    check ("bare occurrence num argument no-op",
+      ``!s :num -> bool. 2 IN s``,
+      ``!s :num -> bool. 2 IN s``);
+    (* A lifted argument that is a num binder becomes its int binder,
+       not ABS of it. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num binder argument",
+      ``!(s :num -> bool) (b :num). s b``,
+      ``!s :int -> bool. !i :int. 0 <= i ==> s i``);
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num existential argument",
+      ``!P :num -> bool. ?n :num. P n``,
+      ``!P :int -> bool. ?i :int. 0 <= i /\ P i``);
+    (* Only a function variable's argument cancels: both sides of this
+       keep the same encoding, so it is no rewrite that loops. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("guarded num under a constant",
+      ``!n :num. real_of_int (&n) = (&n :real)``,
+      ``!i :int. 0 <= i ==>
+          real_of_int (if i < 0 then -i else i) =
+          real_of_int (if i < 0 then -i else i)``)
+  end
+
 fun num_binder_relativization_non_num_noop_success () =
   assert_num_binder_conv
     ("non-num binder relativization no-op",
@@ -39633,6 +39673,8 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("num_args_relativization_success",
+      num_args_relativization_success),
     ("bag_count_relativization_success", bag_count_relativization_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),
