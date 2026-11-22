@@ -222,26 +222,9 @@ fun clausify tm lfn eq cls =
    map used by termToDimacs. *)
 fun cnf_atom_count clause_of clauses =
     let
-      fun add clause pending atoms =
-          if is_comb clause then
-            let val (operator,right) = dest_comb clause in
-              if is_comb operator then
-                let val (head,left) = dest_comb operator in
-                  if same_const disjunction head then
-                    add left (right :: pending) atoms
-                  else add_atom clause pending atoms
-                end
-              else if same_const negation operator then
-                add_atom right pending atoms
-              else add_atom clause pending atoms
-            end
-          else add_atom clause pending atoms
-      and add_atom literal pending atoms =
-          let val atoms' = HOLset.add (atoms, literal) in
-            case pending of [] => atoms'
-              | next :: rest => add next rest atoms'
-          end
-      fun add_clause (clause, atoms) = add (clause_of clause) [] atoms
+      fun add_atom (atom, atoms) = HOLset.add (atoms, atom)
+      fun add_clause (clause, atoms) =
+        fold_clause_atoms add_atom (clause_of clause) atoms
     in HOLset.numItems
          (List.foldl add_clause (HOLset.empty Term.compare) clauses)
     end

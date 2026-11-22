@@ -2920,24 +2920,23 @@ local
               (List.map type_name_stem Args)
         end
 
-  fun dict_type_names tydict =
-    Redblackmap.foldl (fn (_, name, acc) => name :: acc) [] tydict
-
-  fun fresh_smt_name reserved used stem =
+  fun fresh_smt_name_avoiding unavailable stem =
     let
       val stem = smt_simple_symbol "S_" stem
-      fun unavailable s =
-        is_smt_reserved reserved s orelse List.exists (fn t => t = s) used
       fun loop n =
         let
           val candidate =
             if n = 0 then stem else stem ^ "_" ^ Int.toString n
         in
-          if unavailable candidate then loop (n + 1) else candidate
+          if unavailable (n, candidate) then loop (n + 1) else candidate
         end
     in
       loop 0
     end
+
+  fun fresh_smt_name reserved used =
+    fresh_smt_name_avoiding (fn (_, name) =>
+      is_smt_reserved reserved name orelse List.exists (Lib.equal name) used)
 
   fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
 
@@ -4262,16 +4261,24 @@ local
               (field_dependencies field)) graph (constructor_doms ty)
         val components = DatatypeGraph.strong_conn
           (List.foldl add_dependencies graph family)
-        val used0 = dict_type_names tydict @ smt_reserved_type_names
-        fun add_name (fam_ty, (used, acc)) =
+        (* Most stems need only a direct probe. Once suffixes also collide,
+           index the existing names so retries need not scan the map. *)
+        val used_names = Susp.delay (fn () => Redblackmap.foldl
+          (fn (_, name, names) => Redblackset.add (names, name))
+          (Redblackset.empty String.compare) tydict)
+        fun add_name (fam_ty, used) =
           let
-            val name = fresh_smt_name smt_reserved_type_names used
-              (type_name_stem fam_ty)
+            fun unavailable (suffix, name) =
+              is_smt_reserved smt_reserved_type_names name orelse
+              List.exists (Lib.equal name) used orelse
+              (if suffix < 2 then Redblackmap.exists (Lib.equal name) tydict
+               else Redblackset.member (Susp.force used_names, name))
+            val name =
+              fresh_smt_name_avoiding unavailable (type_name_stem fam_ty)
           in
-            (name :: used, name :: acc)
+            name :: used
           end
-        val (_, names_rev) = List.foldl add_name (used0, []) family
-        val names = List.rev names_rev
+        val names = List.rev (List.foldl add_name [] family)
         val tydict_with_family = ListPair.foldlEq
           (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
           tydict (family, names)
@@ -8068,11 +8075,14 @@ local
       (case Lib.total Type.dom_rng (Term.type_of v) of
          SOME (_, rng) => Type.compare (rng, numSyntax.num) = EQUAL
        | NONE => false)
-    val asm_fvs = List.concat (List.map Term.free_vars asms)
-    fun free_in_asms v = List.exists (fn w => Term.aconv v w) asm_fvs
+    val candidates = List.filter (fn v => is_num_var v orelse is_bag_var v)
+      (Term.free_vars concl)
   in
-    List.filter (fn v => (is_num_var v orelse is_bag_var v) andalso
-      not (free_in_asms v)) (Term.free_vars concl)
+    if null candidates then []
+    else
+      let val asm_fvs = Term.FVL asms Term.empty_tmset
+      in List.filter (fn v => not (HOLset.member (asm_fvs, v))) candidates
+      end
   end
 
   fun SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude g =

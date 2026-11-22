@@ -2520,6 +2520,48 @@ fun assert_num_free_transfer label text =
    assert_not_contains label "Num" text;
    assert_not_contains label "int_of_num" text)
 
+fun raw_num_analysis_application_spines () =
+let
+  val n = numSyntax.num
+  val x = Term.mk_var ("x", n)
+  val unary_type = Type.--> (n, n)
+  val bag = Term.mk_var ("b", unary_type)
+  val lookup = Term.mk_comb (bag, x)
+  val consumer = Term.mk_var ("consume", Type.--> (n, Type.bool))
+  val width = 128
+  val args = List.tabulate (width, fn _ => x)
+  val f = Term.mk_var ("f", boolSyntax.list_mk_fun (List.map type_of args, n))
+  val wide = Term.list_mk_comb (f, args)
+  val partial = List.foldl (fn (arg, term) => Term.mk_comb (term, arg))
+    f (List.take (args, width - 1))
+  val stripped = ref 0
+  val ops : Term.term SmtLib_RawNumAnalysis.operations =
+    {same = fn (left, right) => Term.aconv left right, type_of = Term.type_of,
+     is_abstraction = Term.is_abs, dest_abs = Term.dest_abs,
+     is_combination = Term.is_comb, dest_comb = Term.dest_comb,
+     strip_comb = fn term =>
+       let val result as (_, args) = boolSyntax.strip_comb term
+       in stripped := !stripped + List.length args; result end,
+     is_integer_coercion = Term.aconv intSyntax.int_injection,
+     is_num_head = Term.aconv intSyntax.Num_tm,
+     is_bag_card_head = Term.aconv bagSyntax.BAG_CARD_tm,
+     number_type = n}
+  val num = intSyntax.mk_Num (Term.mk_var ("i", intSyntax.int_ty))
+  fun analyse roots = SmtLib_RawNumAnalysis.collect ops [bag, partial] roots
+  val result = analyse
+    [Term.mk_comb (consumer, wide), intSyntax.mk_injected wide]
+in
+  assert (null result, "curried applications must not be marked bag lookups");
+  assert (!stripped <= 4 * width,
+    "raw-num analysis repeatedly flattened curried application spines");
+  assert
+    (case analyse [Term.mk_comb (consumer, lookup),
+                   intSyntax.mk_injected num, intSyntax.mk_injected lookup] of
+       [a, b] => Term.aconv a num andalso Term.aconv b lookup
+     | _ => false,
+     "raw-num analysis lost a unary bag lookup or Num coercion")
+end
+
 fun num_transfer_literal_normalization_success () =
 let
   val text = transferred_smtlib_text ``42n = n``
@@ -4913,7 +4955,27 @@ fun smtlib_logic_fragment_diagnostics () =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
     val cvc5_options =
       {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
+    fun shared 0 = boolSyntax.T
+      | shared depth =
+          let val child = shared (depth - 1)
+          in boolSyntax.mk_conj
+               (boolSyntax.mk_neg child, boolSyntax.mk_disj (child, boolSyntax.T))
+          end
+    val shared_assertion = shared 28
+    fun shared_sum 0 = ``x:int``
+      | shared_sum depth =
+          let val child = shared_sum (depth - 1)
+          in intSyntax.mk_plus (child, child) end
+    val shared_int_atom = intSyntax.mk_less (shared_sum 28, ``y:int``)
   in
+    expect_no_term_fragment "shared Boolean assertion" "QF_UF" shared_assertion;
+    expect_term_fragment "quantifier after shared Boolean assertion" "QF_UF"
+      (boolSyntax.mk_conj (shared_assertion, ``!n:num. n = n``))
+      "quantified formula";
+    expect_term_fragment "shared integer sum" "QF_IDL" shared_int_atom
+      "difference logic atom shape";
+    expect_term_fragment "shared pure integer atom" "QF_BV" shared_int_atom
+      "integer atom";
     expect_fragment_with_options "nested Seq datatype unavailable"
       all_elaborated "QF_S"
       (script "QF_S"
@@ -39793,6 +39855,8 @@ let
       smtfloat_rounding_conversions_success),
     ("smtfloat_ground_evaluation_success",
       smtfloat_ground_evaluation_success),
+    ("raw_num_analysis_application_spines",
+      raw_num_analysis_application_spines),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",

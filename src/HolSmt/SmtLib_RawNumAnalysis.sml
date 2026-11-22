@@ -23,6 +23,15 @@ struct
         List.exists (fn saved => (#same operations) (term,saved)) terms
       fun insert term terms =
         if member term terms then terms else term :: terms
+      fun is_unary_num_application term =
+        (#is_combination operations) term andalso
+        let val (head, _) = (#dest_comb operations) term
+        in not ((#is_combination operations) head) andalso
+           (#is_num_head operations) head
+        end
+      fun expects_number (SOME ty) =
+            Type.compare (ty, #number_type operations) = EQUAL
+        | expects_number NONE = false
       fun for_term term =
         let
           fun visit expected term acc =
@@ -41,20 +50,17 @@ struct
                   Lib.fst (Type.dom_rng ((#type_of operations) rator))
                 val expected_arg =
                   if (#is_integer_coercion operations) rator andalso
-                     not (case (#strip_comb operations) rand of
-                       (head, [_]) => (#is_num_head operations) head
-                     | _ => false) then NONE else SOME domain
+                     not (is_unary_num_application rand)
+                  then NONE else SOME domain
                 val acc = visit NONE rator acc
                 val acc = visit expected_arg rand acc
               in
-                if ((#is_num_head operations) rator orelse
+                if expects_number expected andalso
+                   ((#is_num_head operations) rator orelse
                     (#is_bag_card_head operations) rator orelse
-                    (case (#strip_comb operations) term of
-                       (bag,[_]) => member bag bag_terms
-                     | _ => false)) andalso
-                   Option.isSome expected andalso
-                   Type.compare (Option.valOf expected,
-                     #number_type operations) = EQUAL then
+                    (not (null bag_terms) andalso
+                     not ((#is_combination operations) rator) andalso
+                     member rator bag_terms)) then
                   insert term acc
                 else acc
               end

@@ -451,6 +451,45 @@ in
   val subterms = Library.subterms
   val has_quantifier = Library.has_quantifier
 
+  fun term_children tm =
+    if Term.is_comb tm then
+      let val (operator, operand) = Term.dest_comb tm
+      in [operator, operand] end
+    else if Term.is_abs tm then [#2 (Term.dest_abs tm)]
+    else []
+
+  (* These checks depend on the term, not on the path that reached it.
+     Use physical identity: opening alpha-equivalent abstractions can
+     expose different variable names. Keep a recent-node cache so long
+     runs of equal-looking, independently built terms cannot cause
+     quadratic bucket scans. Eviction never stops the traversal. *)
+  fun walk_terms children roots =
+    let
+      val seen = SmtPointerTable.new
+        {hint = SmtReplayImport.pointer_bucket 4, initial = 15, ceiling = 127}
+      fun remember tm =
+        (if SmtPointerTable.size seen = 256 then SmtPointerTable.clear seen
+         else ();
+         SmtPointerTable.insert seen tm ())
+      fun walk tm =
+        if Term.is_comb tm orelse Term.is_abs tm then
+          case SmtPointerTable.lookup seen tm of
+            SOME () => ()
+          | NONE => (List.app walk (children tm); remember tm)
+        else List.app walk (children tm)
+    in List.app walk roots end
+
+  fun exists_term predicate roots =
+    let
+      exception Found
+      fun descend tm = if predicate tm then raise Found else term_children tm
+      (* Small atoms and early hits need no memo table. *)
+      fun scan _ [] = ()
+        | scan 0 pending = walk_terms descend pending
+        | scan remaining (tm :: pending) =
+            scan (remaining - 1) (descend tm @ pending)
+    in (scan 16 roots; false) handle Found => true end
+
   fun is_numeric_literal tm =
     Lib.can intSyntax.int_of_term tm orelse
     Lib.can realSyntax.int_of_term tm
@@ -702,8 +741,9 @@ in
      encoded elements, but do not classify the wrapper list itself.  Likewise,
      the payload of SmtStr is the private representation of SMT String, not a
      user-visible SMT datatype. *)
-  fun assertion_mentions_datatype_sort ignore_native_sequences tm =
+  fun assertions_mention_datatype_sort ignore_native_sequences assertions =
     let
+      exception Found
       fun type_is_visible_datatype_sort ty =
         type_is_datatype_sort ty andalso
         not (ignore_native_sequences andalso
@@ -715,31 +755,34 @@ in
          :char element is not one either. *)
       val type_contains_visible_datatype =
         Library.type_contains type_is_visible_datatype_sort
-      fun is_smtstr_value tm =
-        case boolSyntax.strip_comb tm of
-          (rator, [_]) =>
-            (case Lib.total Term.dest_thy_const rator of
-               SOME {Thy, Name, ...} =>
-                 Thy = "smtstring" andalso Name = "SmtStr"
-             | NONE => false)
-        | _ => false
-
-      fun walk tm =
-        if is_smtstr_value tm then false
-        else
-          case distinct_literal_elements tm of
-            SOME elements => List.exists walk elements
-          | NONE =>
-            type_contains_visible_datatype (Term.type_of tm) orelse
-            (let val (rator, rand) = Term.dest_comb tm
-             in walk rator orelse walk rand end
-             handle Feedback.HOL_ERR _ =>
-               (let val (_, body) = Term.dest_abs tm
-                in walk body end
-                handle Feedback.HOL_ERR _ => false))
+      fun descend tm =
+        let
+          fun ordinary () =
+            if type_contains_visible_datatype (Term.type_of tm) then
+              raise Found
+            else term_children tm
+        in
+          if Term.is_comb tm then
+            let val (operator, operand) = Term.dest_comb tm in
+              if Term.is_const operator then
+                let val {Thy, Name, ...} = Term.dest_thy_const operator in
+                  if Thy = "smtstring" andalso Name = "SmtStr" then []
+                  else if same_const listSyntax.all_distinct_tm operator then
+                    case Lib.total listSyntax.dest_list operand of
+                        SOME (elements, _) => elements
+                      | NONE => ordinary ()
+                  else ordinary ()
+                end
+              else ordinary ()
+            end
+          else ordinary ()
+        end
     in
-      walk tm
+      (walk_terms descend assertions; false) handle Found => true
     end
+
+  fun assertion_mentions_datatype_sort ignore_native_sequences tm =
+    assertions_mention_datatype_sort ignore_native_sequences [tm]
 
   fun term_mentions_string_theory tm =
     (type_contains_string o Term.type_of) tm
@@ -815,12 +858,12 @@ in
     case is_arith_relation tm of
       SOME sides =>
         List.exists
-          (fn side => List.exists is_clear_non_difference_sum (subterms side))
+          (fn side => exists_term is_clear_non_difference_sum [side])
           sides
     | NONE => false
 
   fun term_has_word_subterm tm =
-    List.exists (type_contains_word o Term.type_of) (subterms tm)
+    exists_term (type_contains_word o Term.type_of) [tm]
 
   fun is_bv_logic_pure_int_atom tm =
     case is_arith_relation tm of
@@ -831,12 +874,19 @@ in
       (surface_flags : surface_flags) assertions =
     let
       val fragment = logic_fragment_of_logic logic
-      val all_subterms = Portable.HOLSusp.delay
-        (fn () => List.concat (List.map subterms assertions))
+      val all_subterms = Portable.HOLSusp.delay (fn () =>
+        let
+          val terms = ref []
+          fun collect tm = (terms := tm :: !terms; term_children tm)
+          val _ = walk_terms collect assertions
+        in List.rev (!terms) end)
       fun some_subterm p = List.exists p (Portable.HOLSusp.force all_subterms)
       fun has_int () = some_subterm (type_contains_int o Term.type_of)
       fun qf_violation () =
-        not (#quantifiers fragment) andalso List.exists has_quantifier assertions
+        not (#quantifiers fragment) andalso
+        exists_term
+          (fn tm => boolSyntax.is_forall tm orelse boolSyntax.is_exists tm)
+          assertions
       fun nonlinear_violation () =
         is_linear_arith_logic logic andalso some_subterm is_nonlinear_product
       fun difference_violation () =
@@ -878,8 +928,7 @@ in
       (* HOL lists may encode native Seq rather than SMT datatypes. *)
       fun datatype_sort_violation () =
         not (#datatypes fragment) andalso
-        List.exists (assertion_mentions_datatype_sort (#strings fragment))
-          assertions
+        assertions_mention_datatype_sort (#strings fragment) assertions
       fun free_sort_violation () =
         not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
         some_subterm (type_contains_free_sort o Term.type_of)

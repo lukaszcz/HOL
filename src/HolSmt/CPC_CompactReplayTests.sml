@@ -202,6 +202,55 @@ struct
     end
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
+  fun indexed_cnf () =
+    let
+      val count = 64
+      val names = List.tabulate (count,fn i => "cnf_p" ^ Int.toString i)
+      val variables = List.map (fn name => Term.mk_var (name,Type.bool)) names
+      val variables_by_name = ListPair.zip (names,variables)
+      val last = List.last variables
+      val assumptions = [boolSyntax.list_mk_conj variables,
+        boolSyntax.mk_neg last]
+      val aggregate = "(and " ^ String.concatWith " " names ^ ")"
+      fun measure repeats =
+        let
+          val graph = G.new ()
+          val scope = G.root_scope graph
+          val sources = S.new graph scope maximum
+            {goal=boolSyntax.F,assumptions=assumptions}
+          val options = Z3_CompactReplayTests.options graph scope
+            variables_by_name
+          fun selector index =
+            let val serial = Int.toString (count-repeats+index)
+            in "(step @c" ^ serial ^ " :rule cnf_and_pos :args (@wide " ^
+              serial ^ "))" end
+          val text = "((define @wide () " ^ aggregate ^ ")" ^
+            "(assume @whole @wide)(assume @neg (not " ^
+            List.last names ^ "))" ^
+            String.concat (List.tabulate (repeats,selector)) ^
+            "(step @last :rule resolution :premises (@c" ^
+            Int.toString (count-1) ^ " @whole))" ^
+            "(step @done false :rule resolution :premises (@last @neg)))"
+          val stream = TextIO.openString text
+          fun check () =
+            let
+              val proof = Q.parse_graph_stream_with_version options
+                (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream
+              val (theorem,stats) = G.with_node_statistics graph scope
+                (fn () => R.prove
+                  {graph=graph,scope=scope,sources=sources,proof=proof,
+                   ordinary_limit=maximum,template_limit=4096,
+                   worker=fn _ => raise Fail "unexpected CNF fallback"})
+              val _ = exact boolSyntax.F assumptions theorem
+            in #node_accesses stats end
+        in Portable.finally
+          (fn () => (TextIO.closeIn stream;G.close_scope graph scope))
+          check () end
+      val short = measure 4
+      val wide = measure count
+    in require ("CPC indexed CNF graph accesses (64/4): " ^
+      IntInf.toString wide ^ "/" ^ IntInf.toString short)
+      (wide < 4 * short) end
   fun exact_transitivity_path () =
     let
       val graph = G.new ()
@@ -251,7 +300,8 @@ struct
         end
     in check count true; check (count+1) false end
   fun run () =
-    (test "CPC indexed transitivity matches exact reachability and kind"
+    (test "CPC indexed CNF reuses validated definition operands" indexed_cnf;
+     test "CPC indexed transitivity matches exact reachability and kind"
        exact_transitivity_path;
      test "CPC fitting law drops all unused original Sources"
        (positive false Closed);

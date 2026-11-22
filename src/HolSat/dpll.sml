@@ -11,13 +11,15 @@ open HolKernel Parse boolLib def_cnf satCommonTools satTools
 
 datatype result = Unsat of thm | Sat of term -> term
 
+fun count_atom (v,acc) = Termtab.map_default (v,0) (fn n => n + 1) acc
+
 fun count_vars ds acc =
     case ds of
       [] => acc
     | lit::lits => let
         val v = dest_neg lit handle HOL_ERR _ => lit
       in
-        count_vars lits (Termtab.map_default (v,0) (fn n => n + 1) acc)
+        count_vars lits (count_atom (v,acc))
       end
 
 fun getBiggest acc =
@@ -29,7 +31,7 @@ fun getBiggest acc =
 (* The first unit we see, or the var that occurs most often *)
 fun find_splitting_var phi =
   let
-    fun count (clause,acc) = count_vars (strip_disj clause) acc
+    fun count (clause,acc) = fold_clause_atoms count_atom clause acc
     fun scan clause pending visited =
         case total dest_conj clause of
             SOME (left,right) => scan left (right :: pending) visited

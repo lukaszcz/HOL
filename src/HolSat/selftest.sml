@@ -471,6 +471,10 @@ local
   val _ = control "DPLL keeps frequency counts and tie order without units"
     (fn () => dpll.find_splitting_var ``(q \/ p) /\ (~q \/ r)`` ~~ ``q:bool``
       andalso dpll.find_splitting_var ``(q \/ p) /\ (s \/ r)`` ~~ ``p:bool``)
+  val _ = control "DPLL counts both signs of a compound atom once per use"
+    (fn () =>
+      dpll.find_splitting_var
+        ``((r \/ (p:bool = q)) \/ s) /\ (~(p = q) \/ t)`` ~~ ``p:bool = q``)
   val _ = control "balanced and asymmetric explicit CNF preserve clause order"
     (fn () =>
       let

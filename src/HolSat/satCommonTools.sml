@@ -25,6 +25,29 @@ val mk_var = Term.mk_var;
 
 val land = rand o rator
 
+(* Visit atoms left to right, removing one outer negation per literal. *)
+fun fold_clause_atoms step clause initial =
+    let
+      fun walk literal pending acc =
+          if is_comb literal then
+            let val (operator,right) = dest_comb literal in
+              if is_comb operator then
+                let val (head,left) = dest_comb operator in
+                  if same_const disjunction head then
+                    walk left (right :: pending) acc
+                  else add literal pending acc
+                end
+              else if same_const negation operator then add right pending acc
+              else add literal pending acc
+            end
+          else add literal pending acc
+      and add atom pending acc =
+          let val acc = step (atom,acc) in
+            case pending of [] => acc
+              | next :: rest => walk next rest acc
+          end
+    in walk clause [] initial end
+
 fun is_T tm = Term.compare(tm,T)=EQUAL
 
 fun is_F tm = Term.compare(tm,F)=EQUAL
