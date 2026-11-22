@@ -40,7 +40,6 @@ datatype reducer =
               apply: {solver:term list -> term -> thm,
                       conv: term list -> term -> thm,
                       context: context,
-                      ctxt: Context.t,
                       stack: term list, relation : term * (term -> thm)} -> conv
               };
 fun dest_reducer (REDUCER x) = x
@@ -203,8 +202,7 @@ fun mapfilter2 f (h1::t1) (h2::t2) =
  * ---------------------------------------------------------------------*)
 
 
-fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack tstate
-                        cctxt tm = let
+fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val add_context' = add_context rewriters dprocs
@@ -255,7 +253,7 @@ fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack tstate
       fun apply_reducer (REDUCER rdata) context tm =
           (#apply rdata) {solver=ctxt_solver,
                           conv=ctxt_conv,
-                          context=context, ctxt=cctxt,
+                          context=context,
                           stack=stack, relation=(relname, mkrefl)}
                          tm before
           dec lim_r
@@ -294,7 +292,7 @@ fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack tstate
     trav stack context
   end
 in
-  trav_with_rel (get_relation' rel) stack tstate tm
+  trav_with_rel (get_relation' rel) stack ctxt tm
 end
 
 (* ---------------------------------------------------------------------
@@ -307,18 +305,9 @@ type traverse_data = {limit : int option,
                       travrules: Travrules.travrules,
                       relation: term};
 
-(* Snapshots the context when the result is applied to an argument; f is
-   partially applied by the caller, so its precomputation is shared. *)
-fun at_application f = fn x => f (Context.snapshot ()) x
-
-(* Collects the context once; the result takes the context to run in. *)
-fun prepare (data as {limit,dprocs,rewriters,travrules,relation}) thms =
+fun TRAVERSE (data as {limit,dprocs,rewriters,travrules,relation}) thms =
    let val context' = add_context rewriters dprocs (initial_context data,thms)
    in TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules relation [] context'
    end;
-
-fun TRAVERSE_IN ctxt data thms = prepare data thms ctxt
-
-fun TRAVERSE data thms = at_application (prepare data thms)
 
 end (* struct *)

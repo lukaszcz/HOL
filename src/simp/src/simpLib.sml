@@ -516,7 +516,7 @@ fun force_add (ss as SS sset) f =
      CONVNET
        (net_add_convs net (List.concat (map (convdata mk_rewrs) thms)))
    end
-   fun apply {solver,conv,context,ctxt=_,stack,relation} tm = let
+   fun apply {solver,conv,context,stack,relation} tm = let
      val net = (raise context) handle CONVNET net => net
    in
      tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
@@ -536,7 +536,7 @@ fun force_add (ss as SS sset) f =
 
  val traversedata_for_ss = traversedata_with context_convdata
 
- fun SIMP_QCONV_IN ctxt ss = TRAVERSE_IN ctxt (traversedata_for_ss ss);
+ fun SIMP_QCONV ss = TRAVERSE (traversedata_for_ss ss);
 
 val Cong   = markerLib.Cong
 val AC     = markerLib.AC;
@@ -618,19 +618,11 @@ fun process_tags ss thl =
         end
     end
 
-fun SIMP_CONV_IN ctxt ss =
-    simpCommon.SIMP_CONV
-      {process_tags = process_tags, qconv = SIMP_QCONV_IN ctxt} ss
+fun SIMP_CONV ss =
+    simpCommon.SIMP_CONV {process_tags = process_tags, qconv = SIMP_QCONV} ss
 
-fun SIMP_CONV ss l =
-    Traverse.at_application (fn ctxt => SIMP_CONV_IN ctxt ss l)
-
-fun SIMP_PROVE_IN ctxt ss =
-    simpCommon.SIMP_PROVE
-      {process_tags = process_tags, qconv = SIMP_QCONV_IN ctxt} ss
-
-fun SIMP_PROVE ss l =
-    Traverse.at_application (fn ctxt => SIMP_PROVE_IN ctxt ss l)
+fun SIMP_PROVE ss =
+    simpCommon.SIMP_PROVE {process_tags = process_tags, qconv = SIMP_QCONV} ss
 
 infix &&;
 
@@ -654,15 +646,10 @@ end;
 
 fun SIMP_RULE ss l = CONV_RULE (SIMP_CONV ss l)
 
-fun SIMP_RULE_IN ctxt ss l = CONV_RULE (SIMP_CONV_IN ctxt ss l)
-
 fun ASM_SIMP_RULE ss = simpCommon.ASM_SIMP_RULE SIMP_RULE ss
 
-fun ASM_SIMP_RULE_IN ctxt ss = simpCommon.ASM_SIMP_RULE (SIMP_RULE_IN ctxt) ss
-
-fun ASM_SIMP_TAC ss ths g ctxt =
-    markerLib.process_taclist_then{arg=ths}
-      (CONV_TAC o SIMP_CONV_IN ctxt ss) g ctxt
+fun ASM_SIMP_TAC ss ths =
+    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
@@ -671,21 +658,21 @@ type simptac_config = simpCommon.simptac_config
 
 val {FULL_SIMP_TAC, REV_FULL_SIMP_TAC, NO_STRIP_FULL_SIMP_TAC,
      NO_STRIP_REV_FULL_SIMP_TAC} =
-    simpCommon.full_simp_tacs {simp_rule = SIMP_RULE_IN,
+    simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
                                asm_simp_tac = ASM_SIMP_TAC}
 val full_simp_tac = FULL_SIMP_TAC
 val rev_full_simp_tac = REV_FULL_SIMP_TAC
 
 val stdcon = simpCommon.stdcon
 
-(* SIMP_RULE_IN ctxt ss l, with the context rewrites of each assumption in l
+(* SIMP_RULE ss l, with the context rewrites of each assumption in l
    derived once per `rws` and reused.  They are a function of the theorem,
    and a theorem whose only hypothesis is its untagged conclusion is
    ASSUME of that conclusion, so they are kept for such theorems only,
    by conclusion, and only while process_tags leaves ss as it is.  A
    bounded rewrite counts its uses in its conversion, so rewrites are kept
    only when none of them is bounded. *)
-fun simp_rule_reusing ctxt rws ss l =
+fun simp_rule_reusing rws ss l =
     let
       fun convdata mk_rewrs th =
           let
@@ -721,7 +708,7 @@ fun simp_rule_reusing ctxt rws ss l =
                          traversedata_with convdata ss'
                        else traversedata_for_ss ss'
           in
-            TRY_CONV (TRAVERSE_IN ctxt data l') tm
+            TRY_CONV (TRAVERSE data l') tm
           end
     in
       CONV_RULE conv
@@ -735,7 +722,7 @@ fun simp_rule_reusing ctxt rws ss l =
 fun psr0 (seen, rws) (cfg : simptac_config) ss =
     let
       val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
-      fun simp ctxt th asl =
+      fun simp th asl =
           let
             val t = concl th
             val tried = getOpt (Redblackmap.peek (!seen, t), [])
@@ -746,7 +733,7 @@ fun psr0 (seen, rws) (cfg : simptac_config) ss =
             if List.exists same tried then th
             else
               let
-                val th' = simp_rule_reusing ctxt rws ss (map ASSUME asl) th
+                val th' = simp_rule_reusing rws ss (map ASSUME asl) th
               in
                 if Portable.pointer_eq (concl th', t) then
                   seen := Redblackmap.insert (!seen, t, (t, asl) :: tried)
@@ -755,8 +742,7 @@ fun psr0 (seen, rws) (cfg : simptac_config) ss =
               end
           end
     in
-      popper (fn th => fn (g as (asl, _)) => fn ctxt =>
-                 stdcon cfg (simp ctxt th asl) g ctxt)
+      popper (fn th => fn (g as (asl, _)) => stdcon cfg (simp th asl) g)
     end
 
 fun new_memo () =

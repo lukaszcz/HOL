@@ -17,8 +17,7 @@ Solvers have the types
 type TraverseExt.ssolver =
   {name : string, solve : simp_prover_ctxt -> term -> thm}
 type TraverseExt.simp_prover_ctxt =
-  {stack : term list, context_thms : thm list, recurse : term -> thm,
-   ctxt : Context.t}
+  {stack : term list, context_thms : thm list, recurse : term -> thm}
 ```
 
 `solve ctxt c` must prove `c` or raise `HOL_ERR`. In `ctxt`, `stack` holds

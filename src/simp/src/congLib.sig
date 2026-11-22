@@ -116,15 +116,6 @@ sig
   * ---------------------------------------------------------------------*)
   val CONGRUENCE_EQ_SIMP_CONV: congset -> simpLib.simpset -> thm list -> term -> thm
 
-  (* Each of the following is the form without _IN, with the traversal's
-     context given. *)
-  val CONGRUENCE_SIMP_CONV_IN:
-    Context.t -> term -> congset -> simpLib.simpset -> thm list -> term -> thm
-  val CONGRUENCE_SIMP_QCONV_IN:
-    Context.t -> term -> congset -> simpLib.simpset -> thm list -> term -> thm
-  val CONGRUENCE_EQ_SIMP_CONV_IN:
-    Context.t -> congset -> simpLib.simpset -> thm list -> term -> thm
-
 
   (* ---------------------------------------------------------------------
   * Tactics and rule similar to simpLib. They all use the equality relation as
@@ -133,9 +124,6 @@ sig
   * ---------------------------------------------------------------------*)
 
   val CONGRUENCE_SIMP_RULE : congset -> simpLib.simpset -> thm list -> thm -> thm
-  (* As CONGRUENCE_SIMP_RULE, with the traversal's context given. *)
-  val CONGRUENCE_SIMP_RULE_IN:
-    Context.t -> congset -> simpLib.simpset -> thm list -> thm -> thm
   val CONGRUENCE_SIMP_TAC : congset -> simpLib.simpset -> thm list -> tactic
   val ASM_CONGRUENCE_SIMP_TAC : congset -> simpLib.simpset -> thm list -> tactic
   val FULL_CONGRUENCE_SIMP_TAC : congset -> simpLib.simpset -> thm list -> tactic

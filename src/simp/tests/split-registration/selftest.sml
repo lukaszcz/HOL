@@ -447,4 +447,36 @@ val _ = Context.with_context uninitialized (fn () =>
   end) ()
 val _ = check "rejected pinned initialization leaves live ownership intact"
   (has_rule ())
+
+(* The splitter reads the [split] rules of the context its tactic runs in,
+   whatever the live context declares.  Excluding the TypeBase case split
+   leaves the [split] rule as the only way to split the goal. *)
+fun changed_in ctxt tac =
+  case VALID tac goal ctxt of
+      ([(asms,result)],_) =>
+        null asms andalso not (aconv result (#2 goal))
+    | _ => false
+val persistent_only = SIMP_TAC (bool_ss ++ split_ss) [ExclX "case:bool"]
+val _ = Context.restore uninitialized
+val _ = check "splitter uses the [split] rules of the tactic's context"
+  (changed_in owned persistent_only)
+val _ = Context.restore owned
+val _ = check "splitter ignores [split] rules only the live context has"
+  (not (changed_in uninitialized persistent_only))
+
+(* ExclX resolves a [split] name among the rules of that context too. *)
+val persistent_name = "split:" ^ thy ^ "$rule"
+val persistent_excluded =
+  SIMP_TAC (bool_ss ++ split_ss) [ExclX "case:bool", ExclX persistent_name]
+val _ = Context.restore uninitialized
+val _ = check "ExclX names a [split] rule of the tactic's context"
+  (case Exn.capture (changed_in owned) persistent_excluded of
+       Exn.Res changed => not changed
+     | Exn.Exn _ => false)
+val _ = Context.restore owned
+val _ = check "ExclX does not name a [split] rule only the live context has"
+  (case Exn.capture (changed_in uninitialized) persistent_excluded of
+       Exn.Exn (HOL_ERR e) =>
+         Feedback.message_of e = "ExclX did not match " ^ persistent_name
+     | _ => false)
 val _ = OS.Process.exit OS.Process.success

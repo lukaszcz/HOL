@@ -53,11 +53,6 @@ sig
     *      The current side condition stack, which grows as nested calls
     *      to the solver are made.
     *
-    *    ctxt:
-    *      The context the traversal runs in.  It is the same for every
-    *      reducer and solver call made while the traversal runs on one
-    *      term.  TRAVERSE takes it when the conversion is applied.
-    *
     * conv:
     *   A continuation function, to be used if the reducer
     *   wants to continue traversing. The continuation invokes traversal
@@ -76,7 +71,6 @@ sig
          apply: {solver:term list -> term -> thm,
                  conv: term list -> term -> thm,
                  context: context,
-                 ctxt: Context.t,
                  stack:term list,
                  relation : (term * (term -> thm))} -> conv
        }
@@ -88,7 +82,6 @@ sig
          apply: {solver:term list -> term -> thm,
                  conv: term list -> term -> thm,
                  context: context,
-                 ctxt: Context.t,
                  stack:term list,
                  relation : (term * (term -> thm))} -> conv}
 
@@ -137,13 +130,5 @@ sig
                          relation: term};
 
    val TRAVERSE : traverse_data -> thm list -> conv
-
-   (* TRAVERSE_IN ctxt is TRAVERSE running in the given context, rather
-      than in the one current when the conversion is applied. *)
-   val TRAVERSE_IN : Context.t -> traverse_data -> thm list -> conv
-
-   (* at_application f is f given the context current when the result is
-      applied, rather than when it is built. *)
-   val at_application : (Context.t -> 'a -> 'b) -> 'a -> 'b
 
 end (* sig *)

@@ -12,21 +12,17 @@ sig
 
   type context = exn
 
-  (* What a reducer's apply function receives from the traversal.  ctxt is
-     the context the traversal runs in, and is the same for every reducer
-     and solver call made while it runs on one term. *)
+  (* What a reducer's apply function receives from the traversal *)
   type apply_args =
     {solver : term list -> term -> thm,
      conv : term list -> term -> thm,
      context : context,
-     ctxt : Context.t,
      stack : term list,
      relation : term * (term -> thm)}
 
   (* Side-condition provers (TraverseExt's configured traversals) *)
   type simp_prover_ctxt =
-    {stack : term list, context_thms : thm list, recurse : term -> thm,
-     ctxt : Context.t}
+    {stack : term list, context_thms : thm list, recurse : term -> thm}
   type ssolver = {name : string, solve : simp_prover_ctxt -> term -> thm}
   type subgoaler = simp_prover_ctxt -> term -> thm
 
@@ -52,7 +48,7 @@ sig
 
   (* Collect context once and return a reusable conversion; congruence
      procedures are built eagerly for each traversal context. *)
-  val TRAVERSE : 'r traversal -> thm list -> Context.t -> conv
+  val TRAVERSE : 'r traversal -> thm list -> conv
 
   (* Collect the given contexts afresh at each application.  check_abort
      runs before each step; observer sees every term offered to reducers
@@ -66,7 +62,6 @@ sig
     {check_abort : (unit -> unit) option, observer : (term -> unit) option,
      policy : traversal_policy, root_only : bool} ->
     'r traversal ->
-    {reducer_context : thm list, solver_context : thm list} ->
-    Context.t -> conv
+    {reducer_context : thm list, solver_context : thm list} -> conv
 
 end

@@ -776,48 +776,14 @@ fun remove_present_frags names ss =
     (List.filter (frag_present ss) names) ss
   handle Conv.UNCHANGED => ss
 
-(* The declarations the reducer applies.  The reducer reads them from the
-   context of the traversal it runs in, and the fragment is installed once
-   and stays, so a declaration or a retraction changes what the fragment
-   does without the fragment being replaced: a reducer is a closure rather
-   than a named rewrite, so a simpset cannot address one of several. *)
-val bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
-  {name = "clasimp.iff_bottom_up", empty = [],
-   pp = fn _ => "<iff bottom-up declarations>"}
-
-(* The same reducer carries [simp_bottom_up], which is this declaration
-   without the claset halves: Isabelle states a law whose subject must be
-   normal as [simp] as well as as [iff], and a rule the source declares
-   [simp] may not seed the claset. *)
-val simp_bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
-  {name = "clasimp.simp_bottom_up", empty = [],
-   pp = fn _ => "<simp bottom-up declarations>"}
-
-val bottom_up_installed : bool Context.Data.slot = Context.Data.new
-  {name = "clasimp.bottom_up_installed", empty = false,
-   pp = Bool.toString}
-
-(* What a context declares bottom-up.  A declaration replaces the list, so
-   an unchanged list is the same object and the key moves whenever a
-   declaration or retraction changes the declarations. *)
-type bottom_up_key = thm list * thm list
-
-fun bottom_up_key_of ctxt : bottom_up_key =
-  (Context.Data.get bottom_up_rewrites ctxt,
-   Context.Data.get simp_bottom_up_rewrites ctxt)
-
-fun same_bottom_up_key ((a, b), (a', b')) =
-  let fun same (l, l') =
-        Portable.pointer_eq (l, l') orelse (null l andalso null l')
-  in same (a, a') andalso same (b, b') end
-
-(* LHS views are derived once for a simpset and the bottom-up declarations
-   of a context, and kept with them: they are a function of those two.  The
-   linear-arithmetic procedures are stripped because views must not depend
-   on arithmetic: they carry the [arith] facts of the context the simpset
-   was derived for, and a view table is reused as the predecessor of
-   another simpset's, which may carry other facts.  An invocation runs
-   them on its goal with its own context.  Stripping them rebuilds the
+(* LHS views are derived once for a simpset and kept with it: they are a
+   function of the simpset, which carries the bottom-up declarations of its
+   context ([iff_bottom_up] below).  The linear-arithmetic procedures are
+   stripped because views must not depend on arithmetic: they carry the
+   [arith] facts of the context the simpset was derived for, and a view
+   table is reused as the predecessor of another simpset's, which may
+   carry other facts.  An invocation runs them on its goal with its own
+   context.  Stripping them rebuilds the
    simpset, so it is done once for each simpset derived from.
 
    A derivation is given the simpset it derives from, the view base, and
@@ -842,8 +808,7 @@ val view_derivation_simpset =
 fun stripped_view_base ss : view_base =
   Susp.delay (fn () => view_derivation_simpset ss)
 
-fun prepare_lhs_view_derivation_with_positions ctxt caller_charge base
-      positions =
+fun prepare_lhs_view_derivation_with_positions caller_charge base positions =
   let
     exception DerivationLimit
     datatype candidate_result =
@@ -866,8 +831,7 @@ fun prepare_lhs_view_derivation_with_positions ctxt caller_charge base
            handle e => (callback_failure := SOME e; raise e))
     val policy = position_policy charge positions
     val prepared =
-      simpLib.prepare_child_first_observed_in ctxt remember policy
-        base
+      simpLib.prepare_child_first_observed remember policy base
     fun candidate theorem =
       let
         val specialised = Drule.SPEC_ALL theorem
@@ -944,18 +908,18 @@ fun prepare_lhs_view_derivation_with_positions ctxt caller_charge base
       end
   in one end
 
-fun prepare_lhs_view_derivation ctxt caller_charge ss =
-  prepare_lhs_view_derivation_with_positions ctxt caller_charge
+fun prepare_lhs_view_derivation caller_charge ss =
+  prepare_lhs_view_derivation_with_positions caller_charge
     (view_derivation_simpset ss)
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
 fun derive_lhs_view_entries caller_charge ss =
-  map (prepare_lhs_view_derivation (Context.snapshot ()) caller_charge ss)
+  map (prepare_lhs_view_derivation caller_charge ss)
       (simpLib.rewrite_source_handles ss)
 
 fun derive_lhs_view_entries_with_positions caller_charge ss positions =
-  map (prepare_lhs_view_derivation_with_positions (Context.snapshot ())
-        caller_charge (view_derivation_simpset ss)
+  map (prepare_lhs_view_derivation_with_positions caller_charge
+        (view_derivation_simpset ss)
         (HOLset.addList (no_positions,positions)))
       (simpLib.rewrite_source_handles ss)
 
@@ -990,7 +954,7 @@ type source_set = simpLib.rewrite_source HOLset.set
 type source_index = (simpLib.rewrite_source,lhs_view_entry) Binarymap.dict
 type dependency_index = (KernelSig.kernelid,source_set) Binarymap.dict
 datatype lhs_view_table = LHSViewTable of
-  {simpset : simpLib.simpset, base : view_base, key : bottom_up_key,
+  {simpset : simpLib.simpset, base : view_base,
    sources : simpLib.rewrite_source list, entries : lhs_view_entry list,
    index : source_index,
    heads : dependency_index,
@@ -1043,19 +1007,10 @@ fun table_indices entries =
       entries
   end
 
-(* A table holds views derived under the bottom-up declarations of one
-   context, so it is a predecessor, or a cache hit, only for that key. *)
-fun table_has_key key (LHSViewTable data) =
-  same_bottom_up_key (#key data,key)
-
 (* Opaque reducers can change answers when their primed context changes. *)
-fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
+fun update_lhs_view_table_with_positions caller_charge previous base ss
       positions =
   let
-    val declared = bottom_up_key_of ctxt
-    val previous = case previous of
-        SOME table => if table_has_key declared table then previous else NONE
-      | NONE => NONE
     val sources = simpLib.rewrite_source_handles ss
     val charged = ref 0
     fun charge () = (charged := !charged + 1; caller_charge ())
@@ -1145,8 +1100,8 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
             else retained old_index source
     val derived = ref 0
     val derive = Susp.delay (fn () =>
-      prepare_lhs_view_derivation_with_positions ctxt charge
-        (Susp.force base) positions)
+      prepare_lhs_view_derivation_with_positions charge (Susp.force base)
+        positions)
     fun obtain source =
       case reusable source of
           NONE =>
@@ -1168,8 +1123,8 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
     val _ = view_generation := !view_generation + 1
   in
     LHSViewTable
-      {simpset=ss,base=base,key=declared,sources=sources,
-       entries=entries,index=index,heads=heads,
+      {simpset=ss,base=base,sources=sources,entries=entries,index=index,
+       heads=heads,
        rewrite_patterns=rewrite_patterns,
        positions=positions,generation= !view_generation,
        derived= !derived,reused=length sources - !derived,
@@ -1178,20 +1133,17 @@ fun update_lhs_view_table_with_positions ctxt caller_charge previous base ss
        plain=Susp.delay (fn () => strip_decisions ss)}
   end
 
-fun update_lhs_view_table ctxt caller_charge previous base ss =
-  update_lhs_view_table_with_positions ctxt caller_charge previous base ss
+fun update_lhs_view_table caller_charge previous base ss =
+  update_lhs_view_table_with_positions caller_charge previous base ss
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
-(* Bounded memoization is independent of when callers request a table.  A
-   table is reused, and offered as a predecessor, only under the bottom-up
-   declarations it was derived with. *)
-fun make_lhs_view_cache_in caller_charge =
+(* Bounded memoization is independent of when callers request a table. *)
+fun make_lhs_view_cache_of_base caller_charge =
   let
     val tables = ref ([] : lhs_view_table list)
     fun base_of (LHSViewTable data) = Susp.force (#base data)
-    fun previous key base ss sources =
+    fun previous base ss sources =
       let
-        val candidates = List.filter (table_has_key key) (!tables)
         (* Several tables can share the same native inventory while their
            conversions or decision procedures differ. Break that tie by
            actual context changes before choosing a predecessor. *)
@@ -1210,7 +1162,7 @@ fun make_lhs_view_cache_in caller_charge =
           then table else old
         fun matching remaining = List.filter
           (fn LHSViewTable data =>
-            Portable.pointer_eq (remaining,#sources data)) candidates
+            Portable.pointer_eq (remaining,#sources data)) (!tables)
         fun suffix remaining =
           case matching remaining of
               first::rest => SOME (List.foldl prefer first rest)
@@ -1233,29 +1185,24 @@ fun make_lhs_view_cache_in caller_charge =
           end
       in
         case suffix sources of SOME table => SOME table
-          | NONE => #1 (List.foldl score (NONE,~1) candidates)
+          | NONE => #1 (List.foldl score (NONE,~1) (!tables))
       end
-    fun get ctxt base ss =
-      let val key = bottom_up_key_of ctxt
-      in
-        case List.find
-          (fn LHSViewTable data =>
-             Portable.pointer_eq (#simpset data,ss) andalso
-             table_has_key key (LHSViewTable data)) (!tables) of
-            SOME table => table
-          | NONE =>
-              let
-                val table = update_lhs_view_table ctxt caller_charge
-                  (previous key base ss (simpLib.rewrite_source_handles ss))
-                  base ss
-                val kept = List.take (!tables,Int.min (7,length (!tables)))
-              in tables := table::kept; table end
-      end
+    fun get base ss =
+      case List.find
+        (fn LHSViewTable data => Portable.pointer_eq (#simpset data,ss))
+        (!tables) of
+          SOME table => table
+        | NONE =>
+            let
+              val table = update_lhs_view_table caller_charge
+                (previous base ss (simpLib.rewrite_source_handles ss)) base ss
+              val kept = List.take (!tables,Int.min (7,length (!tables)))
+            in tables := table::kept; table end
   in get end
 
 fun make_lhs_view_cache caller_charge =
-  let val get = make_lhs_view_cache_in caller_charge
-  in fn ss => get (Context.snapshot ()) (stripped_view_base ss) ss end
+  let val get = make_lhs_view_cache_of_base caller_charge
+  in fn ss => get (stripped_view_base ss) ss end
 
 fun marker_skip theorem =
   Option.isSome (clasetLib.marker_of theorem) orelse
@@ -1568,7 +1515,7 @@ fun make_supplied_view_cache_core () =
       ([] : (int * source_set * abstraction_position HOLset.set *
              lhs_view_table) list)
     (* Supplied rules affect policy, never the ambient reducer inventory. *)
-    fun working_table ctxt (ambient as LHSViewTable table) suspended supplied
+    fun working_table (ambient as LHSViewTable table) suspended supplied
           prepared =
       let
         val already_masked = case prepared of
@@ -1605,7 +1552,7 @@ fun make_supplied_view_cache_core () =
                   else Susp.delay (fn () =>
                     simpLib.suspend_rewrite_sources
                       (HOLset.listItems suspended) (Susp.force (#base table)))
-                val next = update_lhs_view_table_with_positions ctxt
+                val next = update_lhs_view_table_with_positions
                   (fn () => ()) (SOME ambient) base ss
                   (HOLset.union (positions,supplied))
                 val kept = List.take
@@ -1627,16 +1574,13 @@ fun make_supplied_view_cache_core () =
        view= #view old,rejection= #rejection old,footprint= #footprint old,
        abstraction_positions= #abstraction_positions old,
        normalization= #normalization old}
-    fun bind ctxt prior caller_charge (ambient as LHSViewTable table)
+    fun bind prior caller_charge (ambient as LHSViewTable table)
           (binding as SuppliedRuleBinding
             {bundle,positions=supplied_positions,...}) =
       let
         val rules = simpLib.rewrite_bundle_rules bundle
         val initial_positions = HOLset.union
           (#positions table,supplied_positions)
-        val _ = if table_has_key (bottom_up_key_of ctxt) ambient then ()
-          else raise ERR "make_supplied_view_cache_after"
-            "ambient table belongs to another context"
         val _ = case prior of NONE => ()
           | SOME (SuppliedConverseBinding data) =>
               if Portable.pointer_eq (#simpset table,#ambient data) orelse
@@ -1678,8 +1622,7 @@ fun make_supplied_view_cache_core () =
         val prepared = case prior of NONE => NONE
           | SOME (SuppliedConverseBinding data) => SOME (#working data)
         val effective as LHSViewTable working =
-          working_table ctxt ambient suspended supplied_positions
-            prepared
+          working_table ambient suspended supplied_positions prepared
         val positions = #positions working
         val _ = case prior of NONE => ()
           | SOME (SuppliedConverseBinding data) =>
@@ -1687,7 +1630,7 @@ fun make_supplied_view_cache_core () =
               else raise ERR "make_supplied_view_cache_after"
                 "ambient table has another abstraction policy"
         val derive = Susp.delay (fn () =>
-          prepare_lhs_view_derivation_with_positions ctxt charge
+          prepare_lhs_view_derivation_with_positions charge
             (Susp.force (#base working)) positions)
         val derived = ref 0
         val memoized = ref 0
@@ -1730,28 +1673,22 @@ fun make_supplied_view_cache_core () =
            normalization= !charged,derived= !derived,memoized= !memoized}
       end
   in
-    {bind=fn ctxt => bind ctxt NONE,
-     after=fn ctxt => fn table => fn early as SuppliedConverseBinding data =>
-       bind ctxt (SOME early) (#charge data) table (#rules data)}
+    {bind=bind NONE,
+     after=fn table => fn early as SuppliedConverseBinding data =>
+       bind (SOME early) (#charge data) table (#rules data)}
   end
 
-fun make_supplied_view_cache () =
-  let val bind = #bind (make_supplied_view_cache_core ())
-  in fn charge => fn table => fn rules =>
-       bind (Context.snapshot ()) charge table rules
-  end
+fun make_supplied_view_cache () = #bind (make_supplied_view_cache_core ())
 fun make_supplied_view_cache_after () =
-  let val after = #after (make_supplied_view_cache_core ())
-  in fn table => fn early => after (Context.snapshot ()) table early end
+  #after (make_supplied_view_cache_core ())
 
 datatype bound_simplification = BoundSimplification of
   {rules : supplied_rule_binding,policy : Traverse.child_first_policy,
    initial : simpLib.simpset,viewed : simpLib.simpset Susp.susp}
 
-val bound_supplied_views = #after (make_supplied_view_cache_core ())
+val bound_supplied_views = make_supplied_view_cache_after ()
 
-(* The views are derived in the given context, when first wanted. *)
-fun make_bound_simplification_in ctxt prepare_runtime provide_table early =
+fun make_bound_simplification prepare_runtime provide_table early =
   let
     val rules as SuppliedRuleBinding {bundle,...} =
       supplied_converse_rules early
@@ -1761,7 +1698,7 @@ fun make_bound_simplification_in ctxt prepare_runtime provide_table early =
       else install_supplied_rules rules prepared
     fun viewed () =
       let
-        val binding = bound_supplied_views ctxt (provide_table ()) early
+        val binding = bound_supplied_views (provide_table ()) early
         val ambient = supplied_view_associations
           (lhs_view_table_entries (supplied_view_table binding))
         val with_ambient = case ambient of [] => initial
@@ -1781,10 +1718,6 @@ fun make_bound_simplification_in ctxt prepare_runtime provide_table early =
        {rules=rules,policy=supplied_converse_policy early,initial=initial,
         viewed=Susp.delay viewed}
   end
-
-fun make_bound_simplification prepare_runtime provide_table early =
-  make_bound_simplification_in (Context.snapshot ()) prepare_runtime
-    provide_table early
 
 fun bound_simplification_simpset viewed (BoundSimplification data) =
   if viewed then Susp.force (#viewed data) else #initial data
@@ -1811,13 +1744,11 @@ fun deferred_view_tactic make goal ctxt =
   end
 
 datatype working_simpset = WorkingSimpset of
-  {original : simpLib.simpset,key : bottom_up_key,
-   table : lhs_view_table Susp.susp,
+  {original : simpLib.simpset,table : lhs_view_table Susp.susp,
    full : simpLib.simpset Susp.susp,
    decisions : decision_base Susp.susp,plain : decision_base Susp.susp}
 
 fun working_original (WorkingSimpset data) = #original data
-fun working_key (WorkingSimpset data) = #key data
 fun working_view_table (WorkingSimpset data) = Susp.force (#table data)
 fun working_full_simpset (WorkingSimpset data) = Susp.force (#full data)
 fun working_decision_base (WorkingSimpset data) =
@@ -1827,62 +1758,51 @@ fun working_plain_decision_base (WorkingSimpset data) =
 
 (* Retain lazy working states as well as completed predecessor tables.
    Forcing plain decisions cannot trigger ambient view construction. *)
-fun make_working_simpset_cache_in caller_charge =
+fun make_working_simpset_cache_of_base caller_charge =
   let
-    val tables = make_lhs_view_cache_in caller_charge
+    val tables = make_lhs_view_cache_of_base caller_charge
     val states = ref ([] : working_simpset list)
-    fun get ctxt base ss =
-      let val key = bottom_up_key_of ctxt
-      in
-        case List.find
-          (fn state => Portable.pointer_eq (working_original state,ss) andalso
-                       same_bottom_up_key (working_key state,key))
-          (!states) of
-            SOME state => state
-          | NONE =>
-              let
-                val table = Susp.delay (fn () => tables ctxt base ss)
-                val full = Susp.delay (fn () =>
-                  let val LHSViewTable data = Susp.force table
-                  in Susp.force (#full data) end)
-                val state = WorkingSimpset
-                  {original=ss,key=key,table=table,full=full,
-                   decisions=Susp.delay (fn () =>
-                     let val LHSViewTable data = Susp.force table
-                     in Susp.force (#decisions data) end),
-                   plain=Susp.delay (fn () => strip_decisions ss)}
-                val kept = List.take (!states,Int.min (7,length (!states)))
-              in states := state::kept; state end
-      end
+    fun get base ss =
+      case List.find
+        (fn state => Portable.pointer_eq (working_original state,ss))
+        (!states) of
+          SOME state => state
+        | NONE =>
+            let
+              val table = Susp.delay (fn () => tables base ss)
+              val full = Susp.delay (fn () =>
+                let val LHSViewTable data = Susp.force table
+                in Susp.force (#full data) end)
+              val state = WorkingSimpset
+                {original=ss,table=table,full=full,
+                 decisions=Susp.delay (fn () =>
+                   let val LHSViewTable data = Susp.force table
+                   in Susp.force (#decisions data) end),
+                 plain=Susp.delay (fn () => strip_decisions ss)}
+              val kept = List.take (!states,Int.min (7,length (!states)))
+            in states := state::kept; state end
   in get end
 
 fun make_working_simpset_cache caller_charge =
-  let val get = make_working_simpset_cache_in caller_charge
-  in fn ss => get (Context.snapshot ()) (stripped_view_base ss) ss end
+  let val get = make_working_simpset_cache_of_base caller_charge
+  in fn ss => get (stripped_view_base ss) ss end
 
-val cached_working_simpset = make_working_simpset_cache_in (fn () => ())
+val cached_working_simpset = make_working_simpset_cache_of_base (fn () => ())
 
 (* Materialize the adjusted table, never its earlier raw-simpset policy. *)
 fun working_simpset_for (SuppliedViewBinding {table,...}) =
   let val LHSViewTable data = table
   in WorkingSimpset
-       {original= #simpset data,key= #key data,
-        table=Susp.delay (fn () => table),
+       {original= #simpset data,table=Susp.delay (fn () => table),
         full= #full data,decisions= #decisions data,plain= #plain data}
   end
 
 (* BasicProvers supplies the initialization seed, not the predecessor,
    lifted into the extension engine.  The bounded identity/source memo
    above retains completed tables across changes; the derived value owns
-   the lazy working state of the declarations it was last asked for, and
-   the bounded cache above serves every other request.  The state is for
-   the simpset ss, whose LHS views derive from base. *)
-fun owned_working_simpset base ss =
-  let
-    val state = memoUtil.keyed_memo
-      (fn (key, _) => fn (key', _) => same_bottom_up_key (key, key'))
-      (fn (_, ctxt) => cached_working_simpset ctxt base ss)
-  in fn ctxt => state (bottom_up_key_of ctxt, ctxt) end
+   its lazy working state, for the simpset ss whose LHS views derive from
+   base. *)
+fun owned_working_simpset base ss = cached_working_simpset base ss
 
 (* The derived value is a function of the srw_ss and of the context's
    [arith] facts.  The srw_ss state keys the stored memo through the
@@ -1905,12 +1825,42 @@ fun derive_clasimp_value core facts =
       working = owned_working_simpset base full}
   end
 
-val {get = _, get_of = clasimp_derived_of} =
-  BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
-    (fn ss => fn _ =>
+(* The derivation reads an srw_ss through simpExtLib.lift_simpset, which
+   reads its history, limit and exclusions and nothing else, so two srw_ss
+   states that agree on those derive the same value.  A bottom-up
+   declaration and its retraction are two such states: the retraction
+   removes the fragment the declaration added and leaves every other
+   history item as it was.  A bounded memo on the history answers the
+   value of the earlier state again, LHS views included. *)
+fun srw_history ss =
+  let val {history, limit, excluded} = OrdinarySimp.dest_simpset ss
+  in (history, limit, excluded) end
+
+fun same_history_item (OrdinarySimp.ADDFRAG f, OrdinarySimp.ADDFRAG g) =
+      Portable.pointer_eq (f, g)
+  | same_history_item (OrdinarySimp.DELETE_EVENT a,
+                       OrdinarySimp.DELETE_EVENT b) = a = b
+  | same_history_item (OrdinarySimp.ADDWEAKENER a,
+                       OrdinarySimp.ADDWEAKENER b) = Portable.pointer_eq (a, b)
+  | same_history_item _ = false
+
+fun same_srw_history ((history, limit, excluded),
+                      (history', limit', excluded')) =
+  limit = limit' andalso excluded = excluded' andalso
+  length history = length history' andalso
+  ListPair.all same_history_item (history, history')
+
+val clasimp_value_by_history =
+  memoUtil.bounded_memo 4
+    (fn (recorded, _) => fn (key, _) => same_srw_history (recorded, key))
+    (fn (_, ss) =>
        memoUtil.bounded_memo 4 (Lib.list_eq (Lib.curry Portable.pointer_eq))
          (derive_clasimp_value
             (Susp.delay (fn () => clasimp_core (simpExtLib.lift_simpset ss)))))
+
+val {get = _, get_of = clasimp_derived_of} =
+  BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
+    (fn ss => fn _ => clasimp_value_by_history (srw_history ss, ss))
     (fn _ => {full = simpLib.empty_ss, positions = no_positions,
               working = owned_working_simpset
                           (Susp.delay (fn () => simpLib.empty_ss))
@@ -1921,28 +1871,23 @@ val selected_default = ref (NONE : working_simpset option)
 fun clasimp_value_of ctxt =
   let val value =
         clasimp_derived_of ctxt (linarithData.arith_facts_of ctxt)
-  in selected_default := SOME (#working value ctxt); value end
+  in selected_default := SOME (#working value); value end
 
 fun clasimp_value () = clasimp_value_of (Context.snapshot ())
 
 fun clasimp_ss_of ctxt = #full (clasimp_value_of ctxt)
 fun clasimp_ss () = clasimp_ss_of (Context.snapshot ())
 
-fun clasimp_working_simpset_of ctxt =
-  #working (clasimp_value_of ctxt) ctxt
+fun clasimp_working_simpset_of ctxt = #working (clasimp_value_of ctxt)
 fun clasimp_working_simpset () =
   clasimp_working_simpset_of (Context.snapshot ())
 
-fun working_simpset_in ctxt ss =
+fun working_simpset_of ss =
   case !selected_default of
       SOME state =>
-        if Portable.pointer_eq (ss,working_original state) andalso
-           same_bottom_up_key (working_key state,bottom_up_key_of ctxt)
-        then state
-        else cached_working_simpset ctxt (stripped_view_base ss) ss
-    | NONE => cached_working_simpset ctxt (stripped_view_base ss) ss
-
-fun working_simpset_of ss = working_simpset_in (Context.snapshot ()) ss
+        if Portable.pointer_eq (ss,working_original state) then state
+        else cached_working_simpset (stripped_view_base ss) ss
+    | NONE => cached_working_simpset (stripped_view_base ss) ss
 
 fun clasimp_decision_base () =
   working_plain_decision_base (clasimp_working_simpset ())
@@ -2013,7 +1958,7 @@ fun budgeted_decisions_of ctxt budget
 
 fun budgeted_decisions ctxt budget ss =
   budgeted_decisions_of ctxt budget
-    (working_plain_decision_base (working_simpset_in ctxt ss))
+    (working_plain_decision_base (working_simpset_of ss))
 
 val bound_converses = make_supplied_converse_cache ()
 
@@ -2053,22 +1998,18 @@ fun prepare_invocation_rules ss arguments =
        originals= #originals data,positions= #positions data}
   in (ambient,rules) end
 
-fun prepare_bound_rules ctxt level runtime charge ambient rules =
+fun prepare_bound_rules level runtime charge ambient rules =
   let
     val early = bound_converses charge ambient rules
     val _ =
       trace_suspended_converses level (supplied_converse_suspended early)
-    val working = working_simpset_in ctxt ambient
-  in make_bound_simplification_in ctxt runtime
+    val working = working_simpset_of ambient
+  in make_bound_simplification runtime
        (fn () => working_view_table working) early end
 
-fun prepare_bound_simplification_in ctxt level runtime charge ss arguments =
-  let val (ambient,rules) = prepare_invocation_rules ss arguments
-  in prepare_bound_rules ctxt level runtime charge ambient rules end
-
 fun prepare_bound_simplification level runtime charge ss arguments =
-  prepare_bound_simplification_in (Context.snapshot ()) level runtime
-    charge ss arguments
+  let val (ambient,rules) = prepare_invocation_rules ss arguments
+  in prepare_bound_rules level runtime charge ambient rules end
 
 (* A generic callback can pass its simpset to a CS tactic and discard its
    theorem list. Keep compiled supplied origins and facts scoped to that
@@ -2485,7 +2426,7 @@ fun standalone_simp safe ss arguments goal =
   in
     markerLib.ABBRS_THEN (markerLib.LLABEL_RES_THEN
       (fn resolved => fn current => fn ctxt =>
-        let val state = prepare_bound_simplification_in ctxt
+        let val state = prepare_bound_simplification
               (traceUtil.level_of tracer ctxt)
               (budgeted_decisions ctxt budget) (charge_normalization budget)
               ss resolved
@@ -2879,7 +2820,7 @@ exception bottom_up_context
 
 val bottom_up_fragment_name = "clasimp-bottom-up"
 
-(* A reducer rewriting with [rewrites ctxt] as the simplifier matches its own
+(* A reducer rewriting with [rewrites] as the simplifier matches its own
    rewrites.  Isabelle's laws of this kind are higher-order patterns --
    [all_simps] reads a body as [P x] -- and a first-order matcher offers
    them only a body that is literally a variable applied to the bound one,
@@ -2889,44 +2830,85 @@ fun ho_rewrite_reducer name rewrites =
     {name = SOME name,
      initial = bottom_up_context,
      addcontext = fn (context, _) => context,
-     apply = fn {ctxt, ...} => fn term =>
+     apply = fn _ => fn term =>
        Conv.FIRST_CONV
-         (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) (rewrites ctxt)) term}
+         (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) rewrites) term}
 
 fun ho_rewrite_fragment name rewrites =
   simpLib.name_ss name
     (simpLib.dproc_ss (Traverse.lift (ho_rewrite_reducer name rewrites)))
 
-(* Installed in srw_ss, so the extension engine sees it through
-   simpExtLib.lift_simpset. *)
-val bottom_up_fragment = OrdinarySimp.name_ss bottom_up_fragment_name
-  (OrdinarySimp.dproc_ss
-     (ho_rewrite_reducer bottom_up_fragment_name
-        (fn ctxt =>
-           Context.Data.get bottom_up_rewrites ctxt @
-           Context.Data.get simp_bottom_up_rewrites ctxt)))
-
-(* The same mechanism for a rule installed for one invocation rather than
-   declared: the rewrites are fixed when the fragment is built, where the
-   declaration's reducer reads the declarations of the context it runs
-   in. *)
+(* The same reducer for a rule installed for one invocation rather than
+   declared. *)
 val normalised_subject_fragment_name = "clasimp-normalised-subject"
 
 fun normalised_subject_fragment rewrites =
-  ho_rewrite_fragment normalised_subject_fragment_name (fn _ => rewrites)
+  ho_rewrite_fragment normalised_subject_fragment_name rewrites
 
 fun normalised_subject_fragment_ordinary rewrites =
   OrdinarySimp.name_ss normalised_subject_fragment_name
     (OrdinarySimp.dproc_ss
-      (ho_rewrite_reducer normalised_subject_fragment_name (fn _ => rewrites)))
+      (ho_rewrite_reducer normalised_subject_fragment_name rewrites))
 
-(* The fragment is installed by the first declaration and then stays, inert
-   while nothing is declared. *)
-fun ensure_bottom_up_fragment () =
-  if Context.Data.get bottom_up_installed (Context.snapshot ()) then ()
-  else
-    (BasicProvers.augment_srw_ss [bottom_up_fragment];
-     Context.update (Context.Data.put bottom_up_installed true))
+(* The declarations, as the bottom-up tables below list them.  One
+   fragment carries both: [simp_bottom_up] is [iff_bottom_up] without the
+   claset halves -- Isabelle states a law whose subject must be normal as
+   [simp] as well as as [iff], and a rule the source declares [simp] may
+   not seed the claset. *)
+val bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
+  {name = "clasimp.iff_bottom_up", empty = [],
+   pp = fn _ => "<iff bottom-up declarations>"}
+
+val simp_bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
+  {name = "clasimp.simp_bottom_up", empty = [],
+   pp = fn _ => "<simp bottom-up declarations>"}
+
+(* The declarations live in srw_ss.  The fragment closes over the rules
+   declared when it is built, and a declaration or retraction that changes
+   them replaces it there, so a context's srw_ss carries that context's
+   declarations: a proof reads them from the context it runs in, the
+   reducer reads nothing ambient, and every cache keyed on the simpset
+   follows them.  The extension engine sees the fragment through
+   simpExtLib.lift_simpset.
+
+   Replacing removes the fragment from the srw_ss history, which
+   diminish_srw_ss does, and adds its successor.  Deleting it with -*
+   instead would leave a deletion event in the history, and every
+   simpset rebuilt from that history (filter_rewrites, once per rule a
+   proof transports) would replay it over the whole net.  Removal forces
+   an uninitialised srw_ss state, so it is done only when the state holds
+   the fragment, applied or queued.  Neither update records a simp delta:
+   the bottom-up tables record the declarations, and their replay
+   installs the fragment again. *)
+fun bottom_up_fragment rewrites =
+  OrdinarySimp.name_ss bottom_up_fragment_name
+    (OrdinarySimp.dproc_ss
+       (ho_rewrite_reducer bottom_up_fragment_name rewrites))
+
+fun bottom_up_fragment_present () =
+  let
+    val (sset, _, updates) = BasicProvers.simpset_state ()
+    fun queued (BasicProvers.ADD_SSFRAG fragment) =
+          OrdinarySimp.frag_name fragment = SOME bottom_up_fragment_name
+      | queued (BasicProvers.REMOVE_RWT _) = false
+  in
+    Lib.mem bottom_up_fragment_name (OrdinarySimp.ssfrag_names_of sset) orelse
+    List.exists queued updates
+  end
+
+fun replace_bottom_up_fragment () =
+  let
+    val ctxt = Context.snapshot ()
+    val rewrites =
+      Context.Data.get bottom_up_rewrites ctxt @
+      Context.Data.get simp_bottom_up_rewrites ctxt
+  in
+    if bottom_up_fragment_present () then
+      BasicProvers.diminish_srw_ss [bottom_up_fragment_name]
+    else ();
+    if null rewrites then ()
+    else BasicProvers.augment_srw_ss [bottom_up_fragment rewrites]
+  end
 
 (* Whether a delta changes the declarations, found without comparing them:
    retracting what is not declared, and declaring again the same theorem,
@@ -2939,14 +2921,30 @@ fun delta_changes delta table =
            | NONE => true)
     | ThmSetData.REMOVE name => Symtab.defined table (normalise_iff_name name)
 
-(* The slot's list is replaced only when the declarations changed, so the
-   bottom-up key moves only then. *)
+(* The fragment is replaced only when the declarations changed. *)
 fun install_bottom_up_declarations slot changed table =
-  ((if changed
-    then Context.update
-           (Context.Data.put slot (map #2 (Symtab.dest table)))
-    else ());
-   ensure_bottom_up_fragment ())
+  if changed then
+    (Context.update (Context.Data.put slot (map #2 (Symtab.dest table)));
+     replace_bottom_up_fragment ())
+  else ()
+
+(* A declaration applies at once.  A theory's deltas replayed at load go
+   through the finaliser instead, which installs the fragment once for the
+   theory rather than once for each of its deltas.  [step] applies one
+   delta to the table and reports whether it changed the declarations. *)
+fun bottom_up_ops slot step =
+  {apply_to_global = fn delta => fn table =>
+     let val (changed, table) = step delta table
+     in install_bottom_up_declarations slot changed table; table end,
+   thy_finaliser = fn {thyname = _} => fn deltas => fn table =>
+     let
+       val (changed, table) =
+         List.foldl
+           (fn (delta, (changed, table)) =>
+              let val (changed', table) = step delta table
+              in (changed orelse changed', table) end)
+           (false, table) deltas
+     in install_bottom_up_declarations slot changed table; table end}
 
 fun bottom_up_rules kname theorem =
   #rules (iff_declaration (iff_rule_name kname) theorem)
@@ -2956,7 +2954,7 @@ fun bottom_up_rules kname theorem =
    resolve a bare name against, and the replay of an ancestor's deltas at
    load time has no current theory.  Retracting before a repeated
    declaration keeps one name to one copy of the derived rules. *)
-fun apply_bottom_up_to_global delta table =
+fun bottom_up_step delta table =
   let
     fun retract_if_present key =
       if Symtab.defined table key
@@ -2970,18 +2968,20 @@ fun apply_bottom_up_to_global delta table =
                (add_iff_rules (bottom_up_rules kname theorem)))
         | ThmSetData.REMOVE name =>
             retract_if_present (normalise_iff_name name)
-    val changed = delta_changes delta table
-    val table = apply_named_delta delta table
-    val _ = install_bottom_up_declarations bottom_up_rewrites changed table
   in
-    table
+    (delta_changes delta table, apply_named_delta delta table)
   end
 
+val {apply_to_global = apply_bottom_up_to_global,
+     thy_finaliser = finalise_bottom_up} =
+  bottom_up_ops bottom_up_rewrites bottom_up_step
+
 val bottom_up_data =
-  thmTable.register
+  thmTable.register_finalised
     {settype = "iff_bottom_up", initial_value = Symtab.empty,
      apply_delta = apply_named_delta,
-     apply_to_global = apply_bottom_up_to_global}
+     apply_to_global = apply_bottom_up_to_global,
+     thy_finaliser = finalise_bottom_up}
 
 val remove_iff_bottom_up =
   remove_declaration
@@ -3002,21 +3002,18 @@ val remove_iff_bottom_up =
    a side whose own antecedent had not yet been used, and the reading that
    antecedent would have settled is lost. *)
 
-fun apply_simp_bottom_up_to_global delta table =
-  let
-    val changed = delta_changes delta table
-    val table = apply_named_delta delta table
-    val _ = install_bottom_up_declarations simp_bottom_up_rewrites changed
-              table
-  in
-    table
-  end
+val {apply_to_global = apply_simp_bottom_up_to_global,
+     thy_finaliser = finalise_simp_bottom_up} =
+  bottom_up_ops simp_bottom_up_rewrites
+    (fn delta => fn table =>
+       (delta_changes delta table, apply_named_delta delta table))
 
 val simp_bottom_up_data =
-  thmTable.register
+  thmTable.register_finalised
     {settype = "simp_bottom_up", initial_value = Symtab.empty,
      apply_delta = apply_named_delta,
-     apply_to_global = apply_simp_bottom_up_to_global}
+     apply_to_global = apply_simp_bottom_up_to_global,
+     thy_finaliser = finalise_simp_bottom_up}
 
 val remove_simp_bottom_up =
   remove_declaration
@@ -3194,11 +3191,11 @@ fun finish_rule_normal_form (policy : Traverse.child_first_policy) conversion =
        (#charge policy ();
         Conv.QCONV curry_premises term))
 
-fun rule_normal_form_conv ctxt policy ss = finish_rule_normal_form policy
-  (simpLib.SIMP_CONV_CHILD_FIRST_IN ctxt policy ss [])
+fun rule_normal_form_conv policy ss = finish_rule_normal_form policy
+  (simpLib.SIMP_CONV_CHILD_FIRST policy ss [])
 
-fun bound_rule_normal_form_conv ctxt policy ss =
-  let val prepared = simpLib.prepare_child_first_in ctxt policy ss
+fun bound_rule_normal_form_conv policy ss =
+  let val prepared = simpLib.prepare_child_first policy ss
   in finish_rule_normal_form policy (#normalize prepared []) end
 
 fun transport_name cs from =
@@ -3208,8 +3205,7 @@ fun transport_name cs from =
 (* Keep the original declaration and add a certified view for the
    simpset's representation. Exclude a rule's own rewrite statement or
    an equivalence of which the rule is one direction. *)
-fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
-      cs =
+fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
   let
     fun conversion theorem =
       let
@@ -3233,7 +3229,7 @@ fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
               not (aconv (concl rewrite) statement) andalso
               not (own_direction rewrite)) ss
       in
-        normal_form ctxt policy without_self
+        normal_form policy without_self
       end
     fun add ((spec, (_, theorem)), state as (added, from)) =
       let
@@ -3427,7 +3423,7 @@ fun with_claset_transport_from transport budget policy ss candidates cs build
         val relevant =
           transport_candidates budget ss sites candidates
       in
-        case transport ctxt budget policy ss relevant cs of
+        case transport budget policy ss relevant cs of
           NONE => initial_result ()
         | SOME extended =>
           let
@@ -3501,7 +3497,7 @@ fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
               (fn arguments => fn goal => fn ctxt =>
                 let
                   val bound =
-                    prepare_bound_simplification_in ctxt
+                    prepare_bound_simplification
                       (traceUtil.level_of tracer ctxt) runtime
                       (charge_normalization budget) ambient arguments
                 in body bound cs environment goal ctxt end)
@@ -3525,7 +3521,7 @@ fun add_bound_fact_aliases [] state = state
       end
 
 (* Fact aliases retain compiled origins; normalization cannot spend them. *)
-fun transport_bound_facts ctxt viewed
+fun transport_bound_facts viewed
       (state as BoundSimplification {rules=SuppliedRuleBinding data,
                                     policy,...}) environment =
   case clasetFacts.schematic_views environment of
@@ -3545,7 +3541,7 @@ fun transport_bound_facts ctxt viewed
       else (remaining := !remaining - 1; #charge policy ())
     val local_policy =
       {charge=charge,keep_abstraction= #keep_abstraction policy}
-    val prepared = simpLib.prepare_child_first_in ctxt local_policy basis
+    val prepared = simpLib.prepare_child_first local_policy basis
     fun supported original derived = List.all
       (fn assumption => boolSyntax.tmem assumption (hyp original))
       (hyp derived)
@@ -3648,7 +3644,7 @@ fun bound_fact_views viewed consumer budget body base_cs
         fun improve () =
           let
             val (next,transported) =
-              transport_bound_facts ctxt viewed bound environment
+              transport_bound_facts viewed bound environment
             val fact_cs = add_transported_facts consumer budget transported cs
             val candidates = clasetLib.rules_of base_cs @
               clasetLib.invocation_marker_rules cs
@@ -3690,63 +3686,62 @@ fun process_clasimp_args_fact_views consumer budget
     (fn cs => fn simpset => fn controls => fn environment =>
       case simpset of
           SOME ss =>
-            (fn goal => fn ctxt =>
-              let
-                val views =
-                  clasetFacts.schematic_views environment
-                val policy =
-                  abstraction_policy (charge_normalization budget) ss
-                    (controls @ map #theorem views)
-                val conversion = rule_normal_form_conv ctxt policy ss
-                fun transport (view : clasetFacts.view) =
-                  let
-                    val derived =
-                      clasetFacts.transport_view conversion view
-                    val theorem = #theorem derived
-                  in
-                    if aconv (concl theorem) (concl (#theorem view)) orelse
-                       aconv (concl theorem) boolSyntax.T then NONE
-                    else SOME derived
-                  end
-                  handle HOL_ERR _ => NONE
-                       | Conv.UNCHANGED => NONE
-                val transported = List.mapPartial transport views
-                fun implication theorem =
-                  boolSyntax.is_imp_only
-                    (concl (Drule.SPEC_ALL theorem))
-                val fact_cs =
-                  if consumer <> clasetLib.SearchFacts then cs
-                  else
-                    #1 (List.foldl
-                      (fn (view, state as (current, from)) =>
-                        if implication (#source view) andalso
-                           implication (#theorem view) then
-                          let
-                            val (name, index) = transport_name current from
-                          in
-                            searchBudget.charge budget
-                              searchBudget.Application;
-                            (clasetLib.add_derived_rule
-                               {kind = clasetRules.Dest,
-                                safe = false, prio = NONE}
-                               (name, #theorem view) current, index)
-                            handle HOL_ERR _ => state
-                          end
-                        else state)
-                      (cs, 0) transported)
-                val candidates =
-                  clasetLib.rules_of base_cs @
-                  clasetLib.invocation_marker_rules cs
-                val eligible =
-                  if consumer = clasetLib.SafeFacts then
-                    List.filter safe_named_rule candidates
-                  else candidates
-                val arguments =
-                  controls @ map #theorem (views @ transported)
-              in
-                with_claset_transport budget policy ss eligible fact_cs
-                  (fn current => body policy current ss arguments) goal ctxt
-              end)
+            let
+              val views =
+                clasetFacts.schematic_views environment
+              val policy =
+                abstraction_policy (charge_normalization budget) ss
+                  (controls @ map #theorem views)
+              val conversion = rule_normal_form_conv policy ss
+              fun transport (view : clasetFacts.view) =
+                let
+                  val derived =
+                    clasetFacts.transport_view conversion view
+                  val theorem = #theorem derived
+                in
+                  if aconv (concl theorem) (concl (#theorem view)) orelse
+                     aconv (concl theorem) boolSyntax.T then NONE
+                  else SOME derived
+                end
+                handle HOL_ERR _ => NONE
+                     | Conv.UNCHANGED => NONE
+              val transported = List.mapPartial transport views
+              fun implication theorem =
+                boolSyntax.is_imp_only
+                  (concl (Drule.SPEC_ALL theorem))
+              val fact_cs =
+                if consumer <> clasetLib.SearchFacts then cs
+                else
+                  #1 (List.foldl
+                    (fn (view, state as (current, from)) =>
+                      if implication (#source view) andalso
+                         implication (#theorem view) then
+                        let
+                          val (name, index) = transport_name current from
+                        in
+                          searchBudget.charge budget
+                            searchBudget.Application;
+                          (clasetLib.add_derived_rule
+                             {kind = clasetRules.Dest,
+                              safe = false, prio = NONE}
+                             (name, #theorem view) current, index)
+                          handle HOL_ERR _ => state
+                        end
+                      else state)
+                    (cs, 0) transported)
+              val candidates =
+                clasetLib.rules_of base_cs @
+                clasetLib.invocation_marker_rules cs
+              val eligible =
+                if consumer = clasetLib.SafeFacts then
+                  List.filter safe_named_rule candidates
+                else candidates
+              val arguments =
+                controls @ map #theorem (views @ transported)
+            in
+              with_claset_transport budget policy ss eligible fact_cs
+                (fn current => body policy current ss arguments)
+            end
         | NONE =>
             raise ERR "process_clasimp_args_fact_views"
               "simpset was not installed")
@@ -3972,7 +3967,7 @@ fun CS_of_with allocate safe_only body cs ss goal ctxt =
                     val budget = allocate ()
                     val (ambient,rules) = callback_bound_rules ambient rules
                       controls goal ctxt
-                    val state = prepare_bound_rules ctxt
+                    val state = prepare_bound_rules
                       (traceUtil.level_of tracer ctxt)
                       (budgeted_decisions ctxt budget)
                       (charge_normalization budget) ambient rules
@@ -4406,10 +4401,8 @@ in
     let
       val ss = clasimp_ss_of ctxt
       val forms =
-        [attempt (simpLib.SIMP_RULE_IN ctxt ss []) theorem,
-         attempt
-           (Conv.CONV_RULE
-              (consequent_conv (simpLib.SIMP_CONV_IN ctxt ss [])))
+        [attempt (simpLib.SIMP_RULE ss []) theorem,
+         attempt (Conv.CONV_RULE (consequent_conv (simpLib.SIMP_CONV ss [])))
            theorem]
       fun add (NONE, kept) = kept
         | add (SOME form, kept) =

@@ -1099,13 +1099,42 @@ fun del_split name ss =
     List.foldl (fn (id,result) => del_looper_id_quiet id result) ss ids
   end
 
-fun splitter_looper ss (asms, goal) =
+(* A tactic solver runs a tactic, which needs a context, but is called from
+   conversions, which have none.  The simplifier tactics below record the
+   context they are given, on their thread, for the length of the call.
+   Outside one, a tactic solver proves against the ambient context. *)
+local
+  val current : Context.t option ThreadLocal.t = ThreadLocal.new ()
+  fun get () = Option.join (ThreadLocal.get current)
+in
+  fun tactic_context () = get ()
+  fun with_tactic_context (tac : tactic) : tactic = fn g => fn ctxt =>
+    let
+      val old = get ()
+      fun reset () = ThreadLocal.set (current, old)
+      val () = ThreadLocal.set (current, SOME ctxt)
+      val result = tac g ctxt handle e => (reset (); raise e)
+    in
+      reset (); result
+    end
+end
+
+(* The context a split or case name is resolved in: the tactic's, else, in
+   a conversion, which has none, the ambient one. *)
+fun split_context () =
+  case tactic_context () of
+      SOME ctxt => ctxt
+    | NONE => Context.snapshot ()
+
+(* The [split] rules and datatypes are those of the context the tactic runs
+   in. *)
+fun splitter_looper ss (asms, goal) ctxt =
   let
     val excluded = #excl_loopers (strategy_of ss)
     val unfiltered = Binaryset.isEmpty excluded
     fun enabled name = not (Binaryset.member (excluded, name))
     fun enabled_named (name, th) = enabled (split_looper_display name th)
-    val named = splitLib.named_split_thms ()
+    val named = splitLib.named_split_thms_of ctxt
     val persistent =
       map #2 (if unfiltered then named else List.filter enabled_named named)
     fun type_enabled ty =
@@ -1116,12 +1145,12 @@ fun splitter_looper ss (asms, goal) =
         enabled ("split.case " ^ full) andalso
         enabled ("split.case " ^ Tyop)
       end
-    val groups = splitLib.goal_split_rule_groups (goal :: asms)
+    val groups = splitLib.goal_split_rule_groups_of ctxt (goal :: asms)
     val datatype_rules =
       List.concat (map #2
         (if unfiltered then groups else List.filter (type_enabled o #1) groups))
   in
-    splitLib.SPLIT_TAC (persistent @ datatype_rules) (asms, goal)
+    splitLib.SPLIT_TAC (persistent @ datatype_rules) (asms, goal) ctxt
   end
 
 val cases_simp =
@@ -1159,7 +1188,7 @@ fun split_display_exists ss display =
     fun is_persistent (name,th) = split_looper_display name th = display
   in
     List.exists is_local (#loopers (strategy_of ss)) orelse
-    List.exists is_persistent (splitLib.named_split_thms ())
+    List.exists is_persistent (splitLib.named_split_thms_of (split_context ()))
   end
 
 val case_prefix = "split.case "
@@ -1175,7 +1204,7 @@ fun case_display_exists display =
         wanted = KernelSig.name_toString {Thy=thy,Name=tyop}
       end
   in
-    List.exists names (TypeBase.elts ())
+    List.exists names (TypeBase.elts_of (split_context ()))
   end
 
 (* Only ExclX resolves targets. Bare names first use simpLib's rule
@@ -1318,14 +1347,14 @@ fun apply_exclusions ss requests =
     flush (List.foldl step (ss,[]) requests)
   end
 
-(* A tactic solver runs its tactic in the context of the traversal that
-   calls it. *)
 fun mk_tactic_solver (name,tac) =
   let
-    fun solve ({context_thms,ctxt,...} : TraverseExt.simp_prover_ctxt) c =
+    fun solve ({context_thms,...} : TraverseExt.simp_prover_ctxt) c =
       let
         val g = (map concl context_thms,c)
-        val th = Tactical.TAC_PROOF_in ctxt (g,tac)
+        val th = case tactic_context () of
+                     SOME ctxt => Tactical.TAC_PROOF_in ctxt (g,tac)
+                   | NONE => TAC_PROOF (g,tac)
       in
         Lib.itlist PROVE_HYP context_thms th
       end
@@ -2136,7 +2165,7 @@ fun rewrite_context_changes (old_ss as SS old,current_ss as SS current) =
 
  fun legacy_rewriter_for_ss_prepared ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
-   fun apply {solver,conv,context,ctxt=_,stack,relation} tm = let
+   fun apply {solver,conv,context,stack,relation} tm = let
      val net = (raise context) handle CONVNET net => net
    in
      tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
@@ -2149,8 +2178,7 @@ fun rewrite_context_changes (old_ss as SS old,current_ss as SS current) =
  fun configured_rewriter_for_ss_prepared check_abort traversal ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
    exception PolicyAbort of exn
-   fun apply {solver,conv,context,ctxt=_,stack,cond_depth,term_ord,
-              relation} tm = let
+   fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
                  term_ord=term_ord}
@@ -2232,18 +2260,17 @@ fun rewrite_context_changes (old_ss as SS old,current_ss as SS current) =
  fun traversedata_for_ss ss = default_traversedata_for_ss ss;
  fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
 
- fun SIMP_QCONV_WITH_XDATA ctxt traversal xdata reducer_context
-       solver_context =
-   TraverseExt.TRAVERSE_WITH_CONTEXT_IN ctxt traversal xdata
+ fun SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context =
+   TraverseExt.TRAVERSE_WITH_CONTEXT traversal xdata
      {reducer_context=reducer_context,solver_context=solver_context};
 
  (* Only settings consumed by conversions opt into the extended engine.
     Tactic-only loopers and safe solvers do not change context lifetime. *)
- fun SIMP_QCONV_IN ctxt ss =
+ fun SIMP_QCONV ss =
    case traverseconfig_for_ss ss of
        {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
-         TraverseExt.TRAVERSE_IN ctxt (traversedata_for_ss ss)
-     | _ => TraverseExt.XTRAVERSE_IN ctxt (xtraversedata_for_ss ss);
+         TraverseExt.TRAVERSE (traversedata_for_ss ss)
+     | _ => TraverseExt.XTRAVERSE (xtraversedata_for_ss ss);
 
 val Cong   = markerLib.Cong
 val Split  = markerLib.Split
@@ -2411,12 +2438,8 @@ fun rewrite_sources (SS data) thl =
       in plain end
   in (#rewrite_sources data, map supplied thl) end
 
-fun SIMP_CONV_IN ctxt ss =
-    simpCommon.SIMP_CONV
-      {process_tags = process_tags, qconv = SIMP_QCONV_IN ctxt} ss
-
-fun SIMP_CONV ss l =
-    Traverse.at_application (fn ctxt => SIMP_CONV_IN ctxt ss l)
+fun SIMP_CONV ss =
+    simpCommon.SIMP_CONV {process_tags = process_tags, qconv = SIMP_QCONV} ss
 
 (* Policy HOL_ERR is an abort, not a failed rewrite/eta candidate. The
    traversal and native ETA entry must share this guard. Scope it per call,
@@ -2445,7 +2468,7 @@ fun with_child_first_callbacks failure operation argument =
     Portable.finally (fn () => failure := previous) run argument
   end
 
-fun SIMP_CONV_CHILD_FIRST_IN ctxt
+fun SIMP_CONV_CHILD_FIRST
       (policy : TraverseExt.child_first_policy) ss l tm =
   let
     val (ss', l') = process_tags ss l
@@ -2457,20 +2480,14 @@ fun SIMP_CONV_CHILD_FIRST_IN ctxt
   in
     with_child_first_callbacks failure
       (TRY_CONV
-        (TraverseExt.CHILD_FIRST_WITH_ABORT_IN ctxt
+        (TraverseExt.CHILD_FIRST_WITH_ABORT
            (check_child_first_abort failure) NONE policy
            (xtraversedata_with_abort (check_child_first_abort failure)
               (ChildFirst policy) ss' [])
            {reducer_context=l',solver_context=[]})) tm
   end;
 
-fun SIMP_CONV_CHILD_FIRST policy ss l =
-  Traverse.at_application
-    (fn ctxt => SIMP_CONV_CHILD_FIRST_IN ctxt policy ss l)
-
-(* [with_abort] is TraverseExt.CHILD_FIRST_WITH_ABORT, or that given a
-   context. *)
-fun prepare_child_first_with_observer with_abort observer
+fun prepare_child_first_with_observer observer
       (policy : TraverseExt.child_first_policy) (ss as SS data) =
   let
     val callback_failure = ref (NONE : exn option)
@@ -2497,7 +2514,7 @@ fun prepare_child_first_with_observer with_abort observer
         Portable.finally restore run tm
       end
     fun traversal premises =
-      with_abort check_abort observer policy xdata
+      TraverseExt.CHILD_FIRST_WITH_ABORT check_abort observer policy xdata
         {reducer_context=premises,solver_context=[]}
     fun child premises = QCONV (TRY_CONV (traversal premises))
     fun observed conversion tm =
@@ -2535,27 +2552,13 @@ fun prepare_child_first_with_observer with_abort observer
   end;
 
 fun prepare_child_first policy =
-  prepare_child_first_with_observer
-    TraverseExt.CHILD_FIRST_WITH_ABORT NONE policy;
-
-fun prepare_child_first_in ctxt policy =
-  prepare_child_first_with_observer
-    (TraverseExt.CHILD_FIRST_WITH_ABORT_IN ctxt) NONE policy;
+  prepare_child_first_with_observer NONE policy;
 
 fun prepare_child_first_observed observe policy =
-  prepare_child_first_with_observer
-    TraverseExt.CHILD_FIRST_WITH_ABORT (SOME observe) policy;
+  prepare_child_first_with_observer (SOME observe) policy;
 
-fun prepare_child_first_observed_in ctxt observe policy =
-  prepare_child_first_with_observer
-    (TraverseExt.CHILD_FIRST_WITH_ABORT_IN ctxt) (SOME observe) policy;
-
-fun SIMP_PROVE_IN ctxt ss =
-    simpCommon.SIMP_PROVE
-      {process_tags = process_tags, qconv = SIMP_QCONV_IN ctxt} ss
-
-fun SIMP_PROVE ss l =
-    Traverse.at_application (fn ctxt => SIMP_PROVE_IN ctxt ss l)
+fun SIMP_PROVE ss =
+    simpCommon.SIMP_PROVE {process_tags = process_tags, qconv = SIMP_QCONV} ss
 
 infix &&;
 
@@ -2579,11 +2582,7 @@ end;
 
 fun SIMP_RULE ss l = CONV_RULE (SIMP_CONV ss l)
 
-fun SIMP_RULE_IN ctxt ss l = CONV_RULE (SIMP_CONV_IN ctxt ss l)
-
 fun ASM_SIMP_RULE ss = simpCommon.ASM_SIMP_RULE SIMP_RULE ss
-
-fun ASM_SIMP_RULE_IN ctxt ss = simpCommon.ASM_SIMP_RULE (SIMP_RULE_IN ctxt) ss
 
 type simp_mode = {safe : bool}
 
@@ -2598,10 +2597,9 @@ fun reconcile_hyps asl th =
     Lib.itlist ADD_ASSUM asl (Lib.itlist replace_hyp (hyp th) th)
   end
 
-fun simp_conv_with_xdata ctxt traversal xdata reducer_context solver_context =
+fun simp_conv_with_xdata traversal xdata reducer_context solver_context =
   TRY_CONV
-    (SIMP_QCONV_WITH_XDATA ctxt traversal xdata
-       reducer_context solver_context)
+    (SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context)
 
 fun first_tactic enabled apply entries =
   let
@@ -2612,7 +2610,7 @@ fun first_tactic enabled apply entries =
           else first rest g ctxt
   in first entries end
 
-fun final_solver_tac ctxt traversal xdata (mode : simp_mode) ss
+fun final_solver_tac traversal xdata (mode : simp_mode) ss
       reducer_context solver_context =
   let
     val s = strategy_of ss
@@ -2628,16 +2626,15 @@ fun final_solver_tac ctxt traversal xdata (mode : simp_mode) ss
       end
   in
     if null solvers then NO_TAC
-    else fn g => fn tac_ctxt =>
+    else fn g => fn ctxt =>
       let
         val prover_ctxt =
           {stack=[], context_thms=reducer_context @ solver_context,
-           ctxt=ctxt,
            recurse=QCONV
-             (simp_conv_with_xdata ctxt traversal xdata
+             (simp_conv_with_xdata traversal xdata
                 reducer_context solver_context)}
       in
-        first_tactic (K true) (solve_with prover_ctxt) solvers g tac_ctxt
+        first_tactic (K true) (solve_with prover_ctxt) solvers g ctxt
       end
   end
 
@@ -2672,7 +2669,7 @@ fun bounded_looper rounds tac g =
 (* [xdata_of] extracts traversal data from a marker-adjusted tracked set. *)
 fun gen_simp_tac_with_rounds rounds traversal
       xdata_of solver_context (mode : simp_mode) ss ths =
-  fn g => fn ctxt =>
+  with_tactic_context (fn g =>
     let
       fun start supplied recur =
         let
@@ -2691,10 +2688,10 @@ fun gen_simp_tac_with_rounds rounds traversal
               val xdata = xdata_of invocation_ss
               val rewr_tac =
                 CONV_TAC
-                  (simp_conv_with_xdata ctxt traversal xdata
+                  (simp_conv_with_xdata traversal xdata
                      context_thms solver_context)
               val solve_tac =
-                final_solver_tac ctxt traversal xdata mode invocation_ss
+                final_solver_tac traversal xdata mode invocation_ss
                                  context_thms solver_context
               val loop_tac =
                 bounded_looper rounds (looper_tac invocation_ss)
@@ -2707,8 +2704,8 @@ fun gen_simp_tac_with_rounds rounds traversal
           main
         end
     in
-      markerLib.process_taclist_then_bind {arg=ths} start g ctxt
-    end
+      markerLib.process_taclist_then_bind {arg=ths} start g
+    end)
 
 fun gen_simp_tac_with_xdata traversal xdata solver_context mode ss ths g =
   gen_simp_tac_with_rounds (ref (getlimit ss)) traversal
@@ -2749,11 +2746,10 @@ fun strategy_free ss ths =
     not (Option.isSome (#term_ord s)) andalso List.all arg_free ths
   end
 
-fun ASM_SIMP_TAC ss ths gl ctxt =
+fun ASM_SIMP_TAC ss ths gl =
     if strategy_free ss ths then
-      markerLib.process_taclist_then{arg=ths}
-        (CONV_TAC o SIMP_CONV_IN ctxt ss) gl ctxt
-    else GEN_SIMP_TAC {safe=false} ss ths gl ctxt
+      markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss) gl
+    else GEN_SIMP_TAC {safe=false} ss ths gl
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
@@ -2762,13 +2758,14 @@ type simptac_config = simpCommon.simptac_config
 val BF_ASSUME_TAC = simpCommon.BF_ASSUME_TAC
 
 local
-  val tacs = simpCommon.full_simp_tacs {simp_rule = SIMP_RULE_IN,
+  val tacs = simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
                                         asm_simp_tac = ASM_SIMP_TAC}
+  fun wrap tac ss ths = with_tactic_context (tac ss ths)
 in
-  val FULL_SIMP_TAC = #FULL_SIMP_TAC tacs
-  val REV_FULL_SIMP_TAC = #REV_FULL_SIMP_TAC tacs
-  val NO_STRIP_FULL_SIMP_TAC = #NO_STRIP_FULL_SIMP_TAC tacs
-  val NO_STRIP_REV_FULL_SIMP_TAC = #NO_STRIP_REV_FULL_SIMP_TAC tacs
+  val FULL_SIMP_TAC = wrap (#FULL_SIMP_TAC tacs)
+  val REV_FULL_SIMP_TAC = wrap (#REV_FULL_SIMP_TAC tacs)
+  val NO_STRIP_FULL_SIMP_TAC = wrap (#NO_STRIP_FULL_SIMP_TAC tacs)
+  val NO_STRIP_REV_FULL_SIMP_TAC = wrap (#NO_STRIP_REV_FULL_SIMP_TAC tacs)
 end
 val full_simp_tac = FULL_SIMP_TAC
 val rev_full_simp_tac = REV_FULL_SIMP_TAC
@@ -2781,9 +2778,9 @@ fun popper_of (cfg : simptac_config) =
 fun psr (cfg : simptac_config) ss =
     let val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
     in
-      popper (fn th =>
-                 ASSUM_LIST (fn asms => fn g => fn ctxt =>
-                    stdcon cfg (SIMP_RULE_IN ctxt ss asms th) g ctxt))
+      with_tactic_context
+        (popper (fn th =>
+                    ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th))))
     end
 
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
@@ -2844,8 +2841,7 @@ fun counted_psr traversal cfg ss xdata_of solver_context assumptions g ctxt =
                  process_asm_tags ss asms
                val simplified =
                  CONV_RULE
-                   (simp_conv_with_xdata ctxt traversal
-                      (xdata_of invocation_ss)
+                   (simp_conv_with_xdata traversal (xdata_of invocation_ss)
                       reducer_context solver_context) th
                val ordinary =
                  BF_ASSUME_TAC
@@ -2919,7 +2915,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
        In particular the already installed bundle must not be reconstructed
        as supplied arguments, or repaired by a second history replay. *)
   in
-    markerLib.mk_require_tac (
+    with_tactic_context o markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
         markerLib.LLABEL_RES_THEN (
           fn thl =>
@@ -3008,7 +3004,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                    val (invocation_ss,reducer_context) =
                      process_asm_tags ss context
                    val root_rewrite =
-                     TraverseExt.ROOT_REWRITE_WITH_CONTEXT_IN ctxt
+                     TraverseExt.ROOT_REWRITE_WITH_CONTEXT
                        (traversal_state invocation_ss)
                  in
                    SOME (root_rewrite

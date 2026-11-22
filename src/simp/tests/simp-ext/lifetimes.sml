@@ -146,8 +146,7 @@ val _ = let
         record ("collect:" ^ Int.toString (!generations));
         Payload (r,!generations,more))
        | _ => raise Fail "lost opaque solver payload",
-     apply=fn {context,ctxt=_,stack,conv,solver,
-                relation=(rel,refl)} => fn tm =>
+     apply=fn {context,stack,conv,solver,relation=(rel,refl)} => fn tm =>
        let
          val (n,ths) = case context of Payload (r,n,ths) =>
            (contract (Portable.pointer_eq (r,token)); (n,ths))
@@ -174,14 +173,14 @@ val _ = let
       contract (terms stack solve_stack andalso aconv tm p);
       record (name ^ ":subgoal"); REFL tm
     end
-  fun rejecting (ctxt as {context_thms,stack,recurse,ctxt=_}) tm = let
+  fun rejecting (ctxt as {context_thms,stack,recurse}) tm = let
     val (name,_) = current context_thms
     val _ = contract (terms stack solve_stack andalso aconv tm p)
     val _ = record (name ^ ":reject")
     val _ = captured := !captured @ [(!generations,ctxt)]
     val _ = contract (same (recurse x) xy)
   in NO_CONV tm end
-  fun proving {context_thms,stack,recurse,ctxt=_} tm = let
+  fun proving {context_thms,stack,recurse} tm = let
     val (name,proof) = current context_thms
     val _ = contract (terms stack solve_stack andalso aconv tm p)
     val _ = record (name ^ ":prove")

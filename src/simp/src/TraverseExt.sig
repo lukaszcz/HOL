@@ -9,14 +9,13 @@ sig
   (* A reducer's apply function also receives the side-condition depth
      limit (NONE when none is set; see Cond_rewr.stack_limit) and the order
      used for permutative rewrites.  In reducer_context_data, an unset
-     limit is given as the value of Cond_rewr.stack_limit.  ctxt is the
-     context the traversal runs in. *)
+     limit is given as the value of Cond_rewr.stack_limit. *)
   type reducer_config_data =
     {name : string option, initial : context,
      addcontext : context * thm list -> context,
      apply : {solver : term list -> term -> thm,
               conv : term list -> term -> thm, context : context,
-              ctxt : Context.t, stack : term list, cond_depth : int option,
+              stack : term list, cond_depth : int option,
               term_ord : term * term -> order,
               relation : term * (term -> thm)} -> conv}
   type reducer_context_data =
@@ -24,7 +23,7 @@ sig
      addcontext : context * thm list -> context,
      apply : {solver : term list -> term -> thm,
               conv : term list -> term -> thm, context : context,
-              ctxt : Context.t, stack : term list, cond_depth : int,
+              stack : term list, cond_depth : int,
               term_ord : term * term -> order,
               relation : term * (term -> thm)} -> conv}
 
@@ -41,14 +40,6 @@ sig
   val reducer_config_data : reducer -> reducer_config_data
   val reducer_data : reducer -> reducer_context_data
   val addctxt : thm list -> reducer -> reducer
-
-  (* Every traversal entry point E below that takes no context has a form
-     E_IN of type Context.t -> <the type of E>, which runs in the given
-     context.  E itself takes the context current when the conversion is
-     applied to a term (not when it is built).  The reducers' and solvers'
-     ctxt field is that context.  TRAVERSE data thms collects the
-     theorems into the reducers' contexts once, when it is applied to thms;
-     the other entries rebuild them at each application. *)
 
   (* Side-condition solvers; see simpExtLib.add_unsafe_solver *)
   type simp_prover_ctxt = TraverseCore.simp_prover_ctxt
@@ -68,11 +59,9 @@ sig
   (* Adds the theorems to the reducers' contexts once, and returns a
      conversion using the default settings. *)
   val TRAVERSE : traverse_data -> thm list -> conv
-  val TRAVERSE_IN : Context.t -> traverse_data -> thm list -> conv
   (* With the given settings.  The theorems are added to the reducers'
      contexts each time the conversion is applied. *)
   val XTRAVERSE : xtraverse_data -> thm list -> conv
-  val XTRAVERSE_IN : Context.t -> xtraverse_data -> thm list -> conv
 
   (* Child-first traversal simplifies subterms before the terms containing
      them.  The policy's charge is called before each step, and may raise
@@ -95,16 +84,10 @@ sig
      the reducers' contexts. *)
   val TRAVERSE_WITH_CONTEXT : traversal_policy -> xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
-  val TRAVERSE_WITH_CONTEXT_IN : Context.t -> traversal_policy ->
-    xtraverse_data ->
-    {reducer_context : thm list, solver_context : thm list} -> conv
   (* Child-first, calling the observer on every term offered to the
      reducers and to the side-condition solvers, even where they fail. *)
   val CHILD_FIRST_WITH_OBSERVER : (term -> unit) -> child_first_policy ->
     xtraverse_data ->
-    {reducer_context : thm list, solver_context : thm list} -> conv
-  val CHILD_FIRST_WITH_OBSERVER_IN : Context.t -> (term -> unit) ->
-    child_first_policy -> xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
   (* As CHILD_FIRST_WITH_OBSERVER, with an optional observer, also calling
      the check before each step and solver call.  The check should raise
@@ -112,15 +95,9 @@ sig
   val CHILD_FIRST_WITH_ABORT : (unit -> unit) -> (term -> unit) option ->
     child_first_policy -> xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
-  val CHILD_FIRST_WITH_ABORT_IN : Context.t -> (unit -> unit) ->
-    (term -> unit) option -> child_first_policy -> xtraverse_data ->
-    {reducer_context : thm list, solver_context : thm list} -> conv
   (* Rewrites at the root only, without descending into subterms; side
      conditions are simplified with the full traversal. *)
   val ROOT_REWRITE : xtraverse_data -> thm list -> conv
-  val ROOT_REWRITE_IN : Context.t -> xtraverse_data -> thm list -> conv
   val ROOT_REWRITE_WITH_CONTEXT : xtraverse_data ->
-    {reducer_context : thm list, solver_context : thm list} -> conv
-  val ROOT_REWRITE_WITH_CONTEXT_IN : Context.t -> xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
 end

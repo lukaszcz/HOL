@@ -498,8 +498,7 @@ fun user_conv_tracing {name,trace=trace_level} =
      mk_comb(Term.inst theta f, x)
    end
 
-   fun apply {solver,conv,context,ctxt=_,stack,relation = (relation,_)} t =
-   let
+   fun apply {solver,conv,context,stack,relation = (relation,_)} t = let
      val _ = can (match_term rel_t) relation orelse
              raise ERR ("mk_reducer.apply", "Wrong relation")
      val n = case context of redExn n => n
@@ -651,14 +650,9 @@ let
    fun GEN_FULL_SIMP_TAC (drop, r) tac =
       fn ss => fn thms =>
          let
-            fun f asms g ctxt =
-               let
-                  fun simp_asm (t, l') =
-                     simp_rule ctxt ss (l' @ thms) t :: l'
-               in
-                  (MAP_EVERY tac (List.foldl simp_asm [] (r asms))
-                   THEN drop (List.length asms)) g ctxt
-               end
+            fun simp_asm (t, l') = simp_rule ss (l' @ thms) t :: l'
+            fun f asms = MAP_EVERY tac (List.foldl simp_asm [] (r asms))
+                         THEN drop (List.length asms)
          in
             markerLib.ABBRS_THEN
                (fn l => ASSUM_LIST f THEN asm_simp_tac ss l) thms

@@ -17,38 +17,30 @@ val op-* = simpLib.-*;
 
 val ERR = mk_HOL_ERR "BasicProvers";
 
-local val EXPAND_COND_SS = pureSimps.pure_ss ++ boolSimps.COND_elim_ss
-      val EXPAND_COND_CONV = simpLib.SIMP_CONV EXPAND_COND_SS []
-      fun EXPAND_COND_TAC g ctxt =
-          CONV_TAC (simpLib.SIMP_CONV_IN ctxt EXPAND_COND_SS []) g ctxt
+local val EXPAND_COND_CONV =
+           simpLib.SIMP_CONV (pureSimps.pure_ss ++ boolSimps.COND_elim_ss) []
+      val EXPAND_COND_TAC = CONV_TAC EXPAND_COND_CONV
       val EXPAND_COND = CONV_RULE EXPAND_COND_CONV
-      (* the rewrite set is fixed: the normaliser must not depend on the
-         implicit rewrites held by the ambient context *)
-      val ABBREV_ELIM_CONV =
-          Rewrite.GEN_REWRITE_CONV Conv.TOP_DEPTH_CONV Rewrite.bool_rewrites
-                                   [markerTheory.Abbrev_def]
-      fun NORM_RULE_WITH expand = CONV_RULE (expand THENC ABBREV_ELIM_CONV)
-      val NORM_RULE = NORM_RULE_WITH EXPAND_COND_CONV
-      fun NORM_RULE_IN ctxt =
-          NORM_RULE_WITH (simpLib.SIMP_CONV_IN ctxt EXPAND_COND_SS [])
+      val NORM_RULE = CONV_RULE (EXPAND_COND_CONV THENC
+                                 REWRITE_CONV [markerTheory.Abbrev_def])
 in
 fun PROVE thl tm = Tactical.prove (tm,
   EXPAND_COND_TAC THEN mesonLib.MESON_TAC (map NORM_RULE thl))
 
-fun PROVE_TAC thl (asl, w) ctxt = let
+fun PROVE_TAC thl (asl, w) = let
   val working = LLABEL_RESOLVE thl asl
 in
   EXPAND_COND_TAC THEN CONV_TAC (DEST_LABELS_CONV) THEN
-  mesonLib.MESON_TAC (map (NORM_RULE_IN ctxt) working)
-end (asl, w) ctxt
+  mesonLib.MESON_TAC (map NORM_RULE working)
+end (asl, w)
 val prove_tac = PROVE_TAC
 
-fun GEN_PROVE_TAC x y z thl (asl, w) ctxt = let
+fun GEN_PROVE_TAC x y z thl (asl, w) = let
   val working = LLABEL_RESOLVE thl asl
 in
   EXPAND_COND_TAC THEN CONV_TAC (DEST_LABELS_CONV) THEN
-  mesonLib.GEN_MESON_TAC x y z (map (NORM_RULE_IN ctxt) working)
-end (asl, w) ctxt
+  mesonLib.GEN_MESON_TAC x y z (map NORM_RULE working)
+end (asl, w)
 
 end; (* local *)
 
@@ -59,9 +51,8 @@ end; (* local *)
 
 fun SPOSE_NOT_THEN ttac =
   CCONTR_TAC THEN
-  POP_ASSUM (fn th => fn g => fn ctxt =>
-                ttac (simpLib.SIMP_RULE_IN ctxt boolSimps.bool_ss
-                        [GSYM boolTheory.IMP_DISJ_THM] th) g ctxt)
+  POP_ASSUM (fn th => ttac (simpLib.SIMP_RULE boolSimps.bool_ss
+                                     [GSYM boolTheory.IMP_DISJ_THM] th))
 val spose_not_then = SPOSE_NOT_THEN
 
 (*===========================================================================*)
@@ -766,8 +757,7 @@ in
  * builds it only once. *)
 fun PURE_CASE_SIMP_CONV rws = simpLib.SIMP_CONV (case_ss_of rws) []
 
-fun case_conv_of ctxt =
-    simpLib.SIMP_CONV_IN ctxt (#ss (case_state_of ctxt)) []
+fun case_conv_of ctxt = simpLib.SIMP_CONV (#ss (case_state_of ctxt)) []
 
 fun CASE_SIMP_CONV tm = case_conv_of (Context.snapshot()) tm
 
@@ -912,7 +902,7 @@ fun ASSUMS_TAC f P = W (fn (asl,_) =>
 
 fun CONCL_TAC f P = W (fn (_,c) => if P c then f else NO_TAC);
 
-fun LIFT_SIMP ctxt ss = STRIP_ASSUME_TAC o simpLib.SIMP_RULE_IN ctxt ss []
+fun LIFT_SIMP ss = STRIP_ASSUME_TAC o simpLib.SIMP_RULE ss []
 
 local
   fun DTHEN ttac = fn (asl,w) => fn ctxt =>
@@ -965,19 +955,18 @@ val IMP_CONG' = REWRITE_RULE [GSYM AND_IMP_INTRO] (SPEC_ALL IMP_CONG)
 (* LET_FORALL_ELIM theorem is applied after all the movement is possible.    *)
 (*---------------------------------------------------------------------------*)
 
-fun LET_ELIM_TAC goal ctxt =
+fun LET_ELIM_TAC goal =
  let open simpLib pureSimps boolSimps
  in
   CONV_TAC
     (QCHANGED_CONV
-       (SIMP_CONV_IN ctxt pure_ss (!let_movement_thms) THENC
-        SIMP_CONV_IN ctxt pure_ss (combinTheory.LET_FORALL_ELIM ::
-                                   combinTheory.literal_case_FORALL_ELIM ::
-                                   !let_movement_thms) THENC
-        SIMP_CONV_IN ctxt (pure_ss ++ ABBREV_ss ++ UNWIND_ss)
-                     [Cong IMP_CONG'])) THEN
+       (SIMP_CONV pure_ss (!let_movement_thms) THENC
+        SIMP_CONV pure_ss (combinTheory.LET_FORALL_ELIM ::
+                           combinTheory.literal_case_FORALL_ELIM ::
+                           !let_movement_thms) THENC
+        SIMP_CONV (pure_ss ++ ABBREV_ss ++ UNWIND_ss) [Cong IMP_CONG'])) THEN
   REPEAT BOSS_STRIP_TAC THEN markerLib.REABBREV_TAC
- end goal ctxt
+ end goal
 
 fun new_let_thms thl = let_movement_thms := thl @ !let_movement_thms
 
@@ -1070,7 +1059,7 @@ fun PRIM_STP_TAC ss finisher g ctxt =
         can alter goals that don't have any lets in them at all, possibly
         against user expectations.  A less sledge-hammer implementation of
         LET_ELIM_TAC might not have this problem... *)
-     val do_lets = (simpLib.SIMP_CONV_IN ctxt ss [] leave_lets_var ; false)
+     val do_lets = (simpLib.SIMP_CONV ss [] leave_lets_var ; false)
                    handle Conv.UNCHANGED => true
      val LET_ELIM_TAC =
         if do_lets then
@@ -1087,8 +1076,8 @@ fun PRIM_STP_TAC ss finisher g ctxt =
      THEN REPEAT BOSS_STRIP_TAC
      THEN REPEAT (CHANGED_TAC
             (VAR_EQ_TAC
-               ORELSE ASSUMS_TAC (LIFT_SIMP ctxt ss) has_constr_eqn
-               ORELSE ASSUM_TAC (LIFT_SIMP ctxt ss) breakable
+               ORELSE ASSUMS_TAC (LIFT_SIMP ss) has_constr_eqn
+               ORELSE ASSUM_TAC (LIFT_SIMP ss) breakable
                ORELSE CONCL_TAC ASM_SIMP has_constr_eqn
                ORELSE LET_ELIM_TAC))
      THEN TRY finisher
@@ -1112,8 +1101,8 @@ fun splittable c w =
  Lib.can (find_term (fn tm => (is_cond tm orelse TypeBase.is_case_of c tm)
                               andalso free_in tm w)) w;
 
-fun LIFT_SPLIT_SIMP ctxt ss simp th =
-    MP_TAC (simpLib.SIMP_RULE_IN ctxt ss [] th) THEN CASE_TAC THEN simp THEN
+fun LIFT_SPLIT_SIMP ss simp th =
+    MP_TAC (simpLib.SIMP_RULE ss [] th) THEN CASE_TAC THEN simp THEN
     REPEAT BOSS_STRIP_TAC
 
 fun SPLIT_SIMP simp = TRY (IF_CASES_TAC ORELSE CASE_TAC) THEN simp ;
@@ -1129,10 +1118,10 @@ fun PRIM_NORM_TAC ss g ctxt =
      THEN REPEAT BOSS_STRIP_TAC
      THEN REPEAT (CHANGED_TAC
             (VAR_EQ_TAC
-               ORELSE ASSUMS_TAC (LIFT_SIMP ctxt ss) has_constr_eqn
-               ORELSE ASSUM_TAC (LIFT_SIMP ctxt ss) breakable
+               ORELSE ASSUMS_TAC (LIFT_SIMP ss) has_constr_eqn
+               ORELSE ASSUM_TAC (LIFT_SIMP ss) breakable
                ORELSE CONCL_TAC ASM_SIMP has_constr_eqn
-               ORELSE ASSUM_TAC (LIFT_SPLIT_SIMP ctxt ss ASM_SIMP)
+               ORELSE ASSUM_TAC (LIFT_SPLIT_SIMP ss ASM_SIMP)
                                 (splittable ctxt)
                ORELSE CONCL_TAC (SPLIT_SIMP ASM_SIMP) (splittable ctxt)
                ORELSE LET_ELIM_TAC))

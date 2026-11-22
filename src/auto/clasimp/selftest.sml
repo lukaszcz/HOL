@@ -698,7 +698,7 @@ val _ =
            ``?n:num. clasimp_witness_p n /\ clasimp_witness_q n``
          fun prove context_thms =
            clasimpLib.witness_subgoaler
-             {stack = [], ctxt = Context.snapshot (),
+             {stack = [],
               context_thms = context_thms,
               recurse = Thm.REFL} condition
          val proved = prove [Thm.ASSUME left, Thm.ASSUME right]
@@ -721,7 +721,7 @@ val _ =
        let
          val condition = ``?n:num. witness_budget_p n : bool``
          val context =
-           {stack = [], ctxt = Context.snapshot (),
+           {stack = [],
             context_thms =
               [Thm.ASSUME ``witness_budget_p (3:num) : bool``],
             recurse = Thm.REFL}
@@ -754,7 +754,7 @@ val _ =
        let
          val condition = ``witness_budget_p (4:num) : bool``
          val context =
-           {stack = [], ctxt = Context.snapshot (),
+           {stack = [],
             context_thms =
               [Thm.ASSUME ``witness_budget_p (3:num) : bool``],
             recurse = Thm.REFL}
@@ -7019,11 +7019,12 @@ local
         not (auto_closes [pw_rw] ``Pw (bu_view x)`` without_rule) andalso
         auto_closes [pw_rw] ``Pw (bu_view x)`` with_rule
     in
-      check ("the contexts of the bottom-up tests share one srw_ss",
+      check ("a bottom-up declaration or retraction gives a new srw_ss",
              fn () =>
-               Portable.pointer_eq (srw_of with_rule, srw_of without_rule)
-               andalso
-               Portable.pointer_eq (srw_of with_rule, srw_of declared));
+               not (Portable.pointer_eq
+                      (srw_of with_rule, srw_of without_rule)) andalso
+               not (Portable.pointer_eq
+                      (srw_of without_rule, srw_of declared)));
       check ("SRW_TAC reads the bottom-up rule of its context, global \
              \retracted",
              fn () => aconv (residue with_rule) ``bu_view x``);

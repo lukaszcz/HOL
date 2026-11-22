@@ -2612,7 +2612,7 @@ fun reducer_conversion theorems tm =
     apply
       {solver = fn _ => Conv.NO_CONV,
        conv = fn _ => Conv.NO_CONV,
-       context = context, ctxt = Context.snapshot (),
+       context = context,
        stack = [],
        relation = (boolSyntax.equality, Thm.REFL)} tm
   end
@@ -2652,7 +2652,7 @@ val _ =
           forward_split_goal andalso
         ((ignore
             (#solve linarithLib.linarith_solver
-               {stack = [], ctxt = Context.snapshot (),
+               {stack = [],
                 recurse = Conv.NO_CONV,
                 context_thms = map Thm.ASSUME forward_split_context}
                forward_split_goal);
@@ -2742,7 +2742,7 @@ fun private_budget_test body =
               {solver = fn _ => Conv.NO_CONV,
                conv = fn _ => Conv.NO_CONV,
                context = addcontext (initial, assumptions),
-               ctxt = Context.snapshot (), stack = [],
+               stack = [],
                relation = (boolSyntax.equality, Thm.REFL)} tm
           end
       in
@@ -2854,7 +2854,7 @@ val _ =
                        (apply
                           {solver = fn _ => Conv.NO_CONV,
                            conv = fn _ => Conv.NO_CONV,
-                           context = context, ctxt = Context.snapshot (),
+                           context = context,
                            stack = [],
                            relation = (boolSyntax.equality, Thm.REFL)}
                           atom);
@@ -2964,7 +2964,7 @@ val _ =
          val {name, solve} = linarithLib.linarith_solver
          val theorem =
            solve
-             {stack = [], ctxt = Context.snapshot (),
+             {stack = [],
               context_thms =
                 [Thm.ASSUME public_x_le_y,
                  Thm.ASSUME public_y_le_z],
@@ -2992,7 +2992,7 @@ val _ =
            not (Term.aconv public_p boolSyntax.F)
          val theorem =
            solve
-             {stack = [], ctxt = Context.snapshot (),
+             {stack = [],
               context_thms = [Thm.ASSUME public_successor_bound],
               recurse = Conv.NO_CONV} public_p
        in
@@ -3084,7 +3084,7 @@ fun envelope_prims named_thms =
     fun call () =
       ignore
         (solve
-          {stack = [], ctxt = Context.snapshot (),
+          {stack = [],
            context_thms = context, recurse = Conv.NO_CONV}
           public_x_le_z)
     fun repeat 0 = ()
@@ -3543,7 +3543,7 @@ fun solver_discharges_public_p () =
     Term.aconv
       (Thm.concl
         (solve
-          {stack = [], ctxt = Context.snapshot (),
+          {stack = [],
            context_thms = [Thm.ASSUME public_successor_bound],
            recurse = Conv.NO_CONV} public_p))
       public_p
@@ -3575,7 +3575,7 @@ fun solver_declines context tm =
   in
     (ignore
        (solve
-         {stack = [], ctxt = Context.snapshot (),
+         {stack = [],
           context_thms = context, recurse = Conv.NO_CONV}
          tm);
      false)
@@ -3850,7 +3850,7 @@ fun solver_reports_instance_failure () =
     (fn () =>
        ignore
          (#solve linarithLib.linarith_solver
-            {stack = [], ctxt = Context.snapshot (),
+            {stack = [],
              context_thms = malformed_cached_context,
              recurse = Conv.NO_CONV} malformed_cached_goal))
 
@@ -3968,7 +3968,7 @@ val _ =
              (fn () =>
                 ignore
                   (#solve linarithLib.linarith_solver
-                     {stack = [], ctxt = Context.snapshot (),
+                     {stack = [],
                       context_thms = interrupt_context,
                       recurse = Conv.NO_CONV}
                      interrupt_goal)))])
@@ -4092,7 +4092,7 @@ fun solver_verdict context tm =
          (fn () =>
             ignore
               (#solve linarithLib.linarith_solver
-                 {stack = [], ctxt = Context.snapshot (),
+                 {stack = [],
                   context_thms = context,
                   recurse = Conv.NO_CONV} tm)) of
       NONE => "proved"
@@ -4273,7 +4273,7 @@ fun ext_closes fragment goal =
 fun solver_proves (solver : TraverseExt.ssolver) context_thms tm =
   (ignore
      (#solve solver
-        {stack = [], ctxt = Context.snapshot (),
+        {stack = [],
          context_thms = context_thms, recurse = Conv.NO_CONV} tm);
    true)
   handle Feedback.HOL_ERR _ => false

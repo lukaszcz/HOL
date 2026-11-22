@@ -32,13 +32,11 @@ type apply_args =
   {solver : term list -> term -> thm,
    conv : term list -> term -> thm,
    context : context,
-   ctxt : Context.t,
    stack : term list,
    relation : term * (term -> thm)}
 
 type simp_prover_ctxt =
-  {stack : term list, context_thms : thm list, recurse : term -> thm,
-   ctxt : Context.t}
+  {stack : term list, context_thms : thm list, recurse : term -> thm}
 type ssolver = {name : string, solve : simp_prover_ctxt -> term -> thm}
 type subgoaler = simp_prover_ctxt -> term -> thm
 
@@ -276,7 +274,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
                          policy, root_only}
       (t as {limit,rewriters,dprocs,travrules,relation=rel,apply,
              subgoaler,solvers,...} : 'r traversal)
-      stack tstate cctxt tm = let
+      stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val configured = needs_prover_context t
@@ -370,8 +368,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
           handle HOL_ERR _ => (lim_r := recurse_old; REFL tm)
         end
         val prover_ctxt =
-          {stack=stack, context_thms=context_thms, recurse=recurse,
-           ctxt=cctxt}
+          {stack=stack, context_thms=context_thms, recurse=recurse}
         fun first_solver [] _ =
               raise ERR "ctxt_solver" "Unsolved condition"
           | first_solver ({solve,...}::rest) tm =
@@ -403,7 +400,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
       fun apply_reducer reducer context tm =
         ((if plain then () else charge tm);
          apply reducer {solver=ctxt_solver, conv=ctxt_conv, context=context,
-                        ctxt=cctxt, stack=stack, relation=reducer_relation} tm
+                        stack=stack, relation=reducer_relation} tm
          before dec lim_r)
       fun first_reducer (reducer::reducers) (context::contexts) tm =
             (apply_reducer reducer context tm
@@ -480,7 +477,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
   in
     trav_entry select_root stack context
   end
-  val entry = trav_with_rel root_only (get_relation' rel) stack tstate
+  val entry = trav_with_rel root_only (get_relation' rel) stack ctxt
 in
   if plain then entry tm
   else
@@ -499,7 +496,7 @@ end
  * ---------------------------------------------------------------------*)
 
 fun TRAVERSE_WITH_CONTEXT {check_abort,observer,policy,root_only} t
-      {reducer_context,solver_context} cctxt tm =
+      {reducer_context,solver_context} tm =
    let
      val _ = case check_abort of NONE => () | SOME check => check ()
      val collect_thms = needs_prover_context t
@@ -511,17 +508,16 @@ fun TRAVERSE_WITH_CONTEXT {check_abort,observer,policy,root_only} t
      TRAVERSE_IN_CONTEXT
        {check_abort=check_abort, eager=false, observer=observer,
         policy=policy, root_only=root_only}
-       t [] context' cctxt tm
+       t [] context' tm
    end;
 
 fun TRAVERSE t thms =
    let val context' = add_context false t (initial_context t,thms)
    in
-     fn cctxt =>
-       TRAVERSE_IN_CONTEXT
-         {check_abort=NONE, eager=true, observer=NONE, policy=ParentFirst,
-          root_only=false}
-         t [] context' cctxt
+     TRAVERSE_IN_CONTEXT
+       {check_abort=NONE, eager=true, observer=NONE, policy=ParentFirst,
+        root_only=false}
+       t [] context'
    end;
 
 end (* struct *)

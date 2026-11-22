@@ -14,11 +14,10 @@ congLibFn
        val initial = #initial data
        val addcontext = #addcontext data
 
-       fun apply {solver,conv,context,ctxt,stack,
-                  relation as (_, refl)} tm = let
+       fun apply {solver,conv,context,stack,relation as (_, refl)} tm = let
          val eqthm = #apply data
                             {solver=solver,conv=conv,
-                             context=context,ctxt=ctxt,stack=stack,
+                             context=context,stack=stack,
                              relation=relation}
                             tm
          val congThm = refl tm
@@ -35,6 +34,6 @@ congLibFn
        let val {rewriters,dprocs,travrules,...} = simpLib.traversedata_for_ss ss
        in
          ({rewriters=rewriters, dprocs=dprocs, travrules=travrules},
-          Traverse.TRAVERSE, Traverse.TRAVERSE_IN)
+          Traverse.TRAVERSE)
        end
    end)

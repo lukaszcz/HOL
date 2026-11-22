@@ -35,18 +35,8 @@ sig
       term -> congset -> simpset -> thm list -> term -> thm
   val CONGRUENCE_SIMP_QCONV :
       term -> congset -> simpset -> thm list -> term -> thm
-  (* Each of the following is the form without _IN, with the traversal's
-     context given. *)
-  val CONGRUENCE_SIMP_CONV_IN :
-      Context.t -> term -> congset -> simpset -> thm list -> term -> thm
-  val CONGRUENCE_SIMP_QCONV_IN :
-      Context.t -> term -> congset -> simpset -> thm list -> term -> thm
-  val CONGRUENCE_EQ_SIMP_CONV_IN :
-      Context.t -> congset -> simpset -> thm list -> term -> thm
   val CONGRUENCE_EQ_SIMP_CONV : congset -> simpset -> thm list -> term -> thm
   val CONGRUENCE_SIMP_RULE : congset -> simpset -> thm list -> thm -> thm
-  val CONGRUENCE_SIMP_RULE_IN :
-      Context.t -> congset -> simpset -> thm list -> thm -> thm
   val CONGRUENCE_SIMP_TAC : congset -> simpset -> thm list -> tactic
   val ASM_CONGRUENCE_SIMP_TAC : congset -> simpset -> thm list -> tactic
   val FULL_CONGRUENCE_SIMP_TAC : congset -> simpset -> thm list -> tactic
@@ -57,8 +47,7 @@ end
    cong_reducer into an engine reducer; eq_reducer_wrapper makes a simpset
    reducer, which proves equations, prove the reflexive relation instead;
    traversal projects a simpset's reducers and travrules together with the
-   traversals to run them with: one taking the context current when the
-   conversion is applied, and one taking the context first. *)
+   traversal to run them with. *)
 functor congLibFn
   (E : sig
          type reducer
@@ -73,10 +62,6 @@ functor congLibFn
              {rewriters : reducer list, dprocs : reducer list,
               travrules : Travrules.travrules} *
              ({rewriters : reducer list, dprocs : reducer list,
-               limit : int option, travrules : Travrules.travrules,
-               relation : Abbrev.term} -> Abbrev.thm list -> Abbrev.conv) *
-             (Context.t ->
-              {rewriters : reducer list, dprocs : reducer list,
                limit : int option, travrules : Travrules.travrules,
                relation : Abbrev.term} -> Abbrev.thm list -> Abbrev.conv)
        end) : congLibFn =
@@ -236,7 +221,7 @@ val cong_reducer =
         in
           CONVNET (insertThms net thms)
         end
-      fun apply {solver,conv,context,ctxt=_,stack,relation} tm =
+      fun apply {solver,conv,context,stack,relation} tm =
         let
             val net = ((raise context) handle CONVNET net => net)
             val thm = cong_rewrite net relation tm
@@ -315,10 +300,7 @@ fun add_csfrag_rewrites s rewrs =
     merge_cs [s, csfrag_rewrites rewrs];
 
 
-(* The traversal data is computed once, from the relation, the congset and
-   the simpset; plain is the traversal run in the context current when it is
-   applied, and in_ctxt runs it in the context it is given. *)
-fun gen_simp_qconv relation (cs as (CS csdata)) ss =
+fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
   let
     (*build a connection between the preorders and =*)
     val preorders = (#relations csdata);
@@ -330,7 +312,7 @@ fun gen_simp_qconv relation (cs as (CS csdata)) ss =
       {relations=(#relations csdata),
       congprocs=preorder_eq_congs,
       weakenprocs=[]};
-    val (traversedata, traverse, traverse_in) = E.traversal ss
+    val (traversedata, traverse) = E.traversal ss
     val data = {rewriters= (#cong_reducer csdata)::
           (map E.eq_reducer_wrapper (#rewriters traversedata)),
           dprocs= #dprocs csdata @
@@ -340,17 +322,13 @@ fun gen_simp_qconv relation (cs as (CS csdata)) ss =
             ([eq_congsTravrule,#travrules traversedata] @
              #travrules csdata)}
   in
-    {plain = traverse data, in_ctxt = fn ctxt => traverse_in ctxt data}
+    traverse data
   end;
 
-fun CONGRUENCE_SIMP_QCONV relation cs ss =
-  #plain (gen_simp_qconv relation cs ss)
 
-fun CONGRUENCE_SIMP_QCONV_IN ctxt relation cs ss =
-  #in_ctxt (gen_simp_qconv relation cs ss) ctxt
-
-fun with_refl relation (cs as (CS csdata)) qconv =
+fun CONGRUENCE_SIMP_CONV relation (cs as (CS csdata)) ss =
   let
+    val qconv = CONGRUENCE_SIMP_QCONV relation cs ss
     val preorder = find_relation relation (#relations csdata);
     val refl = extract_preorder_refl preorder
     fun conv thms tm = qconv thms tm
@@ -360,36 +338,17 @@ fun with_refl relation (cs as (CS csdata)) qconv =
     conv
   end;
 
-fun CONGRUENCE_SIMP_CONV relation cs ss =
-  with_refl relation cs (CONGRUENCE_SIMP_QCONV relation cs ss)
 
-fun CONGRUENCE_SIMP_CONV_IN ctxt relation cs ss =
-  with_refl relation cs (CONGRUENCE_SIMP_QCONV_IN ctxt relation cs ss)
-
-
-fun CONGRUENCE_EQ_SIMP_CONV cs ss =
-  CONGRUENCE_SIMP_CONV boolSyntax.equality cs ss
-
-fun CONGRUENCE_EQ_SIMP_CONV_IN ctxt cs ss =
-  CONGRUENCE_SIMP_CONV_IN ctxt boolSyntax.equality cs ss
+val CONGRUENCE_EQ_SIMP_CONV = CONGRUENCE_SIMP_CONV boolSyntax.equality;
 
 
 fun CONGRUENCE_SIMP_RULE cs ss =
   (fn thms =>
     CONV_RULE (CONGRUENCE_EQ_SIMP_CONV cs ss thms));
 
-fun CONGRUENCE_SIMP_RULE_IN ctxt cs ss =
-  (fn thms =>
-    CONV_RULE (CONGRUENCE_EQ_SIMP_CONV_IN ctxt cs ss thms));
-
 fun CONGRUENCE_SIMP_TAC cs ss =
-  let
-    val relation = boolSyntax.equality
-    val qconv = gen_simp_qconv relation cs ss
-  in
-    fn thms => fn g => fn ctxt =>
-      CONV_TAC (with_refl relation cs (#in_ctxt qconv ctxt) thms) g ctxt
-  end;
+  (fn thms =>
+    CONV_TAC (CONGRUENCE_EQ_SIMP_CONV cs ss thms));
 
 
 fun ASM_CONGRUENCE_SIMP_TAC cs ss l = let
@@ -419,13 +378,10 @@ fun FULL_CONGRUENCE_SIMP_TAC cs ss l =
          boolLib.STRIP_ALL_THEN
                     (fn th => FIRST [CONTR_TAC th, ACCEPT_TAC th,
                                            ASSUME_TAC th])
-     fun f asms g ctxt = let
-         fun simp_asm (t,l') =
-             CONGRUENCE_SIMP_RULE_IN ctxt cs ss (l'@l) t::l'
-       in
-         (MAP_EVERY STRIP_ASSUME_TAC' (foldl simp_asm [] asms)
-          THEN drop (length asms)) g ctxt
-       end
+     fun simp_asm (t,l') = CONGRUENCE_SIMP_RULE cs ss (l'@l) t::l'
+     fun f asms =
+         MAP_EVERY STRIP_ASSUME_TAC' (foldl simp_asm [] asms)
+         THEN drop (length asms)
        in
          markerLib.ABBRS_THEN
           (fn l => ASSUM_LIST f THEN ASM_CONGRUENCE_SIMP_TAC cs ss l) l

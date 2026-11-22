@@ -15,8 +15,8 @@ solving the goal `(map concl context_thms, c)` with `tac`, where
 `context_thms` are the context theorems supplied by the simplifier. The
 hypotheses of those theorems become hypotheses of the result.
 
-`tac` is run in the `ctxt` of the record the solver is given: the
-context of the traversal that calls it.
+Inside a `simpExtLib` simplification tactic, `tac` is run in the context
+that tactic was given; otherwise, in the ambient context.
 
 ### Failure
 
@@ -27,8 +27,7 @@ Never fails. The solver fails if `tac` fails or leaves subgoals.
 ``` hol4
 >> val em : TraverseExt.ssolver = simpExtLib.mk_tactic_solver
      ("excluded middle", MATCH_ACCEPT_TAC EXCLUDED_MIDDLE);
->> #solve em {stack = [], context_thms = [], recurse = REFL,
-            ctxt = Context.snapshot ()} “q ∨ ¬q”;
+>> #solve em {stack = [], context_thms = [], recurse = REFL} “q ∨ ¬q”;
 ```
 
 ### See also
