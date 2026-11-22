@@ -601,6 +601,49 @@ struct
              (graph_accepted row (clause_provenance o List.map flatten))
         end) table
 
+  fun connective_cnf (p,q,r) =
+    let
+      open boolSyntax
+      val leaves = [p,q,p,r]
+      fun check_theorem rule expected theorem =
+        (Library.check_oracle_tags "CPC connective CNF" rule theorem;
+         require (rule ^ ": wrong clause")
+           (Term.aconv (Thm.concl theorem) expected);
+         require (rule ^ ": unexpected hypotheses") (null (Thm.hyp theorem)))
+      fun check (rule, full_rule, mk, clause, full_clause, connective) =
+        let
+          val left = mk (mk (mk (p,q),p),r)
+          val right = mk (p,mk (q,mk (p,r)))
+          fun replay tree index = CPC_ProofReplay.replay_cnf_for_test rule
+            [tree,intSyntax.term_of_int (Arbint.fromInt index)]
+          fun check_tree tree =
+            (List.app (fn (index, leaf) =>
+               check_theorem rule (clause (tree,leaf)) (replay tree index))
+               (Lib.enumerate 0 leaves);
+             check_theorem full_rule (full_clause tree)
+               (CPC_ProofReplay.replay_cnf_for_test full_rule [tree]))
+          fun check_index_error index expected =
+            require (rule ^ ": wrong diagnostic for " ^ Int.toString index)
+              ((replay right index; false)
+               handle Feedback.HOL_ERR error =>
+                 Feedback.message_of error = expected)
+        in
+          List.app check_tree [left,right];
+          check_index_error 4
+            ("CPC " ^ rule ^ " index is outside the " ^ connective);
+          check_index_error (~1) "term not an injection"
+        end
+    in
+      check ("cnf_and_pos", "cnf_and_neg", mk_conj,
+        fn (tree,leaf) => mk_disj (leaf,mk_neg tree),
+        fn tree => list_mk_disj (tree :: List.map mk_neg leaves),
+        "conjunction");
+      check ("cnf_or_neg", "cnf_or_pos", mk_disj,
+        fn (tree,leaf) => mk_disj (tree,mk_neg leaf),
+        fn tree => list_mk_disj (mk_neg tree :: leaves),
+        "disjunction")
+    end
+
   fun run () =
     let
       val vars as (p,q,r) = (mk_var ("p",bool),mk_var ("q",bool),
@@ -615,6 +658,8 @@ struct
       testutils.tprint "CPC clausal rows: equality provenance forms";
       equality_provenance_forms ();testutils.OK ();
       group "term replay" check_term_replay;
+      testutils.tprint "CPC connective CNF: grouping, duplicates and bounds";
+      connective_cnf vars;testutils.OK ();
       testutils.tprint "CPC clausal rows: declared conclusion fallbacks";
       declared_fallbacks ();testutils.OK ();
       group "graph consumer" (check_graph vars);

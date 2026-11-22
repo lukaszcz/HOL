@@ -95,7 +95,7 @@ fun getIntBranch next id h =
 
 (* parse and resolve a chain : assumes all dependencies already calculated *)
 (* the var component of the first pair is a dummy value ~1 *)
-fun addBranch next consume lfn cl sva tc id =
+fun addBranch_using next consume lfn cl sva tc id =
     let val (br,brl) = getIntBranch next id (id-(rshift tc))
         val _ = if brl <= 1 then () else
           (count "derived-clauses" 1; count "resolution-edges" (brl - 1))
@@ -107,8 +107,12 @@ fun addBranch next consume lfn cl sva tc id =
                                     print (int_to_string i ^ "," ^
                                            int_to_string j ^" ")) br; *)
                       resolveChain lfn sva cl (br,brl) id;
-                      List.app (fn (_,ci) => consume ci) br; true) (* resolve *)
+                      consume br; true) (* resolve *)
     in res end
+
+fun consume_branch step = List.app (fn (_,ci) => step ci)
+
+fun addBranch next consume = addBranch_using next (consume_branch consume)
 
 (* Read the root's literal deltas, checking the cumulative literal number. *)
 fun fold_root next step first initial =
@@ -148,21 +152,24 @@ fun isRoot v =
     Word.compare(Word.andb(Word.fromInt v,Word.fromInt 1),(Word.fromInt 0)) =
     EQUAL
 
-fun readTrace next ended consume advance
-              lfn roots cl sva vc clauseth id =
+fun readTrace_using next ended consume advance
+                    lfn roots cl sva vc clauseth id =
     if ended () then id
     else
       let val tmp = next ()
-          fun continue id = readTrace next ended consume advance
-                          lfn roots cl sva vc clauseth id
+          fun continue id = readTrace_using next ended consume advance
+                                lfn roots cl sva vc clauseth id
       in
         if isRoot tmp then
           (addClause next lfn roots cl sva vc clauseth tmp id;
            advance id; continue (id+1))
-        else if addBranch next (consume id) lfn cl sva tmp id then
+        else if addBranch_using next (consume id) lfn cl sva tmp id then
           (advance id; continue (id+1))
         else continue id
       end
+
+fun readTrace next ended consume =
+    readTrace_using next ended (consume_branch o consume)
 
 exception Trivial
 
@@ -210,7 +217,9 @@ fun count_uses path =
                    if next ()=0 then () else tail ())
             in tail (); true end
       fun loop id roots =
-          if ended () then (uses,roots) else
+          if ended () then
+            (uses,roots,id)
+          else
           let val tag = next () in
             if isRoot tag then
               (next (); root_tail (); loop (id+1) (roots+1))
@@ -224,10 +233,15 @@ fun count_uses path =
     handle error =>
       if dimacsTools.is_terminal error then raise error else NONE
 
-fun read_live_trace path lfn make_roots cl sva vc clauseth fin id =
+fun read_live_trace path lfn make_roots sva vc clauseth fin =
     let
       val bytes = OS.FileSys.fileSize path handle OS.SysErr _ => 0
       val uses = if bytes > 0 then count_uses path else NONE
+      val capacity = case uses of
+          SOME (_,_,clauses) => clauses
+        | NONE => Array.length clauseth * 2
+      (* A changed trace may outgrow the prepass count. *)
+      val cl = Dynarray.array (capacity,TRUTH)
       val roots = make_roots (Option.map #2 uses)
       (* Any non-empty regular file: Basis input1 takes the stream lock for
          every byte; bounded blocks are cheaper even for small proofs. *)
@@ -239,10 +253,11 @@ fun read_live_trace path lfn make_roots cl sva vc clauseth fin id =
           else (Dynarray.update (cl,ci,TRUTH); count "last-use-releases" 1)
       val (consume, advance) =
           case uses of
+              (* Streaming replay has no reference counts to update. *)
               NONE => (fn _ => ignore, ignore)
-            | SOME (table,_) =>
+            | SOME (table,_,_) =>
                 let
-                  fun consume _ ci =
+                  fun consume ci =
                       let val remaining = Dynarray.sub (table,ci)-1 in
                         if remaining < 0 then
                           failwith "resolution trace changed during replay"
@@ -258,12 +273,13 @@ fun read_live_trace path lfn make_roots cl sva vc clauseth fin id =
                          Dynarray.sub (table,current-1) = 0 then
                         release (current-1)
                       else ()
-                in (consume, advance) end
-    in (readTrace next ended consume advance
-          lfn roots cl sva vc clauseth id,roots) end
+                  val consume_all = consume_branch consume
+                in (fn _ => consume_all, advance) end
+    in (readTrace_using next ended consume advance
+          lfn roots cl sva vc clauseth 0,roots,cl) end
 
 (*build the clause/chain list *)
-fun parseTrace make_roots cl sva fname solver vc clauseth lfn proof =
+fun parseTrace make_roots sva fname solver vc clauseth lfn proof =
     let
         val path = if isSome proof then valOf proof
                    else fname^"."^(getSolverName solver)^".proof"
@@ -271,7 +287,7 @@ fun parseTrace make_roots cl sva fname solver vc clauseth lfn proof =
         (* Open first: a missing certificate must select the old fallback
            without constructing an unused compact root context. *)
         fun read () =
-          read_live_trace path lfn make_roots cl sva vc clauseth fin 0
+          read_live_trace path lfn make_roots sva vc clauseth fin
      in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) read ())
      end
 handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
@@ -287,7 +303,6 @@ clauseth: root clause vector. clauseth[i] is i'th root clause from original
 *)
 fun replayProof sva nr fname solver vc clauseth lfn proof =
     let val _ = (minisatResolve.counter:=0)
-        val cl = Dynarray.array((Array.length clauseth) * 2,TRUTH)
         (* One environment check per replay, not per message. *)
         val sat_trace = sat_tracer ()
         fun trace message = sat_trace (fn () => message)
@@ -314,8 +329,8 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
             in roots end
         val _ = trace "resolution trace start"
     in case profile_stage "replay-trace"
-        (parseTrace make_roots cl sva fname solver vc clauseth lfn) proof of
-           SOME (id, roots) =>
+        (parseTrace make_roots sva fname solver vc clauseth lfn) proof of
+           SOME (id, roots, cl) =>
              let val _ = trace "resolution trace done"
                  val result = profile_stage "replay-finish"
                    (minisatResolve.finish_resolution roots lfn clauseth)

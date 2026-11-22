@@ -7263,51 +7263,89 @@ local
   fun real_div_reordering_conv strong_canon = compose_normal_form_conv
     expand_real_div_conv strong_canon
 
-  fun replay_cnf_with_literals name args =
+  datatype connective_branch = FromLeft of Term.term | FromRight of Term.term
+
+  (* The reverse path keeps only the siblings needed to rebuild a proof
+     from the selected leaf. The pending subtrees preserve leaf order. *)
+  fun indexed_connective_leaf dest tree index =
+    let
+      fun seek _ [] = raise Subscript
+        | seek remaining ((term, path) :: pending) =
+            case Lib.total dest term of
+              SOME (left, right) =>
+                seek remaining
+                  ((left, FromLeft right :: path) ::
+                   (right, FromRight left :: path) :: pending)
+            | NONE =>
+                if remaining = 0 then (term, path)
+                else seek (remaining - 1) pending
+    in
+      if index < 0 then raise Subscript else seek index [(tree, [])]
+    end
+
+  fun cnf_index index_tm = Arbnum.toInt
+    (numSyntax.dest_numeral (intSyntax.dest_injected index_tm))
+
+  fun clause_from_implication implication =
+    let
+      val (premise, consequent) =
+        boolSyntax.dest_imp (Thm.concl implication)
+      val negated = boolSyntax.mk_neg premise
+      val positive_case = Thm.DISJ1
+        (Thm.MP implication (Thm.ASSUME premise)) negated
+      val negative_case = Thm.DISJ2 consequent
+        (Thm.ASSUME negated)
+    in
+      Thm.DISJ_CASES
+        (Thm.SPEC premise boolTheory.EXCLUDED_MIDDLE)
+        positive_case negative_case
+    end
+
+  fun replay_indexed_cnf name is_conjunction args =
+    let
+      val aggregate = List.hd args
+      val connective = if is_conjunction then "conjunction" else "disjunction"
+      val index = case args of
+          [_, index_tm] => cnf_index index_tm
+        | _ => raise ERR name ("expected " ^ connective ^ " and index")
+      val dest = if is_conjunction then boolSyntax.dest_conj
+                 else boolSyntax.dest_disj
+      val (selected, reverse_path) =
+        indexed_connective_leaf dest aggregate index
+        handle Subscript => raise ERR name
+          ("CPC " ^ name ^ " index is outside the " ^ connective)
+      fun project (FromLeft _, theorem) = Thm.CONJUNCT1 theorem
+        | project (FromRight _, theorem) = Thm.CONJUNCT2 theorem
+      fun introduce (FromLeft right, theorem) = Thm.DISJ1 theorem right
+        | introduce (FromRight left, theorem) = Thm.DISJ2 left theorem
+      val (inclusion, literals) =
+        if is_conjunction then
+          (Thm.DISCH aggregate (List.foldl project (Thm.ASSUME aggregate)
+             (List.rev reverse_path)),
+           [selected, boolSyntax.mk_neg aggregate])
+        else
+          (Thm.DISCH selected
+             (List.foldl introduce (Thm.ASSUME selected) reverse_path),
+           [aggregate, boolSyntax.mk_neg selected])
+    in
+      (clause_from_implication inclusion, literals)
+    end
+
+  fun replay_cnf_with_literals "cnf_and_pos" args =
+        replay_indexed_cnf "cnf_and_pos" true args
+    | replay_cnf_with_literals "cnf_or_neg" args =
+        replay_indexed_cnf "cnf_or_neg" false args
+    | replay_cnf_with_literals name args =
     let
       fun implication tm = boolSyntax.dest_imp tm
       fun equality tm = boolSyntax.dest_eq tm
       fun neg tm = boolSyntax.mk_neg tm
-      fun strip_conjunction tm =
-        (let val (left, right) = boolSyntax.dest_conj tm in
-           strip_conjunction left @ strip_conjunction right
-         end)
-        handle Feedback.HOL_ERR _ => [tm]
-      fun strip_disjunction tm =
-        (let val (left, right) = boolSyntax.dest_disj tm in
-           strip_disjunction left @ strip_disjunction right
-         end)
-        handle Feedback.HOL_ERR _ => [tm]
       fun xor tm =
         let
           val (f, right) = Term.dest_comb tm
           val (_, left) = Term.dest_comb f
         in (left, right) end
       fun ite tm = boolSyntax.dest_cond tm
-      fun indexed_and as_ =
-        case as_ of
-          [conjunction, index_tm] =>
-            let
-              val index = Arbnum.toInt (numSyntax.dest_numeral
-                (intSyntax.dest_injected index_tm))
-            in
-              List.nth (strip_conjunction conjunction, index)
-                handle Subscript => raise ERR name
-                  "CPC cnf_and_pos index is outside the conjunction"
-            end
-        | _ => raise ERR name "expected conjunction and index"
-      fun indexed_or as_ =
-        case as_ of
-          [disjunction, index_tm] =>
-            let
-              val index = Arbnum.toInt (numSyntax.dest_numeral
-                (intSyntax.dest_injected index_tm))
-            in
-              List.nth (strip_disjunction disjunction, index)
-                handle Subscript => raise ERR name
-                  "CPC cnf_or_neg index is outside the disjunction"
-            end
-        | _ => raise ERR name "expected disjunction and index"
       val literals =
         case (name, args) of
           ("cnf_implies_neg1", [imp]) =>
@@ -7317,17 +7355,11 @@ local
         | ("cnf_implies_pos", [imp]) =>
             let val (left, right) = implication imp
             in [neg left, right, neg imp] end
-        | ("cnf_and_pos", as_) =>
-            let val conjunction = List.hd as_
-            in [indexed_and as_, neg conjunction] end
         | ("cnf_and_neg", [conjunction]) =>
             (conjunction ::
-              List.map neg (strip_conjunction conjunction))
-        | ("cnf_or_neg", as_) =>
-            let val disjunction = List.hd as_
-            in [disjunction, neg (indexed_or as_)] end
+              List.map neg (boolSyntax.strip_conj conjunction))
         | ("cnf_or_pos", [disjunction]) =>
-              (boolSyntax.mk_neg disjunction :: strip_disjunction disjunction)
+            (boolSyntax.mk_neg disjunction :: boolSyntax.strip_disj disjunction)
         | ("cnf_equiv_neg1", [eq]) =>
             let val (left, right) = equality eq
             in [left, right, eq] end
@@ -7371,21 +7403,6 @@ local
             let val (_, then_term, else_term) = ite if_term
             in [if_term, neg then_term, neg else_term] end
         | _ => raise ERR name "unsupported CPC CNF rule argument shape"
-      val conclusion = mk_disj_terms literals
-      fun clause_from_implication implication =
-        let
-          val (premise, consequent) =
-            boolSyntax.dest_imp (Thm.concl implication)
-          val negated = boolSyntax.mk_neg premise
-          val positive_case = Thm.DISJ1
-            (Thm.MP implication (Thm.ASSUME premise)) negated
-          val negative_case = Thm.DISJ2 consequent
-            (Thm.ASSUME negated)
-        in
-          Thm.DISJ_CASES
-            (Thm.SPEC premise boolTheory.EXCLUDED_MIDDLE)
-            positive_case negative_case
-        end
       fun schematic_equivalence_clause () =
         case args of
           [equality] =>
@@ -7437,22 +7454,21 @@ local
         | _ => raise ERR name "expected one XOR argument"
       fun schematic_tree_clause destructor constructor aggregate negated =
         let
-          fun build term =
+          fun build term instances =
             case Lib.total destructor term of
               SOME (left, right) =>
                 let
-                  val (left_tree, left_instances) = build left
-                  val (right_tree, right_instances) = build right
+                  val (left_tree, instances) = build left instances
+                  val (right_tree, instances) = build right instances
                 in
-                  (constructor (left_tree, right_tree),
-                   left_instances @ right_instances)
+                  (constructor (left_tree, right_tree), instances)
                 end
             | NONE =>
                 let val variable = Term.genvar Type.bool in
                   (variable,
-                   [{redex = variable, residue = term}])
+                   {redex = variable, residue = term} :: instances)
                 end
-          val (tree, instances) = build aggregate
+          val (tree, reverse_instances) = build aggregate []
           val first = if negated then tree else boolSyntax.mk_neg tree
           val law = Thm.SPEC first boolTheory.EXCLUDED_MIDDLE
           (* Keep the aggregate literal intact; flatten only its complement. *)
@@ -7461,64 +7477,12 @@ local
               [boolTheory.DE_MORGAN_THM, boolTheory.NOT_CLAUSES,
                Conv.GSYM boolTheory.DISJ_ASSOC])) law
         in
-          observed_inst instances law
+          observed_inst (List.rev reverse_instances) law
         end
-      fun cnf_and_pos_prove () =
-        case args of
-          [conjunction, index_tm] =>
-            let
-              val index = Arbnum.toInt (numSyntax.dest_numeral
-                (intSyntax.dest_injected index_tm))
-              fun projections theorem =
-                case Lib.total boolSyntax.dest_conj (Thm.concl theorem) of
-                  SOME _ => projections (Thm.CONJUNCT1 theorem) @
-                    projections (Thm.CONJUNCT2 theorem)
-                | NONE => [theorem]
-              val selected = List.nth
-                (projections (Thm.ASSUME conjunction), index)
-                handle Subscript => raise ERR name
-                  "CPC cnf_and_pos index is outside the conjunction"
-              val inclusion = Thm.DISCH conjunction selected
-            in
-              clause_from_implication inclusion
-            end
-        | _ => raise ERR name "expected conjunction and index"
-      fun cnf_or_neg_prove () =
-        case args of
-          [disjunction, index_tm] =>
-            let
-              val index = Arbnum.toInt (numSyntax.dest_numeral
-                (intSyntax.dest_injected index_tm))
-              fun introductions term =
-                case Lib.total boolSyntax.dest_disj term of
-                  SOME (left, right) =>
-                    List.map
-                      (fn (literal, introduce) =>
-                        (literal, fn theorem =>
-                          Thm.DISJ1 (introduce theorem) right))
-                      (introductions left) @
-                    List.map
-                      (fn (literal, introduce) =>
-                        (literal, fn theorem =>
-                          Thm.DISJ2 left (introduce theorem)))
-                      (introductions right)
-                | NONE => [(term, fn theorem => theorem)]
-              val (selected, introduce) =
-                List.nth (introductions disjunction, index)
-                handle Subscript => raise ERR name
-                  "CPC cnf_or_neg index is outside the disjunction"
-              val inclusion = Thm.DISCH selected
-                (introduce (Thm.ASSUME selected))
-            in
-              clause_from_implication inclusion
-            end
-        | _ => raise ERR name "expected disjunction and index"
       val theorem =
-      if name = "cnf_and_pos" then cnf_and_pos_prove ()
-      else if name = "cnf_and_neg" then
+      if name = "cnf_and_neg" then
         schematic_tree_clause boolSyntax.dest_conj boolSyntax.mk_conj
           (List.hd args) true
-      else if name = "cnf_or_neg" then cnf_or_neg_prove ()
       else if name = "cnf_or_pos" then
         schematic_tree_clause boolSyntax.dest_disj boolSyntax.mk_disj
           (List.hd args) false
@@ -7527,11 +7491,11 @@ local
       else if String.isPrefix "cnf_xor_" name then
         schematic_xor_clause ()
       else if String.isPrefix "cnf_ite_" name then
-        Tactical.TAC_PROOF (([], conclusion),
+        Tactical.TAC_PROOF (([], mk_disj_terms literals),
           Tactical.THEN
             (Tactic.COND_CASES_TAC,
              tautLib.TAUT_TAC))
-      else tautology name conclusion
+      else tautology name (mk_disj_terms literals)
     in (theorem, literals) end
 
   fun replay_cnf name args = #1 (replay_cnf_with_literals name args)
@@ -21660,13 +21624,8 @@ local
               val (target_disjunction, target_negated) =
                 boolSyntax.dest_disj target
               val target_selected = boolSyntax.dest_neg target_negated
-              val index = Arbnum.toInt (numSyntax.dest_numeral
-                (intSyntax.dest_injected index_tm))
-              fun leaves term =
-                case Lib.total boolSyntax.dest_disj term of
-                  SOME (left, right) => leaves left @ leaves right
-                | NONE => [term]
-              val selected = List.nth (leaves disjunction, index)
+              val (selected, _) = indexed_connective_leaf boolSyntax.dest_disj
+                disjunction (cnf_index index_tm)
             in
               Portable.pointer_eq (target_disjunction, disjunction) andalso
               Portable.pointer_eq (target_selected, selected)

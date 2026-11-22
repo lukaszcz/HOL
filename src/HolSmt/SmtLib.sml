@@ -3821,7 +3821,7 @@ local
             case Redblackmap.peek (indexed, text) of
               NONE => NONE
             | SOME candidates => List.find matches candidates
-        in List.mapPartial record declarations end
+        in List.mapPartial record (declarations ()) end
 
   fun build_translation_records regime regime_reason terms logic reason
       features tydict tmdict datatype_records recorded_sorts =
@@ -6763,7 +6763,7 @@ local
     val record_bag_backend = !current_bag_backend
     val recorded_sorts = emitted_sort_lookup (!emitted_term_sorts)
     val datatype_records = emitted_datatype_records tydict
-      (List.concat (List.map Lib.fst smtlibs))
+      (fn () => List.concat (List.map Lib.fst smtlibs))
     fun records () =
       let
         val restorers = [
@@ -6892,7 +6892,7 @@ local
              observe (fn () => smt_sort_of_type regime dictionary ty),
            type_declaration_records=fn dictionary => fn declarations =>
              observe (fn () => type_declaration_records dictionary
-               (emitted_datatype_records dictionary declarations))}
+               (emitted_datatype_records dictionary (fn () => declarations)))}
         val _ = active := false
       in Exn.release outcome end)
 

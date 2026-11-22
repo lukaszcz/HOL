@@ -637,7 +637,7 @@ local
             List.exists (fn entry => entry = ("root-literal-occurrences", 4))
               (minisatResolve.get_replay_counts ())
       end))
-  val _ = control "compact replay checks sparse and duplicate root origins"
+  val _ = control "compact replay checks sparse, dense and repeated roots"
     (fn () =>
       let
         val x = mk_var ("sat_sparse",bool)
@@ -660,7 +660,9 @@ local
         fun bad_index run =
           (run (); false)
           handle HOL_ERR e => Feedback.message_of e = "dualise0\n"
+        val many_roots = List.concat (List.tabulate (131,fn _ => [2,0,0]))
       in replay [2,0,0,2,0,0,66,1,0,5,2,1,0] valid andalso
+         replay (many_roots @ [66,1,0,5,2,1,0]) valid andalso
          replay [68,0,0] bad_index
       end)
 

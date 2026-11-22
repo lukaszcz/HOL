@@ -143,29 +143,23 @@ struct
       (* Schema variables are declarations, not lexical references. Two
          distinct holes may intentionally denote the same scoped operand. *)
       val declaration = G.declaration_variable_key graph scope
-      val _ = List.foldl (fn (hole,seen) =>
+      val hole_operands = ListPair.zip (holes,operands)
+      fun duplicate_hole _ =
+        raise ERR "checked_graph_schema" "duplicate typed schema hole"
+      val hole_index = List.foldl (fn ((hole,node),index) =>
         let
           val _ = if Term.is_var hole then () else
             raise ERR "checked_graph_schema" "non-variable schema hole"
           val identity = declaration hole
         in
-          if List.exists (fn prior => prior = identity) seen then
-            raise ERR "checked_graph_schema" "duplicate typed schema hole"
-          else identity :: seen
-        end) [] holes
-      val _ = G.reserve_schema_holes graph (ListPair.zip (holes,operands))
-      val hole_ids = List.map declaration holes
-      fun hole term =
-        let val identity = declaration term
-            fun seek [] [] = NONE
-              | seek (name::names) (node::nodes) =
-                  if identity = name then SOME node else seek names nodes
-              | seek _ _ = raise ERR "checked_graph_schema"
-                  "operator schema arity mismatch"
-        in seek hole_ids operands end
+          Redblackmap.insertWith duplicate_hole (index,identity,node)
+        end) (Redblackmap.mkDict
+          (Lib.pair_compare (String.compare,Int.compare))) hole_operands
+      val _ = G.reserve_schema_holes graph hole_operands
       fun tree term =
         if Term.is_var term then
-          (case hole term of SOME node => Operand node
+          (case Redblackmap.peek (hole_index,declaration term) of
+             SOME node => Operand node
            | NONE => raise ERR "checked_graph_schema"
                "unowned schema variable")
         else if Term.is_const term then
