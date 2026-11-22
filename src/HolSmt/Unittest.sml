@@ -414,12 +414,13 @@ fun num_binder_relativization_nested_mixed_success () =
 
 fun num_args_relativization_success () =
   let
-    fun check (label, input, expected) =
-      let val thm = SmtLib.NUM_ARGS_TO_INT_CONV input
+    fun check_conv conv (label, input, expected) =
+      let val thm = conv input
       in
         assert_no_hyps (label, thm);
         assert_concl_alpha (label, thm, boolSyntax.mk_eq (input, expected))
       end
+    val check = check_conv SmtLib.NUM_ARGS_TO_INT_CONV
   in
     check ("num argument relativization",
       ``!P :num -> bool. P 1 ==> P 2``,
@@ -433,7 +434,12 @@ fun num_args_relativization_success () =
       ``?f :'a -> int -> bool. !x. f x 3``);
     check ("bare occurrence num argument no-op",
       ``!s :num -> bool. 2 IN s``,
-      ``!s :num -> bool. 2 IN s``)
+      ``!s :num -> bool. 2 IN s``);
+    (* A lifted argument that is a num binder becomes its int binder,
+       not ABS of it. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num binder argument",
+      ``!(s :num -> bool) (b :num). s b``,
+      ``!s :int -> bool. !i :int. 0 <= i ==> s i``)
   end
 
 fun num_binder_relativization_non_num_noop_success () =

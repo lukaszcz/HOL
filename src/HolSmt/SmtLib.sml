@@ -7103,12 +7103,39 @@ local
 
   val num_transfer_rewrites = SmtLib_GraphNumericStock.rewrites
 
+  (* 0 <= i ==> body  or  0 <= i /\ body: rewrites &Num i to i in body by
+     NUM_TO_INT_GUARDED under the guard, before the total &Num i = ABS i
+     rewrite would turn it into an if-then-else. *)
+  fun guarded_num_cancel_conv tm =
+  let
+    val is_imp = boolSyntax.is_imp_only tm
+    val (guard, body) =
+      if is_imp then boolSyntax.dest_imp tm else boolSyntax.dest_conj tm
+    val (zero, i) = intSyntax.dest_leq guard
+    val _ = Term.is_var i andalso Term.term_eq zero intSyntax.zero_tm orelse
+      raise ERR "guarded_num_cancel_conv" "no guard"
+    val cancel = Thm.MP (Thm.SPEC i HolSmtTheory.NUM_TO_INT_GUARDED)
+      (Thm.ASSUME guard)
+    (* guard |- body = body' *)
+    val body_eq = Rewrite.PURE_REWRITE_CONV [cancel] body
+  in
+    if is_imp then
+      Drule.MATCH_MP boolTheory.IMP_CONG
+        (Thm.CONJ (Thm.REFL guard) (Thm.DISCH guard body_eq))
+    else
+      Drule.MATCH_MP boolTheory.AND_CONG
+        (Thm.CONJ (Thm.DISCH body (Thm.REFL guard))
+           (Thm.DISCH guard body_eq))
+  end
+
   (* Argument lifting goes first: it then sees each function variable as
      the goal binds it, so a bag's fresh codomain binder, whose occurrences
-     are all applied, is never lifted in place of a bare original. *)
+     are all applied, is never lifted in place of a bare original.  The
+     guarded cancellation turns a lifted argument g (&Num i) into g i. *)
   fun NUM_TO_INT_CONV tm =
     Conv.EVERY_CONV
       [NUM_ARGS_TO_INT_CONV, NUM_BINDERS_TO_INT_CONV,
+       Conv.DEPTH_CONV guarded_num_cancel_conv,
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites] tm
     handle Conv.UNCHANGED => Thm.REFL tm
 

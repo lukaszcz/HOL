@@ -85389,7 +85389,9 @@ val _ = run_postlude 440 "held-definition-hypothesis" (fn () =>
 
 (* A function variable's num arguments are lifted to int with its num
    binders, so arithmetic on them reaches the solver; left as num terms,
-   they had an opaque sort and both solvers answered sat. *)
+   they had an opaque sort and both solvers answered sat.  The last goal
+   needs a lifted binder argument as the plain int binder: as ABS of it,
+   cvc5 answered unknown. *)
 val _ = run_postlude 441 "num-function-arguments" (fn () =>
   let
     val goals = [
@@ -85398,7 +85400,9 @@ val _ = run_postlude 441 "num-function-arguments" (fn () =>
       ([], ``a < b /\ b < c /\ c < a + 3 ==>
              ((f:num -> num) (a + 1) = f b)``),
       ([], ``3 * a + 2 * b = 12 /\ b = a + 1 ==>
-             ((f:num -> num) a = f 2)``)]
+             ((f:num -> num) a = f 2)``),
+      ([``!x:num. x IN (s:num -> bool) ==> x IN (t:num -> bool)``,
+        ``(s:num -> bool) (b:num)``], ``(t:num -> bool) (b:num)``)]
     fun prove (name, configured, tac) (index, goal as (asms, concl)) =
       if not configured then () else
       let
