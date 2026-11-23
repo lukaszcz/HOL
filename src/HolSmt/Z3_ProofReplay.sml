@@ -3597,6 +3597,21 @@ local
        ("def_axiom_boolean_spine",
         kind ^ " exceeds its structural bound"))
 
+  fun def_axiom_conjunction counter target =
+    let
+      fun visit current leaves =
+        (bounded_def_axiom_work counter
+           max_def_axiom_boolean_spine_nodes "conjunction spine";
+         if boolSyntax.is_conj current then
+           let
+             val (left, right) = boolSyntax.dest_conj current
+             val (left_shape, leaves) = visit left leaves
+             val (right_shape, leaves) = visit right leaves
+           in (DefAxiomConjunctionNode (left_shape, right_shape), leaves) end
+         else (DefAxiomConjunctionLeaf, current :: leaves))
+      val (shape, leaves) = visit target []
+    in (shape, List.rev leaves) end
+
   fun def_axiom_decline function message =
     raise DEF_AXIOM_DECLINE (function, message)
 
@@ -3660,20 +3675,6 @@ local
            end
          else (current, path) :: result)
 
-      fun conjunction current =
-        (bounded_def_axiom_work conjunction_nodes
-           max_def_axiom_boolean_spine_nodes "conjunction spine";
-         if boolSyntax.is_conj current then
-           let
-             val (left, right) = boolSyntax.dest_conj current
-             val (left_shape, left_leaves) = conjunction left
-             val (right_shape, right_leaves) = conjunction right
-           in
-             (DefAxiomConjunctionNode (left_shape, right_shape),
-              left_leaves @ right_leaves)
-           end
-         else (DefAxiomConjunctionLeaf, [current]))
-
       fun lift_disjunction (step, theorem) =
         case step of
           DefAxiomDisjunctionLeft right => Thm.DISJ1 theorem right
@@ -3706,7 +3707,8 @@ local
 
       fun prove_candidate (candidate, candidate_path) =
         let
-          val (shape, leaves) = conjunction candidate
+          val (shape, leaves) =
+            def_axiom_conjunction conjunction_nodes candidate
           fun complement_for literal =
             case List.find
                 (fn (disjunct, _) => complement literal disjunct)
@@ -3886,20 +3888,6 @@ local
              (DefAxiomDisjunctionLeaf id, (id, current) :: entries)
            end)
 
-      fun conjunction current =
-        (bounded_def_axiom_work conjunction_nodes
-           max_def_axiom_boolean_spine_nodes "conjunction spine";
-         if boolSyntax.is_conj current then
-           let
-             val (left, right) = boolSyntax.dest_conj current
-             val (left_shape, left_leaves) = conjunction left
-             val (right_shape, right_leaves) = conjunction right
-           in
-             (DefAxiomConjunctionNode (left_shape, right_shape),
-              left_leaves @ right_leaves)
-           end
-         else (DefAxiomConjunctionLeaf, [current]))
-
       fun make_conjunction shape terms =
         case (shape, terms) of
           (DefAxiomConjunctionLeaf, term :: rest) => (term, rest)
@@ -3923,7 +3911,8 @@ local
 
       fun prove_candidate (candidate_id, candidate) =
         let
-          val (candidate_shape, leaves) = conjunction candidate
+          val (candidate_shape, leaves) =
+            def_axiom_conjunction conjunction_nodes candidate
           val replacements = Array.array (!next_id, NONE : term option)
           val bindings = ref ([] : def_axiom_schema_binding list)
           val substitution = ref

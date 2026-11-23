@@ -9955,6 +9955,40 @@ in
     "explicit override" forced_z3
 end
 
+fun smtlib_shared_regime_scan_success () =
+let
+  val selector = mk_var ("shared_regime_selector", ``:bool -> bool``)
+  val observer = mk_var ("shared_regime_observer", ``:(bool -> bool) -> bool``)
+  val (head,args) = strip_comb
+    ``option_CASE (box:(bool -> bool) option) (fallback:bool -> bool)
+      (\f. f)``
+  val (box,fallback) = case args of
+      [box,fallback,_] => (box,fallback)
+    | _ => die "FAIL: unexpected option case fixture"
+  val choices = list_mk_comb
+    (head,[box,fallback,mk_abs (selector,selector)])
+  val (_,_,clauses) = TypeBase.dest_case choices
+  val choice_body = #2 (List.last clauses)
+  val assumption = mk_comb (observer,selector)
+  val conclusion = mk_comb (observer,choices)
+  fun shared 0 = assumption
+    | shared depth =
+        let val child = shared (depth-1)
+        in boolSyntax.mk_conj
+          (child,boolSyntax.mk_disj (boolSyntax.T,child)) end
+  val select = SmtLib.regime_for_goal SmtLib.Standard27
+in
+  assert (Portable.pointer_eq (selector,choice_body),
+    "source fixture did not preserve the selector's identity");
+  assert (select ([],shared 40) =
+      (SmtLib.FirstOrder,"automatic:no-ho-trigger"),
+    "shared Boolean goal changed the first-order regime");
+  assert (select ([assumption],conclusion) =
+      (SmtLib.HigherOrder SmtLib.Standard27,
+       "automatic:non-constant/non-variable-rator"),
+    "free occurrence hid the same selector in a datatype branch")
+end
+
 fun smtlib_driver_regime_selection_success () =
 let
   val goal = ([], ``(H:(int -> int) -> bool) (\x. x + 1)``)
@@ -40684,6 +40718,8 @@ let
       z3_assertion_roundtrip_normalization_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
+    ("smtlib_shared_regime_scan_success",
+      smtlib_shared_regime_scan_success),
     ("smtlib_driver_regime_selection_success",
       smtlib_driver_regime_selection_success),
     ("smtlib_standard27_translation_success",

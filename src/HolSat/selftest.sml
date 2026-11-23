@@ -475,6 +475,7 @@ local
     (Timeout.apply (Time.fromSeconds 30) (fn () =>
         let
           val x = mk_var ("shared_x",bool)
+          val y = mk_var ("shared_y",bool)
           val depth = 50
           fun count circuit =
             let val (_,variables,_,clauses) =
@@ -483,7 +484,19 @@ local
           fun repeat extend = count (funpow depth extend x)
           val fibonacci = fst (funpow depth
             (fn (left,right) => (mk_eq (left,right),left))
-            (x,mk_var ("shared_y",bool)))
+            (x,y))
+          fun diamond width t =
+            mk_eq (t,funpow width (fn u => mk_eq (mk_neg y,u)) t)
+          fun wide width =
+            let val gates = (width+1) * depth
+            in repeat (diamond width) = (gates+4,4*gates+7) end
+          fun conditional width =
+            let
+              fun diamond t =
+                mk_cond (x,t,funpow width
+                  (fn u => mk_cond (mk_cond (y,x,y),x,u)) t)
+              val gates = (width+1) * depth
+            in repeat diamond = (gates+4,5*gates+10) end
         in repeat (fn t => mk_eq (t,t)) = (depth + 2,4 * (depth + 1) + 1)
            andalso
            repeat (fn t => mk_eq (t,mk_neg t)) =
@@ -491,6 +504,8 @@ local
            andalso
            repeat (fn t => mk_eq (mk_neg t,mk_disj (t,x))) =
              (3 * depth + 2,9 * depth + 5)
+           andalso wide 2 andalso wide 7 andalso wide 40
+           andalso conditional 7
            andalso count fibonacci = (depth + 3,4 * depth + 5)
         end))
   val _ = control "definitional CNF checks repeated conditionals"

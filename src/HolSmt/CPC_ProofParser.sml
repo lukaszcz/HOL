@@ -2766,12 +2766,6 @@ local
          as functions.  The dictionary entry fixes the arity it accepts,
          so try every split of the declared HOL type into arguments and
          result. *)
-      val (all_domains, final_range) =
-        boolSyntax.strip_fun (boolSyntax.list_mk_fun (domain, range))
-      val signatures = List.tabulate (List.length all_domains + 1,
-        fn k => (List.take (all_domains, k),
-          boolSyntax.list_mk_fun (List.drop (all_domains, k),
-            final_range)))
       val candidates =
         case Redblackmap.peek (tmdict, key) of
           SOME parsefns => parsefns
@@ -2784,10 +2778,20 @@ local
            result_type) = EQUAL
         handle Feedback.HOL_ERR _ => false
              | _ => false
-      fun compatible parsefn =
-        List.exists (compatible_signature parsefn) signatures
+      fun compatible declared_type parsefn =
+        let
+          fun splits reversed_args result_type =
+            compatible_signature parsefn (List.rev reversed_args,result_type)
+            orelse
+            (case Lib.total Type.dom_rng result_type of
+               NONE => false
+             | SOME (argument,next_result) =>
+                 splits (argument :: reversed_args) next_result)
+        in splits [] declared_type end
     in
-      List.exists compatible candidates
+      case candidates of [] => false
+      | _ => List.exists
+          (compatible (boolSyntax.list_mk_fun (domain, range))) candidates
     end
 
   (* A compatible redeclaration may apply the source symbol to more

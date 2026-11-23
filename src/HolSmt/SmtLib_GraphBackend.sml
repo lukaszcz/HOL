@@ -382,55 +382,55 @@ struct
 
   datatype 'a alias_view = AliasAtom
     | AliasApplication of 'a * 'a | AliasBinder of 'a * 'a
+  datatype 'a alias_targets =
+      Collecting of 'a list * int Redblackset.set
+    | Ordered of 'a list
   fun scoped_alias
-      {spend,key,free,resolve,visible,atom,view,apply,abstract,track_all}
+      {spend,key,free,resolve,visible,atom,view,apply,abstract}
       base root blocks =
     let
+      fun compare_id (a,b) = (spend 1;Int.compare (a,b))
       fun compare ((ls,ln),(rs,rn)) =
         (spend 1;case Int.compare (ls,rs) of
            EQUAL => Int.compare (ln,rn) | order => order)
       val memo = ref (Redblackmap.mkDict compare)
       fun same (a,b) = (spend 1;key a=key b)
       val (record,translate) =
-        if track_all then
-          (* Value replay accounts for each of these lookups and checks. *)
-          let
-            val translated = ref (Redblackmap.mkDict
-              (fn (a,b) => (spend 1;Int.compare (a,b))))
-            fun record node result =
-              let
-                val previous = Option.getOpt
-                  (Redblackmap.peek (!translated,key node),[])
-                val next = if List.exists (fn saved => same (saved,result))
-                    previous then previous else previous @ [result]
-              in translated := Redblackmap.insert
-                (!translated,key node,next) end
-            fun translate node = Option.getOpt
-              (Redblackmap.peek (!translated,key node),[node])
-          in (record,translate) end
-        else if null blocks then (fn _ => fn _ => (),fn node => [node])
+        if null blocks then (fn _ => fn _ => (),fn node => [node])
         else
           let
-            val empty = ([],Redblackset.empty Int.compare)
+            val empty = Collecting ([],Redblackset.empty compare_id)
+            (* Only source binder blocks ask for translated endpoints. *)
             val translated = ref (List.foldl (fn ((_,_,node),index) =>
                 Redblackmap.insert (index,key node,empty))
-              (Redblackmap.mkDict Int.compare) blocks)
+              (Redblackmap.mkDict compare_id) blocks)
             fun record node result =
               let val id = key node in
                 case Redblackmap.peek (!translated,id) of
-                  SOME (nodes,seen) =>
+                  SOME (Collecting (nodes,seen)) =>
                     let val result_id = key result in
                       if Redblackset.member (seen,result_id) then ()
                       else translated := Redblackmap.insert
-                        (!translated,id,
+                        (!translated,id,Collecting
                          (result::nodes,Redblackset.add (seen,result_id)))
                     end
-                | NONE => ()
+                | _ => ()
               end
+            (* The walk is complete before blocks are read. Reuse the
+               ordered endpoints when different blocks name the same node. *)
             fun translate node =
-              case Redblackmap.peek (!translated,key node) of
-                SOME (nodes as _::_,_) => List.rev nodes
-              | _ => [node]
+              let val id = key node in
+                case Redblackmap.peek (!translated,id) of
+                  SOME (Ordered nodes) => nodes
+                | SOME (Collecting (nodes as _::_,seen)) =>
+                    let val _ = spend (IntInf.fromInt
+                              (Redblackset.numItems seen))
+                        val ordered = List.rev nodes
+                        val _ = translated := Redblackmap.insert
+                          (!translated,id,Ordered ordered)
+                    in ordered end
+                | _ => [node]
+              end
           in (record,translate) end
       fun replacement bindings node =
         case List.find (fn (old,_,_) => same (old,node)) bindings of
@@ -489,7 +489,6 @@ struct
       identities (root,blocks) =
     capture_blocks (scoped_alias
       {spend=fn _ => (),key=G.node_id,free=G.free_variable_nodes graph,
-       track_all=false,
        resolve=fn node =>
          case List.find (fn (old,_) => old=node) identities of
            SOME (_,bound) => bound
@@ -1301,7 +1300,7 @@ struct
              | NONE => NONE)
       fun capture environment identities (root,blocks) =
         capture_blocks (scoped_alias
-        {spend=PV.spend context,key=PV.key context,track_all=true,
+        {spend=PV.spend context,key=PV.key context,
          free=fn value => SOME (PV.free_variables context value),
          resolve=fn value =>
            case List.find (fn (old,_) =>

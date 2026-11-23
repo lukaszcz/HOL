@@ -3412,19 +3412,21 @@ struct
             "foreign graph or recognition selection"
         val _ = validate_discovery_heads g scope expected
         val _ = validate_discovery_heads g scope held
-        val _ = validate_partial g scope plan
     in {original=original,view=partial_view g scope plan} end
+
+  fun partial_carrier_data g scope recipe annotation =
+    let val _ = validate_partial_recipe g scope recipe
+        val source = partial_source recipe
+        val _ = if closure_child_node g scope annotation = #node source
+            then () else raise ERR "carrier_alpha" "different rich path"
+    in {original = partial_original recipe,source = source,
+        annotation = annotation,visits = 1} end
 
   fun carrier_alpha_data (g : graph) scope receipt =
     case receipt of CarrierFull held => discovered_alpha_data g scope held
     | CarrierPartial {plan,recipe,annotation} =>
         let val _ = validate_partial g scope plan
-            val _ = validate_partial_recipe g scope recipe
-            val source = partial_source recipe
-            val _ = if closure_child_node g scope annotation = #node source
-                then () else raise ERR "carrier_alpha" "different rich path"
-        in {original = partial_original recipe,source = source,
-            annotation = annotation,visits = 1} end
+        in partial_carrier_data g scope recipe annotation end
     | CarrierIdentity {owner,scope = held,original,source,annotation,
                        epoch,symbols} =>
         let val _ = if owner = #owner g andalso scope = held andalso
@@ -6182,7 +6184,6 @@ struct
           raise ERR "selected_partial_data" "foreign graph or selection"
         val _=validate_discovery_heads g scope expected
         val _=validate_discovery_heads g scope held
-        val _=validate_partial_with_policy g scope plan
         val PolicyPartialDiscovery
           {plan=PartialDiscovery {original,...},profiles,...}=plan
     in {original=original,view=partial_view_with_policy g scope plan,
@@ -6302,10 +6303,12 @@ struct
         val _=usable g scope(#original incoming)
         val(left,right)=closure_application_children g scope
           (#annotation incoming)
+        (* The parent validated the shared plan. The child checks below
+           inspect each projected recipe and path without changing it. *)
         fun child plan annotation actual=
           let val result=CarrierPartial
                 {plan=plan,recipe=actual,annotation=annotation}
-              val _=validate_carrier_alpha g scope result
+              val _=partial_carrier_data g scope actual annotation
           in result end
         fun opened plan original annotation=
           let val source=cached_opened_view g scope original

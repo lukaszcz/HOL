@@ -6568,7 +6568,7 @@ local
     in fn (assumptions,goal) =>
       first_reason (scan []) (assumptions @ [goal]) end
 
-  val term_regime_operations : Term.term regime_operations =
+  fun term_regime_operations_with memoize : Term.term regime_operations =
     {syntax=term_translation_operations,is_abstraction=Term.is_abs,
      constant_name=fn current =>
        let val {Thy,Name,...} = Term.dest_thy_const current in (Thy,Name) end,
@@ -6578,8 +6578,67 @@ local
            (fn () => #2 (boolSyntax.strip_comb pattern),body)) clauses} end,
      is_syntax_error=fn Feedback.HOL_ERR _ => true | _ => false,
      is_optional_error=fn Portable.Interrupt => false | _ => true,
-     memoize=fn _ => fn _ => fn compute => compute ()}
-  val goal_ho_reason = goal_ho_reason_with term_regime_operations
+     memoize=memoize}
+
+  val term_regime_operations =
+    term_regime_operations_with (fn _ => fn _ => fn compute => compute ())
+
+  fun native_regime_operations () =
+    let
+      val recent = Array.array (4,NONE)
+      val next = ref 0
+      val branches = Array.array (127,NONE)
+      fun same_scope (left,right) =
+        Portable.pointer_eq (left,right) orelse
+        ListPair.allEq Portable.pointer_eq (left,right)
+      (* Retain likely expensive branches across intervening scans. Both
+         caches use exact term identity and the inherited selector scope. *)
+      fun memoize inherited current compute =
+        let
+          fun matches (term,scope,_) =
+            Portable.pointer_eq (term,current) andalso
+            same_scope (scope,inherited)
+          fun present NONE = false
+            | present (SOME entry) = matches entry
+          fun ordinary () =
+            case Array.find present recent of
+              SOME (SOME (_,_,reason)) => reason
+            | _ =>
+                let val reason = compute ()
+                    val offset = !next
+                    val _ = Array.update
+                      (recent,offset,SOME (current,inherited,reason))
+                    val _ = next := (offset + 1) mod Array.length recent
+                in reason end
+        in
+          if Term.is_comb current then
+            let val (operator,argument) = Term.dest_comb current
+            in
+              (* Preserve the tail call down ordinary unary spines. *)
+              if not (Term.is_comb operator) then compute ()
+              else if Term.is_comb (Term.rand operator) andalso
+                      Term.is_comb argument then
+                let
+                  val bucket = SmtReplayImport.pointer_bucket 2
+                    (Array.length branches) current
+                  fun save () =
+                    let val reason = compute ()
+                        val _ = Array.update (branches,bucket,
+                          SOME (current,inherited,reason))
+                    in reason end
+                in case Array.sub (branches,bucket) of
+                    SOME (entry as (_,_,reason)) =>
+                      if matches entry then reason else save ()
+                  | NONE => save ()
+                end
+              else ordinary ()
+            end
+          else ordinary ()
+        end
+    in term_regime_operations_with memoize end
+
+  fun goal_ho_reason goal =
+    goal_ho_reason_with (native_regime_operations ()) goal
 
   fun goal_requires_ho_aux goal = Option.isSome (goal_ho_reason goal)
 
@@ -6594,7 +6653,12 @@ local
         (case goal_ho_reason_with algebra goal of
            NONE => (FirstOrder, "automatic:no-ho-trigger")
          | SOME reason => (HigherOrder dialect, reason))
-  val select_regime = select_regime_with term_regime_operations
+  fun select_regime request goal =
+    case request of
+      RegimeOverride _ =>
+        select_regime_with term_regime_operations request goal
+    | AutomaticRegime _ =>
+        select_regime_with (native_regime_operations ()) request goal
 
   (* Returns the selected translation and SMT-LIB text for the input goal;
      the conclusion is negated before emission.  A term-dictionary integer is

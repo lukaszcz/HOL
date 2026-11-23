@@ -21,6 +21,65 @@ val presimp_conv =
    tm is the term passed to to_cnf. *)
 exception to_cnf_unsat of thm
 
+(* A bounded structural sample only selects a bucket. Reuse requires
+   physical identity, even when two terms have the same sample. *)
+val source_bucket_mask = 0w1023
+
+fun source_hint tm =
+    let
+      fun sample 0 _ = 0w7
+        | sample n t =
+            if is_comb t then
+              let val (f,x) = dest_comb t
+              in 0w31 * sample (n-1) f + 0w17 * sample (n-1) x end
+            else if is_var t then
+              CharVector.foldl
+                (fn (c,h) => 0w33 * h + Word.fromInt (Char.ord c))
+                0w13 (#1 (dest_var t))
+            else if is_const t then
+              Word.fromInt (KernelSig.epoch_of (#Name (dest_thy_constid t)))
+            else 0w5
+    in Word.toInt (Word.andb (sample 5 tm,source_bucket_mask)) end
+
+fun source_table () =
+    Array.array (Word.toInt source_bucket_mask + 1,(0,[],[]))
+
+fun source_lookup source (_,recent,older) =
+    let fun same (saved,_) = Portable.pointer_eq (source,saved)
+    in case List.find same recent of
+           NONE => List.find same older
+         | found => found
+    end
+
+(* Keep probing bounded when many distinct terms have identical samples.
+   Rotating two groups avoids walking or copying a list on insert. *)
+fun source_add_at table key entry (count,recent,older) =
+    Array.update (table,key,
+      if count = 64 then (1,[entry],recent)
+      else (count+1,entry :: recent,older))
+
+fun source_add table (entry as (source,_)) =
+    let val key = source_hint source
+    in source_add_at table key entry (Array.sub (table,key)) end
+
+(* Avoid caching applications with only one compound argument at ordinary
+   arities. For wider applications, stop before rescanning a shared operator
+   prefix for each of its uses. *)
+fun branching_application operator operand =
+    let
+      fun scan 0 _ _ = true
+        | scan remaining seen t =
+          if is_comb t then
+            let val (f,x) = dest_comb t in
+              if is_comb x then seen orelse scan (remaining-1) true f
+              else scan (remaining-1) seen f
+            end
+          else false
+    in scan 8 (is_comb operand) operator end
+
+fun branching_source t =
+    let val (f,x) = dest_comb t in branching_application f x end
+
 (* ------------------------------------------------------------------------- *)
 (* Split up a theorem according to conjuncts, in a general sense.            *)
 (* ------------------------------------------------------------------------- *)
@@ -33,27 +92,48 @@ fun is_clausal tm =
         SOME (left,right) => is_literal left andalso is_clausal right
       | NONE => is_literal tm
 
-(* The test is independent of binders. On a shared application graph,
-   revisit only the subterms that have fallen out of the bounded cache. *)
+(* The test is independent of binders. Build a visited set only for
+   subterms that exceed the initial traversal budget. *)
 fun contains_constant tm =
     let
-      fun scan seen budget [] = false
-        | scan seen budget (pending as t :: rest) =
+      fun scan seen initial budget [] = false
+        | scan seen initial budget (pending as t :: rest) =
             if same_const T t orelse same_const F t then true
             else if is_comb t then
-              if budget = 0 then memo_scan pending
+              if budget = 0 then
+                if initial then scan (recent_terms ()) false 4096 pending
+                else memo_scan pending
               else
                 let val (operator,operand) = dest_comb t
                     val next = if budget < 0 then budget else budget - 1
                 in
-                  if budget < 0 andalso is_comb operator andalso
-                     is_comb operand andalso seen t then scan seen budget rest
-                  else scan seen next (operator :: operand :: rest)
+                  if not initial andalso is_comb operator andalso
+                     is_comb operand andalso
+                     (budget >= 0 orelse
+                      branching_application operator operand) andalso
+                     seen t then
+                    scan seen initial next rest
+                  else scan seen initial next (operator :: operand :: rest)
                 end
-            else if is_abs t then scan seen budget (snd (dest_abs t) :: rest)
-            else scan seen budget rest
-      and memo_scan pending = scan (recent_terms ()) ~1 pending
-    in scan (fn _ => false) 128 [tm] end
+            else if is_abs t then
+              scan seen initial budget (snd (dest_abs t) :: rest)
+            else scan seen initial budget rest
+      and memo_scan pending =
+          let
+            val visited = source_table ()
+            fun seen t =
+                let
+                  val key = source_hint t
+                  val bucket = Array.sub (visited,key)
+                in
+                  case source_lookup t bucket of
+                      SOME _ => true
+                    | NONE =>
+                        (source_add_at visited key (t,()) bucket;
+                         false)
+                end
+          in scan seen false ~1 pending end
+    in scan (fn _ => false) true 128 [tm] end
 in
 val GCONJUNCTS  =
     let
@@ -120,42 +200,79 @@ fun propvar cnfv i = mk_var(cnfv^(int_to_string i),bool)
 (* Set up the basic definitional arrangement.                                *)
 (* ------------------------------------------------------------------------- *)
 
+local
+datatype source_probe = Unprobed | SkipMemo | Bucket of int
+in
 fun localdefs cnfv tm state =
     let val rollbacks = ref 0
         val empty = (T,T)
         val newest = ref empty
         val older = ref empty
+        val memo = ref NONE
 
         fun extend source body (n,defs,lfn) =
           let val next = n + 1
               val v = propvar cnfv next
           in (next,v,RBM.insert (defs,body,v),RBM.insert (lfn,v,source)) end
 
+        fun observe_source lfn source v =
+          if not (isSome (!memo)) andalso
+             Portable.pointer_eq (source,rbapply lfn v) then
+            let val table = source_table () in
+              source_add table (!older);
+              source_add table (!newest);
+              memo := SOME table
+            end
+          else ()
+
         fun intern source body (state as (n,defs,lfn)) =
           case RBM.peek (defs,body) of
-              SOME v => (n,v,defs,lfn)
+              SOME v =>
+                (if is_comb source then observe_source lfn source v else ();
+                 (n,v,defs,lfn))
             | NONE => extend source body state
 
-        (* A completed definition remains valid while the map only grows.
-           Keep the last two compounds so an intervening connective does
-           not hide a subcircuit shared by both branches. *)
+        (* The recent results handle local sharing. Build the full memo
+           only after revisiting the original source of a definition. *)
         fun walk tm (state as (n,defs,lfn)) =
           if is_comb tm then
-            let val (source,v) = !newest in
-              if Portable.pointer_eq (source,tm) then (n,v,defs,lfn)
+            let
+              val (s1,v1) = !newest
+              val (s2,v2) = !older
+            in
+              if Portable.pointer_eq (s1,tm) then (n,v1,defs,lfn)
+              else if Portable.pointer_eq (s2,tm) then (n,v2,defs,lfn)
               else
-                let val (source,v) = !older in
-                  if Portable.pointer_eq (source,tm) then (n,v,defs,lfn)
-                  else remember tm state
-                end
+                case !memo of
+                    NONE => remember tm state Unprobed
+                  | SOME table =>
+                      if branching_source tm then
+                        let val key = source_hint tm in
+                          case source_lookup tm (Array.sub (table,key)) of
+                              SOME (_,v) => (n,v,defs,lfn)
+                            | NONE => remember tm state (Bucket key)
+                        end
+                      else remember tm state SkipMemo
             end
           else define tm state
-        and remember tm state =
+        and remember tm state probe =
           let val before_define = !rollbacks
               val (result as (_,v,_,_)) = define tm state
           in
             if before_define = !rollbacks then
-              (older := !newest; newest := (tm,v))
+              (older := !newest; newest := (tm,v);
+               case !memo of
+                   NONE => ()
+                 | SOME table =>
+                     case probe of
+                         SkipMemo => ()
+                       | Bucket key =>
+                           (* Children may have updated this bucket. *)
+                           source_add_at table key (tm,v)
+                             (Array.sub (table,key))
+                       | Unprobed =>
+                           if branching_source tm then source_add table (tm,v)
+                           else ())
             else ();
             result
           end
@@ -180,14 +297,17 @@ fun localdefs cnfv tm state =
                   val tm' = mk_comb(mk_comb(mk_comb(opr,v1),v2),v3)
               in case RBM.peek (defs3,tm') of
                      SOME v =>
-                       (if Portable.pointer_eq (defs2,defs3) then ()
+                       (if Portable.pointer_eq (defs2,defs3) then
+                          observe_source lfn3 tm v
                         else (newest := empty; older := empty;
+                              memo := NONE;
                               rollbacks := !rollbacks + 1);
                         (n3,v,defs2,lfn3))
                    | NONE => extend tm tm' (n3,defs3,lfn3)
               end
           else intern tm tm (n,defs,lfn)
     in walk tm state end
+end
 
 (* ------------------------------------------------------------------------- *)
 (* Just translate to fresh variables, but otherwise leave unchanged.         *)
