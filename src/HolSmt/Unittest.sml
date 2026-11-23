@@ -21825,6 +21825,94 @@ in
   end
 end
 
+(* A datatype lemma about a compound case scrutinee holds for every value
+   of the scrutinee.  Splitting the smallest scrutinees first (the nine
+   [probe_g i a] inside [probe_h ...]) runs out of the split cap; the
+   generalized route splits [probe_h ...] once. *)
+fun datatype_generalized_scrutinee_success () =
+let
+  val a = ``generalized_a:num``
+  fun g i = Term.mk_var ("generalized_g" ^ Int.toString i,
+    ``:num -> num option``)
+  fun field i =
+    ``case ^(Term.mk_comb (g i, a)) of NONE => 0n | SOME z => z``
+  val fields = List.tabulate (9, field)
+  val h = Term.mk_var ("generalized_h",
+    List.foldr (fn (_, ty) => ``:num -> ^ty``) ``:num option`` fields)
+  val scrutinee = Term.list_mk_comb (h, fields)
+  val x = ``case ^scrutinee of NONE => NONE | SOME z => SOME (z + 1n)``
+  val target = ``(^x = SOME (THE ^x)) \/ ~IS_SOME ^x``
+  val () = Profile.reset_all ()
+  val theorem = SmtDatatypeProve.datatype_prove target
+  val label = "datatype generalized scrutinee"
+in
+  assert_no_hyps (label, theorem);
+  assert_concl_alpha (label, theorem, target);
+  check_oracle_tags label theorem;
+  assert (profile_call_count "datatype(generalized)_OK" = 1,
+    "the generalized scrutinee route did not prove the lemma")
+end
+
+(* Z3 reorders the children of a disjunction or conjunction, and writes
+   a conditional with a constant branch, an implication or a negated
+   connective as one.  Each child pair needs its own rung (a false word
+   atom, and two forms of one list atom), so skeleton congruence must
+   pair the children across the reordering. *)
+fun z3_rewrite_spine_congruence_success () =
+let
+  val skeleton = "rewrite(25a)(skeleton-congruence)_OK"
+  val word_rung = "rewrite(18)(BBLAST)_OK"
+  val false_word =
+    ``((spine_x:word4) && (spine_x - 1w)) + 1w =
+      spine_x - (spine_x && -spine_x)``
+  val seq_atom =
+    ``REVERSE [spine_a:int; spine_b] = [spine_b; spine_a]``
+  val seq_atom' =
+    ``[spine_b; spine_a] = REVERSE [spine_a:int; spine_b]``
+  val not_seq = boolSyntax.mk_neg seq_atom
+  val not_seq' = boolSyntax.mk_neg seq_atom'
+  fun replay target =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+    in
+      Z3_ProofReplay.replay_root_for_test
+        (Z3_Proof.update_proof_steps initial steps)
+    end
+  fun check name (left, right) =
+    let
+      val target = boolSyntax.mk_eq (left, right)
+      val () = Profile.reset_all ()
+      val theorem = replay target
+    in
+      assert_no_hyps (name, theorem);
+      assert_concl_alpha (name, theorem, target);
+      check_oracle_tags name theorem;
+      assert (profile_call_count skeleton = 1,
+        name ^ " was not proved by skeleton congruence");
+      assert (profile_call_count word_rung = 1,
+        name ^ " did not consume exactly one word residue")
+    end
+  val reordered = boolSyntax.mk_disj (not_seq', boolSyntax.F)
+in
+  check "spine disjunction reordered"
+    (boolSyntax.mk_disj (false_word, not_seq), reordered);
+  check "spine conditional"
+    (boolSyntax.mk_disj (false_word, not_seq),
+     boolSyntax.mk_cond (not_seq', boolSyntax.T, boolSyntax.F));
+  check "spine implication"
+    (boolSyntax.mk_imp (seq_atom, false_word),
+     boolSyntax.mk_disj (boolSyntax.F, not_seq'));
+  check "spine negated conjunction"
+    (boolSyntax.mk_neg
+       (boolSyntax.mk_conj (boolSyntax.mk_neg false_word, seq_atom)),
+     reordered);
+  check "spine negated disjunction"
+    (boolSyntax.mk_neg (boolSyntax.mk_disj (false_word, not_seq)),
+     boolSyntax.mk_conj (seq_atom', boolSyntax.T))
+end
+
 fun z3_lowered_boolean_sat_success () =
 let
   val first = ``lowered_sat_first:bool``
@@ -39972,6 +40060,8 @@ let
       datatype_constructor_case_reduction_success),
     ("datatype_exact_spine_case_eta_success",
       datatype_exact_spine_case_eta_success),
+    ("datatype_generalized_scrutinee_success",
+      datatype_generalized_scrutinee_success),
     ("datatype_destructor_ablation_boundaries_success",
       datatype_destructor_ablation_boundaries_success),
     ("smtlib_native_datatype_destructor_uf_success",
@@ -40416,6 +40506,8 @@ let
       z3_rewrite_skeleton_congruence_success),
     ("z3_rewrite_skeleton_congruence_boundaries",
       z3_rewrite_skeleton_congruence_boundaries),
+    ("z3_rewrite_spine_congruence_success",
+      z3_rewrite_spine_congruence_success),
     ("z3_lowered_boolean_sat_success",
       z3_lowered_boolean_sat_success),
     ("z3_rewrite_abs_rung_shaped_failure",
