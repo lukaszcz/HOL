@@ -450,6 +450,17 @@ local
         (fn conf => checked valid (GEN_SAT conf)) andalso
       measured (internal (set_term invalid base_config))
         (fn conf => model conf invalid))
+  val _ = control "ordinary CNF finds a free variable after a shared prefix"
+    (fn () =>
+      let
+        fun shared 0 (term,_) = term
+          | shared depth (left,right) =
+              shared (depth-1) (mk_eq (left,right),left)
+        val atom = mk_eq (shared 12 (T,F),mk_var ("p",bool))
+        val clauses = mk_conj (atom,mk_neg atom)
+      in
+        measured (internal (config clauses)) (fn conf => model conf clauses)
+      end)
   val _ = control "ordinary DPLL preserves definitional refutations and models"
     (fn () =>
       let

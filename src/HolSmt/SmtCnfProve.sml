@@ -18,6 +18,8 @@ fun refute source_clauses =
  let
   val variables=ref (Redblackmap.mkDict Term.compare)
   val reverse=ref (Redblackmap.mkDict Int.compare)
+  val known_atoms=Array.array (257,NONE)
+  val atom_bucket=SmtReplayImport.pointer_bucket 2 (Array.length known_atoms)
   fun primitive term =
    let val remaining=ref 64
        fun small ty=if !remaining=0 then false else
@@ -27,14 +29,29 @@ fun refute source_clauses =
          small (Term.type_of term) andalso
          List.all visit (SmtResource.term_children term)
    in SmtResource.term_nodes_up_to 65 term<=64 andalso visit term end
-  fun variable term = if not (primitive term) then decline "opaque-atom"
-   else case Redblackmap.peek (!variables,term) of
+  fun intern term = case Redblackmap.peek (!variables,term) of
     SOME id=>id
    | NONE=>let val id=Redblackmap.numItems (!variables)+1
                val _=if id<=512 then () else decline "variables"
                val _=variables:=Redblackmap.insert (!variables,term,id)
                val _=reverse:=Redblackmap.insert (!reverse,id,term)
            in id end
+  (* A Boolean variable meets the atom bounds by construction. For other
+     atoms, reuse admission only on a physical match in the hinted slot. *)
+  fun variable term =
+   if Term.is_var term andalso Type.compare (Term.type_of term,Type.bool)=EQUAL
+   then intern term
+   else
+    let val bucket=atom_bucket term
+        fun admit () =
+         if not (primitive term) then decline "opaque-atom"
+         else let val id=intern term
+         in Array.update (known_atoms,bucket,SOME (term,id)); id end
+    in case Array.sub (known_atoms,bucket) of
+         SOME (saved,id)=>if Portable.pointer_eq (saved,term) then id
+                          else admit ()
+       | NONE=>admit ()
+    end
   fun signed_id id term = if boolSyntax.is_neg term then
     ~(id (boolSyntax.dest_neg term)) else id term
   val literal_count=ref 0

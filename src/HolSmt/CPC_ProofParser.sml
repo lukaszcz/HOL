@@ -347,10 +347,42 @@ local
     handle Redblackmap.NotFound => NONE
 
   val cpc_fp_private_parse_avoid = ref ([] : Term.term list)
+  val cpc_fp_private_name_index = ref (HOLset.empty String.compare)
   val cpc_fp_private_allocated = ref Term.empty_varset
   val cpc_source_variables = ref (Redblackmap.mkDict Term.var_compare)
   val cpc_source_images = ref Term.empty_varset
   val cpc_reserved_source_scope = ref ([] : Term.term list)
+
+  fun reserve_cpc_name term =
+    cpc_fp_private_parse_avoid := term :: !cpc_fp_private_parse_avoid
+
+  fun cpc_occupied_names () =
+    case !cpc_fp_private_parse_avoid of
+      [] => !cpc_fp_private_name_index
+    | pending =>
+        (* Ordinary declarations only queue names. Index pending
+           reservations when a caller needs to choose a fresh name. *)
+        let
+          val names = List.foldl
+            (fn (term, names) => HOLset.add (names, #1 (Term.dest_var term)))
+            (!cpc_fp_private_name_index) pending
+          val _ = cpc_fp_private_name_index := names
+          val _ = cpc_fp_private_parse_avoid := []
+        in names end
+
+  fun cpc_variant variable =
+    let
+      val occupied = cpc_occupied_names ()
+      (* [variant] with no avoid list still checks the constant signature.
+         Reserve names at every type, just as the full avoid list did. *)
+      fun next variable =
+        let val candidate = Term.variant [] variable
+            val (name, ty) = Term.dest_var candidate
+        in if HOLset.member (occupied, name) then
+             next (Term.mk_var (name ^ "'", ty))
+           else candidate
+        end
+    in next variable end
 
   (* A proof-local @var/declaration/binder can be printed AFTER a private
      allocation with that allocation's exact HOL descriptor. Preserve the
@@ -365,17 +397,16 @@ local
         SOME variable => variable
       | NONE =>
           let
-            val occupied = !cpc_fp_private_parse_avoid
             val variable =
               if HOLset.member (!cpc_fp_private_allocated, original) orelse
                  HOLset.member (!cpc_source_images, original)
-              then Term.variant occupied original
+              then cpc_variant original
               else original
             val _ = cpc_source_variables := Redblackmap.insert
               (!cpc_source_variables, original, variable)
             val _ = cpc_source_images :=
               HOLset.add (!cpc_source_images, variable)
-            val _ = cpc_fp_private_parse_avoid := variable :: occupied
+            val _ = reserve_cpc_name variable
           in variable end
     end
 
@@ -504,12 +535,7 @@ local
         (fn () => cpc_fp_private_source_avoid := saved) action input
     end
 
-  (* Declaration callers supply variables, not compound source terms. *)
-  fun cpc_fp_private_avoid_terms terms =
-    cpc_fp_private_parse_avoid :=
-      terms @ !cpc_fp_private_parse_avoid
-
-  fun fresh_cpc_fp_private_marker ty _ =
+  fun fresh_cpc_fp_private_marker ty =
     let
       (* Original variables come from the permitted Source scope; parsed
          declarations and earlier private allocations are reserved directly.
@@ -518,13 +544,13 @@ local
       val sources = (!cpc_fp_private_source_avoid) ()
       (* Source scopes memoize this exact variable list. Retain it once,
          not once per marker (which would grow avoids quadratically). *)
-      val avoided =
+      val _ =
         if Portable.pointer_eq (sources,!cpc_reserved_source_scope) then
-          !cpc_fp_private_parse_avoid
-        else sources @ !cpc_fp_private_parse_avoid
+          ()
+        else List.app reserve_cpc_name sources
       val _ = cpc_reserved_source_scope := sources
-      val marker = Term.variant avoided (Term.genvar ty)
-      val _ = cpc_fp_private_parse_avoid := marker :: avoided
+      val marker = cpc_variant (Term.genvar ty)
+      val _ = reserve_cpc_name marker
       val _ = cpc_fp_private_allocated :=
         HOLset.add (!cpc_fp_private_allocated, marker)
     in marker end
@@ -536,7 +562,7 @@ local
         SmtLib_Theories.K_zero_zero tm), tmdict)
     in
       dicts_ref := (tydict, tmdict);
-      if Term.is_var tm then cpc_fp_private_avoid_terms [tm] else ()
+      if Term.is_var tm then reserve_cpc_name tm else ()
     end
 
   (* CPC prints rational literals as atoms (for example `-1` and `4/3`),
@@ -784,6 +810,9 @@ local
   val cpc_fp_private_bindings_ref =
     ref ([] : cpc_fp_private_binding list)
 
+  val cpc_fp_private_buckets =
+    ref (NONE : (int, cpc_fp_private_binding list) Redblackmap.dict option)
+
   val cpc_fp_private_unbound_markers_ref =
     ref ([] : (Term.term * string) list)
 
@@ -944,6 +973,7 @@ local
           SOME saved => Portable.pointer_eq (saved, key)
         | NONE => false
       val saved_bindings = !cpc_fp_private_bindings_ref
+      val saved_buckets = !cpc_fp_private_buckets
       val saved_unbound = !cpc_fp_private_unbound_markers_ref
       val saved_identities = !cpc_fp_private_identity_index
       val (bindings, unbound, identities) =
@@ -952,32 +982,46 @@ local
             (bindings, unbound, identities)
         | NONE => ([], [], empty_private_identity_index ())
       val _ = cpc_fp_private_bindings_ref := bindings
+      val _ = cpc_fp_private_buckets := NONE
       val _ = cpc_fp_private_unbound_markers_ref := unbound
       val _ = cpc_fp_private_identity_index := identities
       fun restore () =
         (cpc_fp_private_bindings_ref := saved_bindings;
+         cpc_fp_private_buckets := saved_buckets;
          cpc_fp_private_unbound_markers_ref := saved_unbound;
          cpc_fp_private_identity_index := saved_identities)
     in Portable.finally restore action input end
 
   fun cpc_fp_private_abbreviation token sort_marker source =
     let
+      val ty = Term.type_of sort_marker
+      (* The bounded hash ignores binder bodies. Alpha conversion still
+         decides whether two sources in a bucket denote the same marker. *)
+      val bucket = Option.map (fn table => (table, term_intern_hash source))
+        (!cpc_fp_private_buckets)
+      val candidates = case bucket of
+          SOME (table, index) =>
+            Option.getOpt (Redblackmap.peek (table, index), [])
+        | NONE => !cpc_fp_private_bindings_ref
       fun same ({marker, kind, source = saved} : cpc_fp_private_binding) =
         kind = token andalso
-        Type.compare (Term.type_of marker, Term.type_of sort_marker) = EQUAL
+        Type.compare (Term.type_of marker, ty) = EQUAL
         andalso (Portable.pointer_eq (saved, source) orelse
                  Term.aconv saved source)
     in
-      case List.find same (!cpc_fp_private_bindings_ref) of
+      case List.find same candidates of
         SOME {marker, ...} => marker
       | NONE =>
           let
-            val marker = fresh_cpc_fp_private_marker
-              (Term.type_of sort_marker) [source]
+            val marker = fresh_cpc_fp_private_marker ty
             val binding = {marker = marker, kind = token, source = source}
           in
             cpc_fp_private_bindings_ref :=
               binding :: !cpc_fp_private_bindings_ref;
+            Option.app (fn (table, index) =>
+              cpc_fp_private_buckets := SOME
+                (Redblackmap.insert (table, index, binding :: candidates)))
+              bucket;
             register_cpc_fp_private_identity marker;
             marker
           end
@@ -990,8 +1034,7 @@ local
       case args of
         [sort_marker] =>
           let
-            val marker = fresh_cpc_fp_private_marker
-              (Term.type_of sort_marker) []
+            val marker = fresh_cpc_fp_private_marker (Term.type_of sort_marker)
           in
             cpc_fp_private_unbound_markers_ref :=
               (marker, token) :: !cpc_fp_private_unbound_markers_ref;
@@ -4165,6 +4208,8 @@ local
     (cpc_list_definitions := Redblackmap.mkDict String.compare;
      cpc_list_names := [];
      cpc_fp_private_parse_avoid := [];
+     cpc_fp_private_name_index := HOLset.empty String.compare;
+     cpc_fp_private_buckets := NONE;
      cpc_fp_private_allocated := Term.empty_varset;
      cpc_source_variables := Redblackmap.mkDict Term.var_compare;
      cpc_source_images := Term.empty_varset;
@@ -4181,6 +4226,7 @@ local
          diagnostics -- then works with a tested version. *)
       val version = resolve_version version
       val _ = cpc_fp_private_bindings_ref := []
+      val _ = cpc_fp_private_buckets := SOME (Redblackmap.mkDict Int.compare)
       val _ = cpc_fp_private_unbound_markers_ref := []
       val _ = cpc_fp_private_identity_index := empty_private_identity_index ()
       val _ = reset_term_intern ()
@@ -4255,11 +4301,13 @@ in
     let
       val forall_blocks = !cpc_forall_blocks
       val bindings = !cpc_fp_private_bindings_ref
+      val buckets = !cpc_fp_private_buckets
       val unbound = !cpc_fp_private_unbound_markers_ref
       val identities = !cpc_fp_private_identity_index
       fun restore () =
         (cpc_forall_blocks := forall_blocks;
          cpc_fp_private_bindings_ref := bindings;
+         cpc_fp_private_buckets := buckets;
          cpc_fp_private_unbound_markers_ref := unbound;
          cpc_fp_private_identity_index := identities)
       fun run _ () = (cpc_shell_parents := []; action input)

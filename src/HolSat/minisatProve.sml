@@ -132,17 +132,46 @@ exception initexp of term * thm;
 
 (* Test the common binder-free case without building a variable set.  A
    binder may hide bound occurrences, so use the kernel's free-variable
-   traversal for that subtree. *)
+   traversal for that subtree. After the initial budget, cache branching
+   applications so a shared subtree can be skipped on a later visit. *)
 fun has_free_variable tm =
-    let fun scan [] = false
-          | scan (t :: rest) =
+    let fun scan seen budget [] = false
+          | scan seen budget (pending as t :: rest) =
               if is_var t then true
-              else if is_comb t then scan (rator t :: rand t :: rest)
+              else if is_comb t then
+                if budget = 0 then memo_scan pending
+                else
+                  let
+                    val (opr,arg) = dest_comb t
+                    val applied = is_comb opr
+                    val next = if budget < 0 then budget else budget - 1
+                  in
+                    if budget < 0 andalso applied andalso is_comb arg andalso
+                       seen t then scan seen budget rest
+                    else if applied andalso Portable.pointer_eq (rand opr,arg)
+                    then
+                      scan seen next (rator opr :: arg :: rest)
+                    else scan seen next (opr :: arg :: rest)
+                  end
               else if is_abs t then
                 not (HOLset.isEmpty (FVL [t] Term.empty_varset))
-                orelse scan rest
-              else scan rest
-    in scan [tm] end
+                orelse scan seen budget rest
+              else scan seen budget rest
+        and memo_scan pending =
+            let
+              val capacity = 32
+              val recent = Array.array (capacity,T)
+              val cursor = ref 0
+              fun seen t =
+                if Array.exists (fn saved => Portable.pointer_eq (t,saved))
+                                recent then true
+                (* Depth-first scanning finishes this application's
+                   children before processing a later occurrence. *)
+                else (Array.update (recent,!cursor,t);
+                      cursor := (!cursor + 1) mod capacity;
+                      false)
+            in scan seen ~1 pending end
+    in scan (fn _ => false) 128 [tm] end
 
 fun initialise check_sat_model infile is_cnf tm =
     let

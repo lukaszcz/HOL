@@ -3394,7 +3394,29 @@ local
             "cpc-true-elim-normalization"
             (SmtResource.dag_nodes_up_to
               (SmtResource.max_skeleton_replay_dag_nodes + 1) term)
+          val memo = SmtPointerTable.new
+            {hint = SmtReplayImport.pointer_bucket 4, initial = 7,
+             ceiling = 4093}
+          (* A shared disjunct can also fail at several occurrences. Cache
+             only the checked result or the ordinary HOL refusal. *)
           fun prove term =
+            case SmtPointerTable.lookup memo term of
+              SOME result => Exn.release result
+            | NONE =>
+                let
+                  (* Keep the exact source shell for the caller's kernel
+                     checks. Its proved children have already been aligned. *)
+                  val result =
+                    let val theorem = derive term
+                        val actual = Thm.concl theorem
+                    in Exn.Res
+                      (if Portable.pointer_eq (actual,term) then theorem
+                       else Thm.EQ_MP (Thm.ALPHA actual term) theorem)
+                    end
+                    handle error as Feedback.HOL_ERR _ => Exn.Exn error
+                  val _ = SmtPointerTable.insert memo term result
+                in Exn.release result end
+          and derive term =
             if Term.aconv term boolSyntax.T then boolTheory.TRUTH
             else
               case Lib.total boolSyntax.dest_conj term of

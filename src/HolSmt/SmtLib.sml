@@ -8619,26 +8619,32 @@ in
         {known_const_matches=known_const_matches,type_of=type_of} (head,left)
     | (_,[]) => ()
 
+  fun check_reglan_application application =
+    outbound_check_reglan_application
+      {type_of=Term.type_of,
+       known_const_matches=fn expected => fn actual =>
+         same_const actual expected} application
+
   fun reject_reglan_hol_equalities (assumptions, conclusion) =
     let
-      fun children term pending =
-        if Term.is_comb term then
-          let val (operator, operand) = Term.dest_comb term
-              val _ = outbound_check_reglan_application
-                {type_of=Term.type_of,
-                 known_const_matches=fn expected => fn actual =>
-                   same_const actual expected} (operator,operand)
-          in operator :: operand :: pending end
-        else if Term.is_abs term then
-          Lib.snd (Term.dest_abs term) :: pending
-        else pending
-      fun visit _ [] = ()
-        | visit seen (term :: pending) =
-            if HOLset.member (seen, term) then visit seen pending
-            else
-              visit (HOLset.add (seen, term)) (children term pending)
+      (* Check each shared branch once without comparing entire subterms.
+         The bucket hint only selects candidates for pointer equality. *)
+      val seen = SmtPointerTable.new
+        {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093}
+      fun visit [] = ()
+        | visit (term :: pending) =
+            if Term.is_comb term then
+              if SmtPointerTable.mark seen term then
+                let val (operator,operand) = Term.dest_comb term
+                    val _ = check_reglan_application (operator,operand)
+                in visit (operator :: operand :: pending) end
+              else visit pending
+            else if Term.is_abs term andalso
+                    SmtPointerTable.mark seen term then
+              visit (Lib.snd (Term.dest_abs term) :: pending)
+            else visit pending
     in
-      visit (HOLset.empty Term.compare) (conclusion :: assumptions)
+      visit (conclusion :: assumptions)
     end
 
   local
@@ -8650,8 +8656,14 @@ in
         val inventory = Susp.delay (fn () => query_subterms (concl :: asms))
         val sequence_emission = Susp.delay
           (fn () => native_sequence_subterms (Susp.force inventory))
-        val _ = preflight inventory sequence_emission
-        val _ = reject_reglan_hol_equalities goal
+        val _ =
+          case preflight inventory sequence_emission of
+            NONE => reject_reglan_hol_equalities goal
+          | SOME subterms =>
+              List.app (fn term =>
+                if Term.is_comb term then
+                  check_reglan_application (Term.dest_comb term)
+                else ()) subterms
         val tail = outbound_query_tail string_output_operations get_proof
       in
         Lib.apsnd (fn xs => xs @ tail)
@@ -8705,7 +8717,7 @@ in
   in
 
     fun goal_to_SmtLib_translation_gen opts goal =
-      translate_with_preflight (fn _ => fn _ => ()) opts goal
+      translate_with_preflight (fn _ => fn _ => NONE) opts goal
 
     fun goal_to_SmtLib_gen opts goal =
       Lib.apfst translation_dicts (goal_to_SmtLib_translation_gen opts goal)
@@ -8718,19 +8730,22 @@ in
       let
         fun preflight inventory sequence_emission =
           case target of
-            NONE => ()
+            NONE => NONE
           | SOME solver_target =>
               let
                 val sequence_emission = Susp.force sequence_emission
+                val subterms = Susp.force inventory
                 val constants = Susp.delay (fn () =>
-                  List.filter Term.is_const (Susp.force inventory))
+                  List.filter Term.is_const subterms)
                 fun occurs head = List.exists (fn constant =>
                   Term.same_const constant head andalso
                   counts_for_operator_availability constant)
                   (Susp.force constants)
               in
                 outbound_check_operator_availability
-                  {sequence_emission = sequence_emission} solver_target occurs
+                  {sequence_emission = sequence_emission} solver_target occurs;
+                (* Availability has already forced the whole inventory. *)
+                SOME subterms
               end
       in
         translate_with_preflight preflight

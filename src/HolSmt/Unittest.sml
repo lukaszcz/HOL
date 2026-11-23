@@ -19209,6 +19209,55 @@ in
   rejected (boolSyntax.mk_imp (left, collision))
 end
 
+fun cpc_true_elim_shared_normal_form () =
+let
+  val depth = 16
+  val definitions = List.tabulate (depth, fn i =>
+    let val previous = "@d" ^ Int.toString i
+    in "(define @d" ^ Int.toString (i + 1) ^ " () (and " ^
+      previous ^ " " ^ previous ^ ")) "
+    end)
+  val proof = parse_cpc_proof_string
+    ("((define @d0 () (= 0 0)) " ^ String.concat definitions ^
+     "(assume @eq (= false @d" ^ Int.toString depth ^ ")) " ^
+     "(step @out false :rule true_elim :premises (@eq)))")
+  fun replay () =
+    let val before_count = #CONJ (Count.thm_count ())
+        val theorem = CPC_ProofReplay.replay_root_for_test proof
+        val inferences = #CONJ (Count.thm_count ()) - before_count
+    in
+      assert (Thm.concl theorem ~~ boolSyntax.F,
+        "CPC true_elim changed the shared normalization result");
+      assert (inferences <= 2 * depth,
+        "CPC true_elim revisited a shared conjunction");
+      check_oracle_tags "CPC true_elim shared Boolean normal form" theorem
+    end
+  val _ = Count.counting_thms true
+in Portable.finally (fn () => Count.counting_thms false) replay () end
+
+fun cpc_fp_private_alpha_index () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @a () (@fp.INF (_ BitVec 1) (lambda ((x Bool)) x))) \
+    \(define @b () (@fp.INF (_ BitVec 1) (lambda ((y Bool)) y))) \
+    \(define @c () (@fp.INF (_ BitVec 1) (lambda ((z Bool)) (not z)))) \
+    \(assume @same (= @a @b)) (assume @distinct (= @a @c)))"
+  fun equal_markers term =
+    let val (left, right) = boolSyntax.dest_eq term
+    in Term.aconv left right end
+  val _ = case CPC_Proof.proof_commands proof of
+      [CPC_Proof.ASSUME (_, {term = same,...}),
+       CPC_Proof.ASSUME (_, {term = distinct,...})] =>
+        assert (equal_markers same andalso not (equal_markers distinct),
+          "CPC private marker lookup changed source alpha identity")
+    | _ => raise Fail "unexpected private source index fixture commands"
+  val _ = ignore (parse_cpc_proof_string "((assume @plain true))")
+in
+  CPC_ProofParser.with_cpc_fp_private_proof proof (fn () =>
+    assert (List.length (CPC_ProofParser.cpc_fp_private_bindings ()) = 2,
+      "CPC private marker index changed retained proof metadata")) ()
+end
+
 (* Retained proof metadata, not the most recent parse or a name prefix,
    selects the real native TRUST deferral used by the graph force tests. *)
 fun cpc_fp_private_proof_scope_success () =
@@ -40763,6 +40812,8 @@ let
     ("cpc_boolean_circuit_xor_success", cpc_boolean_circuit_xor_success),
     ("cpc_boolean_circuit_shared_projection_success",
       cpc_boolean_circuit_shared_projection_success),
+    ("cpc_true_elim_shared_normal_form", cpc_true_elim_shared_normal_form),
+    ("cpc_fp_private_alpha_index", cpc_fp_private_alpha_index),
     ("cpc_fp_private_proof_scope_success",
       cpc_fp_private_proof_scope_success),
     ("cpc_fp_private_witness_search_success",
