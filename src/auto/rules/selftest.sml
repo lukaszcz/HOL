@@ -3645,6 +3645,32 @@ val _ =
 
 val _ =
   test
+    ("fact insertion keeps the first match across reordered type bindings",
+     fn () =>
+       let
+         val x = mk_var ("x", Type.alpha)
+         val y = mk_var ("y", Type.beta)
+         val fact =
+           GENL [x, y]
+             (CONJ (REFL (pairSyntax.mk_pair (x, y)))
+                   (REFL (pairSyntax.mk_pair (y, x))))
+         val goal = ([``(0, T) = (0, T)``, ``(T, 0) = (T, 0)``], T)
+         fun inserted (build : thm list -> tactic) =
+           case #1 (build [fact] goal (Context.snapshot ())) of
+               [(assumptions, _)] => List.take
+                 (assumptions, length assumptions - length (#1 goal))
+             | _ => raise Fail "expected one goal after fact insertion"
+         val ordinary = inserted INSERT_FACTS_TAC
+         val measured =
+           inserted (INSERT_FACTS_TAC_BUDGETED (searchBudget.unbounded ()))
+       in
+         length ordinary = 2 andalso
+         ListPair.allEq (fn (left, right) => aconv left right)
+           (ordinary, measured)
+       end)
+
+val _ =
+  test
     ("rule origins preserve declaration order across claset edits",
      fn () =>
        let

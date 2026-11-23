@@ -181,7 +181,12 @@ fun mark_clashes visible
       List.exists (fn meta => HOLset.member (visible_types, meta)) types
     end
 
-type frame = {source : node option, states : node seq.seq}
+datatype ancestors =
+    AncestorList of int * node list
+  | AncestorSet of node Binaryset.set
+
+type frame =
+  {source : node option, states : node seq.seq, ancestors : ancestors}
 
 (* Compare as paths, treating the active subtree as one interval. *)
 fun compare_active_path [] _ = EQUAL
@@ -234,21 +239,36 @@ fun discard_subtree child frames =
    function of the node, so the subtree below the repetition is the subtree
    below the ancestor, which the same search reaches there by a shorter path.
    Without this an unsafe wrapper and the rule it undoes alternate for ever.
-   The frame stack is the ancestor chain: a frame's [source] is the node whose
-   expansion it holds. *)
-fun repeats_ancestor node frames =
-  List.exists
-    (fn frame : frame =>
-      case #source frame of
-          NONE => false
-        | SOME source => clasetGoal.equal (node, source))
-    frames
+   Each frame keeps its source and the ancestors still on the stack beneath
+   it. Pruning restores the set from the nearest surviving frame. *)
+fun compare_ancestor (left, right) =
+  case Int.compare (clasetGoal.goal_count left, clasetGoal.goal_count right) of
+      EQUAL => clasetGoal.compare (left, right)
+    | order => order
+
+fun has_ancestor current (AncestorList (_, nodes)) = member_node current nodes
+  | has_ancestor current (AncestorSet nodes) =
+      Binaryset.member (nodes, current)
+
+(* Keep short paths on the cheap scan used for shallow searches. *)
+fun add_ancestor node (AncestorList (count, nodes)) =
+      if count < 8 then AncestorList (count + 1, node :: nodes)
+      else
+        AncestorSet
+          (List.foldl (fn (old, set) => Binaryset.add (set, old))
+             (Binaryset.empty compare_ancestor) (node :: nodes))
+  | add_ancestor node (AncestorSet nodes) =
+      AncestorSet (Binaryset.add (nodes, node))
 
 fun DEPTH_SOLVE level expand initial =
   let
-    fun frame_for source =
+    val no_ancestors = AncestorList (0, [])
+    fun ancestors_of [] = no_ancestors
+      | ancestors_of ((frame : frame) :: _) = #ancestors frame
+    fun frame_for source frames =
       {source = SOME source,
-       states = seq.map (note_transition source) (expand source)}
+       states = seq.map (note_transition source) (expand source),
+       ancestors = add_ancestor source (ancestors_of frames)}
 
     fun depth _ [] = seq.empty
       | depth used ((frame : frame) :: rest) =
@@ -259,7 +279,8 @@ fun DEPTH_SOLVE level expand initial =
                 | SOME (current, siblings) =>
                     let
                       val rest0 =
-                        {source = #source frame, states = siblings} :: rest
+                        {source = #source frame, states = siblings,
+                         ancestors = #ancestors frame} :: rest
                       val completed =
                         case #source frame of
                             NONE => false
@@ -290,7 +311,7 @@ fun DEPTH_SOLVE level expand initial =
                       then
                         seq.cons current
                           (depth (current :: used) rest1)
-                      else if repeats_ancestor current rest0 then
+                      else if has_ancestor current (#ancestors frame) then
                         (traceUtil.trace level 2
                            (fn () =>
                              "depth-solve dropped a state repeating an \
@@ -299,14 +320,15 @@ fun DEPTH_SOLVE level expand initial =
                       else
                         (expansion_trace level "depth-solve"
                            (length used + 1) current;
-                         depth used (frame_for current :: rest1))
+                         depth used (frame_for current rest1 :: rest1))
                     end)
   in
     seq.delay
       (fn () =>
         (last_pruning_count := 0;
          depth []
-           [{source = NONE, states = seq.result initial}]))
+           [{source = NONE, states = seq.result initial,
+             ancestors = no_ancestors}]))
   end
 
 val split_satisfied = Lib.partition

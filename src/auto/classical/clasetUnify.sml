@@ -90,8 +90,8 @@ fun pattern_binding store config (head, args) target =
    rewriting the terms beforehand: what a metavariable binds to has to stay
    a subterm the other side actually contains, so that a residual goal
    comes back written the way it was posed. *)
-fun uncross tm =
-  case strip_comb tm of
+fun uncross application =
+  case application of
       (head, [item, set]) =>
         (case total dest_thy_const head of
              SOME {Thy = "bool", Name = "IN", ...} =>
@@ -112,105 +112,121 @@ fun unify store config pair =
         clasetMeta.bind (right, left) current
       else NONE
 
-    fun recurse current (raw_left, raw_right) =
-      case unify_types current config
-        (type_of raw_left, type_of raw_right)
-      of
-        NONE => NONE
-      | SOME typed_store =>
-          let
-            val left = clasetMeta.norm typed_store raw_left
-            val right = clasetMeta.norm typed_store raw_right
-            val (left_head, left_args) = strip_comb left
-            val (right_head, right_args) = strip_comb right
-            val applied_meta =
-              (clasetMeta.is_meta left_head andalso
-               not (null left_args)) orelse
-              (clasetMeta.is_meta right_head andalso
-               not (null right_args))
+    fun recurse already_normal current (raw_left, raw_right) =
+      if Portable.pointer_eq (raw_left, raw_right) then SOME current
+      else
+        case unify_types current config (type_of raw_left, type_of raw_right) of
+            NONE => NONE
+          | SOME typed_store =>
+              let
+                val (left, right) =
+                  if already_normal andalso
+                     Portable.pointer_eq (current, typed_store)
+                  then (raw_left, raw_right)
+                  else
+                    (clasetMeta.norm typed_store raw_left,
+                     clasetMeta.norm typed_store raw_right)
+              in
+                if aconv left right then SOME typed_store
+                else compare_terms typed_store (left, right)
+              end
 
-            fun approximate () =
-              if length left_args <> length right_args then NONE
-              else if flexible_term config left_head orelse
-                      flexible_term config right_head
-              then
-                (case recurse typed_store (left_head, right_head) of
-                   NONE => NONE
-                 | SOME head_store =>
-                     fold_pairs recurse head_store
-                       (left_args, right_args))
-              else if aconv left_head right_head then
-                fold_pairs recurse typed_store (left_args, right_args)
-              else NONE
+    and compare_terms typed_store (left, right) =
+      let
+        val left_application as (left_head, left_args) = strip_comb left
+        val right_application as (right_head, right_args) = strip_comb right
+        (* Components are normal under the store that produced them.
+           A previous component can bind a metavariable or a type. *)
+        fun descend current =
+          recurse (Portable.pointer_eq (current, typed_store)) current
+        val applied_meta =
+          (clasetMeta.is_meta left_head andalso
+           not (null left_args)) orelse
+          (clasetMeta.is_meta right_head andalso
+           not (null right_args))
 
-            fun structural () =
-              case (dest_term left, dest_term right) of
-                (VAR _, _) => bind_term typed_store (left, right)
-              | (_, VAR _) => bind_term typed_store (right, left)
-              | (CONST _, CONST _) => NONE
-              | (COMB (left_fun, left_arg),
-                 COMB (right_fun, right_arg)) =>
-                  (case recurse typed_store (left_fun, right_fun) of
-                     NONE => NONE
-                   | SOME function_store =>
-                       recurse function_store (left_arg, right_arg))
-              | (LAMB (left_var, left_body),
-                 LAMB (right_var, right_body)) =>
-                  let
-                    val fresh = genvar (type_of left_var)
-                    val left' =
-                      subst [left_var |-> fresh] left_body
-                    val right' =
-                      subst [right_var |-> fresh] right_body
-                  in
-                    case clasetMeta.register_eigen fresh typed_store of
-                      NONE => NONE
-                    | SOME scoped_store =>
-                        recurse scoped_store (left', right')
-                  end
-              | _ => NONE
-            fun after_patterns () =
-              if applied_meta then approximate () else structural ()
+        fun approximate () =
+          if length left_args <> length right_args then NONE
+          else if flexible_term config left_head orelse
+                  flexible_term config right_head
+          then
+            (case descend typed_store (left_head, right_head) of
+               NONE => NONE
+             | SOME head_store =>
+                 fold_pairs descend head_store
+                   (left_args, right_args))
+          else if aconv left_head right_head then
+            fold_pairs descend typed_store (left_args, right_args)
+          else NONE
 
-            fun try_right_pattern () =
-              case pattern_binding typed_store config
-                (right_head, right_args) left
-              of
-                NoPattern => after_patterns ()
-              | Pattern residue =>
-                  (case clasetMeta.bind
-                    (right_head, residue) typed_store
-                   of
-                     NONE => after_patterns ()
-                   | success => success)
+        fun structural () =
+          case (dest_term left, dest_term right) of
+            (VAR _, _) => bind_term typed_store (left, right)
+          | (_, VAR _) => bind_term typed_store (right, left)
+          | (CONST _, CONST _) => NONE
+          | (COMB (left_fun, left_arg),
+             COMB (right_fun, right_arg)) =>
+              (case descend typed_store (left_fun, right_fun) of
+                 NONE => NONE
+               | SOME function_store =>
+                   descend function_store (left_arg, right_arg))
+          | (LAMB (left_var, left_body),
+             LAMB (right_var, right_body)) =>
+              let
+                val fresh = genvar (type_of left_var)
+                val left' =
+                  subst [left_var |-> fresh] left_body
+                val right' =
+                  subst [right_var |-> fresh] right_body
+              in
+                case clasetMeta.register_eigen fresh typed_store of
+                  NONE => NONE
+                | SOME scoped_store =>
+                    recurse false scoped_store (left', right')
+              end
+          | _ => NONE
+        fun after_patterns () =
+          if applied_meta then approximate () else structural ()
 
-            fun try_patterns () =
-              case pattern_binding typed_store config
-                (left_head, left_args) right
-              of
-                NoPattern => try_right_pattern ()
-              | Pattern residue =>
-                  (case clasetMeta.bind
-                    (left_head, residue) typed_store
-                   of
-                     NONE => try_right_pattern ()
-                   | success => success)
-            (* Only the membership side moves, so the other keeps the shape
-               its author gave it. *)
-            fun crossed () =
-              case (uncross left, uncross right) of
-                  (SOME left', NONE) => recurse typed_store (left', right)
-                | (NONE, SOME right') => recurse typed_store (left, right')
-                | _ => NONE
-          in
-            if aconv left right then SOME typed_store
-            else
-              case try_patterns () of
-                  NONE => crossed ()
-                | success => success
-          end
+        fun try_right_pattern () =
+          case pattern_binding typed_store config
+            (right_head, right_args) left
+          of
+            NoPattern => after_patterns ()
+          | Pattern residue =>
+              (case clasetMeta.bind
+                (right_head, residue) typed_store
+               of
+                 NONE => after_patterns ()
+               | success => success)
+
+        fun try_patterns () =
+          case pattern_binding typed_store config
+            (left_head, left_args) right
+          of
+            NoPattern => try_right_pattern ()
+          | Pattern residue =>
+              (case clasetMeta.bind
+                (left_head, residue) typed_store
+               of
+                 NONE => try_right_pattern ()
+               | success => success)
+        (* Only the membership side moves, so the other keeps the shape
+           its author gave it. *)
+        fun crossed () =
+          case (uncross left_application, uncross right_application) of
+              (SOME left', NONE) =>
+                recurse false typed_store (left', right)
+            | (NONE, SOME right') =>
+                recurse false typed_store (left, right')
+            | _ => NONE
+      in
+        case try_patterns () of
+            NONE => crossed ()
+          | success => success
+      end
   in
-    recurse store pair
+    recurse false store pair
   end
 
 end

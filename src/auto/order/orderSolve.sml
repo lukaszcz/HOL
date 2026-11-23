@@ -355,9 +355,47 @@ fun stated work equalities (x, y) =
        else NONE)
     equalities
 
+fun equality_lookup (work : work) equalities =
+  case (#max_nodes work, equalities) of
+      (SOME _, _ :: _ :: _ :: _ :: _) =>
+        let
+          fun key (x, y) =
+            if Term.compare (x, y) = GREATER then ((y, x), true)
+            else ((x, y), false)
+          val compare = Lib.pair_compare (Term.compare, Term.compare)
+          fun build () =
+            let
+              fun add ((x, y, theorem), index) =
+                let val (pair, reversed) = key (x, y)
+                in Redblackmap.insert (index, pair, (theorem, reversed)) end
+            in
+              List.foldl add (Redblackmap.mkDict compare)
+                (List.rev equalities)
+            end
+          val index = Portable.HOLSusp.delay build
+          val scans = ref 8
+        in
+          fn endpoints =>
+            (* Keep early lookups cheap. Repeated misses pay for a
+               shared index. The first equality in either direction
+               wins, and symmetry is applied only to the chosen proof. *)
+            if !scans > 0 then
+              (scans := !scans - 1; stated work equalities endpoints)
+            else
+              let val (pair, reversed) = key endpoints
+              in
+                Option.map
+                  (fn (theorem, orientation) =>
+                    if orientation = reversed then theorem else SYM theorem)
+                  (Redblackmap.peek (Portable.HOLSusp.force index, pair))
+              end
+        end
+    | _ => stated work equalities
+
 fun close work (context : orderData.context) (edges, equalities) =
   let
     val {reach, ...} = reach_from work (#transitive (#axioms context)) edges
+    val lookup = equality_lookup work equalities
     fun one (x, y, distinction) =
       let
         fun contradiction equality =
@@ -366,7 +404,7 @@ fun close work (context : orderData.context) (edges, equalities) =
       in
         if aconv x y then SOME (contradiction (REFL x))
         else
-          case stated work equalities (x, y) of
+          case lookup (x, y) of
               SOME equality => SOME (contradiction equality)
             | NONE =>
                 Option.map contradiction (crossing work context reach (x, y))

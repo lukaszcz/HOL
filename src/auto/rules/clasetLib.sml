@@ -1622,8 +1622,14 @@ fun match_indexed_sites goal_terms =
            end
   end
 
+fun compare_type_binding ({redex, residue}, {redex = other, residue = value}) =
+  Lib.pair_compare (Type.compare, Type.compare)
+    ((redex, residue), (other, value))
+
+val compare_type_substitution = List.collate compare_type_binding
+
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
-fun maximal_type_joins_with charge substitutions =
+fun maximal_type_joins_with budgeted charge substitutions =
   case substitutions of
       [] => []
     | [_] => []
@@ -1653,10 +1659,12 @@ fun maximal_type_joins_with charge substitutions =
                    right)
                left)
           val unique =
-            List.foldl
-              (fn (types, kept) =>
-                if List.exists (same_types types) kept then kept
-                else kept @ [types]) [] substitutions
+            if budgeted then
+              List.foldl
+                (fn (types, kept) =>
+                  if List.exists (same_types types) kept then kept
+                  else kept @ [types]) [] substitutions
+            else substitutions
         in
           case unique of
               [] => []
@@ -1809,16 +1817,7 @@ fun goal_variables goal_terms =
    List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
      [] goal_terms)
 
-fun distinct_type_substitutions substitutions =
-  let
-    fun compare_binding ({redex, residue}, {redex = other, residue = value}) =
-      Lib.pair_compare (Type.compare, Type.compare)
-        ((redex, residue), (other, value))
-  in
-    listUtil.distinct_by (List.collate compare_binding) Lib.I substitutions
-  end
-
-fun polymorphic_instances_with charge prepare_substitutions
+fun polymorphic_instances_with budgeted charge
       get_goal_variables match_sites fact original_types =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
@@ -1898,12 +1897,19 @@ fun polymorphic_instances_with charge prepare_substitutions
                   then SOME proper
                   else NONE
                 end)
+        val matched = match_sites instance_of patterns
+        (* Matching can discover the same bindings in different orders.
+           Use an ordered key while retaining the first match. *)
         val substitutions =
-          prepare_substitutions (match_sites instance_of patterns)
-        fun add_instance (types, kept) =
+          if budgeted then matched
+          else listUtil.distinct_by compare_type_substitution
+                 (Listsort.sort compare_type_binding) matched
+        fun instantiate types =
+          (charge searchBudget.Normalization;
+           Thm.INST_TYPE types match_fact)
+        fun add_measured_instance (types, kept) =
           let
-            val _ = charge searchBudget.Normalization
-            val instance = Thm.INST_TYPE types match_fact
+            val instance = instantiate types
           in
             if List.exists
                  (fn earlier =>
@@ -1915,10 +1921,32 @@ fun polymorphic_instances_with charge prepare_substitutions
             then kept
             else kept @ [instance]
           end
-        val instances = List.foldl add_instance [] substitutions
+        fun add_indexed_instance (types, state as (seen, kept)) =
+          let
+            val instance = instantiate types
+            (* The kernel returns hypotheses in Term.compare order. *)
+            val key = (Thm.concl instance, Thm.hyp instance)
+          in
+            if HOLset.member (seen, key) then state
+            else (HOLset.add (seen, key), instance :: kept)
+          end
+        fun collect add initial =
+          let val singles = List.foldl add initial substitutions
+          in
+            (* Distinct proper substitutions for one type variable are
+               incompatible. Measured search still charges for the pairs. *)
+            case (budgeted, match_loose) of
+                (false, [_]) => singles
+              | _ =>
+                  List.foldl add singles
+                    (maximal_type_joins_with budgeted charge substitutions)
+          end
         val instances =
-          List.foldl add_instance instances
-            (maximal_type_joins_with charge substitutions)
+          if budgeted then collect add_measured_instance []
+          else
+            List.rev (#2 (collect add_indexed_instance
+              (HOLset.empty (Lib.pair_compare
+                (Term.compare, List.collate Term.compare)), [])))
       in
         if null instances then [fact]
         else if null alien then fact :: instances
@@ -1926,13 +1954,13 @@ fun polymorphic_instances_with charge prepare_substitutions
       end
   end
 
-fun goal_type_instances_with charge prepare_substitutions
+fun goal_type_instances_with budgeted charge
       get_goal_variables match_sites fact =
   (charge searchBudget.Normalization;
    case type_vars_in_term (Thm.concl fact) of
        [] => [fact]
      | original_types =>
-         polymorphic_instances_with charge prepare_substitutions
+         polymorphic_instances_with budgeted charge
            get_goal_variables match_sites fact original_types)
 
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
@@ -1948,22 +1976,21 @@ fun insert_facts_tac_with budget facts =
        val terms = target :: assumptions
        val variables = Portable.HOLSusp.delay (fn () => goal_variables terms)
        fun get_goal_variables () = Portable.HOLSusp.force variables
-       val (charge, match_sites, prepare_substitutions) =
+       val (budgeted, charge, match_sites) =
          case budget of
              NONE =>
-               (fn _ => (), match_indexed_sites terms,
-                distinct_type_substitutions)
+               (false, fn _ => (), match_indexed_sites terms)
            | SOME owned =>
                let val charge = searchBudget.charge owned
                    fun match_sites match patterns =
                      List.mapPartial match
                        (matching_pairs_with charge terms patterns)
-               in (charge, match_sites, Lib.I) end
+               in (true, charge, match_sites) end
        val instances =
          List.rev
            (List.concat
              (map
-               (goal_type_instances_with charge prepare_substitutions
+               (goal_type_instances_with budgeted charge
                  get_goal_variables match_sites)
                facts))
        fun assume fact inner ctxt =

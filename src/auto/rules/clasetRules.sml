@@ -531,9 +531,10 @@ fun PERMUTE_PREMISES_RULE kind order th =
   let
     val {vars, core, prems, ...} =
       rule_spine_with (canonical_rule_of kind) th
-    val _ = check_permutation (length prems) order
+    val indexed = Vector.fromList prems
+    val _ = check_permutation (Vector.length indexed) order
   in
-    finish_rule vars [] (map (fn index => List.nth (prems, index)) order)
+    finish_rule vars [] (map (fn index => Vector.sub (indexed, index)) order)
       (apply_assumed core prems)
   end
 

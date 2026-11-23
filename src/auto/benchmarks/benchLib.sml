@@ -738,12 +738,14 @@ fun compare_with_goal goal =
       | NONE => fresh ()
   end
 
-fun theorem_is_goal goal theorem =
+fun theorem_statement theorem : comparison_statement =
   let val statement = Thm.concl theorem
   in
-    compare_with_goal goal
-      (prepare_citation statement, fn () => unfolded statement)
+    (prepare_citation statement, fn () => unfolded statement)
   end
+
+fun theorem_is_goal goal theorem =
+  compare_with_goal goal (theorem_statement theorem)
 
 fun withheld_primitives goal =
   List.mapPartial
@@ -892,12 +894,30 @@ fun same_ambient_source (previous, definitions) (current, next) =
   Portable.pointer_eq (previous, current) andalso
   Portable.pointer_eq (definitions, next)
 
-val ambient_claset_statements =
-  memoUtil.keyed_memo same_ambient_source
-    (fn (claset, heads) =>
-      map (fn (_, (name, theorem)) =>
-        ({name = name, theorem = theorem}, ambient_statement heads theorem))
-        (clasetLib.rules_of claset))
+val ambient_claset_cache :
+    ((clasetLib.claset * string HOLset.set) *
+     (exclusion * comparison_statement) list) option ref = ref NONE
+
+fun cached_ambient_claset source =
+  case !ambient_claset_cache of
+      SOME (previous, statements) =>
+        if same_ambient_source previous source then SOME statements else NONE
+    | NONE => NONE
+
+fun ambient_claset_statements (source as (claset, heads)) =
+  case cached_ambient_claset source of
+      SOME statements => statements
+    | NONE =>
+        let
+          val statements =
+            map (fn (_, (name, theorem)) =>
+              ({name = name, theorem = theorem},
+               ambient_statement heads theorem))
+              (clasetLib.rules_of claset)
+        in
+          ambient_claset_cache := SOME (source, statements);
+          statements
+        end
 
 val ambient_simpset_statements =
   memoUtil.keyed_memo same_ambient_source
@@ -1767,16 +1787,38 @@ fun compile_recipe simpset entry recipe =
         in Tactical.THEN (step, Tactical.REPEAT step)
         end
 
+(* Compare the declarations that would survive deletion. This check
+   needs their names and statements, so the rule indexes can stay shared. *)
+fun remaining_claset_comparison goal (excl : exclusion list) =
+  let
+    val names =
+      HOLset.fromList String.compare
+        (List.concat (map (claset_names o #name) excl))
+  in
+    (fn name => not (HOLset.member (names, name)), compare_with_goal goal)
+  end
+
+fun has_remaining_claset_analogue claset goal excl =
+  let
+    val (retained, compare) = remaining_claset_comparison goal excl
+  in
+    case cached_ambient_claset (claset, !definitional_heads) of
+        SOME statements =>
+          List.exists (fn ({name, ...}, statement) =>
+            retained name andalso compare statement) statements
+      | NONE =>
+          (* One-off clasets can validate without replacing the snapshot
+             that corpus preparation will reuse. *)
+          List.exists (fn (_, (name, theorem)) =>
+            retained name andalso compare (theorem_statement theorem))
+            (clasetLib.rules_of claset)
+  end
+
 fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
   let
-    val names = List.concat (map (claset_names o #name) excl)
     val base_names = map #name excl
-    val diminished = List.foldl (fn (name, cs) =>
-      clasetLib.remove_rule name cs) claset names
     fun supplied_is_analogue ({theorem, ...} : exclusion) =
       theorem_is_goal goal theorem
-    fun context_has_analogue ({thm, ...} : clasetLib.aesop_rule) =
-      theorem_is_goal goal thm
     fun rewrite_is_unexcluded theorem =
       case DB.revlookup theorem of
           [] => false
@@ -1787,16 +1829,13 @@ fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
               locations
   in
     List.all supplied_is_analogue excl andalso
-    not (List.exists context_has_analogue (clasetLib.all_rules diminished))
+    not (has_remaining_claset_analogue claset goal excl)
     andalso
     not (List.exists rewrite_is_unexcluded (simpset_analogues goal))
   end
 
 fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
   let
-    val names = List.concat (map (claset_names o #name) excl)
-    val diminished = List.foldl (fn (name, cs) =>
-      clasetLib.remove_rule name cs) claset names
     val bad_supplied =
       map
         (fn ({name, theorem} : exclusion) =>
@@ -1804,12 +1843,12 @@ fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
         (List.filter
           (fn ({theorem, ...} : exclusion) =>
             not (theorem_is_goal goal theorem)) excl)
+    val (retained, compare) = remaining_claset_comparison goal excl
     val remaining =
-      map #name
-        (List.filter
-          (fn ({thm, ...} : clasetLib.aesop_rule) =>
-            theorem_is_goal goal thm)
-          (clasetLib.all_rules diminished))
+      List.mapPartial
+        (fn ({name, ...}, statement) =>
+          if retained name andalso compare statement then SOME name else NONE)
+        (ambient_claset_statements (claset, !definitional_heads))
     fun rewrite_names theorem =
       case DB.revlookup theorem of
           [] => ["<unnamed>"]

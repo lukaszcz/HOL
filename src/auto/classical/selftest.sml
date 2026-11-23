@@ -1034,6 +1034,26 @@ val _ =
 
 val _ =
   test
+    ("unification renormalizes a sibling after a function binding",
+     fn () =>
+       let
+         val (m, store) = bool_fun_meta [] clasetMeta.empty
+         val x = Term.mk_var ("sibling_x", bool_ty)
+         val identity = Term.mk_abs (x, x)
+         val left =
+           boolSyntax.mk_conj
+             (boolSyntax.mk_eq (m, m), Term.mk_comb (m, boolSyntax.T))
+         val right =
+           boolSyntax.mk_conj
+             (boolSyntax.mk_eq (identity, identity), boolSyntax.T)
+       in
+         case unify_with store clasetUnify.Unify no_rule_metas (left, right) of
+             SOME final => Term.aconv (clasetMeta.norm final m) identity
+           | NONE => false
+       end)
+
+val _ =
+  test
     ("match mode protects old term and type metavariables",
      fn () =>
        let
@@ -5489,6 +5509,41 @@ fun search_results sequence =
     | SOME (value, rest) => value :: search_results rest
 
 fun search_target node = #w (hd (clasetGoal.goals node))
+
+val _ =
+  test
+    ("DEPTH_SOLVE cuts ancestor cycles independently in each sibling",
+     fn () =>
+       let
+         val nodes =
+           Vector.tabulate
+             (13, fn i =>
+                search_singleton (Term.mk_var (Int.toString i, bool_ty)))
+         val expanded = ref []
+         fun expand node =
+           let
+             val (name, _) = Term.dest_var (search_target node)
+             val i = valOf (Int.fromString name)
+             val _ = expanded := i :: !expanded
+             val children =
+               if i < 9 then [i + 1]
+               else
+                 case i of
+                     9 => [10, 11]
+                   | 10 => [12]
+                   | 11 => [12]
+                   | _ => [10]
+           in
+             seq.fromList (map (fn j => Vector.sub (nodes, j)) children)
+           end
+         val results =
+           search_results
+             (clasetSearch.DEPTH_SOLVE traceUtil.silent expand
+                (Vector.sub (nodes, 0)))
+       in
+         null results andalso
+         List.rev (!expanded) = List.tabulate (10, I) @ [10, 12, 11, 12, 10]
+       end)
 
 val dfs_root_tm = Term.mk_var ("dfs_root", bool_ty)
 val dfs_left_tm = Term.mk_var ("dfs_left", bool_ty)

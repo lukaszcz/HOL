@@ -285,7 +285,24 @@ val excluded_goal : benchLib.corpus_goal =
 val _ =
   check
     ("self-analogue exclusion removes every aconv claset copy",
-     fn () => benchLib.exclusions_effective analogue_cs excluded_goal)
+     fn () =>
+       let
+         val name = "unit$self_analogue"
+         val aliases =
+           [".__clasimp_iff_intro", ".__clasimp_iff_dest",
+            ".__clasimp_iff_elim"]
+         fun add suffix claset =
+           clasetLib.add_derived_rule analogue_spec
+             (name ^ suffix, analogue) claset
+         val with_aliases =
+           List.foldl (fn (suffix, claset) => add suffix claset)
+             analogue_cs aliases
+       in
+         benchLib.exclusions_effective with_aliases excluded_goal andalso
+         not
+           (benchLib.exclusions_effective
+              (add ".__clasimp_iff_intro_extra" with_aliases) excluded_goal)
+       end)
 
 val _ =
   check

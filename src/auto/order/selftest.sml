@@ -106,6 +106,42 @@ val _ =
 
 val _ =
   check
+    ("repeated distinction checks use the first equality in either direction",
+     fn () =>
+       let
+         val transitive =
+           Thm.ASSUME
+             (Term.mk_comb
+                (Term.prim_mk_const {Thy = "relation", Name = "transitive"},
+                 long_order_relation))
+         fun equation i j =
+           boolSyntax.mk_eq
+             (List.nth (long_order_nodes, i), List.nth (long_order_nodes, j))
+         val early =
+           List.tabulate
+             (8, fn i => Thm.ASSUME (boolSyntax.mk_neg (equation 0 (i + 2))))
+         val later = boolSyntax.mk_neg (equation 0 1)
+         val fillers =
+           List.tabulate (2, fn i => Thm.ASSUME (equation 10 (i + 11)))
+         fun uses_first first second =
+           let
+             val facts =
+               transitive :: early @
+               (Thm.ASSUME later :: (fillers @ map Thm.ASSUME [first, second]))
+             val theorem = orderSolve.prove_with facts boolSyntax.F
+             val support = Thm.hyp theorem
+           in
+             length support = 2 andalso
+             List.exists (Term.aconv first) support andalso
+             List.exists (Term.aconv later) support
+           end
+       in
+         uses_first (equation 1 0) (equation 0 1) andalso
+         uses_first (equation 0 1) (equation 1 0)
+       end)
+
+val _ =
+  check
     ("negative order facts share the instantiated totality rules",
      fn () =>
        let
