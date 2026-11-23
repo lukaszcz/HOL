@@ -1628,8 +1628,20 @@ fun compare_type_binding ({redex, residue}, {redex = other, residue = value}) =
 
 val compare_type_substitution = List.collate compare_type_binding
 
+(* The inputs are ordered by redex, with each variable bound once. *)
+fun sorted_types_compatible
+      ((left as {redex, residue} :: ls) : (hol_type, hol_type) Lib.subst)
+      (right as {redex = other, residue = value} :: rs) =
+      (case Type.compare (redex, other) of
+           LESS => sorted_types_compatible ls right
+         | GREATER => sorted_types_compatible left rs
+         | EQUAL =>
+             Type.compare (residue, value) = EQUAL andalso
+             sorted_types_compatible ls rs)
+  | sorted_types_compatible _ _ = true
+
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
-fun maximal_type_joins_with budgeted charge substitutions =
+fun maximal_type_joins_with budgeted charge ordered substitutions =
   case substitutions of
       [] => []
     | [_] => []
@@ -1674,20 +1686,33 @@ fun maximal_type_joins_with budgeted charge substitutions =
                   val parts = Vector.fromList unique
                   val count = Vector.length parts
                   val neighbors = Array.array (count, [])
-                  fun connect i j =
-                    if j = count then ()
-                    else
-                      (if compatible (Vector.sub (parts, i))
-                           (Vector.sub (parts, j)) then
-                         (Array.update (neighbors, i,
-                            j :: Array.sub (neighbors, i));
-                          Array.update (neighbors, j,
-                            i :: Array.sub (neighbors, j)))
-                       else ();
-                       connect i (j + 1))
-                  val _ =
-                    List.app (fn i => connect i (i + 1))
-                      (List.tabulate (count, fn i => i))
+                  fun connect i =
+                    let
+                      val matches =
+                        case ordered of
+                            NONE =>
+                              let val left = Vector.sub (parts, i)
+                              in fn j => compatible left (Vector.sub (parts, j))
+                              end
+                          | SOME keyed =>
+                              let val left = Vector.sub (keyed, i)
+                              in fn j => sorted_types_compatible left
+                                           (Vector.sub (keyed, j))
+                              end
+                      fun visit j =
+                        if j = count then ()
+                        else
+                          (if matches j then
+                             (Array.update (neighbors, i,
+                                j :: Array.sub (neighbors, i));
+                              Array.update (neighbors, j,
+                                i :: Array.sub (neighbors, j)))
+                           else ();
+                           visit (j + 1))
+                    in
+                      visit (i + 1)
+                    end
+                  val _ = List.app connect (List.tabulate (count, I))
                   (* The connection loop visits each vertex's neighbors in
                      increasing order, so each list is already descending.
                      Store only edges, with binary search within each row. *)
@@ -1902,12 +1927,25 @@ fun polymorphic_instances_with budgeted charge
                   else NONE
                 end)
         val matched = match_sites instance_of patterns
-        (* Matching can discover the same bindings in different orders.
-           Use an ordered key while retaining the first match. *)
-        val substitutions =
-          if budgeted then matched
-          else listUtil.distinct_by compare_type_substitution
-                 (Listsort.sort compare_type_binding) matched
+        (* Retain each original binding order for INST_TYPE proof records.
+           The ordered deduplication keys also serve the compatibility scan. *)
+        val (substitutions, ordered) =
+          case (budgeted, match_loose) of
+              (true, _) => (matched, NONE)
+            | (false, [_]) =>
+                (listUtil.distinct_by compare_type_substitution I matched,
+                 NONE)
+            | _ =>
+                let
+                  val keyed = map
+                    (fn types =>
+                      (types, Listsort.sort compare_type_binding types))
+                    matched
+                  val unique = listUtil.distinct_by compare_type_substitution
+                    #2 keyed
+                in
+                  (map #1 unique, SOME (Vector.fromList (map #2 unique)))
+                end
         fun instantiate types =
           (charge searchBudget.Normalization;
            Thm.INST_TYPE types match_fact)
@@ -1943,7 +1981,8 @@ fun polymorphic_instances_with budgeted charge
                 (false, [_]) => singles
               | _ =>
                   List.foldl add singles
-                    (maximal_type_joins_with budgeted charge substitutions)
+                    (maximal_type_joins_with budgeted charge ordered
+                       substitutions)
           end
         val instances =
           if budgeted then collect add_measured_instance []

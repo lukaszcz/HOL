@@ -4687,6 +4687,43 @@ val _ =
   (tprint "compatible partial fact types admit only maximal joins";
    if joined_fixture_result then OK () else die "compatible join missing");
 
+val _ =
+  test
+    ("wide partial fact types give the same ordered joins under a meter",
+     fn () =>
+       joined_fact_fixture
+         (fn (fact, inserted, _, _) =>
+           let
+             val binders =
+               [``x:'a # 'b # 'c # 'd``, ``y:'a # 'b # 'c # 'e``,
+                ``z:'f``]
+             val wide = GENL binders (Drule.ISPECL binders fact)
+             val assumptions =
+               [``join_p (0:num, T, []:num list, SOME T)``,
+                ``join_q (0:num, T, []:num list, SOME 0)``,
+                ``join_q (T, T, []:num list, SOME 0)``,
+                ``join_r T``]
+             fun shape tm =
+               map (fn binder =>
+                 let val ty = type_of binder in
+                   case Type.type_vars ty of
+                       [] => (0, SOME ty)
+                     | vars => (length vars, NONE)
+                 end) (fst (strip_forall tm))
+             val ordinary =
+               map shape (inserted clasetLib.INSERT_FACTS_TAC wide assumptions)
+             val metered =
+               map shape (inserted
+                 (clasetLib.INSERT_FACTS_TAC_BUDGETED
+                   (searchBudget.unbounded ())) wide assumptions)
+             val full =
+               [(0, SOME (type_of ``(0:num, T, []:num list, SOME T)``)),
+                (0, SOME (type_of ``(0:num, T, []:num list, SOME 0)``)),
+                (0, SOME Type.bool)]
+           in
+             ordinary = metered andalso List.exists (equal full) ordinary
+           end))
+
 (* bounded_memo keeps the values of the most recently asked-for keys.
    The counter records every call of the computation. *)
 val _ =

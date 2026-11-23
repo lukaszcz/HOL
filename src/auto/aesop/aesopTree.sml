@@ -977,7 +977,9 @@ fun install_rapp parent_id
              | SOME hypothesis => hypothesis :: #forwarded parent))
         child_cgoals
     val copy_sources =
-      if dependencies_empty (#deps parent) then []
+      if not (Option.isSome (#parent parent)) orelse
+         dependencies_empty (#deps parent)
+      then []
       else copying_sources tree parent_id assigned child_specs
     val copy_specs =
       map

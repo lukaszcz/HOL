@@ -136,7 +136,12 @@ fun elim_var_with (work : work) drop_column
         end
       else
         let
-          fun add (a, b) = Arbint.+ (scale1 a, scale2 b)
+          (* Sparse rows still occupy every column in the coefficient list. *)
+          fun add (a, b) =
+            if ai_zero a then
+              if ai_zero b then zero else scale2 b
+            else if ai_zero b then scale1 a
+            else Arbint.+ (scale1 a, scale2 b)
         in
           ListPair.mapEq add
             (if drop_column then (List.tl coeffs1, List.tl coeffs2)

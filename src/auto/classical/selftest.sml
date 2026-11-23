@@ -5625,6 +5625,26 @@ val _ =
            [dfs_solution1_tm, dfs_solution3_tm, dfs_solution2_tm]
        end)
 
+val _ =
+  test
+    ("DEPTH_FIRST preserves solution order after indexing duplicates",
+     fn () =>
+       let
+         val root = search_singleton dfs_root_tm
+         val targets = List.tabulate (12, fn i =>
+           mk_var ("dfs_solution_" ^ Int.toString i, bool_ty))
+         val leaves = map search_singleton targets
+         fun satisfied node = not (aconv (search_target node) dfs_root_tm)
+         fun expand node =
+           if satisfied node then seq.empty
+           else seq.fromList (leaves @ map search_singleton targets)
+         val results =
+           search_results
+             (clasetSearch.DEPTH_FIRST traceUtil.silent satisfied expand root)
+       in
+         aconv_list (map search_target results) targets
+       end)
+
 fun bool_function_chain 0 tm = tm
   | bool_function_chain count tm =
       let

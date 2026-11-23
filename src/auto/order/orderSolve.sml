@@ -177,21 +177,21 @@ fun cyclic_components edges =
    that can relax, in the same (round, original position) order, so that
    a node still gets the same first path. Edges from a source reached
    in the initial scans are eligible from round zero. *)
-fun indexed_rounds relax outgoing source nodes =
+fun indexed_rounds work relax outgoing source nodes =
   let
     val empty =
       Redblackmap.mkDict (Lib.pair_compare (Int.compare, Int.compare))
-    fun schedule round (index, edge) pending =
-      Redblackmap.insert (pending, (round, index), edge)
+    (* Settled targets keep their first path and cannot relax again. *)
+    fun schedule known round (index, edge : edge) pending =
+      if aconv (#target edge) source orelse
+         Option.isSome (reached work known (#target edge)) then pending
+      else Redblackmap.insert (pending, (round, index), edge)
     fun outgoing_from from =
       Option.getOpt (Termtab.lookup outgoing from, [])
+    val initial = ReachedIndex nodes
     fun seed from pending =
       List.foldl
-        (fn (entry as (_, edge : edge), pending) =>
-          if aconv (#target edge) source orelse
-             Option.isSome (Termtab.lookup nodes (#target edge)) then
-            pending
-          else schedule 0 entry pending)
+        (fn (entry, pending) => schedule initial 0 entry pending)
         pending (outgoing_from from)
     val pending =
       Termtab.fold (fn (from, _) => seed from) nodes (seed source empty)
@@ -206,7 +206,8 @@ fun indexed_rounds relax outgoing source nodes =
                 if changed then
                   let
                     fun add (entry as (position, _), pending) =
-                      schedule (if position > last then round else round + 1)
+                      schedule known'
+                        (if position > last then round else round + 1)
                         entry pending
                   in
                     List.foldl add rest (outgoing_from (#target edge))
@@ -216,7 +217,7 @@ fun indexed_rounds relax outgoing source nodes =
               run known' next
             end
   in
-    run (ReachedIndex nodes) pending
+    run initial pending
   end
 
 (* Everything the source reaches, one path per node. A node is settled
@@ -274,8 +275,8 @@ fun reachable work transitivity edges outgoing observe source =
                 case reached' of
                     ReachedIndex nodes =>
                       if left = 1 then
-                        indexed_rounds relax (Portable.HOLSusp.force outgoing)
-                          source nodes
+                        indexed_rounds work relax
+                          (Portable.HOLSusp.force outgoing) source nodes
                       else rounds (left - 1) reached'
                   | ReachedList _ => rounds 0 reached'
             end

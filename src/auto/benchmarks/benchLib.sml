@@ -987,15 +987,30 @@ val benchmark_safe_solver =
    respells a trailing cons are each other's reverse, and the pair
    loops. *)
 fun clean_simpset ctxt goal =
-  simpLib.filter_rewrites
-    (fn (_, theorem) => not (theorem_is_goal goal theorem))
-    (clasimpLib.clasimp_ss_of ctxt)
-  |> simpLib.set_cond_depth clasimpLib.cond_depth
-  |> simpLib.set_safe_solvers [benchmark_safe_solver]
-  |> simpLib.add_unsafe_solver
-       (linarithLib.linarith_solver_with_facts
-          (linarithData.arith_facts_of ctxt))
-  |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
+  let
+    val simpset = clasimpLib.clasimp_ss_of ctxt
+    val statements =
+      ref (ambient_simpset_statements (simpset, !definitional_heads))
+    val compare = compare_with_goal goal
+    (* The cache and the filter walk the same fragment history. Confirm
+       each theorem's identity before reusing its prepared statement. *)
+    fun keep (_, theorem) =
+      case !statements of
+          (expected, statement) :: rest =>
+            if Portable.pointer_eq (theorem, expected) then
+              (statements := rest; not (compare statement))
+            else
+              (statements := []; not (theorem_is_goal goal theorem))
+        | [] => not (theorem_is_goal goal theorem)
+  in
+    simpLib.filter_rewrites keep simpset
+    |> simpLib.set_cond_depth clasimpLib.cond_depth
+    |> simpLib.set_safe_solvers [benchmark_safe_solver]
+    |> simpLib.add_unsafe_solver
+         (linarithLib.linarith_solver_with_facts
+            (linarithData.arith_facts_of ctxt))
+    |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
+  end
 
 fun preserve_target tactic (original as (_, target)) ctxt =
   let
