@@ -5612,12 +5612,52 @@ end
         | _ => ()
     in args end
 
-  fun graph_locations (backend:'a B.backend) symbol_key =
+  fun install_graph_recipes_with_policy
+      (options:F.policy_options) (terms:F.session) =
+    let val graph = #graph options
+        val width_limit = #index_limit (#recipe_limits options)
+        fun value_index natural node =
+          case G.unfolded_nodes_with_policy graph
+              G.RawNodes width_limit node of
+              SOME size =>
+                if SmtReplayResourcePolicy.allows width_limit size then
+                  natural (G.representative graph node)
+                else raise ERR "graph_index" "expanded private index operand"
+            | NONE => raise ERR "graph_index" "opaque private index operand"
+    in install_graph_recipes_with_policy_for_backend value_index options terms
+    end
+
+  local
+  fun graph_locations_using meter_masks (backend:'a B.backend) symbol_key =
     let
       val serial = ref 0
       val definitions = ref (Redblackmap.mkDict String.compare)
       fun binding occurrence =
         (serial := !serial + 1;(!serial,occurrence))
+      datatype masks =
+          Metered of string list
+        | Indexed of string Redblackset.set
+      val empty = if meter_masks then Metered []
+        else Indexed (Redblackset.empty String.compare)
+      fun extend names (Metered outer) = Metered (names @ outer)
+        | extend names (Indexed outer) =
+            Indexed (List.foldl (fn (name,set) =>
+              Redblackset.add (set,name)) outer names)
+      fun lookup_definition key = Redblackmap.peek (!definitions,key)
+      fun lookup token (Indexed names) =
+            let val key = symbol_key token in
+              if Redblackset.member (names,key) then NONE
+              else lookup_definition key
+            end
+        | lookup token (Metered names) =
+            (* The Value reader charges both the candidate and the guarded
+               symbol lookup. Preserve the order and count of these calls. *)
+            let
+              fun walk [] = lookup_definition (symbol_key token)
+                | walk (key::rest) =
+                    (B.syntax_spend backend 1;
+                     if key=symbol_key token then NONE else walk rest)
+            in walk names end
       fun resolve environment
           (whole as P.ConstructionOccurrence {value,role,token,children}) =
         let
@@ -5625,13 +5665,9 @@ end
             (1 + IntInf.fromInt (List.length children))
           fun rebuild children = P.ConstructionOccurrence
             {value=value,role=role,token=token,children=children}
-          fun lookup [] = Redblackmap.peek (!definitions,symbol_key token)
-            | lookup ((key,entry)::rest) =
-                (B.syntax_spend backend 1;
-                 if key=symbol_key token then entry else lookup rest)
         in case role of
             P.ConstructionAtom =>
-              (case lookup environment of NONE => whole
+              (case lookup token environment of NONE => whole
                | SOME (stamp,occurrence) => P.ConstructionOccurrence
                    {value=value,role=P.ConstructionReference stamp,
                     token=token,children=[occurrence]})
@@ -5643,27 +5679,27 @@ end
                    Keep a term LET's lexical uses atomic; in particular a
                    use of c cannot supply the immediate slots of its RHS.
                    RHSs see the outer frame (simultaneous LET). *)
-                val masks = List.map (fn (key,_) => (key,NONE)) names
-                val body = resolve (masks @ environment)
+                val body = resolve (extend (List.map #1 names) environment)
                   (List.last children)
               in rebuild (rhs @ [body]) end
           | P.ConstructionBinder {variables,...} =>
               let val masks = List.concat (List.map (fn (key,name,_) =>
-                    [(key,NONE),(symbol_key name,NONE)]) variables)
-              in rebuild (List.map (resolve (masks @ environment)) children)
+                    [key,symbol_key name]) variables)
+              in rebuild (List.map (resolve (extend masks environment))
+                children)
               end
           | _ => rebuild (List.map (resolve environment) children)
         end
       fun locate (term:'a F.constructed_term) : 'a F.constructed_term =
         {node= #node term,scope= #scope term,
          source_syntax= #source_syntax term,binder_blocks= #binder_blocks term,
-         occurrence=resolve [] (#occurrence term)}
+         occurrence=resolve empty (#occurrence term)}
       fun define (name,term:'a F.constructed_term) =
         definitions := Redblackmap.insert
           (!definitions,symbol_key name,binding (#occurrence term))
     in {locate=locate,define=define} end
 
-  fun graph_command_reader_for_backend_with_policy
+  fun graph_command_reader_using_locations meter_masks
       install_recipes make_session options
       (declaration_dicts:dicts) requested_version make_token
       : 'a constructed_graph_command_reader =
@@ -5683,8 +5719,8 @@ end
         indexed (#lookup_list terms) (#symbol_key terms) (#define_list terms)
       val _ = (#add_literal_parser terms)
         (fn token => cpc_literal_parsefn token [] [])
-      val locations = graph_locations (#backend (#reader terms))
-        (#symbol_key terms)
+      val locations = graph_locations_using meter_masks
+        (#backend (#reader terms)) (#symbol_key terms)
       val known = ref (HOLset.empty String.compare)
       val snapshots = ref ([] : string HOLset.set list)
       val seen = ref (Redblackmap.mkDict String.compare)
@@ -6002,21 +6038,42 @@ end
           "unexpected end of CPC proof wrapper"
     in {next = checked_next, terms = terms, cvc_version = version} end
 
-  fun graph_command_reader_with_factory make_session
+  fun graph_command_reader_using_factory meter_masks make_session
       (options : SmtLib_GraphFrontend.options)
       (declaration_dicts : dicts) requested_version instream
       : graph_command_reader =
-    graph_command_reader_for_backend_with_policy install_graph_recipes
+    graph_command_reader_using_locations meter_masks install_graph_recipes
       make_session options declaration_dicts requested_version
       (fn () => P.make_cpc_proof_stream_tokenizer instream)
 
+  fun graph_policy_reader_using_factory meter_masks
+      make_session (options:F.policy_options) declaration_dicts
+      requested_version make_token : graph_command_reader =
+    graph_command_reader_using_locations meter_masks
+      install_graph_recipes_with_policy make_session options declaration_dicts
+      requested_version make_token
+
+  in
+  fun graph_locations backend symbol_key =
+    graph_locations_using true backend symbol_key
+
+  fun graph_command_reader_for_backend_with_policy install_recipes
+      make_session options declaration_dicts requested_version make_token =
+    graph_command_reader_using_locations true install_recipes make_session
+      options declaration_dicts requested_version make_token
+
+  fun graph_command_reader_with_factory make_session options dicts version
+      input =
+    graph_command_reader_using_factory true make_session options dicts
+      version input
+
   fun graph_command_reader_with_version options declaration_dicts version input =
-    graph_command_reader_with_factory F.create_session
+    graph_command_reader_using_factory false F.create_session
       options declaration_dicts version input
 
   fun graph_configured_command_reader_with_version
       (configured : F.configured_options) declaration_dicts version input =
-    graph_command_reader_with_factory
+    graph_command_reader_using_factory false
       (fn _ => F.create_configured_session configured)
       (#base configured) declaration_dicts version input
 
@@ -6048,28 +6105,13 @@ end
       val make_session = fn _ =>
         SmtLib_GraphTranslation.create_session options translation
       val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
-    in packet version (graph_command_reader_with_factory make_session
+    in packet version (graph_command_reader_using_factory false make_session
       (#base configured) dicts version input) end
 
   fun parse_graph_stream_with_version options declaration_dicts version input
       : graph_proof =
     SmtLib_GraphProof.proof
       (parse_graph_packet_with_version options declaration_dicts version input)
-
-  fun install_graph_recipes_with_policy
-      (options:F.policy_options) (terms:F.session) =
-    let val graph = #graph options
-        val width_limit = #index_limit (#recipe_limits options)
-        fun value_index natural node =
-          case G.unfolded_nodes_with_policy graph
-              G.RawNodes width_limit node of
-              SOME size =>
-                if SmtReplayResourcePolicy.allows width_limit size then
-                  natural (G.representative graph node)
-                else raise ERR "graph_index" "expanded private index operand"
-            | NONE => raise ERR "graph_index" "opaque private index operand"
-    in install_graph_recipes_with_policy_for_backend value_index options terms
-    end
 
   fun graph_term_reader_with_version_with_policy options version instream =
     let
@@ -6087,11 +6129,9 @@ end
 
 
   fun graph_command_reader_with_factory_with_policy_token_factory
-      make_session (options:F.policy_options) declaration_dicts
-      requested_version make_token : graph_command_reader =
-    graph_command_reader_for_backend_with_policy
-      install_graph_recipes_with_policy make_session options declaration_dicts
-      requested_version make_token
+      make_session options dicts version make_token =
+    graph_policy_reader_using_factory true make_session options dicts
+      version make_token
 
   fun graph_command_reader_with_factory_with_policy make_session
       options declaration_dicts version instream =
@@ -6100,14 +6140,16 @@ end
       (fn () => P.make_cpc_proof_stream_tokenizer instream)
 
   fun graph_command_reader_with_version_with_policy options declaration_dicts version input =
-    graph_command_reader_with_factory_with_policy F.create_session_with_policy
-      options declaration_dicts version input
+    graph_policy_reader_using_factory false F.create_session_with_policy
+      options declaration_dicts version
+      (fn () => P.make_cpc_proof_stream_tokenizer input)
 
   fun graph_configured_command_reader_with_version_with_policy
       (configured : F.policy_configured_options) declaration_dicts version input =
-    graph_command_reader_with_factory_with_policy
+    graph_policy_reader_using_factory false
       (fn _ => F.create_configured_session_with_policy configured)
-      (#base configured) declaration_dicts version input
+      (#base configured) declaration_dicts version
+      (fn () => P.make_cpc_proof_stream_tokenizer input)
 
   fun parse_graph_packet_with_version_with_policy options declaration_dicts version input =
     let val reader = graph_command_reader_with_version_with_policy
@@ -6128,7 +6170,7 @@ end
         SmtLib_GraphTranslation.create_session_with_policy options translation
       val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
     in packet version
-      (graph_command_reader_with_factory_with_policy_token_factory
+      (graph_policy_reader_using_factory false
         make_session (#base configured) dicts version make_token) end
 
   fun parse_graph_translation_packet_with_version_with_policy options translation
@@ -6147,6 +6189,8 @@ end
       : graph_proof =
     SmtLib_GraphProof.proof
       (parse_graph_packet_with_version_with_policy options declaration_dicts version input)
+
+  end
 
 end
 

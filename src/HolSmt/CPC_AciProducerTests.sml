@@ -66,12 +66,12 @@ struct
         in
           case result of
             Exn.Exn actual =>
-              (* Poly/ML may attach a fresh raise-location wrapper. Check
-                 the constructor and exact first payload, not its pointer. *)
+              (* Poly/ML may attach a fresh raise-location wrapper. Compare
+                 the original HOL error payload inside the exception. *)
               require "ACI callback's first exception was replaced"
                 (case (actual,first) of
                    (Feedback.HOL_ERR got,Feedback.HOL_ERR expected) =>
-                     got = expected
+                     Portable.pointer_eq (got,expected)
                  | (Fail got,Fail expected) => got = expected
                  | (CPC_AciProducer.Declined,CPC_AciProducer.Declined) =>
                      true

@@ -599,8 +599,28 @@ struct
       val next = ref 0
       val reserved = ref 0
       val count = 4093
-      val physical = Array.array
-        (count, [] : (Term.term * int) list)
+      val hint = pointer_bucket count
+      val physical = ref (Array.array (1,[] : (Term.term * int) list))
+      val remaining = ref 8
+      fun push buckets slot entry =
+        Array.update (buckets,slot,entry :: Array.sub (buckets,slot))
+      (* A recursive visit may have promoted the array before its caller
+         returns to store another entry from a small-bucket lookup. *)
+      fun save_small (entry as (term,_)) =
+        let val current = !physical in
+          if Array.length current <> 1 then push current (hint term) entry
+          else if !remaining > 0 then
+            (remaining := !remaining - 1; push current 0 entry)
+          else
+            let
+              val table = Array.array (count,[])
+              val _ = List.app (fn entry as (term,_) =>
+                push table (hint term) entry) (List.rev (Array.sub (current,0)))
+            in
+              physical := table;
+              push table (hint term) entry
+            end
+        end
       fun type_id ty = case intern_type of
           SOME intern => intern ty
         | NONE =>
@@ -618,10 +638,12 @@ struct
             in #insert nodes (key,id); id end
       fun visit term =
         let
-          val bucket = pointer_bucket count term
+          val table = !physical
+          val small = Array.length table = 1
+          val bucket = if small then 0 else hint term
           val found = List.find
             (fn (prior, _) => Portable.pointer_eq (term, prior))
-            (Array.sub (physical, bucket))
+            (Array.sub (table, bucket))
         in
           case found of
             SOME (_, id) => SOME id
@@ -657,8 +679,9 @@ struct
                            end)
                   val _ = case result of
                       NONE => ()
-                    | SOME id => Array.update (physical, bucket,
-                        (term, id) :: Array.sub (physical, bucket))
+                    | SOME id =>
+                        if small then save_small (term,id)
+                        else push table bucket (term,id)
                 in result end
         end
     in visit end
@@ -869,7 +892,16 @@ struct
       val abstractions = ref (Redblackmap.mkDict Term.compare)
       val types = ref (Redblackmap.mkDict Type.compare)
       val next = ref 0
-      val buckets = 4093
+      (* Select a smaller memo for short application trees. The inspector
+         still runs before any type comparison or binder opening. *)
+      fun fits [] _ = true
+        | fits _ 0 = false
+        | fits (node :: rest) remaining =
+            if Term.is_comb node then
+              let val (operator,operand) = Term.dest_comb node
+              in fits (operator :: operand :: rest) (remaining - 1) end
+            else not (Term.is_abs node) andalso fits rest (remaining - 1)
+      val buckets = if fits [term] 16 then 127 else 4093
       val physical = Array.array (buckets, [] : (Term.term * (int * int)) list)
       fun type_id ty =
         case Redblackmap.peek (!types, ty) of

@@ -31,7 +31,8 @@ struct
     | ParsedBoundary of
         G.node SmtLib_Parser.construction_occurrence
     | IntroducedBoundary of (G.node*conjunction_boundary)list
-  datatype recipe=Original of G.node|Local of int * G.node
+  datatype recipe=Recipe of int * recipe_body
+  and recipe_body=Original of G.node|Local of G.node
     | Specialized of
         {source:recipe,target:G.node,law:P.closed_fact}
     | DoubleNegationEliminated of
@@ -63,7 +64,7 @@ struct
      scoped_edges:(P.policy_scope_snapshot *
        (G.node * P.edge)list)list ref,
      roots:G.node list ref,ordinal:int ref,
-     edges:(recipe * P.edge) list ref,last:entry option ref,
+     edges:(int,P.edge)Redblackmap.dict ref,last:entry option ref,
      epoch:int,symbols:int}
   fun retire(Invocation{phase,work,...})=(phase:=Retired;W.close work)
   fun protect owner action=action()handle primary=>
@@ -98,6 +99,8 @@ struct
        in answer end))
   fun tick(owner as Invocation{work,...})=
     (active owner;W.spend_policy work 1)
+  fun empty_edges work=Redblackmap.mkDict
+    (fn pair=>(W.spend_policy work 1;Int.compare pair))
   fun current(owner as Invocation{block,work,...})=
     (active owner;case !block of SOME saved=>
        (P.validate_block_for work saved;saved)
@@ -125,12 +128,14 @@ struct
                else find rest)
     in action owner(fn()=>find(!scoped_edges))end
   fun scope_recipes owner recipes=
-    let val seen=ref([]:recipe list)
+    let fun compare pair=(tick owner;Int.compare pair)
+        val seen=ref(Redblackset.empty compare)
         val found=ref([]:recipe list)
-        fun visit recipe=
-          (tick owner;if List.exists(fn old=>
-              (tick owner;Portable.pointer_eq(old,recipe)))(!seen)then ()else
-            (case recipe of Specialized{source,...}=>visit source
+        (* One recipe is created for each command serial. Scope restoration
+           drops entries but never reuses their serials. *)
+        fun visit(recipe as Recipe(serial,body))=
+          (tick owner;if Redblackset.member(!seen,serial)then ()else
+            (case body of Specialized{source,...}=>visit source
               | DoubleNegationEliminated{premise,...}=>
                   visit premise
               | AndEliminated{premise,...}=>visit premise
@@ -139,19 +144,17 @@ struct
               | EqResolved{first,second,...}=>
                   (visit first;visit second)
               | Scoped _=>found:=recipe:: !found|_=>();
-             seen:=recipe:: !seen))
+             seen:=Redblackset.add(!seen,serial)))
         val _=List.app visit recipes
     in List.rev(!found)end
 
   (* Recipes retain proof sharing without carrying stale Block edges into
      a new Context. All memo hits first validate the actual current Block. *)
   fun evaluate(owner as Invocation{work,graph,root,sources,preprocessing,
-      extras,edges,...})recipe=
+      extras,edges,...})(Recipe(serial,body))=
     let val block=current owner
-        fun find []=NONE|find((held,edge)::rest)=
-          (tick owner;if Portable.pointer_eq(held,recipe)then SOME edge
-           else find rest)
-        val saved=action owner(fn()=>(tick owner;find(!edges)))
+        val saved=action owner(fn()=>
+          (tick owner;Redblackmap.peek(!edges,serial)))
         fun boolean opcode premises=P.execute_boolean_primitive_with_policy
           work(P.prepare_boolean_primitive_with_policy
             work block opcode premises)
@@ -177,7 +180,7 @@ struct
           in seek(List.length prefix)rows end
     in case saved of SOME edge=>edge|NONE=>
       let
-        val edge=case recipe of
+        val edge=case body of
             Original node=>
               (* The genuine GP factory and its returned query EACH own a
                  separate Work action. Neither is called inside action(). *)
@@ -191,7 +194,7 @@ struct
                 | NONE=>raise ERR "registry"
                     "original/processed assertion has no genuine assembler"
               end
-          | Local(serial,node)=>action owner(fn()=>local_source serial node)
+          | Local node=>action owner(fn()=>local_source serial node)
           | Scoped{snapshot,output,...}=>
               #2(scoped_result owner snapshot output)
           | DoubleNegationEliminated{source,premise,target,...}=>
@@ -300,7 +303,8 @@ struct
                         "fixed local law did not prove actual target name"
                 in answer end)end
         val _=action owner(fn()=>
-          (P.validate_block_for work block;edges:=(recipe,edge):: !edges))
+          (P.validate_block_for work block;
+           edges:=Redblackmap.insert(!edges,serial,edge)))
       in edge end
     end
   (* Called outside receiver-owned actions. P prepare/execute each own
@@ -315,7 +319,7 @@ struct
                restores the outer registry and publishes an opaque recipe. *)
             val visible=if has_scope then List.map #recipe ordered else []
         in scope_recipes owner (additional @ visible) end)
-      fun data(Scoped value)=value
+      fun data(Recipe(_,Scoped value))=value
         | data _=raise ERR "scope" "not an actual scoped recipe"
     in if List.null recipes then ()else
       let
@@ -339,7 +343,7 @@ struct
         val _=block:=SOME(#block actual)
         val _=layout:=SOME(#layout actual)
         val _=extras:=continued
-        val _=edges:=[]
+        val _=edges:=empty_edges work
         val _=scoped_edges:=List.map(fn{snapshot,targets}=>
           (snapshot,targets))(#outputs actual)
         val _=active owner
@@ -391,7 +395,7 @@ struct
       val _=action owner(fn()=>
         (Option.app(P.retire_policy_block_for work)(!block);
          block:=SOME next;layout:=SOME next_layout;
-         extras:= !extras @ appended;edges:=[];scoped_edges:=[]))
+         extras:= !extras @ appended;edges:=empty_edges work;scoped_edges:=[]))
       val _=replay_scopes owner []
     in active owner end
   fun begin_with_policy work native
@@ -416,7 +420,8 @@ struct
             has_scope=false},
           stack=ref[],extras=ref[],facts=ref[],block=ref NONE,
           layout=ref NONE,scoped_edges=ref[],
-          roots=ref[],ordinal=ref ordinal,edges=ref[],last=ref NONE,
+          roots=ref[],ordinal=ref ordinal,edges=ref(empty_edges work),
+          last=ref NONE,
           epoch=Type.type_epoch(),symbols=Term.term_epoch()}
         val _=active owner
         val _=rebuild owner []
@@ -437,7 +442,7 @@ struct
              if #scope value=root andalso G.scope_visible graph root
                  (G.node_scope graph(#node value))then #node value else
                raise ERR "next" "non-root declaration needs scoped handler")
-          fun save id node recipe=
+          fun save id node (recipe as Recipe(_,body))=
             let val {ordered,index,has_scope}= !known
                 val (result,updated)=action owner(fn()=>
                   let
@@ -451,7 +456,7 @@ struct
                         ParsedBoundary(#occurrence value)
                       | Q.GraphAssumePush(_,value)=>
                           ParsedBoundary(#occurrence value)
-                      | Q.GraphStep{step,...}=>(case recipe of
+                      | Q.GraphStep{step,...}=>(case body of
                           AndIntroduced{premises,...}=>
                             let
                               val actual=List.map (lookup owner)
@@ -470,7 +475,7 @@ struct
                     val result={serial=serial,id=id,node=node,recipe=recipe,
                       boundary=boundary}:entry
                   in (result,Redblackmap.insert(index,id,result)) end)
-                val scoped=case recipe of Scoped _=>true | _=>has_scope
+                val scoped=case body of Scoped _=>true | _=>has_scope
                 val _=known:={ordered=result::ordered,index=updated,
                   has_scope=scoped}
                 val _=last:=SOME result
@@ -486,7 +491,7 @@ struct
                   val _=action owner(fn()=>
                     roots:=add_root owner node(!roots))
                   val _=rebuild owner []
-                  val recipe=Original node
+                  val recipe=Recipe(serial,Original node)
                   val _=ignore(evaluate owner recipe)
               in save id node recipe end
             | Q.GraphAssumePush(id,value)=>
@@ -495,7 +500,7 @@ struct
                   val _=action owner(fn()=>
                     roots:=add_root owner node(!roots))
                   val _=rebuild owner[(serial,node)]
-                  val recipe=Local(serial,node)
+                  val recipe=Recipe(serial,Local node)
                   val _=ignore(evaluate owner recipe)
               in save id node recipe end
             | Q.GraphStep{step,pop=true}=>
@@ -556,8 +561,8 @@ struct
                   (current_layout owner){indices=[index],
                     outputs=[{body= #node premise,edge=edge}],
                     check_type=policy owner}
-                val recipe=Scoped
-                  {snapshot=snapshot,selected=[slot],output=0}
+                val recipe=Recipe(serial,Scoped
+                  {snapshot=snapshot,selected=[slot],output=0})
                 (* Closed snapshot encapsulates the popped proof. Inner
                    IDs disappear before collecting outer visible recipes. *)
                 val _=known:=outer val _=stack:=tl(!stack)
@@ -640,9 +645,9 @@ struct
                       (#boundary premise)
                     val boundary=peel middle target inner_boundary
                   in(target,middle,[outer,inner],boundary)end)
-                val recipe=DoubleNegationEliminated
+                val recipe=Recipe(serial,DoubleNegationEliminated
                   {source= #node premise,premise= #recipe premise,
-                   middle=middle,target=target,boundary=boundary}
+                   middle=middle,target=target,boundary=boundary})
                 (* R inspects these exact NOT definitions and their actual
                    operator ports. Demand them before any cold assembly;
                    semantic conversion cuts must not erase the obligation. *)
@@ -752,9 +757,9 @@ struct
                     val _=if answer=target then ()else
                       fail "declared target differs from indexed boundary"
                   in(path,boundary)end)
-                val recipe=AndEliminated{source= #node premise,
+                val recipe=Recipe(serial,AndEliminated{source= #node premise,
                   premise= #recipe premise,target=target,path=path,
-                  boundary=boundary}
+                  boundary=boundary})
                 val _=action owner(fn()=>
                   List.app(fn node=>roots:=add_root owner node(!roots))
                     (target::List.map #1 path))
@@ -806,8 +811,9 @@ struct
                       | walk _ []=mismatch()
                     val _=List.app(fn(row:entry)=>boolean(#node row))premises
                   in walk target premises end)
-                val recipe=AndIntroduced{premises=List.map(fn(row:entry)=>
-                  (#node row,#recipe row))premises,joins=joins}
+                val recipe=Recipe(serial,AndIntroduced
+                  {premises=List.map(fn(row:entry)=>
+                    (#node row,#recipe row))premises,joins=joins})
                 val _=action owner(fn()=>
                   List.app(fn node=>roots:=add_root owner node(!roots))
                     (target::joins))
@@ -866,10 +872,10 @@ struct
                        | NONE=>raise ERR "eq_resolve"
                            "target is not the actual Boolean equality side")
                   end)
-                val recipe=EqResolved{first= #recipe first,
+                val recipe=Recipe(serial,EqResolved{first= #recipe first,
                   second= #recipe second,first_node= #node first,
                   second_node= #node second,target=target,
-                  equality_first=equality_first,reverse=reverse}
+                  equality_first=equality_first,reverse=reverse})
                 val _=action owner(fn()=>
                   roots:=add_root owner target(!roots))
                 val _=rebuild owner []
@@ -926,8 +932,8 @@ struct
                    roots:=add_root owner(P.closed_node law)
                      (add_root owner target(!roots))))
                 val _=rebuild owner []
-                val recipe=Specialized{source= #recipe premise,
-                  target=target,law=law}
+                val recipe=Recipe(serial,Specialized
+                  {source= #recipe premise,target=target,law=law})
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
               end

@@ -241,11 +241,10 @@ fun resolveChain lfn sva cl (nl,lnl) rci =
         val r1 = resolveClause lfn sva cl vi r0 c1i
         val res = List.foldl (fn ((vi,ci),th) =>
                                  resolveClause lfn sva cl vi th ci) r1 nlt
-        (* Dual clauses carry their surviving literals as hypotheses, plus
-           the root context.  Count these as such rather than claim they
-           are ordinary clause literals.  This walk is diagnostic only. *)
+        (* This diagnostic counts surviving literals and the root context
+           together because dual clauses carry both as hypotheses. *)
         val _ = if not (sat_profile ()) then () else
-          count "derived-dual-hypotheses" (List.length (hyp res))
+          count "derived-dual-hypotheses" (HOLset.numItems (hypset res))
         val _ = Dynarray.update(cl,rci,res)
     in () end
 

@@ -8808,6 +8808,25 @@ struct
   fun sr_inc value = #inc (sr_data value)
   fun sr_type value = #ty (sr_data value)
   fun sr_same a b = Term.term_eq a b
+  fun source_name_generator tick compare =
+    let
+      val identifiers = ref (Redblackset.empty compare)
+      fun admit name = tick (String.size name+1)
+      fun remember name =
+        (admit name;identifiers := Redblackset.add (!identifiers,name))
+      fun for_prefix prefix =
+        let
+          val next_suffix = ref (0:IntInf.int)
+          fun choose suffix =
+            let
+              val name = prefix ^ IntInf.toString suffix
+              val _ = admit name
+            in
+              if Redblackset.member (!identifiers,name) then choose (suffix+1)
+              else (next_suffix := suffix+1;name)
+            end
+        in fn () => choose (!next_suffix) end
+    in {remember=remember,for_prefix=for_prefix} end
   fun sr_fail work operation = operation ()
     handle primary => (W.close work;raise primary)
   fun sr_guard expected (SourceRulePlan
@@ -8855,9 +8874,11 @@ struct
       val budget = ref (0:IntInf.int)
       val policies = ref ([]:sr_type list)
       val next = ref 0
-      val identifiers = ref ([]:string list)
       val binders = ref ([]:(int * string * Type.hol_type) list)
       fun tick n = W.spend expected n
+      val {remember,for_prefix} = source_name_generator tick String.compare
+      val fresh_name = for_prefix "__smt_source_clause_"
+      val fresh_bound_name = for_prefix "__smt_source_bound_"
       fun snapshot ty =
         (tick 1;SRCaptured ty ::
           (if Type.is_vartype ty then [] else
@@ -8871,6 +8892,7 @@ struct
         | SRArrow (a,b) => types a @ types b)
       fun atom shape ty = SRTree {ty=ty,shape=shape,raw=1,inc=1,
         annotations=types ty}
+      fun fresh name ty = atom (SRFresh (name (),ty)) (SRCaptured ty)
       fun app ty left right = SRTree
         {ty=ty,shape=SRApp (left,right),raw=1+sr_raw left+sr_raw right,
          inc=1+sr_inc left+sr_inc right,
@@ -8879,9 +8901,6 @@ struct
         {ty=ty,shape=SRLam (id,variable,body),raw=1+sr_raw body,
          inc=2+sr_inc body,
          annotations=types ty @ sr_types variable @ sr_types body}
-      fun remember name = (tick (String.size name+1);
-        if List.exists (fn held => held=name) (!identifiers) then ()
-        else identifiers := name :: !identifiers)
       fun binding variable [] = NONE
         | binding variable ((held,id)::rest) =
             (tick 1;if sr_same variable held then SOME id
@@ -8946,18 +8965,9 @@ struct
         arguments
       (* Choose names only AFTER every bounded clause/argument variable has
          been seen. The opaque raw Source hypotheses are never scanned. *)
-      fun fresh prefix ty =
-        let fun choose n =
-              let val candidate=prefix ^ Int.toString n
-                  val _=tick (String.size candidate+1)
-              in if List.exists (fn old => old=candidate) (!identifiers)
-                then choose (n+1) else
-                  (identifiers:=candidate :: !identifiers;candidate) end
-            val name=choose 0
-        in atom (SRFresh (name,ty)) (SRCaptured ty) end
       val renaming = List.map (fn (node,old) =>
         let val (_,ty)=Term.dest_var old
-        in (node,old,fresh "__smt_source_clause_" ty) end) names
+        in (node,old,fresh fresh_name ty) end) names
       fun rename (value as SRTree {ty,shape,...}) = case shape of
           SRAtom old => (case List.find
               (fn (_,name,_) => sr_same old name) renaming of
@@ -9144,7 +9154,7 @@ struct
             (if List.exists (fn (old,_,_)=>old=id) (!binders) then () else
               let val (_,ty)=Term.dest_var v
                   val fresh=case #shape (sr_data
-                      (fresh "__smt_source_bound_" ty)) of
+                      (fresh fresh_bound_name ty)) of
                       SRFresh (name,_)=>name | _=>raise ERR
                         "prepare_source_rule" "fresh binder grammar"
               in binders:=(id,fresh,ty):: !binders end;collect body)
@@ -10201,20 +10211,23 @@ struct
       val quota=IntInf.fromInt(W.work_limit expected)
       val budget=ref(0:IntInf.int)
       val policies=ref([]:Type.hol_type list)
-      val identifiers=ref([]:string list)
       val nodes=ref([]:G.node list)
       fun guarded operation=
         (List.app(sce_guard expected) parents;
          let val value=operation()
          in List.app(sce_guard expected) parents;value end)
       fun tick n=W.spend expected n
+      fun compare_names pair = (tick 1;String.compare pair)
+      val {remember=remember_name,for_prefix} =
+        source_name_generator tick compare_names
+      val fresh_name = for_prefix "__smt_source_conditions_"
       fun append [] tail=tail
         | append(value::rest) tail=(tick 1;value::append rest tail)
       fun flatten []=[]
         | flatten(values::rest)=(tick 1;append values (flatten rest))
       fun remember term=if Term.is_var term then
         let val(name,_)=Term.dest_var term
-        in tick(String.size name+1);identifiers:=name:: !identifiers end
+        in remember_name name end
         else ()
       fun capture cap names origin term=
         let
@@ -10263,14 +10276,7 @@ struct
         (capture template (#names d)NONE value,witness)) (#rows d)) data)
       fun name node=
         let val ty=G.type_of graph node
-            fun choose n=
-              let val candidate="__smt_source_conditions_"^Int.toString n
-                  val _=tick(String.size candidate+1)
-              in if List.exists(fn held=>(tick 1;held=candidate))
-                   (!identifiers) then
-                   choose(n+1) else
-                 (identifiers:=candidate:: !identifiers;candidate) end
-        in (node,choose 0,ty) end
+        in (node,fresh_name (),ty) end
       val _=List.app(fn d=>List.app(fn(node,_)=>
         if List.exists(fn held=>(tick 1;held=node)) (!nodes) then () else
           nodes:=node:: !nodes)(#names d)) data
@@ -11865,11 +11871,9 @@ struct
       val cap=template_limit
       val budget=ref(0:IntInf.int)
       val policies=ref([]:Type.hol_type list)
-      val identifiers=ref([]:string list)
       fun tick n=W.spend expected n
-      fun remember text=(tick(String.size text+1);
-        if List.exists(fn old=>old=text)(!identifiers) then () else
-          identifiers:=text:: !identifiers)
+      val {remember,for_prefix} = source_name_generator tick String.compare
+      val fresh_name = for_prefix "__smt_gen_gamma_"
       fun bounded limit term=
         (case SmtReplayImport.bounded_raw_size limit term of
            SOME n=>tick n | NONE=>raise ERR
@@ -12005,13 +12009,7 @@ struct
             val bindings=selected_names names originals(Thm.concl proof)
         in List.app(fn(node,_)=>if protected node then ()
           else ignore(actual node)) bindings end)(!raw)
-      fun fresh node=
-        let fun choose index=
-              let val text="__smt_gen_gamma_"^Int.toString index
-                  val _=tick(String.size text+1)
-              in if List.exists(fn old=>old=text)(!identifiers) then
-                choose(index+1) else (remember text;text) end
-        in SGName(node,choose 0,G.type_of graph node) end
+      fun fresh node = SGName (node,fresh_name (),G.type_of graph node)
       val gamma=List.map(fn node=>(node,if protected node then fresh node
         else actual node))(!sources)
       fun replacement node=case List.find(fn(old,_)=>old=node) gamma of
@@ -14385,11 +14383,9 @@ struct
       val cap=template_limit
       val budget=ref(0:IntInf.int)
       val policies=ref([]:Type.hol_type list)
-      val identifiers=ref([]:string list)
       fun tick n=W.spend expected n
-      fun remember text=(tick(String.size text+1);
-        if List.exists(fn old=>old=text)(!identifiers) then () else
-          identifiers:=text:: !identifiers)
+      val {remember,for_prefix} = source_name_generator tick String.compare
+      val fresh_name = for_prefix "__smt_gen_gamma_"
       fun bounded limit term=
         (case SmtReplayImport.bounded_raw_size limit term of
            SOME n=>tick n | NONE=>raise ERR
@@ -14610,13 +14606,7 @@ struct
           | NONE=>List.app(fn(node,_)=>if protected node orelse
               Option.isSome(scope_spine node)then ()else ignore(actual node))
                 bindings end)(!raw)
-      fun fresh node=
-        let fun choose index=
-              let val text="__smt_gen_gamma_"^Int.toString index
-                  val _=tick(String.size text+1)
-              in if List.exists(fn old=>old=text)(!identifiers) then
-                choose(index+1) else (remember text;text) end
-        in SGName(node,choose 0,G.type_of graph node) end
+      fun fresh node = SGName (node,fresh_name (),G.type_of graph node)
       val gamma=List.map(fn node=>(node,if protected node then fresh node
         else actual node))ports
       val _=port_replacements:=gamma

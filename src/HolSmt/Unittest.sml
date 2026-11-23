@@ -39931,6 +39931,35 @@ in
   ()
 end
 
+local
+  structure F = SmtLib_OutputFragments
+  structure S = SmtLib_OutputSchedule
+in
+fun sparse_output_schedule () =
+  let
+    val initial = S.create
+      {compare_region=Int.compare,compare_key=Int.compare,prefix="ref_"}
+    val (initial,parent) = S.bind (initial,0,0,F.text "false")
+    val (initial,leaf) = S.bind (initial,1,0,parent)
+    val sparse = List.foldl (fn (key,state) =>
+      #1 (S.bind (state,1,key,F.text "unused"))) initial
+      (List.tabulate (32,fn i => i+1))
+    val forward = F.reference "ref_35"
+    val expression = F.concat [F.text "(and ",leaf,F.text " ",forward,
+                               F.text ")"]
+    val (sparse,body) = S.bind (sparse,1,33,expression)
+    val (sparse,_) = S.bind (sparse,1,34,F.text "unused")
+    val sealed = S.wrap (sparse,1,body)
+    val fragments = ref []
+    val _ = F.render (fn fragment => fragments := fragment :: !fragments)
+      sealed
+  in
+    assert (String.concat (List.rev (!fragments)) =
+      "(let ((ref_1 ref_0)) (let ((ref_34 (and ref_1 ref_35))) ref_34))",
+      "sparse wrapping changed definition order or reference scope")
+  end
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -41269,7 +41298,8 @@ let
     (* Retires private canaries to test both declaration epochs. *)
     ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run),
     ("source_condition_builder_contract",
-      SmtReplaySourceConditionTests.run)
+      SmtReplaySourceConditionTests.run),
+    ("sparse_output_schedule", sparse_output_schedule)
   ]
   val selected =
     case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of
