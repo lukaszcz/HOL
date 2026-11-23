@@ -1318,7 +1318,22 @@ fun replay_normalization charge units =
   let fun loop 0 = () | loop n = (charge (); loop (n-1))
   in loop units end
 
-fun converse_sources caller_charge patterns sources =
+(* Share matcher preparation across supplied rules in one binding.
+   Force each matcher only after the caller's normalization charge. *)
+fun prepare_converse_rewriters () =
+  let
+    fun prepare raw =
+      let val theorem = Drule.SPEC_ALL raw
+      in
+        if null (hyp theorem) andalso boolSyntax.is_eq (concl theorem) then
+          SOME (Susp.delay (fn () => Conv.REWR_CONV theorem))
+        else NONE
+      end
+  in
+    memoUtil.keyed_memo (Lib.curry Portable.pointer_eq) prepare
+  end
+
+fun converse_sources caller_charge patterns prepare sources =
   let
     val callback_failure = ref (NONE : exn option)
     fun charge () = caller_charge ()
@@ -1370,23 +1385,18 @@ fun converse_sources caller_charge patterns sources =
         val (left,right) = boolSyntax.dest_eq
           (#2 (boolSyntax.strip_imp_only (concl supplied)))
         fun consider (origin,found) =
-          let
-            val theorem = Drule.SPEC_ALL
-              (#2 (simpLib.source_rewrite origin))
-          in
-            if not (null (hyp theorem)) orelse
-               not (boolSyntax.is_eq (concl theorem)) then found
-            else
-              let
-                val _ = charge ()
-                val rewrite = Conv.REWR_CONV theorem
-                val result = Conv.QCONV (once origin rewrite) right
-                val _ = check_callback ()
-              in
-                if aconv (boolSyntax.rhs (concl result)) left then
-                  HOLset.add (found,origin) else found
-              end
-          end
+          case prepare (#2 (simpLib.source_rewrite origin)) of
+              NONE => found
+            | SOME prepared =>
+                let
+                  val _ = charge ()
+                  val rewrite = Susp.force prepared
+                  val result = Conv.QCONV (once origin rewrite) right
+                  val _ = check_callback ()
+                in
+                  if aconv (boolSyntax.rhs (concl result)) left then
+                    HOLset.add (found,origin) else found
+                end
       in
         List.foldl consider found (HOLset.listItems (#2 (candidates right)))
       end
@@ -1477,6 +1487,7 @@ fun make_supplied_converse_cache () =
         val derived = ref 0
         val memoized = ref 0
         fun charge () = (caller_charge (); charged := !charged + 1)
+        val prepare = prepare_converse_rewriters ()
         fun detect (data : converse_inventory) (theorem,sources) =
           let
             fun matches (entry : supplied_view_memo) =
@@ -1496,7 +1507,7 @@ fun make_supplied_converse_cache () =
                   let
                     val start = !charged
                     val suspended = HOLset.listItems (converse_sources charge
-                      (#patterns data) sources)
+                      (#patterns data) prepare sources)
                     val entry =
                       {generation= #generation data,theorem=theorem,
                        positions=initial_positions,
@@ -1615,6 +1626,7 @@ fun make_supplied_view_cache_core () =
         val charged = ref (case prior of NONE => 0
           | SOME (SuppliedConverseBinding data) => #normalization data)
         fun charge () = (caller_charge (); charged := !charged + 1)
+        val prepare = prepare_converse_rewriters ()
         fun detect (theorem,sources) =
           let
             val matches = matching (#generation table) initial_positions
@@ -1632,7 +1644,8 @@ fun make_supplied_view_cache_core () =
                       if null sources then []
                       else HOLset.listItems
                         (converse_sources charge
-                          (Susp.force (#rewrite_patterns table)) sources)
+                          (Susp.force (#rewrite_patterns table)) prepare
+                          sources)
                     val entry =
                       {generation= #generation table,theorem=theorem,
                        positions=initial_positions,

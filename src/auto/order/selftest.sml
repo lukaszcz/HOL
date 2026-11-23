@@ -397,6 +397,43 @@ val _ =
 
 val _ =
   check
+    ("direct crossings keep the first edge proof after an earlier miss",
+     fn () =>
+       let
+         fun fact x y = Thm.ASSUME (long_order_edge x y)
+         fun apart x y =
+           Thm.ASSUME
+             (boolSyntax.mk_neg
+               (boolSyntax.mk_eq (List.nth (long_order_nodes, x),
+                                  List.nth (long_order_nodes, y))))
+         val axiom =
+           Thm.ASSUME
+             (Term.mk_comb
+               (Term.prim_mk_const
+                  {Thy = "relation", Name = "antisymmetric"},
+                long_order_relation))
+         val guard = Term.mk_var ("first_edge_support", Type.bool)
+         val first = Drule.ADD_ASSUM guard (fact 2 3)
+         val facts =
+           [axiom, fact 0 1, fact 1 2, first, fact 2 3, fact 3 2,
+            apart 0 1, apart 2 3]
+         val target = boolSyntax.F
+         val context : orderData.context =
+           {relation = long_order_relation, reduction = Conv.ALL_CONV,
+            axioms = {reflexive = NONE, transitive = NONE,
+                      antisymmetric = SOME axiom, total = NONE}}
+         val ordinary = orderSolve.prove_using [context] facts target
+       in
+         List.exists (Term.aconv guard) (Thm.hyp ordinary) andalso
+         (case orderSolve.prove_using_budgeted
+                 (searchBudget.unbounded ()) [context] facts target of
+              SOME metered =>
+                Lib.list_eq Term.aconv (Thm.hyp ordinary) (Thm.hyp metered)
+            | NONE => false)
+       end)
+
+val _ =
+  check
     ("a budgeted invocation proves beyond the unbudgeted graph cap",
      fn () =>
        case orderSolve.prove_with_budget

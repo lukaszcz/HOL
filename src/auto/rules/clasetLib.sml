@@ -32,6 +32,8 @@ type aesop_index =
 type distinct_source =
   {name : string, case_def : thm, case_const : term,
    constructors : term vector, cases : thm vector,
+   constructor_positions :
+     (KernelSig.kernelid, int list) Redblackmap.dict Portable.HOLSusp.susp,
    cache : (int * int, aesop_rule) Redblackmap.dict ref}
 type distinct_entry = {source : distinct_source, first : int}
 type distinct_table = (string * string, distinct_entry) Redblackmap.dict
@@ -281,6 +283,17 @@ fun add_distinct_source key case_def (make_source : unit -> distinct_source)
       end
   end
 
+fun index_constructors constructors =
+  let
+    fun add (position, constructor, index) =
+      if is_const constructor then
+        Redblackmap.insertWith (fn (later, earlier) => earlier @ later)
+          (index, #Name (dest_thy_constid constructor), [position])
+      else index
+  in
+    Vector.foldri add (Redblackmap.mkDict KernelSig.id_compare) constructors
+  end
+
 fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
   let val key = TypeBasePure.ty_name_of tyi
   in
@@ -289,13 +302,18 @@ fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
           let
             val case_def = TypeBasePure.case_def_of tyi
             fun make_source () =
-              {name = tyinfo_stem tyi ^ "_distinct",
-               case_def = case_def,
-               case_const = TypeBasePure.case_const_of tyi,
-               constructors = Vector.fromList constructors,
-               cases = Vector.fromList (CONJUNCTS case_def),
-               cache = ref (Redblackmap.mkDict
-                 (Lib.pair_compare (Int.compare, Int.compare)))}
+              let val constructors = Vector.fromList constructors
+              in
+                {name = tyinfo_stem tyi ^ "_distinct",
+                 case_def = case_def,
+                 case_const = TypeBasePure.case_const_of tyi,
+                 constructors = constructors,
+                 constructor_positions = Portable.HOLSusp.delay
+                   (fn () => index_constructors constructors),
+                 cases = Vector.fromList (CONJUNCTS case_def),
+                 cache = ref (Redblackmap.mkDict
+                   (Lib.pair_compare (Int.compare, Int.compare)))}
+              end
           in
             add_distinct_source key case_def make_source cs
           end
@@ -403,6 +421,8 @@ fun distinct_candidates_lazy (meter as {checkpoint, ...}) distinct
               let
                 val left_head = fst (strip_comb left)
                 val right_head = fst (strip_comb right)
+                val measured =
+                  not (Portable.pointer_eq (checkpoint, listUtil.no_checkpoint))
                 val metas =
                   if is_var left_head orelse is_var right_head then qvars ()
                   else Term.empty_tmset
@@ -414,11 +434,18 @@ fun distinct_candidates_lazy (meter as {checkpoint, ...}) distinct
                       if is_var head andalso HOLset.member (metas, head) then
                         List.tabulate (n, Lib.I)
                       else if is_const head then
-                        Vector.foldri
-                          (fn (k, c, rest) =>
-                             (checkpoint ();
-                              if same_const c head then k :: rest else rest))
-                          [] constructors
+                        if measured then
+                          Vector.foldri
+                            (fn (k, c, rest) =>
+                               (checkpoint ();
+                                if same_const c head then k :: rest else rest))
+                            [] constructors
+                        else
+                          Option.getOpt
+                            (Redblackmap.peek
+                              (Portable.HOLSusp.force
+                                 (#constructor_positions source),
+                               #Name (dest_thy_constid head)), [])
                       else []
                     val ls = positions left_head
                     val rs = positions right_head

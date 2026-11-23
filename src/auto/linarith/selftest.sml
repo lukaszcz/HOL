@@ -707,6 +707,25 @@ fun fm_budgeted budget items =
 
 val _ =
   check
+    ("FM input keeps the first contradictory constant row",
+     fn () =>
+       let
+         fun constant n = fm_le (no_atoms, fm_rat n) (no_atoms, fm_rat 0)
+         val rows = [constant 0, fm_row (1, 0) 0, constant 1, constant 2]
+         val items = map (fn row => (fm_conclusion, SOME row)) rows
+         val visited = ref []
+         fun nonnegative atom =
+           (visited := atom :: !visited; Term.aconv atom fm_x)
+       in
+         case prove_decomposed traceUtil.silent fm_config (fn _ => NONE)
+                nonnegative items fm_conclusion of
+             (_, SOME [Asm 2]) =>
+               Lib.list_eq Term.aconv (List.rev (!visited)) [fm_x, fm_z]
+           | _ => false
+       end)
+
+val _ =
+  check
     ("FM equation elimination keeps the first constant contradiction",
      fn () =>
        let

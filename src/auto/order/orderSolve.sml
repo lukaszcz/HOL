@@ -227,11 +227,24 @@ fun indexed_rounds work relax outgoing source nodes =
 fun reachable work transitivity edges outgoing observe source =
   case transitivity of
       NONE =>
-        ReachedList
-          (List.map (fn e => (#target e, #path e))
-            (List.filter
-              (fn e => (candidate work; aconv (#source e) source))
-              edges))
+        (case #max_nodes work of
+             NONE =>
+               ReachedList
+                 (List.map (fn e => (#target e, #path e))
+                   (List.filter
+                     (fn e => (candidate work; aconv (#source e) source))
+                     edges))
+           | SOME _ =>
+               let
+                 val bucket = Option.getOpt
+                   (Termtab.lookup (Portable.HOLSusp.force outgoing) source,
+                    [])
+                 (* The bucket is reversed. Put the first original edge
+                    first so it still supplies the proof. *)
+                 fun add ((_, e : edge), nodes) = (#target e, #path e) :: nodes
+               in
+                 ReachedList (List.foldl add [] bucket)
+               end)
     | SOME instantiate =>
         let
           val step = instantiate ()

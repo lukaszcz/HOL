@@ -1935,9 +1935,15 @@ fun instp_cascade cs =
 fun inst_cascade derive cs input =
   append_results (inst0_cascade derive cs) (instp_cascade cs) input
 
-fun unsafe_cascade cs =
-  rule_results no_note clasetUnify.Unify cs false
-    (clasetLib.unsafe_part cs) all_weights
+fun unsafe_candidates cs =
+  rule_candidates listUtil.no_checkpoint clasetUnify.Unify
+    (clasetLib.unsafe_part cs)
+
+fun unsafe_applications cs =
+  rule_applications no_note clasetUnify.Unify cs false
+
+fun unsafe_cascade cs input =
+  unsafe_applications cs (fn () => unsafe_candidates cs input) input
 
 fun depth_cascade part cs input =
   append_results (instp_cascade cs)
@@ -2384,11 +2390,20 @@ fun unsafe_rung derive fast cs (input as (node, _)) =
                 NONE => guesses_last metas (unsafe_cascade cs input)
               | SOME (first, rest) =>
                   if guessed_meta metas first then
-                    lazy_append (guess_free metas (unsafe_cascade cs input))
-                      (fn () =>
-                        lazy_append (seq.cons first rest)
-                          (fn () =>
-                            guessing metas (unsafe_cascade cs input)))
+                    let
+                      (* The two passes use the same unsafe rule order.
+                         Share lookup while keeping attempts independent. *)
+                      val tagged = Portable.HOLSusp.delay
+                        (fn () => unsafe_candidates cs input)
+                      fun unsafe () =
+                        unsafe_applications cs
+                          (fn () => Portable.HOLSusp.force tagged) input
+                    in
+                      lazy_append (guess_free metas (unsafe ()))
+                        (fn () =>
+                          lazy_append (seq.cons first rest)
+                            (fn () => guessing metas (unsafe ())))
+                    end
                   else seq.cons first rest)
     end
 

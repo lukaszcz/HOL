@@ -169,10 +169,13 @@ fun install_committed level id data tree =
 
 fun application_assigned goal
       ({node, ...} : aesopTree.rapp_data) =
-  not
-    (aesopTree.dependencies_empty
-      (aesopTree.assigned_between
-        (aesopTree.active_store goal) (clasetGoal.store node)))
+  let
+    val {terms, types} =
+      clasetMeta.new_bindings
+        (aesopTree.active_store goal) (clasetGoal.store node)
+  in
+    not (null terms andalso null types)
+  end
 
 (* A forward rule neither consumes nor rewrites what it matched, and its
    alternatives are confluent: taking one leaves all the others available

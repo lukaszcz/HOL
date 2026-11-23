@@ -583,6 +583,13 @@ fun rigid_head term =
   then SOME term
   else NONE
 
+(* Stripping a truth equivalence can expose a different head. *)
+fun citation_head term =
+  case rigid_head term of
+      SOME head =>
+        if Term.same_const head boolSyntax.equality then NONE else SOME head
+    | NONE => NONE
+
 fun prepare_stripped term =
   let
     open Portable.HOLSusp
@@ -630,13 +637,13 @@ fun prepare_citation statement : prepared_citation =
                   if Portable.pointer_eq (conclusion, statement)
                   then WholeCitation
                   else CitationPart
-                    (rigid_head conclusion, normal_reading conclusion)
+                    (citation_head conclusion, normal_reading conclusion)
               in
                 seq.cons (inherited, reading) rest
               end
       end
   in
-    {statement = statement, head = rigid_head statement,
+    {statement = statement, head = citation_head statement,
      contentless = delay (fn () => contentless statement),
      whole = normal_reading statement,
      readings = seq.delay (fn () => read [] statement seq.empty)}
@@ -706,36 +713,27 @@ fun prepare_statement_comparison goal =
       if distinct_readings then prepare_stripped stripped_body else whole
     val premises = map (prepare_symmetry statement_normal_form) goal_premises
     fun covered premise = List.exists (same premise) premises
-    (* Beta and eta preserve a rigid head. An equality can expose a
-       different head when a truth equivalence is stripped. *)
-    fun different_head raw (expected, _, _) =
-      case (raw, expected) of
-          (SOME a, SOME b) =>
-            not (Term.same_const a boolSyntax.equality) andalso
-            not (Term.same_const a b)
-        | _ => false
+    (* Beta and eta preserve the heads recorded for raw citations. *)
+    fun possible (SOME a) (SOME b, _, _) = Term.same_const a b
+      | possible _ _ = true
   in
     fn ({head, whole = citation, readings, ...} : prepared_citation) =>
       let
-        val whole_possible = not (different_head head whole)
+        val whole_possible = possible head whole
         fun all_covered [] = true
           | all_covered (premises :: earlier) =
               all_covered earlier andalso List.all covered (force premises)
         fun matches (premises, WholeCitation) =
               distinct_readings andalso
-              not (different_head head conclusion) andalso
+              possible head conclusion andalso
               same_stripped (force citation) conclusion andalso
               all_covered premises
           | matches (premises, CitationPart (head, prepared)) =
-              if different_head head whole andalso
-                 (not distinct_readings orelse different_head head conclusion)
-              then false
-              else
-                let val left = force prepared in
-                  same_stripped left whole orelse
-                  (distinct_readings andalso
-                   same_stripped left conclusion andalso all_covered premises)
-                end
+              (possible head whole andalso
+               same_stripped (force prepared) whole) orelse
+              (distinct_readings andalso possible head conclusion andalso
+               same_stripped (force prepared) conclusion andalso
+               all_covered premises)
         fun matches_reading readings =
           case seq.cases readings of
               NONE => false

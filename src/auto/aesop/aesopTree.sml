@@ -853,18 +853,8 @@ fun ancestry tree start =
     walk start
   end
 
-fun original_goal tree start =
-  let
-    fun walk seen id =
-      if Lib.mem id seen then
-        raise ERR "original_goal" "cycle in copy links"
-      else
-        case #copy_of (goal tree id) of
-            NONE => id
-          | SOME source => walk (id :: seen) source
-  in
-    walk [] start
-  end
+(* Installation records the original goal even when copying a copy. *)
+fun original_goal tree id = Option.getOpt (#copy_of (goal tree id), id)
 
 fun take_through_rapp wanted [] = []
   | take_through_rapp wanted (entry :: rest) =
@@ -879,35 +869,29 @@ fun copying_sources_on_path tree parent_id relevant_assigned
       dropped_candidates =
   let
     val path = ancestry tree parent_id
-    val ancestor_created =
-      List.foldl
-        (fn ((_, rid), dependencies) =>
-          dependencies_union
-            dependencies (#created (rapp tree rid)))
-        (empty_dependencies ()) path
     (* HOL types are inhabited, so a dropped metavariable needs no
        synthesis goal.  It still drives copying exactly like an
-       assignment. *)
-    val dropped =
-      dependencies_intersection dropped_candidates ancestor_created
+       assignment if it was created along this path. Every creator of
+       an assigned or dropped candidate can therefore bound the search. *)
+    val candidates = dependencies_union relevant_assigned dropped_candidates
+    fun creator ((_, rid), result as (missing, _)) =
+      let val created = #created (rapp tree rid)
+      in
+        if dependencies_overlap candidates created then
+          (dependencies_difference missing created, SOME rid)
+        else result
+      end
+    val (missing, topmost) = List.foldl creator (candidates, NONE) path
     val copying =
-      dependencies_union relevant_assigned dropped
-    val not_created =
-      dependencies_difference copying ancestor_created
+      dependencies_union relevant_assigned
+        (dependencies_difference dropped_candidates missing)
     val bounded_path =
       if dependencies_empty copying then []
-      else if not (dependencies_empty not_created) then path
+      else if dependencies_overlap relevant_assigned missing then path
       else
-        let
-          fun creator ((_, rid), topmost) =
-            if dependencies_overlap copying (#created (rapp tree rid))
-            then SOME rid
-            else topmost
-        in
-          case List.foldl creator NONE path of
-              NONE => path
-            | SOME topmost => take_through_rapp topmost path
-        end
+        case topmost of
+            NONE => path
+          | SOME rid => take_through_rapp rid path
     val path_originals =
       List.foldl
         (fn ((id, _), origins) => HOLset.add (origins, original_goal tree id))

@@ -600,14 +600,10 @@ fun mklineq_with work index (item, asm_index) =
 
 (* Nonneg is the registry-extensible replacement for upstream mknat
    (fast_lin_arith.ML:549-553). *)
-fun mknonneg is_nonnegative width (index, atom) =
-  if is_nonnegative atom then
-    SOME
-      (Lineq
-         (zero, Le,
-          List.tabulate (width, fn i => if i = index then one else zero),
-          Nonneg atom))
-  else NONE
+fun mknonneg width (index, atom) =
+  Lineq (zero, Le,
+         List.tabulate (width, fn i => if i = index then one else zero),
+         Nonneg atom)
 
 fun is_neq (Decomp {rel, ...}) = rel = REL_NEQ
 
@@ -734,15 +730,46 @@ fun refute_system_with (work : work) is_nonnegative items justs =
           (atoms, atom_index_with work atoms)
         end
       else indexed_atoms items
-    val nonnegative =
-      List.mapPartial
-        (fn item =>
-          (candidate work;
-           mknonneg is_nonnegative (#width index) item))
-        (Lib.enumerate 0 atoms)
-    val ineqs = List.map (mklineq_with work index) items @ nonnegative
+    val numbered_atoms = Lib.enumerate 0 atoms
+    val nonneg_row = mknonneg (#width index)
+    fun eligible (_, atom) = (candidate work; is_nonnegative atom)
+    val contradiction =
+      if #metered work then
+        let
+          val nonnegative =
+            List.mapPartial
+              (fn atom => if eligible atom then SOME (nonneg_row atom)
+                          else NONE)
+              numbered_atoms
+        in
+          elim_with work
+            (List.map (mklineq_with work index) items @ nonnegative)
+        end
+      else
+        let
+          (* Check eligibility in atom order even if an assumption
+             refutes the system before any unit row is needed. *)
+          val eligible_atoms = List.filter eligible numbered_atoms
+          (* Keep the assumption order and stop at the first
+             contradiction. Unit rows are already nontrivial. *)
+          fun collect kept [] =
+                elim_rows_with work 0 true
+                  (List.revAppend (kept, List.map nonneg_row eligible_atoms))
+            | collect kept (item :: rest) =
+                let
+                  val row as Lineq (_, _, _, just) =
+                    mklineq_with work index item
+                in
+                  if is_trivial_with work row then
+                    if is_contradictory row then SOME just
+                    else collect kept rest
+                  else collect (row :: kept) rest
+                end
+        in
+          collect [] items
+        end
   in
-    Option.map (fn just => just :: justs) (elim_with work ineqs)
+    Option.map (fn just => just :: justs) contradiction
   end
 
 fun refutes_with (work : work) is_nonnegative
