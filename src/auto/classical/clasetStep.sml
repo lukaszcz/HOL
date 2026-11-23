@@ -184,8 +184,10 @@ type closing_goal =
   {input : node * goalpos, asl : term list, store : clasetMeta.store,
    normalized_w : term, positioned : (int * term * term) list}
 
+(* Consume closing alternatives in positional order.  A first-result
+   consumer need not build every pair of matching assumptions. *)
 fun assumption_results ({store, normalized_w, positioned, ...} : closing_goal) =
-  list_seq
+  seq.delay
     (fn () =>
       let
         fun result (asm_pos, asm) =
@@ -204,12 +206,14 @@ fun assumption_results ({store, normalized_w, positioned, ...} : closing_goal) =
                action = clasetReplay.assumption_action asm_pos,
                closed = [], store = store}
           end
+        fun scan [] = seq.empty
+          | scan ((pos, asm, normalized) :: rest) =
+              if aconv normalized normalized_w then
+                seq.cons (result (pos, asm))
+                  (seq.delay (fn () => scan rest))
+              else scan rest
       in
-        List.mapPartial
-          (fn (pos, asm, normalized) =>
-            if aconv normalized normalized_w then SOME (result (pos, asm))
-            else NONE)
-          positioned
+        scan positioned
       end)
 
 fun normalized_assumptions store asl =
@@ -235,7 +239,7 @@ fun assumption_lookup positioned (_ :: _ :: _) =
 
 fun contradiction_results
       ({store, normalized_w, positioned, ...} : closing_goal) =
-  list_seq
+  seq.delay
     (fn () =>
       let
         val negatives =
@@ -243,47 +247,46 @@ fun contradiction_results
             positioned
         val lookup = assumption_lookup positioned negatives
 
-        fun results [] = []
-          | results ((neg_pos, neg_tm, normalized_neg) :: rest) =
-            let
-              val positive = dest_neg normalized_neg
-              val normalized_positive = normalize_term store positive
-              fun make (pos_pos, pos_tm) =
-                let
-                  fun validation [] =
-                        let
-                          val nthm = assumption_thm neg_tm normalized_neg
-                          val pthm = assumption_thm pos_tm positive
-                          val false_thm = MP (NOT_ELIM nthm) pthm
-                        in
-                          Drule.CONTR normalized_w false_thm
-                        end
-                    | validation _ =
-                        raise mk_HOL_ERR "clasetStep"
-                          "contradiction_results"
-                          "contradiction validation has children"
-                in
-                  Direct
-                    {kind = Contradiction (neg_pos, pos_pos),
-                     consumed = SOME neg_pos, created = no_created,
-                     eigenvariables = [], result = ([], validation),
-                     children = SOME [],
-                     action =
-                       clasetReplay.contradiction_action
-                         (neg_pos, pos_pos),
-                     closed = [], store = store}
-                end
-            in
-              map make (lookup normalized_positive) @ results rest
-            end
+        fun results (neg_pos, neg_tm, normalized_neg) =
+          let
+            val positive = dest_neg normalized_neg
+            val normalized_positive = normalize_term store positive
+            fun make (pos_pos, pos_tm) =
+              let
+                fun validation [] =
+                      let
+                        val nthm = assumption_thm neg_tm normalized_neg
+                        val pthm = assumption_thm pos_tm positive
+                        val false_thm = MP (NOT_ELIM nthm) pthm
+                      in
+                        Drule.CONTR normalized_w false_thm
+                      end
+                  | validation _ =
+                      raise mk_HOL_ERR "clasetStep"
+                        "contradiction_results"
+                        "contradiction validation has children"
+              in
+                Direct
+                  {kind = Contradiction (neg_pos, pos_pos),
+                   consumed = SOME neg_pos, created = no_created,
+                   eigenvariables = [], result = ([], validation),
+                   children = SOME [],
+                   action =
+                     clasetReplay.contradiction_action
+                       (neg_pos, pos_pos),
+                   closed = [], store = store}
+              end
+          in
+            seq.map make (seq.fromList (lookup normalized_positive))
+          end
       in
-        results negatives
+        seq.bind (seq.fromList negatives) results
       end)
 
 fun mp_results
       ({input = (node, pos), asl, store, normalized_w, positioned}
        : closing_goal) =
-  list_seq
+  seq.delay
     (fn () =>
       let
         val {params, ...} = clasetGoal.goal_at node pos
@@ -296,64 +299,62 @@ fun mp_results
             positioned
         val lookup = assumption_lookup positioned implications
 
-        fun results [] = []
-          | results
-              ((imp_pos, imp_tm, normalized_imp, (antecedent, consequent))
-               :: rest) =
-              let
-                val normalized_antecedent = normalize_term store antecedent
-                fun make_matches [] = []
-                  | make_matches matches =
+        fun results
+            (imp_pos, imp_tm, normalized_imp, (antecedent, consequent)) =
+          let
+            val normalized_antecedent = normalize_term store antecedent
+            fun make_matches [] = seq.empty
+              | make_matches matches =
+                  let
+                    val child_asl = consequent :: delete_nth asl imp_pos
+                    val child = (child_asl, normalized_w)
+                    val child_cgoal =
+                      {params = params, asl = child_asl, w = normalized_w}
+                    fun make (ante_pos, ante_tm) =
                       let
-                        val child_asl = consequent :: delete_nth asl imp_pos
-                        val child = (child_asl, normalized_w)
-                        val child_cgoal =
-                          {params = params, asl = child_asl, w = normalized_w}
-                        fun make (ante_pos, ante_tm) =
-                          let
-                            fun validation [child_thm] =
-                                  let
-                                    val ithm =
-                                      assumption_thm imp_tm normalized_imp
-                                    val athm =
-                                      assumption_thm ante_tm antecedent
-                                    val consequent_thm = MP ithm athm
-                                    val result =
-                                      Drule.PROVE_HYP
-                                        consequent_thm child_thm
-                                  in
-                                    EQ_MP
-                                      (ALPHA (concl result) normalized_w)
-                                      result
-                                  end
-                              | validation _ =
-                                  raise mk_HOL_ERR "clasetStep" "mp_results"
-                                    "modus ponens validation arity"
-                          in
-                            Direct
-                              {kind =
-                                 ModusPonens
-                                   {implication = imp_pos,
-                                    antecedent = ante_pos},
-                               consumed = SOME imp_pos,
-                               created = no_created,
-                               eigenvariables = [[]],
-                               result = ([child], validation),
-                               children = SOME [child_cgoal],
-                               action =
-                                 clasetReplay.mp_action
-                                   {implication = imp_pos,
-                                    antecedent = ante_pos},
-                               closed = [NONE], store = store}
-                          end
+                        fun validation [child_thm] =
+                              let
+                                val ithm =
+                                  assumption_thm imp_tm normalized_imp
+                                val athm =
+                                  assumption_thm ante_tm antecedent
+                                val consequent_thm = MP ithm athm
+                                val result =
+                                  Drule.PROVE_HYP
+                                    consequent_thm child_thm
+                              in
+                                EQ_MP
+                                  (ALPHA (concl result) normalized_w)
+                                  result
+                              end
+                          | validation _ =
+                              raise mk_HOL_ERR "clasetStep" "mp_results"
+                                "modus ponens validation arity"
                       in
-                        map make matches
+                        Direct
+                          {kind =
+                             ModusPonens
+                               {implication = imp_pos,
+                                antecedent = ante_pos},
+                           consumed = SOME imp_pos,
+                           created = no_created,
+                           eigenvariables = [[]],
+                           result = ([child], validation),
+                           children = SOME [child_cgoal],
+                           action =
+                             clasetReplay.mp_action
+                               {implication = imp_pos,
+                                antecedent = ante_pos},
+                           closed = [NONE], store = store}
                       end
-              in
-                make_matches (lookup normalized_antecedent) @ results rest
-              end
+                  in
+                    seq.map make (seq.fromList matches)
+                  end
+          in
+            make_matches (lookup normalized_antecedent)
+          end
       in
-        results implications
+        seq.bind (seq.fromList implications) results
       end)
 
 fun closing_results methods (input as (node, pos)) =

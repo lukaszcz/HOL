@@ -87,7 +87,18 @@ fun order_fact_views_with _ _ _ [] = []
         | SOME owned => searchBudget.charge owned
     val environment =
       clasetFacts.create_with_charge charge goal theorems
-    val sites = get_sites ()
+    (* A merged list may mention the same relation on both sides.
+       Matching an alpha-equivalent pair produces an equivalent view;
+       keep the first, as the final theorem deduplication would. *)
+    val distinct_sites =
+      case budget of
+          NONE => listUtil.distinct_by Term.compare I
+        | SOME _ => I
+    val sites =
+      case get_sites () of
+          ([], concrete) => concrete
+        | (goal_sites, []) => goal_sites
+        | (goal_sites, concrete) => distinct_sites (goal_sites @ concrete)
     val sites_for =
       case budget of
           NONE => select_relation_sites sites
@@ -97,9 +108,11 @@ fun order_fact_views_with _ _ _ [] = []
         val schematic = #theorem (clasetFacts.schematic_view entry)
         val contexts =
           orderData.contexts_unmetered [schematic]
+        val heads = relation_sites [Thm.concl schematic]
         val patterns =
-          relation_sites [Thm.concl schematic] @
-          map #relation contexts
+          case contexts of
+              [] => heads
+            | _ => distinct_sites (heads @ map #relation contexts)
         val instances =
           List.concat
             (map
@@ -121,7 +134,7 @@ fun order_fact_views_with _ _ _ [] = []
 
 fun order_fact_views (goal as (asl, w)) theorems =
   order_fact_views_with NONE
-    (fn () => relation_sites (w :: asl) @ concrete_relation_sites theorems)
+    (fn () => (relation_sites (w :: asl), concrete_relation_sites theorems))
     goal theorems
 
 (* The goal's own assumptions are the context: an order arrives as a
@@ -243,7 +256,7 @@ fun make_order_reducer budget =
                 let
                   val views =
                     order_fact_views_with budget
-                      (fn () => atom_sites @ concrete ()) ([], tm) theorems
+                      (fn () => (atom_sites, concrete ())) ([], tm) theorems
                   val result = (views, contexts_of views)
                   val previous = !sites
                 in

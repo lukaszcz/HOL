@@ -343,8 +343,22 @@ struct
 
   fun norm term =
     case term of
-        Skolem (name, args) => Skolem (name, vars_in_vars args)
-      | Const (name, terms) => Const (name, map norm terms)
+        Skolem (_, []) => term
+      | Skolem (name, args) => Skolem (name, vars_in_vars args)
+      | Const (_, []) => term
+      | Const (name, terms) =>
+          let
+            fun normalize argument =
+              let val result = norm argument
+              in
+                if Portable.pointer_eq (argument, result) then Portable.SAME
+                else Portable.DIFF result
+              end
+          in
+            case Portable.delta_map normalize terms of
+                Portable.SAME => term
+              | Portable.DIFF result => Const (name, result)
+          end
       | Var v =>
           (case !v of
                NONE => term
@@ -355,13 +369,18 @@ struct
              | nf =>
                  let
                    val nx = norm x
+                   fun application () =
+                     if Portable.pointer_eq (f, nf) andalso
+                        Portable.pointer_eq (x, nx)
+                     then term
+                     else nf $ nx
                  in
                    case (nf, nx) of
                        (head $ item, Abs (_, body)) =>
                          if membership head then
                            norm (subst_bound (item, body))
-                         else nf $ nx
-                     | _ => nf $ nx
+                         else application ()
+                     | _ => application ()
                  end)
       | _ => term
 

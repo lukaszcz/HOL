@@ -940,18 +940,29 @@ fun copying_sources tree parent_id assigned child_specs =
     val relevant_assigned =
       dependencies_intersection assigned (#deps parent)
     val unassigned = dependencies_difference (#deps parent) relevant_assigned
+    fun retains_all (_, deps : dependencies, _, _) =
+      HOLset.isSubset (#terms unassigned, #terms deps) andalso
+      HOLset.isSubset (#types unassigned, #types deps)
     val dropped_candidates =
       if dependencies_empty unassigned then unassigned
       else
-        let
-          val child_dependencies =
-            List.foldl
-              (fn ((_, deps, _, _), dependencies) =>
-                dependencies_union dependencies deps)
-              (empty_dependencies ()) child_specs
-        in
-          dependencies_difference unassigned child_dependencies
-        end
+        case child_specs of
+            [] => unassigned
+          | [(_, deps, _, _)] => dependencies_difference unassigned deps
+          | _ =>
+              (* One child can retain every dependency of the parent. *)
+              if List.exists retains_all child_specs then
+                empty_dependencies ()
+              else
+                let
+                  val child_dependencies =
+                    List.foldl
+                      (fn ((_, deps, _, _), dependencies) =>
+                        dependencies_union dependencies deps)
+                      (empty_dependencies ()) child_specs
+                in
+                  dependencies_difference unassigned child_dependencies
+                end
   in
     if dependencies_empty relevant_assigned andalso
        dependencies_empty dropped_candidates then []

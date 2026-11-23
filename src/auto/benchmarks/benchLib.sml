@@ -465,7 +465,7 @@ datatype citation_reading =
 
 type prepared_citation =
   {statement : term, head : term option,
-   whole : stripped_reading susp,
+   contentless : bool susp, whole : stripped_reading susp,
    readings : (premise_groups * citation_reading) seq.seq}
 type comparison_statement = prepared_citation * (unit -> term)
 
@@ -634,6 +634,7 @@ fun prepare_citation statement : prepared_citation =
       end
   in
     {statement = statement, head = rigid_head statement,
+     contentless = delay (fn () => contentless statement),
      whole = normal_reading statement,
      readings = seq.delay (fn () => read [] statement seq.empty)}
   end
@@ -720,13 +721,14 @@ fun prepare_statement_comparison goal =
 
 fun prepare_goal_comparison goal =
   let
+    open Portable.HOLSusp
     val ordinary = prepare_statement_comparison goal
     val expanded =
-      Portable.HOLSusp.delay (fn () =>
+      delay (fn () =>
         let val term = unfolded goal
         in
-          (term, if Portable.pointer_eq (term, goal) then ordinary
-                 else prepare_statement_comparison term)
+          if Portable.pointer_eq (term, goal) then (true, ordinary)
+          else (Term.aconv term goal, prepare_statement_comparison term)
         end)
   in
     fn (citation, expand_statement) =>
@@ -735,14 +737,17 @@ fun prepare_goal_comparison goal =
        let
          val unfolded_statement = expand_statement ()
          val statement = #statement citation
-         val (unfolded_goal, compare) = Portable.HOLSusp.force expanded
+         val (same_goal, compare) = force expanded
+         val original = Portable.pointer_eq (unfolded_statement, statement)
        in
-         not (Term.aconv unfolded_statement statement andalso
-              Term.aconv unfolded_goal goal) andalso
-         not (contentless unfolded_statement) andalso
-         compare
-           (if Portable.pointer_eq (unfolded_statement, statement)
-            then citation else prepare_citation unfolded_statement)
+         not (same_goal andalso
+              (original orelse Term.aconv unfolded_statement statement))
+         andalso
+         (if original then
+            not (force (#contentless citation)) andalso compare citation
+          else
+            not (contentless unfolded_statement) andalso
+            compare (prepare_citation unfolded_statement))
        end)
   end
 
