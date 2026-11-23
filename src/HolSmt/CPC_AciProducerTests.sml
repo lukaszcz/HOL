@@ -71,7 +71,7 @@ struct
               require "ACI callback's first exception was replaced"
                 (case (actual,first) of
                    (Feedback.HOL_ERR got,Feedback.HOL_ERR expected) =>
-                     got = expected
+                     Feedback.format_ERR got = Feedback.format_ERR expected
                  | (Fail got,Fail expected) => got = expected
                  | (CPC_AciProducer.Declined,CPC_AciProducer.Declined) =>
                      true
