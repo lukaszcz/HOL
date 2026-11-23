@@ -923,3 +923,16 @@ let
 in
   case result of NONE => OK () | SOME message => die message
 end
+
+(* The command must get the signal state of a program started from a shell:
+   Poly/ML blocks almost every signal in ML threads and ignores SIGPIPE, and
+   a solver inheriting that ignores the signals sent to stop it.  A command
+   that survives sending itself the signal reports success.  ulimit -c 0
+   stops SIGXCPU from dumping core. *)
+val _ = if not Systeml.isUnix then () else
+  List.app (fn signal =>
+    (tprint ("SatProcess command is not blocking or ignoring SIG" ^ signal);
+     if OS.Process.isSuccess (SatProcess.system
+          ("ulimit -c 0; kill -" ^ signal ^ " $$; exit 0"))
+     then die "the command survived the signal" else OK ()))
+  ["PIPE","TERM","INT","XCPU"]

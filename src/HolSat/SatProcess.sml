@@ -35,10 +35,11 @@ exception FastUnavailable
    pipes to drain/close.  Only standard POSIX types cross this interface:
    pid_t is int on the supported Unix targets, and argv/envp are terminated
    arrays of strings.  Symbol lookup is lazy; missing spawn support takes
-   the unchanged fork route.  The spawn attribute object stays opaque: it is
-   only initialised/destroyed by libc, in a buffer larger than
-   posix_spawnattr_t on every supported target (a pointer on Darwin and the
-   BSDs, 336 bytes on glibc/musl). *)
+   the unchanged fork route.  The spawn attribute object and the signal sets
+   stay opaque: they are only initialised/destroyed by libc, each in a buffer
+   larger than its type on every supported target (posix_spawnattr_t is a
+   pointer on Darwin and the BSDs, 336 bytes on glibc/musl; sigset_t is at
+   most 128 bytes). *)
 local
   open Foreign
   val spawn = buildCall6
@@ -59,8 +60,22 @@ local
     handle Foreign _ => fn _ => raise FastUnavailable
   val attr_setflags = attribute "setflags" cShort
   val attr_setpgroup = attribute "setpgroup" cInt
-  (* POSIX_SPAWN_SETPGROUP is 0x02 on every ABI accepted by setsid_path. *)
-  val setpgroup_flag = 2
+  val attr_setsigmask = attribute "setsigmask" cPointer
+  val attr_setsigdefault = attribute "setsigdefault" cPointer
+  fun sigset name = buildCall1
+    (getSymbol (loadExecutable ()) name,cPointer,cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  val sigemptyset = sigset "sigemptyset"
+  val sigfillset = sigset "sigfillset"
+  (* POSIX_SPAWN_SETPGROUP is 0x02 on every ABI accepted by setsid_path.
+     POSIX_SPAWN_SETSIGDEF and _SETSIGMASK are 0x04 and 0x08 on Linux and
+     Darwin, 0x10 and 0x20 on the BSDs. *)
+  val setpgroup_flag = 0x02
+  fun signal_flags () =
+    if List.exists (fn (key,value) => key = "sysname" andalso
+         (String.isSuffix "BSD" value orelse value = "DragonFly"))
+       (Posix.ProcEnv.uname ())
+    then 0x30 else 0x0C
   val attr_bytes = 0w1024
   val wait = buildCall3
     (getSymbol (loadExecutable ()) "waitpid",(cInt,cStar cInt,cInt),cInt)
@@ -92,24 +107,36 @@ in
       else raise FastUnavailable
     end handle Foreign _ => raise FastUnavailable
 
-  fun native_spawn command = spawn_with Memory.null command
-
-  (* Same group ownership as the fork route's child setpgid, but the new
-     process is created by libc without duplicating the live ML heap.
-     Called with interrupts deferred; the attribute is always released. *)
-  fun native_spawn_group command =
+  (* The process starts with an empty signal mask and every signal at its
+     default disposition.  posix_spawn would otherwise pass on the calling
+     thread's mask and the parent's ignored signals: Poly/ML blocks almost
+     every signal in ML threads and ignores SIGPIPE.  dash clears the mask
+     at startup but bash keeps it, and an ignored signal stays ignored in
+     every descendant, the solver included.  With group, the process also
+     leads a new process group: the fork route's child setpgid, without
+     duplicating the live ML heap.  Called with interrupts deferred; the
+     attribute is always released. *)
+  fun native_spawn group command =
     let
-      val attr = Memory.malloc attr_bytes
+      val block = Memory.malloc (0w3 * attr_bytes)
         handle Foreign _ => raise FastUnavailable
+      val attr = block
+      val no_signals = Memory.++ (block,attr_bytes)
+      val all_signals = Memory.++ (block,0w2 * attr_bytes)
       (* Never raise after a successful spawn: its PID must reach owner. *)
-      fun release () = Memory.free attr handle _ => ()
+      fun release () = Memory.free block handle _ => ()
       val _ = if (attr_init attr handle e => (release (); raise e)) = 0
               then () else (release (); raise FastUnavailable)
       fun finish () = ((ignore (attr_destroy attr) handle _ => ());
                        release ())
       val pid =
-        (if attr_setflags (attr,setpgroup_flag) = 0 andalso
-            attr_setpgroup (attr,0) = 0
+        (if sigemptyset no_signals = 0 andalso
+            sigfillset all_signals = 0 andalso
+            attr_setflags (attr,signal_flags () +
+              (if group then setpgroup_flag else 0)) = 0 andalso
+            attr_setsigmask (attr,no_signals) = 0 andalso
+            attr_setsigdefault (attr,all_signals) = 0 andalso
+            (not group orelse attr_setpgroup (attr,0) = 0)
          then spawn_with attr command else raise FastUnavailable)
         handle e => (finish (); raise e)
     in finish (); pid end
@@ -138,6 +165,10 @@ fun signal target = retry (fn () =>
    via setsid -w, or (no setsid program) as a process group leader. *)
 datatype launcher = Session of string | Group
 
+(* Unlike native_spawn's, the forked supervisor keeps the calling thread's
+   signal mask and ignored signals: resetting them in the child would need
+   the signal ABI's constants, and this route mainly serves targets whose
+   ABI is not modelled. *)
 fun fork_system command =
   let
     val attributes = Thread.getAttributes ()
@@ -334,8 +365,8 @@ fun spawn_system launcher command =
           exception at the return boundary must not lose the process owner. *)
        val pid = case launcher of
            Session setsid =>
-             native_spawn (setsid,["-w","/bin/sh","-c",wrapper])
-         | Group => native_spawn_group ("/bin/sh",["-c",wrapper])
+             native_spawn false (setsid,["-w","/bin/sh","-c",wrapper])
+         | Group => native_spawn true ("/bin/sh",["-c",wrapper])
        val _ = process := SOME pid
        val _ = List.app (fn fd =>
          Posix.IO.setfd (fd,Posix.IO.FD.cloexec)) inherited
