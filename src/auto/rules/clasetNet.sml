@@ -196,6 +196,10 @@ fun follow checkpoint measured walk (tm, bvars) rest
 fun match tm net =
   let
     fun walk [] (NODE (tips, _)) suffix = join tips suffix
+      | walk (_ :: _) (NODE (_, [])) suffix = suffix
+      (* The sole wildcard consumes the entire pending subterm. *)
+      | walk (_ :: rest) (NODE (_, [(V, child)])) suffix =
+          walk rest child suffix
       | walk ((task, bvars) :: rest) node suffix =
           follow no_checkpoint false walk
             (eta_contract task, bvars) rest node suffix
@@ -237,18 +241,25 @@ fun unify_with checkpoint measured schematic q net =
           suffix edges
 
     fun walk [] (NODE (tips, _)) suffix = (checkpoint (); join tips suffix)
-      | walk ((tm0, bvars) :: rest) node suffix =
-          let
-            val _ = checkpoint ()
-            val tm = eta_contract tm0
-          in
-            if is_var tm andalso not (bound tm bvars) andalso schematic tm then
-              if measured then
-                concat_map (fn child => walk rest child []) (skip_one_m node)
-              else skip_unmeasured (walk rest) 1 node suffix
-            else
-              follow checkpoint measured walk (tm, bvars) rest node suffix
-          end
+      | walk (task :: rest) (node as NODE (_, edges)) suffix =
+          if measured then walk_term task rest node suffix
+          else
+            case edges of
+                [] => suffix
+              | [(V, child)] => walk rest child suffix
+              | _ => walk_term task rest node suffix
+    and walk_term (tm0, bvars) rest node suffix =
+      let
+        val _ = checkpoint ()
+        val tm = eta_contract tm0
+      in
+        if is_var tm andalso not (bound tm bvars) andalso schematic tm then
+          if measured then
+            concat_map (fn child => walk rest child []) (skip_one_m node)
+          else skip_unmeasured (walk rest) 1 node suffix
+        else
+          follow checkpoint measured walk (tm, bvars) rest node suffix
+      end
   in
     walk [(q, [])] net []
   end

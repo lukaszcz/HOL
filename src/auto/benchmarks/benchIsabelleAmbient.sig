@@ -79,7 +79,7 @@ sig
   val declaring_theories : string list
   val ancestry : (string * string list) list
 
-  type source_location
+  type source_location = string * int
   val parse_location : string -> source_location
   val in_scope_at : {declared : source_location, goal : source_location} ->
                     bool

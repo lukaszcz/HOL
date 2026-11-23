@@ -91,7 +91,7 @@ fun relation_sides (ops : ac_ops) tm =
              SOME sides => sides
            | NONE => boolSyntax.dest_eq tm)
 
-fun ac_equality (ops : ac_ops) left right =
+fun ac_equality (ops : ac_ops) rearrange left right =
   if Term.aconv left right then Thm.REFL left
   else
     let
@@ -113,7 +113,7 @@ fun ac_equality (ops : ac_ops) left right =
                 ((BINOP_CONV canon THENC
                   refl_conv) equality)
     in
-      EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
+      EQT_ELIM (rearrange equality)
       handle HOL_ERR _ => fallback ()
     end
 
@@ -121,7 +121,7 @@ fun ac_equality (ops : ac_ops) left right =
    theorem, remove every summand common to both sides of a relation at
    once, matching summands up to aconv and one occurrence at a time.
    Raises UNCHANGED when there is nothing to cancel. *)
-fun cancel_common (ops : ac_ops) cancel tm =
+fun cancel_common (ops : ac_ops) rearrange cancel tm =
   let
     val operator = Term.rator (Term.rator tm)
     val (left, right) = relation_sides ops tm
@@ -153,18 +153,17 @@ fun cancel_common (ops : ac_ops) cancel tm =
             (* An emptied side becomes common + 0 so that both sides share
                the cancellation theorem's shape. *)
             fun cancellation_side original [] =
-                  Thm.TRANS (ac_equality ops original common_sum)
+                  Thm.TRANS (ac_equality ops rearrange original common_sum)
                     (Thm.SYM (Thm.SPEC common_sum (#rid ops)))
               | cancellation_side original rest =
-                  ac_equality ops original
+                  ac_equality ops rearrange original
                     (#mk_plus ops (common_sum, mk_sum ops rest))
             val relation_thm =
               Thm.MK_COMB
                 (Thm.AP_TERM operator (cancellation_side left left'),
                  cancellation_side right right')
             val cancel_thm =
-              REWR_CONV cancel
-                (#2 (boolSyntax.dest_eq (Thm.concl relation_thm)))
+              cancel (#2 (boolSyntax.dest_eq (Thm.concl relation_thm)))
           in
             Thm.TRANS relation_thm cancel_thm
           end
@@ -191,13 +190,24 @@ fun mk_norm_conv (spec : norm_spec) =
   let
     val ops = #ac spec
     val expression_conv = #expression_conv spec
+    (* Share theorem matching setup while keeping failures at first use. *)
+    fun delayed_conv build =
+      let val pending = Portable.HOLSusp.delay build
+      in fn tm => Portable.HOLSusp.force pending tm end
+    val rearrange =
+      delayed_conv (fn () => AC_CONV (#assoc ops, #comm ops))
+    fun canceller theorem =
+      cancel_common ops rearrange (delayed_conv (fn () => REWR_CONV theorem))
+    val leq_cancel = canceller (#leq_cancel spec)
+    val less_cancel = canceller (#less_cancel spec)
+    val eq_cancel = canceller (#eq_cancel spec)
     fun cancel_rule tm =
-      if Lib.can (#dest_leq ops) tm then SOME (#leq_cancel spec)
-      else if Lib.can (#dest_less ops) tm then SOME (#less_cancel spec)
+      if Lib.can (#dest_leq ops) tm then SOME leq_cancel
+      else if Lib.can (#dest_less ops) tm then SOME less_cancel
       else if boolSyntax.is_eq tm andalso
               same_type (Term.type_of (#1 (boolSyntax.dest_eq tm)))
                 (#ty spec)
-      then SOME (#eq_cancel spec)
+      then SOME eq_cancel
       else NONE
     val finish =
       TRY_CONV (#reduce_conv spec) THENC
@@ -207,8 +217,7 @@ fun mk_norm_conv (spec : norm_spec) =
       case cancel_rule tm of
           NONE => expression_conv tm
         | SOME cancel =>
-            (BINOP_CONV expression_conv THENC
-             cancel_common ops cancel THENC finish) tm
+            (BINOP_CONV expression_conv THENC cancel THENC finish) tm
   end
 
 end

@@ -466,13 +466,14 @@ fun collect_metas store tm =
   Redblackmap.listItems' (List.foldl (insert_meta store)
     (Redblackmap.mkDict string_compare) (free_vars tm))
 
+fun has_term_metas (store : store) =
+  Redblackmap.numItems (#metas store) <> 0
+
 fun metas_of_normalized store tm =
-  if Redblackmap.numItems (#metas store) = 0 then []
-  else collect_metas store tm
+  if has_term_metas store then collect_metas store tm else []
 
 fun metas_of store tm =
-  if Redblackmap.numItems (#metas store) = 0 then []
-  else collect_metas store (norm store tm)
+  if has_term_metas store then collect_metas store (norm store tm) else []
 
 fun same_var left right = aconv left right
 

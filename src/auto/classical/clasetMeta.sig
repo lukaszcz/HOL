@@ -25,6 +25,7 @@ sig
   val instantiate : store -> term -> term
   val norm : store -> term -> term
   val norm_type : store -> hol_type -> hol_type
+  val has_term_metas : store -> bool
   val metas_of : store -> term -> meta list
   val metas_of_normalized : store -> term -> meta list
   val is_meta : term -> bool

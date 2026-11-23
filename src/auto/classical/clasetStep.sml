@@ -2295,14 +2295,19 @@ fun safe_saturate_all_in ctxt cs node =
    has bound since is no longer one of them, and one reachable only through
    such a binding is, so surface occurrences are read through the store. *)
 fun undetermined_metas node =
-  let
-    val store = clasetGoal.store node
-    fun goal_terms ({asl, w, ...} : clasetGoal.cgoal) = w :: asl
-    val surface =
-      clasetGoal.marked_terms
-        (List.concat (map goal_terms (clasetGoal.goals node)))
+  let val store = clasetGoal.store node
   in
-    Lib.op_U clasetMeta.same_meta (map (clasetMeta.metas_of store) surface)
+    if clasetMeta.has_term_metas store then
+      let
+        fun goal_terms ({asl, w, ...} : clasetGoal.cgoal) = w :: asl
+        val surface =
+          clasetGoal.marked_terms
+            (List.concat (map goal_terms (clasetGoal.goals node)))
+      in
+        Lib.op_U clasetMeta.same_meta
+          (map (clasetMeta.metas_of store) surface)
+      end
+    else []
   end
 
 (* Isabelle names the unsafe steps for what they may do: instantiate
@@ -2328,12 +2333,16 @@ fun guessed_meta metas direct =
             List.exists (fn made => clasetMeta.same_meta made meta) created
           fun refines meta =
             List.exists created_meta (clasetMeta.metas_of store meta)
-          val children =
-            List.concat
-              (map (fn (asl, w) => w :: asl) (#1 (direct_result direct)))
+          fun children_carry_created () =
+            let
+              val children =
+                List.concat
+                  (map (fn (asl, w) => w :: asl) (#1 (direct_result direct)))
+            in
+              List.exists created_meta (clasetGoal.marked_terms children)
+            end
         in
-          List.exists refines metas orelse
-          List.exists created_meta (clasetGoal.marked_terms children)
+          List.exists refines metas orelse children_carry_created ()
         end
 
 fun sift keep metas sequence =

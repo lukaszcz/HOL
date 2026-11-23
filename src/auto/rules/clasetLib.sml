@@ -652,7 +652,7 @@ fun unify_intro_candidates_measured checkpoint
 
 (* Static nets retain their historical broad skeleton query; only lazy
    pair generation must distinguish true search metas from rigid frees. *)
-fun unify_elim_candidates_with (meter as {checkpoint, ...})
+fun unify_elim_candidates_lazy (meter as {checkpoint, ...})
       (((_, enet), distinct) : claset_part) tm query =
   let
     val static = unify_candidates checkpoint enet tm
@@ -663,13 +663,18 @@ fun unify_elim_candidates_with (meter as {checkpoint, ...})
       else candidate_order_measured checkpoint static
   in
     candidate_order_measured checkpoint
-      (static @ map distinct_brl (distinct_candidates meter distinct query))
+      (static @
+       map distinct_brl (distinct_candidates_lazy meter distinct query))
   end
 
+fun unify_elim_candidates_with meter part tm {q, qvars, flexible_type} =
+  unify_elim_candidates_lazy meter part tm
+    {q = q, qvars = K qvars, flexible_type = flexible_type}
+
 fun unify_elim_candidates_measured checkpoint part tm =
-  unify_elim_candidates_with
+  unify_elim_candidates_lazy
     {checkpoint = checkpoint, derive = listUtil.no_checkpoint} part tm
-    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset,
+    {q = tm, qvars = fn () => Term.FVL [tm] Term.empty_tmset,
      flexible_type = K true}
 
 fun unify_intro_candidates part =

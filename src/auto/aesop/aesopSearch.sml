@@ -78,9 +78,9 @@ fun trace_goal level label (goal : aesopTree.goal) =
       cgoal_string (aesopTree.active_cgoal goal))
 
 fun application_data ({name, phase, ...} : aesopRule.rule)
-      (records, next) : aesopTree.rapp_data =
+      (records, next) forwarded : aesopTree.rapp_data =
   {rule = name, phase = phase, records = records, node = next,
-   forwarded = NONE}
+   forwarded = forwarded}
 
 (* The safe phase walks a rule's alternatives one at a time, so a rule that
    raises where the engine expects a sequence has to be read there as
@@ -107,8 +107,7 @@ fun forward_candidate parent node =
         else NONE
     | _ => NONE
 
-fun admissible_forward goal rule
-      ({node, ...} : aesopTree.rapp_data) =
+fun admissible_forward goal rule node =
   if not (#once rule) then SOME NONE
   else
     case forward_candidate (aesopTree.active_cgoal goal) node of
@@ -145,12 +144,6 @@ fun trace_install level data result =
                "copied " ^ Int.toString count ^
                " metavariable-coupled goal(s)"))
 
-fun data_with_forwarded
-      ({rule, phase, records, node, ...} : aesopTree.rapp_data)
-      forwarded : aesopTree.rapp_data =
-  {rule = rule, phase = phase, records = records, node = node,
-   forwarded = forwarded}
-
 fun data_with_phase
       ({rule, records, node, forwarded, ...} : aesopTree.rapp_data)
       phase : aesopTree.rapp_data =
@@ -167,8 +160,7 @@ fun install_committed level id data tree =
       (#tree installed)
   end
 
-fun application_assigned goal
-      ({node, ...} : aesopTree.rapp_data) =
+fun application_assigned goal node =
   let
     val {terms, types} =
       clasetMeta.new_bindings
@@ -366,29 +358,25 @@ fun safe_phase ctxt level budget (cache : safe_scan_cache)
          | SOME (rule, result as (_, next)) =>
              if not (aesopTree.changed node next) then search ()
              else
-               let val data = application_data rule result
-               in
-                 case admissible_forward goal rule data of
-                     NONE => search ()
-                   | SOME added =>
-                       let val data' = data_with_forwarded data added
-                       in
-                         if has_dependencies andalso
-                            application_assigned goal data
-                         then
-                           (#postponed scan :=
-                              data' :: !(#postponed scan);
-                            search ())
-                         else if at_rapp_limit then
-                           (forget_safe_scan cache id;
-                            CommitLimit tree)
-                         else
-                           (charge budget searchBudget.Application;
-                            forget_safe_scan cache id;
-                            Committed
-                              (install_committed level id data' tree))
-                       end
-               end)
+               case admissible_forward goal rule next of
+                   NONE => search ()
+                 | SOME added =>
+                     let val data = application_data rule result added
+                     in
+                       if has_dependencies andalso
+                          application_assigned goal next
+                       then
+                         (#postponed scan :=
+                            data :: !(#postponed scan);
+                          search ())
+                       else if at_rapp_limit then
+                         (forget_safe_scan cache id;
+                          CommitLimit tree)
+                       else
+                         (charge budget searchBudget.Application;
+                          forget_safe_scan cache id;
+                          Committed (install_committed level id data tree))
+                     end)
   in
     search ()
   end
@@ -635,13 +623,8 @@ fun finish_unsafe_scan budget
     fun prepare (result as (_, next)) =
       if not (aesopTree.changed node next) then NONE
       else
-        let
-          val data = application_data rule result
-        in
-          Option.map
-            (fn added => data_with_forwarded data added)
-            (admissible_forward goal rule data)
-        end
+        Option.map (application_data rule result)
+          (admissible_forward goal rule next)
     fun scan () =
       case (charge_external_pull budget rule;
             next_application (!remaining)) of

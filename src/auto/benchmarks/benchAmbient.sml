@@ -440,6 +440,23 @@ val argument_sites =
     (argument, benchIsabelleAmbient.parse_location
       (declaration_site (benchLib.argument_name argument)))) arguments
 
+(* Cross-file scope stays fixed as the corpus moves through a file.
+   Keep same-file declarations in order for the per-goal scope check. *)
+val arguments_in_file =
+  memoUtil.keyed_memo
+    (fn (file : string, _) => fn (previous, _) => file = previous)
+    (fn site as (file, _) =>
+      let
+        fun eligible (argument, declared as (declared_file, _)) =
+          if declared_file = file then SOME (argument, SOME declared)
+          else if
+            benchIsabelleAmbient.in_scope_at {declared = declared, goal = site}
+          then SOME (argument, NONE)
+          else NONE
+      in
+        List.mapPartial eligible argument_sites
+      end)
+
 (* Isabelle's ambient context is theory-ordered: a goal reads what its
    own theory has declared above it and what its ancestors declare, not
    what the library declares somewhere.  This is the cut, and it is the
@@ -449,12 +466,12 @@ val argument_sites =
 fun arguments_at goal =
   let
     val site = benchIsabelleAmbient.parse_location goal
+    fun before_goal (argument, NONE) = SOME argument
+      | before_goal (argument, SOME declared) =
+          if benchIsabelleAmbient.in_scope_at {declared = declared, goal = site}
+          then SOME argument else NONE
   in
-    List.mapPartial
-      (fn (argument, declared) =>
-        if benchIsabelleAmbient.in_scope_at {declared = declared, goal = site}
-        then SOME argument else NONE)
-      argument_sites
+    List.mapPartial before_goal (arguments_in_file site)
   end
 
 (* A definition unfolds one constant; a characterisation relates

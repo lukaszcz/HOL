@@ -223,9 +223,21 @@ struct
     let
       fun inc level (term as Bound i) =
             if i >= level then Bound (i + increment) else term
-        | inc level (Abs (name, body)) =
-            Abs (name, inc (level + 1) body)
-        | inc level (f $ x) = inc level f $ inc level x
+        | inc level (term as Abs (name, body)) =
+            let val body' = inc (level + 1) body
+            in
+              if Portable.pointer_eq (body, body') then term
+              else Abs (name, body')
+            end
+        | inc level (term as f $ x) =
+            let
+              val f' = inc level f
+              val x' = inc level x
+            in
+              if Portable.pointer_eq (f, f') andalso
+                 Portable.pointer_eq (x, x') then term
+              else f' $ x'
+            end
         | inc _ term = term
     in
       inc
@@ -270,10 +282,21 @@ struct
             else if i = level then
               if level = 0 then arg else raise_arg level
             else Bound (i - 1)
-        | subst (Abs (name, body), level) =
-            Abs (name, subst (body, level + 1))
-        | subst (f $ x, level) =
-            subst (f, level) $ subst (x, level)
+        | subst (term as Abs (name, body), level) =
+            let val body' = subst (body, level + 1)
+            in
+              if Portable.pointer_eq (body, body') then term
+              else Abs (name, body')
+            end
+        | subst (term as f $ x, level) =
+            let
+              val f' = subst (f, level)
+              val x' = subst (x, level)
+            in
+              if Portable.pointer_eq (f, f') andalso
+                 Portable.pointer_eq (x, x') then term
+              else f' $ x'
+            end
         | subst (body, _) = body
     in
       subst (term, 0)
@@ -433,15 +456,21 @@ struct
       | f $ x =>
           (case wkNormAux f of
                Abs (_, body) => wkNorm (subst_bound (x, body))
-             | nf => nf $ x)
+             | nf => if Portable.pointer_eq (f, nf) then term else nf $ x)
       | Abs (name, body) =>
-          (case wkNormAux body of
-               nb as (f $ x) =>
-                 if mentions_binder 0 f
-                    orelse not (aconv (wkNorm x, Bound 0))
-                 then Abs (name, nb)
-                 else wkNorm (incr_boundvars ~1 f)
-             | nb => Abs (name, nb))
+          let
+            val nb = wkNormAux body
+            fun abstraction () =
+              if Portable.pointer_eq (body, nb) then term else Abs (name, nb)
+          in
+            case nb of
+                f $ x =>
+                  if mentions_binder 0 f
+                     orelse not (aconv (wkNorm x, Bound 0))
+                  then abstraction ()
+                  else wkNorm (incr_boundvars ~1 f)
+              | _ => abstraction ()
+          end
       | _ => term
 
   and wkNorm term =

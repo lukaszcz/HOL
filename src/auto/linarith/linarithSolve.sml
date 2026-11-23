@@ -241,8 +241,12 @@ fun partition_pivot_with work v drop_column rows =
    Packed counters avoid allocating a reference pair per column and
    walking a second list during each row scan. *)
 fun choose_blowup_with work [] = NONE
-  | choose_blowup_with work (first :: rest) =
+  | choose_blowup_with work (rows as Lineq (_, _, first, _) :: _) =
       let
+        (* Preserve the metered row visits before scanning coefficients. *)
+        val _ =
+          if #metered work then List.app (fn _ => candidate work) rows
+          else ()
         val width = List.length first
         val positives = Array.array (width, 0)
         val negatives = Array.array (width, 0)
@@ -276,8 +280,7 @@ fun choose_blowup_with work [] = NONE
               pick (i + 1) next
             end
       in
-        tally 0 first;
-        List.app (tally 0) rest;
+        List.app (fn Lineq (_, _, cs, _) => tally 0 cs) rows;
         pick 0 NONE
       end
 
@@ -412,32 +415,25 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
                   | Contradiction just => SOME just
               end
           | NONE =>
-              let
-                val coeff_lists =
-                  List.map
-                    (fn Lineq (_, _, cs, _) => (candidate work; cs))
-                    noneqs
-              in
-                case choose_blowup_with work coeff_lists of
-                    NONE => NONE
-                  | SOME (_, v) =>
-                      let
-                        val drop_column = drop_leading v
-                        val (independent, dependent) =
-                          partition_pivot_with work v drop_column nontriv
-                        val (pos, neg) =
-                          List.partition
-                            (fn (_, c) => (candidate work; ai_pos c))
-                            dependent
-                      in
-                        report_pivot "inequality" v;
-                        case eliminate_pairs work drop_column
-                               independent pos neg of
-                            Rows rows =>
-                              next drop_column (not (#metered work)) rows
-                          | Contradiction just => SOME just
-                      end
-              end
+              (case choose_blowup_with work noneqs of
+                 NONE => NONE
+               | SOME (_, v) =>
+                   let
+                     val drop_column = drop_leading v
+                     val (independent, dependent) =
+                       partition_pivot_with work v drop_column nontriv
+                     val (pos, neg) =
+                       List.partition
+                         (fn (_, c) => (candidate work; ai_pos c))
+                         dependent
+                   in
+                     report_pivot "inequality" v;
+                     case eliminate_pairs work drop_column
+                            independent pos neg of
+                         Rows rows =>
+                           next drop_column (not (#metered work)) rows
+                       | Contradiction just => SOME just
+                   end)
       end
   in
     case List.find (fn row => (candidate work; is_contradictory row)) triv of
