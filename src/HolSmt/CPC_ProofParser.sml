@@ -2139,6 +2139,22 @@ local
             ")" :: List.foldl collect ("(" :: acc) entries
     in List.rev (collect (raw, [])) end
 
+  (* Replay a buffered tree without allocating a flat list of its tokens. *)
+  fun raw_token_stream raw exhausted =
+    let
+      val pending = ref [raw]
+      val parents = ref []
+      fun next () =
+        case !pending of
+          RawAtom token :: siblings => (pending := siblings; token)
+        | RawList children :: siblings =>
+            (parents := siblings :: !parents; pending := children; "(")
+        | [] => (case !parents of
+            siblings :: rest => (parents := rest; pending := siblings; ")")
+          | [] => exhausted ())
+      fun finished () = null (!pending) andalso null (!parents)
+    in (next, finished) end
+
   (* Shared syntax-only validation; no term elaboration or mutable
      parser dictionaries enter this check. *)
   fun validate_raw_term raw_error raw =
@@ -2638,19 +2654,11 @@ local
         (cpc_indexed_identifier (fn name => Option.isSome
           (Redblackmap.peek (#2 (!dicts_ref), name))))
         source
-      val pending = ref [raw]
-      val parents = ref []
-      fun next_token () =
-        case !pending of
-          RawAtom token :: siblings => (pending := siblings; token)
-        | RawList children :: siblings =>
-            (parents := siblings :: !parents; pending := children; "(")
-        | [] => (case !parents of
-            siblings :: rest => (parents := rest; pending := siblings; ")")
-          | [] => raise ERR "parse_located_term"
-              "internal CPC occurrence token stream exhausted")
+      val (next_token, finished) = raw_token_stream raw
+        (fn () => raise ERR "parse_located_term"
+          "internal CPC occurrence token stream exhausted")
       val parsed_term = parse_term dicts_ref next_token
-      val _ = (null (!pending) andalso null (!parents)) orelse
+      val _ = finished () orelse
         raise ERR "parse_located_term"
           "internal CPC occurrence parser left trailing tokens"
       (* SMT-LIB lets elaborate to kernel LET applications, while the exact
@@ -3147,14 +3155,11 @@ local
           val body_tydict = List.foldl add_parameter tydict parameter_pairs
           fun selector_type ({sort, ...}: datatype_selector) =
             let
-              val tokens = ref (raw_tokens sort)
-              fun next () =
-                case !tokens of
-                  token :: rest => (tokens := rest; token)
-                | [] => raise ERR "declare-datatypes"
-                    "datatype selector sort ended unexpectedly"
+              val (next, finished) = raw_token_stream sort
+                (fn () => raise ERR "declare-datatypes"
+                  "datatype selector sort ended unexpectedly")
               val ty = parse_cpc_type next body_tydict
-              val _ = if List.null (!tokens) then () else
+              val _ = if finished () then () else
                 raise ERR "declare-datatypes"
                   "datatype selector sort has trailing syntax"
             in
@@ -4194,6 +4199,7 @@ in
   datatype raw_term = datatype raw_term
   val read_raw_term = read_raw_term
   val raw_tokens = raw_tokens
+  val raw_token_stream = raw_token_stream
   val normalize_cpc_testers = normalize_cpc_testers
   val validate_raw_term = validate_raw_term
   val intern_cpc_term = intern_cpc_term
@@ -5799,12 +5805,10 @@ end
       val _ = Library.expect_token "(" (token ())
       fun error message = raise ERR "graph_commands" message
       fun tokens raw action =
-        let val remaining = ref (raw_tokens raw)
-            fun next () = case !remaining of
-                first :: rest => (remaining := rest; first)
-              | [] => error "buffered term ended unexpectedly"
+        let val (next, finished) = raw_token_stream raw
+              (fn () => error "buffered term ended unexpectedly")
             val result = action next
-            val _ = if null (!remaining) then () else
+            val _ = if finished () then () else
               error "buffered term has trailing syntax"
         in result end
       fun sort raw = graph_parse_sort (#backend (#reader terms)) tokens

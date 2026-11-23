@@ -77,15 +77,8 @@ local
           sigdelset (set,SysWord.toInt (Posix.Signal.toWord signal)) = 0
     in sigfillset set = 0 andalso remove Posix.Signal.kill andalso
        remove Posix.Signal.stop end
-  (* POSIX_SPAWN_SETPGROUP is 0x02 on every ABI accepted by setsid_path.
-     POSIX_SPAWN_SETSIGDEF and _SETSIGMASK are 0x04 and 0x08 on Linux and
-     Darwin, 0x10 and 0x20 on the BSDs. *)
+  (* POSIX_SPAWN_SETPGROUP is 0x02 on every supported ABI. *)
   val setpgroup_flag = 0x02
-  fun signal_flags () =
-    if List.exists (fn (key,value) => key = "sysname" andalso
-         (String.isSuffix "BSD" value orelse value = "DragonFly"))
-       (Posix.ProcEnv.uname ())
-    then 0x30 else 0x0C
   val attr_bytes = 0w1024
   val wait = buildCall3
     (getSymbol (loadExecutable ()) "waitpid",(cInt,cStar cInt,cInt),cInt)
@@ -126,7 +119,7 @@ in
      leads a new process group: the fork route's child setpgid, without
      duplicating the live ML heap.  Called with interrupts deferred; the
      attribute is always released. *)
-  fun native_spawn group command =
+  fun native_spawn signal_flags group command =
     let
       val block = Memory.malloc (0w3 * attr_bytes)
         handle Foreign _ => raise FastUnavailable
@@ -142,7 +135,7 @@ in
       val pid =
         (if sigemptyset no_signals = 0 andalso
             settable_signals defaults andalso
-            attr_setflags (attr,signal_flags () +
+            attr_setflags (attr,signal_flags +
               (if group then setpgroup_flag else 0)) = 0 andalso
             attr_setsigmask (attr,no_signals) = 0 andalso
             attr_setsigdefault (attr,defaults) = 0 andalso
@@ -320,7 +313,7 @@ fun fork_system command =
         end
   end
 
-fun spawn_system launcher command =
+fun spawn_system signal_flags launcher command =
   let
     val attributes = Thread.getAttributes ()
     fun defer () = Thread.setAttributes
@@ -397,8 +390,9 @@ fun spawn_system launcher command =
           exception at the return boundary must not lose the process owner. *)
        val pid = case launcher of
            Session setsid =>
-             native_spawn false (setsid,["-w","/bin/sh","-c",wrapper])
-         | Group => native_spawn true ("/bin/sh",["-c",wrapper])
+             native_spawn signal_flags false
+               (setsid,["-w","/bin/sh","-c",wrapper])
+         | Group => native_spawn signal_flags true ("/bin/sh",["-c",wrapper])
        val _ = process := SOME pid
        val _ = List.app (fn fd =>
          Posix.IO.setfd (fd,Posix.IO.FD.cloexec)) inherited
@@ -442,28 +436,37 @@ fun spawn_system launcher command =
      handle e => abort e)
   end
 
-fun setsid_path () =
+fun spawn_signal_flags () =
   (* Limit the FFI to known pid_t=int ABIs.  Other Unix targets retain the
      existing implementation rather than making assumptions about C types.
      Without a setsid program (e.g. stock macOS), still spawn natively, as a
      process group leader: forking the live ML heap per call costs far more
      system time than the supervisor itself. *)
-  if not (List.exists (fn (key,value) => key = "sysname" andalso
-    List.exists (fn name => value = name)
-      ["Linux","Darwin","FreeBSD","NetBSD","OpenBSD","DragonFly"])
-    (Posix.ProcEnv.uname () handle OS.SysErr _ => [])) then NONE
-  else SOME (case List.find (fn path =>
-                    OS.FileSys.access (path,[OS.FileSys.A_EXEC])
-                    handle OS.SysErr _ => false)
-                  ["/usr/bin/setsid","/bin/setsid"] of
-               SOME setsid => Session setsid
-             | NONE => Group)
+  (* POSIX_SPAWN_SETSIGDEF and _SETSIGMASK are 0x04 and 0x08 on Linux and
+     Darwin, 0x10 and 0x20 on the BSDs. *)
+  case List.find (fn (key,_) => key = "sysname")
+         (Posix.ProcEnv.uname () handle OS.SysErr _ => []) of
+      SOME (_,"Linux") => SOME 0x0C
+    | SOME (_,"Darwin") => SOME 0x0C
+    | SOME (_,"FreeBSD") => SOME 0x30
+    | SOME (_,"NetBSD") => SOME 0x30
+    | SOME (_,"OpenBSD") => SOME 0x30
+    | SOME (_,"DragonFly") => SOME 0x30
+    | _ => NONE
+
+fun setsid_launcher () =
+  case List.find (fn path =>
+         OS.FileSys.access (path,[OS.FileSys.A_EXEC])
+         handle OS.SysErr _ => false)
+         ["/usr/bin/setsid","/bin/setsid"] of
+      SOME setsid => Session setsid
+    | NONE => Group
 
 fun system command =
   if not Systeml.isUnix then Systeml.system_ps command
-  else case setsid_path () of
+  else case spawn_signal_flags () of
     NONE => fork_system command
-  | SOME launcher => spawn_system launcher command
+  | SOME flags => spawn_system flags (setsid_launcher ()) command
       handle FastUnavailable => fork_system command
 
 end

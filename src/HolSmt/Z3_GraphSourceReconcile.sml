@@ -181,26 +181,34 @@ struct
         else (1,1)
       fun normalization beta term =
         let
-          fun walk term =
+          (* The bounded scan admits the entire input before any proof work.
+             Exact subtree sizes then follow the checked constructors. *)
+          fun checked_walk term =
+            (within (measure term);walk term)
+          and walk term =
             let
-              val _ = within (measure term)
-              val proof = if Term.is_comb term then
+              val (proof,input_size,output_size) = if Term.is_comb term then
                   let val (f,x) = Term.dest_comb term
-                      val left = walk f val right = walk x
-                      val lf = boolSyntax.rhs (Thm.concl left)
-                      val rx = boolSyntax.rhs (Thm.concl right)
-                      val (fr,fb) = measure lf val (xr,xb) = measure rx
-                      val rhs_size = application_size (fr,fb) (xr,xb)
-                      val _ = within (equality_size (measure term) rhs_size)
-                  in call "MK_COMB" (fn () => Thm.MK_COMB (left,right)) end
+                      val (left,left_input,left_output) = walk f
+                      val (right,right_input,right_output) = walk x
+                      val output_size =
+                        application_size left_output right_output
+                      val input_size =
+                        application_size left_input right_input
+                      val _ = within (equality_size input_size output_size)
+                  in (call "MK_COMB" (fn () => Thm.MK_COMB (left,right)),
+                      input_size,output_size) end
                 else if Term.is_abs term then
-                  let val (v,b) = Term.dest_abs term val body = walk b
-                      val (r,i) = measure (boolSyntax.rhs (Thm.concl body))
-                      val rhs_size = abstraction_size (r,i)
-                      val _ = within (equality_size (measure term) rhs_size)
-                  in call "ABS" (fn () => Thm.ABS v body) end
-                else (admit_equality term term;
-                  call "REFL" (fn () => Thm.REFL term))
+                  let val (v,b) = Term.dest_abs term
+                      val (body,body_input,body_output) = walk b
+                      val output_size = abstraction_size body_output
+                      val input_size = abstraction_size body_input
+                      val _ = within (equality_size input_size output_size)
+                  in (call "ABS" (fn () => Thm.ABS v body),
+                      input_size,output_size) end
+                else let val size = (1,1)
+                         val _ = within (equality_size size size)
+                     in (call "REFL" (fn () => Thm.REFL term),size,size) end
               val current = boolSyntax.rhs (Thm.concl proof)
               val conversion = if beta andalso Term.is_comb current then
                   let val (operator,argument) = Term.dest_comb current in
@@ -222,14 +230,14 @@ struct
                     end
                   end
                 else NONE
-            in case conversion of NONE => proof
+            in case conversion of NONE => (proof,input_size,output_size)
               | SOME equality =>
                   let val next = boolSyntax.rhs (Thm.concl equality)
                       val _ = bridge_endpoints current next equality
-                      val rest = walk next
-                  in trans proof (trans equality rest) end
+                      val (rest,_,size) = checked_walk next
+                  in (trans proof (trans equality rest),input_size,size) end
             end
-        in walk term end
+        in #1 (checked_walk term) end
       val normal = ref (Redblackmap.mkDict Int.compare)
       fun normalize node = case Redblackmap.peek (!normal,G.node_id node) of
           SOME proof => proof

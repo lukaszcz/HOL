@@ -461,6 +461,16 @@ local
       in
         measured (internal (config clauses)) (fn conf => model conf clauses)
       end)
+  val _ = control "CNF preprocessing reuses visits to shared subterms"
+    (fn () =>
+      let
+        val apply = mk_var ("shared",bool --> bool --> bool)
+        fun shared 0 (left,_) = left
+          | shared n (left,right) =
+              shared (n-1) (list_mk_comb (apply,[left,right]),left)
+        val atom = shared 55 (mk_var ("p",bool),mk_var ("q",bool))
+        val goal = mk_neg (mk_conj (atom,F))
+      in checked goal (SAT_PROVE_ONLY goal) end)
   val _ = control "ordinary DPLL preserves definitional refutations and models"
     (fn () =>
       let

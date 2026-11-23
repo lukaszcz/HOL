@@ -49,12 +49,18 @@ struct
             ")" :: List.foldl collect ("(" :: acc) entries
     in List.rev (collect (raw, [])) end
   fun buffered raw action =
-    let val pending = ref (token_list raw)
-        fun next () = case !pending of
-            token :: rest => (pending := rest; token)
-          | [] => raise ERR "buffered" "incomplete expression"
+    let val pending = ref [raw]
+        val parents = ref []
+        fun next () =
+          case !pending of
+            Atom token :: siblings => (pending := siblings; token)
+          | List children :: siblings =>
+              (parents := siblings :: !parents; pending := children; "(")
+          | [] => (case !parents of
+              siblings :: rest => (parents := rest; pending := siblings; ")")
+            | [] => raise ERR "buffered" "incomplete expression")
         val result = action next
-        val _ = if null (!pending) then () else
+        val _ = if null (!pending) andalso null (!parents) then () else
           raise ERR "buffered" "trailing expression syntax"
     in result end
   fun atom context (Atom token) = P.proof_symbol_text token

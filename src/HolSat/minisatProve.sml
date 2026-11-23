@@ -157,20 +157,7 @@ fun has_free_variable tm =
                 not (HOLset.isEmpty (FVL [t] Term.empty_varset))
                 orelse scan seen budget rest
               else scan seen budget rest
-        and memo_scan pending =
-            let
-              val capacity = 32
-              val recent = Array.array (capacity,T)
-              val cursor = ref 0
-              fun seen t =
-                if Array.exists (fn saved => Portable.pointer_eq (t,saved))
-                                recent then true
-                (* Depth-first scanning finishes this application's
-                   children before processing a later occurrence. *)
-                else (Array.update (recent,!cursor,t);
-                      cursor := (!cursor + 1) mod capacity;
-                      false)
-            in scan seen ~1 pending end
+        and memo_scan pending = scan (recent_terms ()) ~1 pending
     in scan (fn _ => false) 128 [tm] end
 
 fun initialise check_sat_model infile is_cnf tm =

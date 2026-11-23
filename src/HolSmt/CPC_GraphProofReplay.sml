@@ -4222,6 +4222,7 @@ struct
           val witnesses = ref (Redblackmap.mkDict Int.compare)
           val deferred = ref ([] : (step * G.node) list)
           val block_roots = ref []
+          val law_nodes = ref []
           val alias_facts = ref ([] : P.closed_fact list)
           val alias_conversions = ref ([] : P.closed_conversion list)
           val obligations = ref ([] : G.node list)
@@ -4236,12 +4237,14 @@ struct
                    in deferred := (step,law) :: !deferred;
                       block_roots := law :: !block_roots end
                | ClosedLaw (law,theorem,_) =>
-                   (witnesses := Redblackmap.insert
+                   (law_nodes := law :: !law_nodes;
+                    witnesses := Redblackmap.insert
                      (!witnesses,G.node_id law,theorem);
                     block_roots := law :: !block_roots;
                     List.app inventory (premise_list step))
                | ObligationLaw {obligation,law,theorem,...} =>
-                   (obligations := obligation :: !obligations;
+                   (law_nodes := law :: !law_nodes;
+                    obligations := obligation :: !obligations;
                     witnesses := Redblackmap.insert
                       (!witnesses,G.node_id law,theorem);
                     block_roots := obligation :: law :: !block_roots;
@@ -4286,18 +4289,6 @@ struct
                     List.app inventory (premise_list step))
                | _ => List.app inventory (premise_list step))
           val _ = inventory root
-          fun law step = case recipe step of
-              ClosedLaw (law,_,_) => [law]
-            | ObligationLaw {law,...} => [law] | _ => []
-          val law_nodes = ref []
-          val seen_laws = ref (Redblackset.empty Int.compare)
-          fun laws step =
-            if Redblackset.member (!seen_laws,serial step) then () else
-            (seen_laws := Redblackset.add (!seen_laws,serial step);
-             case recipe step of Scope _ => ()
-               | _ => (law_nodes := law step @ !law_nodes;
-                       List.app laws (premise_list step)))
-          val _ = laws root
           (* Deferred/scope witnesses can retain original Source Hyp. The
              literal sparse finalizer admits only closed supplied laws;
              use genuine Source-cut receipts for these open imports. *)

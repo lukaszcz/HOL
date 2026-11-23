@@ -41,6 +41,24 @@ fun dest_disjunction tm =
           if same_const disjunction head then SOME (left,right) else NONE
       | NONE => NONE
 
+(* A bounded pointer set for depth-first visits to shared terms. *)
+fun recent_terms () =
+    let
+      val terms = Array.array (32,T)
+      val size = ref 0
+      val cursor = ref 0
+      fun contains term i =
+          i < !size andalso
+          (Portable.pointer_eq (term,Array.sub (terms,i)) orelse
+           contains term (i+1))
+      fun seen term =
+          contains term 0 orelse
+          (Array.update (terms,!cursor,term);
+           if !size < Array.length terms then size := !size + 1 else ();
+           cursor := (!cursor + 1) mod Array.length terms;
+           false)
+    in seen end
+
 (* Visit atoms left to right, removing one outer negation per literal. *)
 fun fold_clause_atoms step clause initial =
     let

@@ -32,6 +32,28 @@ fun is_clausal tm =
     case dest_disjunction tm of
         SOME (left,right) => is_literal left andalso is_clausal right
       | NONE => is_literal tm
+
+(* The test is independent of binders. On a shared application graph,
+   revisit only the subterms that have fallen out of the bounded cache. *)
+fun contains_constant tm =
+    let
+      fun scan seen budget [] = false
+        | scan seen budget (pending as t :: rest) =
+            if same_const T t orelse same_const F t then true
+            else if is_comb t then
+              if budget = 0 then memo_scan pending
+              else
+                let val (operator,operand) = dest_comb t
+                    val next = if budget < 0 then budget else budget - 1
+                in
+                  if budget < 0 andalso is_comb operator andalso
+                     is_comb operand andalso seen t then scan seen budget rest
+                  else scan seen next (operator :: operand :: rest)
+                end
+            else if is_abs t then scan seen budget (snd (dest_abs t) :: rest)
+            else scan seen budget rest
+      and memo_scan pending = scan (recent_terms ()) ~1 pending
+    in scan (fn _ => false) 128 [tm] end
 in
 val GCONJUNCTS  =
     let
@@ -68,10 +90,6 @@ val GCONJUNCTS  =
                              (GCONJUNCTS' (CONJUNCT2 th) acc)
                | _ => th::acc
           end
-        fun contains_constant tm =
-            isSome (HolKernel.gen_find_term
-              (fn (_,t) => if same_const T t orelse same_const F t
-                           then SOME () else NONE) tm)
         fun GCONJUNCTS'' th = GCONJUNCTS' th []
     in fn tm => fn th =>
           let open Uref
@@ -79,20 +97,16 @@ val GCONJUNCTS  =
                          then CONJUNCTSR (CONV_RULE NOT_NOT_CONV th) else [th]
               val ths1 = List.map GCONJUNCTS'' ths0
               val is_cnf = Uref.new true
-              val ths2 =
-                  List.map (fn th =>
-                               if is_clausal (concl th) then (true,th)
-                               else (is_cnf:=false;(false,th)))
-                           (List.concat ths1)
               (* A clause of variable literals contains no T or F. *)
-              val ths3 = if !is_cnf then ths2 else
-                         List.map (fn (is_c,th) =>
-                                      if not is_c andalso
-                                         contains_constant (concl th)
-                                      then (is_c,CONV_RULE presimp_conv th)
-                                      else (is_c,th))
-                                  ths2
-          in (!is_cnf,ths3) end
+              fun classify th =
+                  let val clause = concl th in
+                    if is_clausal clause then (true,th)
+                    else (is_cnf := false;
+                          (false,if contains_constant clause
+                                 then CONV_RULE presimp_conv th else th))
+                  end
+              val ths2 = List.map classify (List.concat ths1)
+          in (!is_cnf,ths2) end
     end
 end
 
