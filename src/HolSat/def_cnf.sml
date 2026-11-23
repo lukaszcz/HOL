@@ -68,8 +68,10 @@ val GCONJUNCTS  =
                              (GCONJUNCTS' (CONJUNCT2 th) acc)
                | _ => th::acc
           end
-        fun findTF tm =
-            total (HolKernel.find_term (fn t => is_T t orelse is_F t)) tm
+        fun contains_constant tm =
+            isSome (HolKernel.gen_find_term
+              (fn (_,t) => if same_const T t orelse same_const F t
+                           then SOME () else NONE) tm)
         fun GCONJUNCTS'' th = GCONJUNCTS' th []
     in fn tm => fn th =>
           let open Uref
@@ -86,7 +88,7 @@ val GCONJUNCTS  =
               val ths3 = if !is_cnf then ths2 else
                          List.map (fn (is_c,th) =>
                                       if not is_c andalso
-                                         isSome (findTF (concl th))
+                                         contains_constant (concl th)
                                       then (is_c,CONV_RULE presimp_conv th)
                                       else (is_c,th))
                                   ths2

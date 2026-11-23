@@ -63,7 +63,7 @@ struct
      block:P.block option ref,layout:P.policy_scope_layout option ref,
      scoped_edges:(P.policy_scope_snapshot *
        (G.node * P.edge)list)list ref,
-     roots:G.node list ref,ordinal:int ref,
+     roots:G.node list ref,root_ids:int Redblackset.set ref,ordinal:int ref,
      edges:(int,P.edge)Redblackmap.dict ref,last:entry option ref,
      epoch:int,symbols:int}
   fun retire(Invocation{phase,work,...})=(phase:=Retired;W.close work)
@@ -109,9 +109,13 @@ struct
     (tick owner;case Redblackmap.peek(#index(!known),wanted)of
         SOME entry=>entry
       | NONE=>raise ERR "registry"("unknown visible command "^wanted))
-  fun add_root owner node roots=
-    if List.exists(fn held=>(tick owner;held=node))roots then roots
-    else node::roots
+  (* All roots belong to this invocation's graph. Keep their original
+     publication order independently of the membership index. *)
+  fun add_root(owner as Invocation{roots,root_ids,...})node=
+    let val _=tick owner val id=G.node_id node
+    in if Redblackset.member(!root_ids,id)then ()else
+      (root_ids:=Redblackset.add(!root_ids,id);roots:=node:: !roots)
+    end
   (* These helpers belong only to the actual opaque E invocation. They
      never adopt a caller-supplied result, serial map or successor Block. *)
   fun current_layout(owner as Invocation{layout,...})=
@@ -411,6 +415,7 @@ struct
           {packet=packet,preprocessing=preprocessing,
            profiles=profiles,check_type=check_type}
         fun compare_ids pair=(W.spend_policy work 1;String.compare pair)
+        fun compare_roots pair=(W.spend_policy work 1;Int.compare pair)
         val owner=Invocation{work=work,native=native,graph=graph,root=root,
           sources=sources,frame=frame,preprocessing=preprocessing,
           packet=packet,worker=worker,profiles=profiles,check_type=check_type,
@@ -420,7 +425,8 @@ struct
             has_scope=false},
           stack=ref[],extras=ref[],facts=ref[],block=ref NONE,
           layout=ref NONE,scoped_edges=ref[],
-          roots=ref[],ordinal=ref ordinal,edges=ref(empty_edges work),
+          roots=ref[],root_ids=ref(Redblackset.empty compare_roots),
+          ordinal=ref ordinal,edges=ref(empty_edges work),
           last=ref NONE,
           epoch=Type.type_epoch(),symbols=Term.term_epoch()}
         val _=active owner
@@ -430,7 +436,7 @@ struct
     ((expected_owner expected owner;protect owner(fn()=>
       let
         val Invocation{work,graph,root,sources,preprocessing,worker,phase,
-          cursor,remaining,known,stack,extras,facts,roots,last,
+          cursor,remaining,known,stack,extras,facts,last,
           profiles,...}=owner
         val _=if !phase=Ready then phase:=Running else
           raise ERR "next" "invocation consumed or reentrant"
@@ -488,8 +494,7 @@ struct
                         S.assumption_nodes sources @
                         [S.denied_goal_node sources])then ()else
                     raise ERR "next" "assertion outside actual Source prefix"
-                  val _=action owner(fn()=>
-                    roots:=add_root owner node(!roots))
+                  val _=action owner(fn()=>add_root owner node)
                   val _=rebuild owner []
                   val recipe=Recipe(serial,Original node)
                   val _=ignore(evaluate owner recipe)
@@ -497,8 +502,7 @@ struct
             | Q.GraphAssumePush(id,value)=>
               let val node=located value
                   val _=stack:=(!known,List.length(!extras)):: !stack
-                  val _=action owner(fn()=>
-                    roots:=add_root owner node(!roots))
+                  val _=action owner(fn()=>add_root owner node)
                   val _=rebuild owner[(serial,node)]
                   val recipe=Recipe(serial,Local node)
                   val _=ignore(evaluate owner recipe)
@@ -571,8 +575,7 @@ struct
                 val _=case declared of NONE=>()
                   | SOME node=>if node=target then ()else
                       raise ERR "scope" "recorded pop target differs"
-                val _=action owner(fn()=>
-                  roots:=add_root owner target(!roots))
+                val _=action owner(fn()=>add_root owner target)
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
             | Q.GraphStep{step,pop=false}=>
@@ -652,7 +655,7 @@ struct
                    operator ports. Demand them before any cold assembly;
                    semantic conversion cuts must not erase the obligation. *)
                 val _=action owner(fn()=>
-                  List.app(fn node=>roots:=add_root owner node(!roots))
+                  List.app(add_root owner)
                     (#node premise::middle::target::heads))
                 val _=rebuild owner []
                 val _=ignore(evaluate owner recipe)
@@ -761,7 +764,7 @@ struct
                   premise= #recipe premise,target=target,path=path,
                   boundary=boundary})
                 val _=action owner(fn()=>
-                  List.app(fn node=>roots:=add_root owner node(!roots))
+                  List.app(add_root owner)
                     (target::List.map #1 path))
                 val _=rebuild owner []
                 val _=ignore(evaluate owner recipe)
@@ -815,7 +818,7 @@ struct
                   {premises=List.map(fn(row:entry)=>
                     (#node row,#recipe row))premises,joins=joins})
                 val _=action owner(fn()=>
-                  List.app(fn node=>roots:=add_root owner node(!roots))
+                  List.app(add_root owner)
                     (target::joins))
                 val _=rebuild owner []
                 val _=ignore(evaluate owner recipe)
@@ -876,8 +879,7 @@ struct
                   second= #recipe second,first_node= #node first,
                   second_node= #node second,target=target,
                   equality_first=equality_first,reverse=reverse})
-                val _=action owner(fn()=>
-                  roots:=add_root owner target(!roots))
+                val _=action owner(fn()=>add_root owner target)
                 val _=rebuild owner []
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
@@ -929,8 +931,8 @@ struct
                   in target end)
                 val _=action owner(fn()=>
                   (facts:=law:: !facts;
-                   roots:=add_root owner(P.closed_node law)
-                     (add_root owner target(!roots))))
+                   add_root owner target;
+                   add_root owner(P.closed_node law)))
                 val _=rebuild owner []
                 val recipe=Recipe(serial,Specialized
                   {source= #recipe premise,target=target,law=law})

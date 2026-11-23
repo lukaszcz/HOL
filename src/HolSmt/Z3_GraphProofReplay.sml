@@ -429,19 +429,20 @@ struct
              Sparse realization never receives an open native witness. *)
           fun retained_law node prefix theorem =
             let
-              val _ = List.app (fn _ => law_tick ()) canonical_sources
-              val _ = List.app (fn _ => law_tick ()) (!sources)
-              val known = canonical_sources @ !sources
               val incoming = Thm.hyp theorem
               val _ = pay_law_ports incoming
               val _ = pay_law_ports prefix
               fun canonical hypothesis =
-                case List.find (fn source => (law_tick ();
-                    Portable.pointer_eq
-                      (hypothesis,G.representative graph source))) known of
+                let
+                  fun matches source = (law_tick ();Portable.pointer_eq
+                    (hypothesis,G.representative graph source))
+                in case List.find matches canonical_sources of
                   SOME source => source
-                | NONE => raise ERR "discover"
-                    "completed rule has a noncanonical source hypothesis"
+                | NONE => case List.find matches (!sources) of
+                    SOME source => source
+                  | NONE => raise ERR "discover"
+                      "completed rule has a noncanonical source hypothesis"
+                end
               val hypotheses = List.map canonical incoming
               val ports = hypotheses @ prefix
               val law = R.implication graph scope ports node

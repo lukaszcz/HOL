@@ -746,6 +746,7 @@ local
        proof node is admissible only when its parsed term is a member of this
        set; this is the enforcement half of translation round-trip identity. *)
     allowed_asserted_hyps : Term.term HOLset.set,
+    assertion_projections : Thm.thm Termtab.table option ref,
     datatype_admit : Term.term -> unit,
     (* keeps track of assumptions; (only) these may remain in the
        final theorem *)
@@ -794,6 +795,7 @@ local
     {
       datatype_admit = #datatype_admit s,
       allowed_asserted_hyps = #allowed_asserted_hyps s,
+      assertion_projections = #assertion_projections s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       fp_context = #fp_context s,
       definition_hyps = #definition_hyps s,
@@ -837,6 +839,7 @@ local
         handle HOLset.NotFound => flexible
     in {
       allowed_asserted_hyps = #allowed_asserted_hyps s,
+      assertion_projections = #assertion_projections s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
       fp_context = #fp_context s,
@@ -871,6 +874,7 @@ local
       val large = SmtResource.term_nodes_up_to 16384 conclusion > 16384
     in {
       allowed_asserted_hyps = #allowed_asserted_hyps s,
+      assertion_projections = #assertion_projections s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
       definition_occurrences_rev = #definition_occurrences_rev s,
@@ -2121,12 +2125,12 @@ local
   val assertion_sequence_rewrites =
     [HolSmtTheory.smt_seq_at_def, HolSmtTheory.smt_seq_extract_def]
 
-  fun assertion_encoding_conv target =
+  val assertion_encoding_conv =
     Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
       (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
        List.map Conv.REWR_CONV
          (wordsTheory.w2w_id :: assertion_unit_rewrites @
-          assertion_set_rewrites @ assertion_sequence_rewrites)))) target
+          assertion_set_rewrites @ assertion_sequence_rewrites))))
 
   fun z3_asserted (state : state, t) =
   let
@@ -2138,15 +2142,26 @@ local
          Library.term_to_string t)
     fun regroup () =
       let
-        fun source theorem =
-          Drule.CONJUNCTS
-            (Thm.EQ_MP (assertion_encoding_conv (Thm.concl theorem))
-              theorem)
-        val sources = List.concat
-          (List.map (source o Thm.ASSUME) (HOLset.listItems allowed))
+        val cache = #assertion_projections state
+        val sources =
+          case !cache of
+            SOME sources => sources
+          | NONE =>
+              let
+                fun add (source, sources) =
+                  let
+                    val encoded = Thm.EQ_MP (assertion_encoding_conv source)
+                      (Thm.ASSUME source)
+                    (* Keep the first witness in assertion/projection order. *)
+                    fun index (theorem, sources) =
+                      Termtab.default (Thm.concl theorem, theorem) sources
+                  in List.foldl index sources (Drule.CONJUNCTS encoded) end
+                val sources =
+                  List.foldl add Termtab.empty (HOLset.listItems allowed)
+              in cache := SOME sources; sources end
         val conversion = assertion_encoding_conv t
         fun derive target =
-          case List.find (Term.aconv target o Thm.concl) sources of
+          case Termtab.lookup sources target of
             SOME theorem => theorem
           | NONE =>
               if Teq target then boolTheory.TRUTH
@@ -7315,26 +7330,29 @@ local
       fun acyclic theorems =
         let
           val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
-          (* The left sides reached from one through right sides. *)
+          val lefts = List.map #1 sides
+          val rights = Termtab.make_list sides
+          val adjacency = ref Termtab.empty
           fun successors left =
-            let
-              val rights = List.mapPartial (fn (other, right) =>
-                if Term.aconv other left then SOME right else NONE) sides
-            in
-              List.filter (fn other => List.exists (Term.free_in other) rights)
-                (List.map #1 sides)
-            end
-          (* A search visits each left side once. *)
+            case Termtab.lookup (!adjacency) left of
+              SOME next => next
+            | NONE =>
+                let
+                  val targets = Termtab.lookup_list rights left
+                  val next = List.filter (fn other =>
+                    List.exists (Term.free_in other) targets) lefts
+                  val _ = adjacency := Termtab.update (left, next) (!adjacency)
+                in next end
           fun reaches target seen [] = false
             | reaches target seen (left :: pending) =
               Term.aconv left target orelse
-              (if List.exists (Term.aconv left) seen then
+              (if HOLset.member (seen, left) then
                  reaches target seen pending
-               else reaches target (left :: seen) (successors left @ pending))
+               else reaches target (HOLset.add (seen, left))
+                 (successors left @ pending))
           fun on_cycle (left, right) =
-            reaches left []
-              (List.filter (fn other => Term.free_in other right)
-                 (List.map #1 sides))
+            reaches left Term.empty_tmset
+              (List.filter (fn other => Term.free_in other right) lefts)
         in
           List.filter
             (not o on_cycle o boolSyntax.dest_eq o Thm.concl) theorems
@@ -11712,6 +11730,7 @@ in
       allowed_asserted_hyps definitions proof : state = {
     datatype_admit = admit,
     allowed_asserted_hyps = allowed_asserted_hyps,
+    assertion_projections = ref NONE,
     asserted_hyps = Term.empty_tmset,
     definition_hyps = Term.empty_tmset,
     definition_occurrences_rev = NONE,
@@ -12544,6 +12563,7 @@ in
   fun record_definition_occurrences (s : state) : state = {
     datatype_admit = #datatype_admit s,
     allowed_asserted_hyps = #allowed_asserted_hyps s,
+    assertion_projections = #assertion_projections s,
     asserted_hyps = #asserted_hyps s,definition_hyps = #definition_hyps s,
     definition_occurrences_rev = SOME [],flexible_vars = #flexible_vars s,
     thm_cache = #thm_cache s,large_thm_cache = #large_thm_cache s,

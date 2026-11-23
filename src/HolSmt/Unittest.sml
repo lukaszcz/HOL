@@ -8148,6 +8148,8 @@ in List.app check [true,false] end
 
 fun smtlib_graph_raw_number_scope_retirement () =
 let
+fun check complete =
+let
   val limit = SmtReplayResourcePolicy.Uncapped
   val graph = G.new ()
   val scope = G.root_scope graph
@@ -8164,29 +8166,40 @@ let
   fun open_view caller node = ignore
     (G.record_opened_view_with_policy graph caller limit node)
   val child = G.new_scope graph scope []
+  val live_child = G.new_scope graph scope []
   val argument = G.fresh_bound_variable graph child
     (Term.mk_var ("i",intSyntax.int_ty))
-  val head = G.constant graph child intSyntax.Num_tm
+  val other_argument = G.fresh_bound_variable graph live_child
+    (Term.mk_var ("j",intSyntax.int_ty))
+  val head = G.constant graph scope intSyntax.Num_tm
   val marker = G.application graph child (head,argument)
+  val other_marker = G.application graph live_child (head,other_argument)
   val retired = ref false
   val result = Exn.capture (fn () =>
     SmtLib_GraphTranslation.with_outbound_seeded_query_analysis_with_policy
       work query open_view
         {graph=graph,scope=scope,sets=[],bags=[],
-         raw_numbers=[{node=marker,scope=child}]} (fn context =>
+         raw_numbers=[{node=marker,scope=child},
+                      {node=other_marker,scope=live_child}]} (fn context =>
           let
             val marked = #is_raw_number context
             val subject = #goal context
             val {raw_numbers,...} = (#collection_terms context) ()
-            val _ = assert (not (marked subject), "unexpected raw number")
-            val _ = assert (List.exists marked raw_numbers,
+            val _ = if complete then
+                assert (not (marked subject), "unexpected raw number")
+              else ()
+            val [first,second] = raw_numbers
+            val _ = assert (marked first,
               "live indexed raw number was not found")
+            val _ = assert (marked first,
+              "cached raw number was not found")
             val _ = G.close_scope graph child
             val _ = GP.validate_query_with_policy work query
             val _ = retired := true
-            val _ = marked subject
+            val _ = marked (if complete then subject else second)
           in raise Fail "indexed lookup accepted a retired scope" end)) ()
   val _ = W.close work
+  val _ = G.close_scope graph live_child
   val _ = G.close_scope graph scope
 in
   case result of
@@ -8195,6 +8208,7 @@ in
   | Exn.Exn error => raise error
   | Exn.Res _ => assert (false, "unexpected successful graph borrow")
 end
+in List.app check [false,true] end
 end
 
 (* cvc5's array encoding gives a marked set an Array sort, so every use of
@@ -19905,7 +19919,7 @@ let
   val not_p = boolSyntax.mk_neg p
   val merged = boolSyntax.mk_conj
     (p, boolSyntax.mk_conj (not_p, boolSyntax.T))
-  fun check assumptions =
+  fun check assumptions expected =
     let
       val initial = Z3_Proof.empty_proof "4.15.3"
       val steps = List.foldl
@@ -19921,9 +19935,9 @@ let
          Z3_Proof.update_proof_steps initial steps)
     in
       assert_concl_alpha ("regrouped asserted node", theorem, boolSyntax.F);
-      assert (List.all (fn hypothesis =>
-          List.exists (Term.aconv hypothesis) assumptions) (Thm.hyp theorem),
-        "regrouped assertion introduced a derived hypothesis");
+      assert (HOLset.equal
+        (Thm.hypset theorem, HOLset.fromList Term.compare expected),
+        "regrouped assertion changed its source hypotheses");
       check_oracle_tags "regrouped asserted node" theorem
     end
   fun sequence name args = boolSyntax.list_mk_icomb
@@ -19977,8 +19991,13 @@ let
       check_oracle_tags "assertion encoding identity" theorem
     end
 in
-  check [p, not_p];
-  check [boolSyntax.mk_conj (not_p, p)];
+  check [p, not_p] [p, not_p];
+  let val source = boolSyntax.mk_conj (not_p, p)
+  in check [source] [source] end;
+  let
+    val first = boolSyntax.mk_conj (p, ``q:bool``)
+    val second = boolSyntax.mk_conj (p, ``r:bool``)
+  in check [second, not_p, first] [not_p, first] end;
   List.app check_encoding aliases
 end
 
@@ -28249,8 +28268,17 @@ let
         "shared canonicalization is not idempotent");
       check_oracle_tags "shared canonicalization" theorem
     end
+  val p = ``p:bool``
+  val parent = boolSyntax.mk_neg p
+  val replacement = boolSyntax.mk_conj (``q:bool``, parent)
+  val rewrite = Thm.ASSUME (boolSyntax.mk_eq (p, replacement))
+  fun change term =
+    if Portable.pointer_eq (term, p) then rewrite else raise Conv.UNCHANGED
 in
-  List.app check [4, 16, 28]
+  List.app check [4, 16, 28];
+  expect_hol_error_contains "cycle below a rewrite root"
+    "cyclic rewrite expansion"
+    (fn () => ignore (SmtReplayCanon.dag_rewrite_conv change parent))
 end
 
 fun smt_shared_circuit_replay_success () =

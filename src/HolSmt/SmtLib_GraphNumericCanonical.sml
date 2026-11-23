@@ -923,13 +923,14 @@ struct
                  in active owner;answer end)
   fun retain_closure (owner as Owner {graph,scope,retained,...}) node =
     let
-      val seen = ref ([] : G.node list)
+      val seen = ref (Redblackset.empty Int.compare)
       val pending = ref ([] : G.closure_child list)
       fun walk child =
         let val _ = active owner
             val n = G.closure_child_node graph scope child
-        in if List.exists (fn old => n = old) (!seen) then () else
-          (seen := n:: !seen;pending := child:: !pending;
+            val id = G.node_id n
+        in if Redblackset.member (!seen,id) then () else
+          (seen := Redblackset.add (!seen,id);pending := child:: !pending;
            case G.view graph n of
              G.Application _ =>
                let val (f,x) = G.closure_application_children graph scope child
@@ -2376,13 +2377,14 @@ struct
   fun retain_closure (policy_owner as PolicyOwner {graph,scope,retained,...})
     node =
     let
-      val seen = ref ([] : G.node list)
+      val seen = ref (Redblackset.empty Int.compare)
       val pending = ref ([] : G.closure_child list)
       fun walk child =
         let val _ = active policy_owner
             val n = G.closure_child_node graph scope child
-        in if List.exists (fn old => n = old) (!seen) then () else
-          (seen := n:: !seen;pending := child:: !pending;
+            val id = G.node_id n
+        in if Redblackset.member (!seen,id) then () else
+          (seen := Redblackset.add (!seen,id);pending := child:: !pending;
            case G.view graph n of
              G.Application _ =>
                let val (f,x) = G.closure_application_children graph scope child

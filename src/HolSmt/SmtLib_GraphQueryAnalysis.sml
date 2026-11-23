@@ -920,42 +920,44 @@ struct
                 else
                   case G.unpriced_validation_revision graph root of
                     NONE => contains numbers current
-                  | revision =>
+                  | SOME revision =>
                       let
-                        (* Only a miss has authenticated every marker.
-                           Preserve first match order after a revision change. *)
-                        fun scan [] observed =
-                              (if G.unpriced_validation_revision graph root =
-                                  revision then
-                                 raw_number_index := SOME (revision,
-                                   List.foldl (fn ((id,saved),table) =>
-                                     Redblackmap.insert (table,id,saved))
-                                     (Redblackmap.mkDict Int.compare) observed)
-                               else ();
+                        val (table,pending) = case !raw_number_index of
+                            SOME (saved,table,pending) =>
+                              if saved = revision then (table,pending)
+                              else (Redblackmap.mkDict Int.compare,numbers)
+                          | NONE => (Redblackmap.mkDict Int.compare,numbers)
+                        fun stable () =
+                          G.unpriced_validation_revision graph root =
+                            SOME revision
+                        val wanted = semantic_id [] current
+                        (* Index only the prefix already authenticated in
+                           order. A successful lookup leaves the tail alone. *)
+                        fun scan table [] =
+                              (raw_number_index := SOME (revision,table,[]);
                                false)
-                          | scan (saved :: rest) observed =
-                              let
-                                val wanted = semantic_id [] current
-                                val id = semantic_id [] saved
-                              in
-                                id = wanted orelse
-                                scan rest ((id,saved) :: observed)
+                          | scan table (saved :: rest) =
+                              let val id = semantic_id [] saved in
+                                if stable () then
+                                  let
+                                    val table =
+                                      if Redblackmap.inDomain (table,id)
+                                      then table
+                                      else Redblackmap.insert (table,id,saved)
+                                  in
+                                    if id = wanted then
+                                      (raw_number_index :=
+                                         SOME (revision,table,rest);true)
+                                    else scan table rest
+                                  end
+                                else id = wanted orelse contains rest current
                               end
-                        fun lookup table =
-                          let val wanted = semantic_id [] current in
-                            if G.unpriced_validation_revision graph root =
-                               revision then
-                              (case Redblackmap.peek (table,wanted) of
-                                 SOME term => semantic_id [] term = wanted
-                               | NONE => false)
-                            else scan numbers []
-                          end
                       in
-                        case !raw_number_index of
-                          SOME (saved,table) =>
-                            if saved = revision then lookup table
-                            else scan numbers []
-                        | NONE => scan numbers []
+                        if stable () then
+                          (case Redblackmap.peek (table,wanted) of
+                             SOME term => semantic_id [] term = wanted
+                           | NONE => scan table pending)
+                        else contains numbers current
                       end
               val (sets,bags) = case groups of
                   [(sets,_),(bags,_)] => (sets,bags)

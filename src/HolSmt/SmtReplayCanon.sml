@@ -63,14 +63,20 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
+  fun new_pointer_table () = SmtPointerTable.new
+    {hint = SmtResource.pointer_bucket, initial = 31, ceiling = 4093}
+
   (* Whether tm applies ediv or emod to two arguments: the trigger of the
      ground-total pass, which reduces children before their parent, so a
      parent that is not ground yet may become ground. *)
   fun is_total_application tm =
-    let val (head,args) = boolSyntax.strip_comb tm in
-      (Term.same_const head smt_ediv_total_tm orelse
-       Term.same_const head smt_emod_total_tm) andalso
-      List.length args = 2
+    Term.is_comb tm andalso
+    let val operator = Term.rator tm in
+      Term.is_comb operator andalso
+      let val head = Term.rator operator in
+        Term.same_const head smt_ediv_total_tm orelse
+        Term.same_const head smt_emod_total_tm
+      end
     end
 
   fun is_ground_total tm =
@@ -109,19 +115,11 @@ struct
   fun may_trigger trigger root =
     let
       exception Found
-      val bucket_count = 4093
-      val seen = Array.array (bucket_count, [] : Term.term list)
+      val seen = new_pointer_table ()
       val visited = ref 0
       fun visit admitted term =
-        let
-          val index = SmtResource.pointer_bucket bucket_count term
-          val bucket = Array.sub (seen, index)
-        in
-          if List.exists (fn old => Portable.pointer_eq (old, term)) bucket
-          then ()
-          else
-            (Array.update (seen, index, term :: bucket);
-             visited := !visited + 1;
+          if SmtPointerTable.mark seen term then
+            (visited := !visited + 1;
              if !visited > SmtResource.max_bv_replay_term_nodes orelse
                 (not admitted andalso Term.is_abs term andalso
                  not (scan_may_open SmtResource.max_bv_replay_term_nodes term))
@@ -132,7 +130,7 @@ struct
              else if Term.is_abs term then
                visit true (#2 (SmtReplayImport.dest_abs_preserving_names term))
              else ())
-        end
+          else ()
     in (visit false root; false) handle Found => true end
 
   (* Where ETA_CONV may rewrite: an abstraction whose body applies
@@ -149,33 +147,32 @@ struct
 
   fun dag_conversion revisit orient root =
     let
-      val bucket_count = 4093
-      val cache = Array.array
-        (bucket_count, [] : (Term.term * Thm.thm) list)
-      val active = ref ([] : Term.term list)
-      val order = new_term_order ()
-      fun normalize term =
-        let
-          val index = SmtResource.pointer_bucket bucket_count term
-          val bucket = Array.sub (cache, index)
-        in
-          case List.find
-              (fn (saved, _) => Portable.pointer_eq (saved, term)) bucket of
-            SOME (_, theorem) => theorem
+      val cache = new_pointer_table ()
+      val saved_order = Susp.delay new_term_order
+      fun order (left, right) =
+        if Portable.pointer_eq (left, right) then EQUAL
+        else Susp.force saved_order (left, right)
+      fun normalize ancestors rewrite_ancestors term =
+          case SmtPointerTable.lookup cache term of
+            SOME theorem => theorem
           | NONE =>
               let
-                val _ = not (List.exists
+                (* Structural descent is acyclic. Only a rewrite can reach
+                   a node that was already active before this descent. *)
+                val _ = if List.exists
                     (fn prior => Portable.pointer_eq (prior, term))
-                    (!active)) orelse
+                    rewrite_ancestors then
                   raise ERR "dag_conversion" "cyclic rewrite expansion"
-                val _ = active := term :: !active
+                  else ()
+                val active = if revisit then term :: ancestors else ancestors
+                val child = normalize active rewrite_ancestors
                 val _ = admit_type (Term.type_of term)
                 val children =
                   if Term.is_comb term then
                     let
                       val (operator, operand) = Term.dest_comb term
-                      val operator_thm = normalize operator
-                      val operand_thm = normalize operand
+                      val operator_thm = child operator
+                      val operand_thm = child operand
                     in
                       if Portable.pointer_eq (operator,
                            boolSyntax.rhs (Thm.concl operator_thm)) andalso
@@ -189,7 +186,7 @@ struct
                     let
                       val _ = admit_native "canon-binder-opening" term
                       val (variable, body) = Term.dest_abs term
-                      val body_thm = normalize body
+                      val body_thm = child body
                     in
                       if Portable.pointer_eq
                            (body, boolSyntax.rhs (Thm.concl body_thm)) then
@@ -210,19 +207,16 @@ struct
                 val right = boolSyntax.rhs (Thm.concl orientation)
                 val orientation =
                   if revisit andalso order (current,right) <> EQUAL then
-                    Thm.TRANS orientation (normalize right)
+                    Thm.TRANS orientation (normalize active active right)
                   else orientation
                 val theorem =
                   if Portable.pointer_eq (term, current) then orientation
                   else if Portable.pointer_eq (current,
                       boolSyntax.rhs (Thm.concl orientation)) then children
                   else Thm.TRANS children orientation
-                val _ = Array.update (cache, index,
-                  (term, theorem) :: Array.sub (cache, index))
-                val _ = active := tl (!active)
+                val _ = SmtPointerTable.insert cache term theorem
               in theorem end
-        end
-    in normalize root end
+    in normalize [] [] root end
 
   fun dag_orientation_conv orient = dag_conversion false (fn _ => orient)
   fun dag_rewrite_conv orient = dag_conversion true (fn _ => orient)
@@ -237,14 +231,11 @@ struct
   fun import_nodewise graph scope allowance binder root =
     let
       val types = new_type_order ()
-      val count = 4093
-      val memo = Array.array (count,[] : (Term.term * G.source) list)
+      val memo = new_pointer_table ()
       val observed = ref 0
       fun visit term =
-        let val bucket = SmtResource.pointer_bucket count term in
-          case List.find (fn (old,_) => Portable.pointer_eq (old,term))
-              (Array.sub (memo,bucket)) of
-            SOME (_,source) => source
+          case SmtPointerTable.lookup memo term of
+            SOME source => source
           | NONE =>
               let
                 val _ = case allowance of NONE => ()
@@ -274,10 +265,8 @@ struct
                           then checked_refl term
                         else leaf_equality types term target
                     in {node = node,original = term,bridge = theorem} end
-                val _ = Array.update (memo,bucket,
-                  (term,source) :: Array.sub (memo,bucket))
+                val _ = SmtPointerTable.insert memo term source
               in source end
-        end
     in visit root end
 
   (* Binder interning is optional here. Keep the opaque fallback when its

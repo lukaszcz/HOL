@@ -5822,10 +5822,6 @@ local
   and constructor_for_pattern context loc sigdict scrutinee_sort constructors
       smt_name =
     let
-      fun same_constructor tm ctor =
-        const_name tm = const_name ctor
-        handle Feedback.HOL_ERR _ => false
-
       fun instantiate
           ({tm, domain, domain_surface, range, ...}: function_signature) =
         let
@@ -5834,10 +5830,11 @@ local
           val domain = List.map (Type.type_subst subst) domain
           val domain_surface =
             List.map (instantiate_surface_sort subst) domain_surface
+          val hol_name = const_name tm
         in
-          case List.find (same_constructor tm) constructors of
+          case Redblackmap.peek (constructors, hol_name) of
             SOME ctor =>
-              SOME {smt_name = smt_name, hol_name = const_name ctor,
+              SOME {smt_name = smt_name, hol_name = hol_name,
                 constructor = ctor, domain = domain,
                 domain_surface = domain_surface}
           | NONE => NONE
@@ -5874,16 +5871,19 @@ local
 
   and reject_duplicate_pattern_binders context loc names =
     let
-      fun seen _ [] = false
-        | seen name (x :: xs) = name = x orelse seen name xs
-      fun loop [] = ()
-        | loop (name :: rest) =
-            if seen name rest then
-              type_error "typecheck_match" context loc NONE NONE
-                ("duplicate match pattern binder '" ^ name ^ "'")
-            else loop rest
+      (* Report the leftmost binder whose name appears again. *)
+      fun check (name, (seen, duplicate)) =
+        if Redblackset.member (seen, name) then (seen, SOME name)
+        else (Redblackset.add (seen, name), duplicate)
+      val (_, duplicate) =
+        List.foldl check (Redblackset.empty String.compare, NONE)
+          (List.rev names)
     in
-      loop names
+      case duplicate of
+        NONE => ()
+      | SOME name =>
+          type_error "typecheck_match" context loc NONE NONE
+            ("duplicate match pattern binder '" ^ name ^ "'")
     end
 
   and typecheck_match elaborate_datatypes context
@@ -5906,6 +5906,12 @@ local
       val scrutinee_sort = checked_sort scrutinee_checked
       val constructors =
         constructors_for_match context (loc_of scrutinee) scrutinee_sort
+      val constructors = List.map (fn ctor => (const_name ctor, ctor))
+        constructors
+      val constructors_by_name =
+        List.foldr (fn ((name, ctor), by_name) =>
+          Redblackmap.insert (by_name, name, ctor))
+          (Redblackmap.mkDict String.compare) constructors
 
       fun check_body local_tmdict local_sigdict body =
         typecheck_term_with_options elaborate_datatypes context
@@ -5919,7 +5925,7 @@ local
           val _ = reject_duplicate_pattern_binders context pattern_loc binders
           val {hol_name, constructor, domain, domain_surface, ...} =
             constructor_for_pattern context (loc_of ctor_name) sigdict
-              scrutinee_sort constructors ctor_s
+              scrutinee_sort constructors_by_name ctor_s
           val _ =
             if List.length binders = List.length domain then ()
             else
@@ -5966,7 +5972,8 @@ local
              | MatchPatternAtom name =>
                  (case Lib.total
                     (constructor_for_pattern context (loc_of name) sigdict
-                      scrutinee_sort constructors) (located_string_node name) of
+                      scrutinee_sort constructors_by_name)
+                    (located_string_node name) of
                     SOME {constructor, domain = [], hol_name, ...} =>
                       let
                         val body_checked = check_body tmdict sigdict body
@@ -6019,42 +6026,47 @@ local
               "match branch result sort mismatch")
           checked_branches
 
-      fun duplicate name [] = false
-        | duplicate name (x :: xs) = name = x orelse duplicate name xs
-      fun scan [] seen default = (List.rev seen, default)
+      fun scan [] seen default = (seen, default)
         | scan (branch :: rest) seen default =
             (case branch of
                CheckedMatchConstructor {smt_name, hol_name, loc, ...} =>
-                 if duplicate hol_name seen then
-                   type_error "typecheck_match" context loc NONE NONE
-                     ("duplicate match constructor pattern '" ^ smt_name ^ "'")
-                 else scan rest (hol_name :: seen) default
+                 let
+                   fun duplicate _ =
+                     type_error "typecheck_match" context loc NONE NONE
+                       ("duplicate match constructor pattern '" ^
+                        smt_name ^ "'")
+                 in scan rest
+                   (Redblackmap.insertWith duplicate
+                     (seen, hol_name, (branch, Option.isSome default))) default
+                 end
              | CheckedMatchDefault {loc, ...} =>
                  (case default of
                     NONE => scan rest seen (SOME branch)
                   | SOME _ =>
                       type_error "typecheck_match" context loc NONE NONE
                         "duplicate match default pattern"))
-      val (covered, default) = scan checked_branches [] NONE
-      val missing =
-        List.filter (fn ctor => not (duplicate (const_name ctor) covered))
-          constructors
+      val (covered, default) =
+        scan checked_branches (Redblackmap.mkDict String.compare) NONE
       val _ =
-        if List.null missing orelse Option.isSome default then ()
-        else
-          type_error "typecheck_match" context loc NONE NONE
-            ("non-exhaustive match: missing constructor pattern '" ^
-             const_name (hd missing) ^ "'")
+        if Option.isSome default orelse
+           Redblackmap.numItems covered =
+             Redblackmap.numItems constructors_by_name then ()
+        else case List.find (fn (name, _) =>
+               not (Redblackmap.inDomain (covered, name))) constructors of
+            NONE => ()
+          | SOME (name, _) =>
+              type_error "typecheck_match" context loc NONE NONE
+                ("non-exhaustive match: missing constructor pattern '" ^
+                 name ^ "'")
 
-      fun branch_for_constructor ctor =
-        let val cname = const_name ctor
+      fun branch_for_constructor (name, ctor) =
+        let
+          (* A default preceding the constructor pattern takes priority. *)
+          val branch = case Redblackmap.peek (covered, name) of
+              SOME (explicit, false) => SOME explicit
+            | _ => default
         in
-          case List.find
-              (fn branch =>
-                case branch of
-                  CheckedMatchConstructor {hol_name, ...} => hol_name = cname
-                | CheckedMatchDefault _ => true)
-              checked_branches of
+          case branch of
             SOME (CheckedMatchConstructor {pattern, body, ...}) =>
               (pattern, checked_term body)
           | SOME (CheckedMatchDefault {var, body, ...}) =>
