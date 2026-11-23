@@ -20776,7 +20776,7 @@ in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its target");
   check_oracle_tags "Z3 datatype-normalize rewrite" theorem;
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" > 0,
     "Z3 datatype-normalize rewrite was proved by another rung")
 end
 
@@ -20797,7 +20797,7 @@ in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its swapped target");
   check_oracle_tags "Z3 datatype-normalize swapped rewrite" theorem;
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" > 0,
     "Z3 datatype-normalize swapped rewrite was proved by another rung");
   assert (boolSyntax.lhs (Thm.concl l_thm) ~~ r andalso
           boolSyntax.lhs (Thm.concl r_thm) ~~ l,

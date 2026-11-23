@@ -1920,9 +1920,13 @@ local
       else raise ERR "arith_prove" (Hol_pp.term_to_string t)
 
   and arith_prove_smt_rdiv t =
+    (* srw_ss normalization is costly on large targets; without reals
+       there is no division for it to normalize. *)
     if not (SmtResource.contains
-        (fn tm => Term.type_of tm = realSyntax.real_ty) t) then
-      raise ERR "arith_prove_smt_rdiv" "no real division"
+        (fn tm => Term.type_of tm = realSyntax.real_ty) t) andalso
+       SmtResource.term_nodes_up_to arith_split_max_target_nodes t >
+         arith_split_max_target_nodes then
+      raise ERR "arith_prove_smt_rdiv" "large target without reals"
     else
     let
       val t_eq_t' =
