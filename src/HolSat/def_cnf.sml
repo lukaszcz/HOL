@@ -120,45 +120,74 @@ fun propvar cnfv i = mk_var(cnfv^(int_to_string i),bool)
 (* Set up the basic definitional arrangement.                                *)
 (* ------------------------------------------------------------------------- *)
 
-fun localdefs cnfv tm (n,defs,lfn) =
-    if is_neg tm then
-        let val (n1,v1,defs1,lfn1) = localdefs cnfv  (rand tm) (n,defs,lfn)
-            val  tm' = mk_neg v1
-        in (n1,rbapply defs1 tm',defs1,lfn1)
-           handle NotFound =>
-             let val n2 = n1 + 1
-                 val v2 = propvar cnfv n2
-             in  (n2,v2,RBM.insert(defs1,tm',v2),RBM.insert(lfn1,v2,tm)) end
-        end
-    else if is_conj tm orelse is_disj tm orelse is_imp tm orelse is_eq tm then
-        let val (n1,v1,defs1,lfn1) = localdefs cnfv  (land tm) (n,defs,lfn)
-            val (n2,v2,defs2,lfn2) = localdefs cnfv  (rand tm) (n1,defs1,lfn1)
-            val tm' = mk_comb(mk_comb(rator(rator tm),v1),v2)
-        in (n2,rbapply defs2 tm',defs2,lfn2)
-           handle NotFound =>
-                  let val n3 = n2 + 1
-                      val v3 = propvar cnfv n3
-                  in (n3,v3,RBM.insert(defs2,tm',v3),RBM.insert(lfn2,v3,tm)) end
-        end
-    else if is_cond tm then
-        let val (opr,args) = strip_comb tm
-            val (n1,v1,defs1,lfn1) =
-                localdefs cnfv  (List.nth(args,0)) (n,defs,lfn)
-            val (n2,v2,defs2,lfn2) =
-                localdefs cnfv  (List.nth(args,1)) (n1,defs1,lfn1)
-            val (n3,v3,defs3,lfn3) =
-                localdefs cnfv  (List.nth(args,2)) (n2,defs2,lfn2)
-            val tm' = mk_comb(mk_comb(mk_comb(opr,v1),v2),v3)
-        in (n3,rbapply defs3 tm',defs2,lfn3)
-           handle NotFound =>
-                  let val n4 = n3 + 1
-                      val v4 = propvar cnfv n4
-                  in (n4,v4,RBM.insert(defs3,tm',v4),RBM.insert(lfn3,v4,tm)) end
-        end
-  else (n,rbapply defs tm,defs,lfn)
-       handle NotFound => let val n1 = n + 1
-                              val v1 = propvar cnfv n1
-                   in (n1,v1,RBM.insert(defs,tm,v1),RBM.insert(lfn,v1,tm)) end
+fun localdefs cnfv tm state =
+    let val rollbacks = ref 0
+        val empty = (T,T)
+        val newest = ref empty
+        val older = ref empty
+
+        fun extend source body (n,defs,lfn) =
+          let val next = n + 1
+              val v = propvar cnfv next
+          in (next,v,RBM.insert (defs,body,v),RBM.insert (lfn,v,source)) end
+
+        fun intern source body (state as (n,defs,lfn)) =
+          case RBM.peek (defs,body) of
+              SOME v => (n,v,defs,lfn)
+            | NONE => extend source body state
+
+        (* A completed definition remains valid while the map only grows.
+           Keep the last two compounds so an intervening connective does
+           not hide a subcircuit shared by both branches. *)
+        fun walk tm (state as (n,defs,lfn)) =
+          if is_comb tm then
+            let val (source,v) = !newest in
+              if Portable.pointer_eq (source,tm) then (n,v,defs,lfn)
+              else
+                let val (source,v) = !older in
+                  if Portable.pointer_eq (source,tm) then (n,v,defs,lfn)
+                  else remember tm state
+                end
+            end
+          else define tm state
+        and remember tm state =
+          let val before_define = !rollbacks
+              val (result as (_,v,_,_)) = define tm state
+          in
+            if before_define = !rollbacks then
+              (older := !newest; newest := (tm,v))
+            else ();
+            result
+          end
+        and define tm (n,defs,lfn) =
+          if is_neg tm then
+              let val (n1,v1,defs1,lfn1) = walk (rand tm) (n,defs,lfn)
+              in intern tm (mk_neg v1) (n1,defs1,lfn1) end
+          else if is_conj tm orelse is_disj tm orelse
+                  is_imp tm orelse is_eq tm then
+              let val (n1,v1,defs1,lfn1) = walk (land tm) (n,defs,lfn)
+                  val (n2,v2,defs2,lfn2) = walk (rand tm) (n1,defs1,lfn1)
+                  val tm' = mk_comb (mk_comb (rator (rator tm),v1),v2)
+              in intern tm tm' (n2,defs2,lfn2) end
+          else if is_cond tm then
+              let val (opr,args) = strip_comb tm
+                  val (n1,v1,defs1,lfn1) =
+                      walk (List.nth(args,0)) (n,defs,lfn)
+                  val (n2,v2,defs2,lfn2) =
+                      walk (List.nth(args,1)) (n1,defs1,lfn1)
+                  val (n3,v3,defs3,lfn3) =
+                      walk (List.nth(args,2)) (n2,defs2,lfn2)
+                  val tm' = mk_comb(mk_comb(mk_comb(opr,v1),v2),v3)
+              in case RBM.peek (defs3,tm') of
+                     SOME v =>
+                       (if Portable.pointer_eq (defs2,defs3) then ()
+                        else (newest := empty; older := empty;
+                              rollbacks := !rollbacks + 1);
+                        (n3,v,defs2,lfn3))
+                   | NONE => extend tm tm' (n3,defs3,lfn3)
+              end
+          else intern tm tm (n,defs,lfn)
+    in walk tm state end
 
 (* ------------------------------------------------------------------------- *)
 (* Just translate to fresh variables, but otherwise leave unchanged.         *)

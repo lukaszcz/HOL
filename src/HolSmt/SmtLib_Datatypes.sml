@@ -117,7 +117,7 @@ struct
   fun assoc_smt smt pairs =
     Option.map #hol (List.find (fn {smt = n, ...} => n = smt) pairs)
 
-  fun assoc_hol hol pairs =
+  fun assoc_hol hol (pairs : name_pair list) =
     Option.map #smt (List.find (fn {hol = n, ...} => n = hol) pairs)
 
   fun add_name kind ({types, constructors, selectors, testers} : name_map)
@@ -589,13 +589,22 @@ struct
       fun type_entry ((name, _), hol_type) =
         {smt_name = node name, hol_type = hol_type}
 
+      val lookup_name =
+        case constructors of
+          _ :: _ :: _ :: _ :: _ =>
+            let val names = List.foldr (fn ({hol, smt}, table) =>
+                  Redblackmap.insert (table, hol, smt))
+                  (Redblackmap.mkDict String.compare) constructors
+            in fn name => Redblackmap.peek (names, name) end
+        | _ => fn name => assoc_hol name constructors
+
       fun constructor_entry hol_type ctor =
         let
           val tm = TypeBasePure.cinst hol_type ctor
           val hol_name = const_name tm
           val smt_name =
             option_get ("missing SMT constructor name for " ^ hol_name)
-              (assoc_hol hol_name constructors)
+              (lookup_name hol_name)
         in
           {smt_name = smt_name, hol_name = hol_name, term = tm}
         end
@@ -604,27 +613,37 @@ struct
         List.map (constructor_entry hol_type)
           (TypeBase.constructors_of hol_type)
 
-      fun selector_entry
-          ({selector_smt, constructor_smt, constructor_hol, field_index, ...}
-             : selector_info) =
-        let
-          fun find_in_type hol_type =
-            Option.map (fn ctor => (hol_type, ctor))
-              (find_constructor hol_type constructor_hol)
-          val (domain, ctor) =
-            option_get
-              ("missing constructor type for selector " ^ selector_smt)
-              (Lib.get_first find_in_type hol_types)
-          val range =
-            List.nth (constructor_args (Term.type_of ctor), field_index)
-        in
-          {smt_name = selector_smt, constructor = constructor_smt,
-           domain = domain, range = range}
-        end
+      val entries = List.concat (List.map constructor_entries hol_types)
+
+      fun selector_entries [] = []
+        | selector_entries selectors =
+            let
+              fun add ({hol_name, term, ...}, table) =
+                let val (ranges, domain) =
+                      boolSyntax.strip_fun (Term.type_of term)
+                in Redblackmap.insert
+                  (table, hol_name, (domain, Vector.fromList ranges)) end
+              (* Keep the first constructor in declaration order. *)
+              val fields =
+                List.foldr add (Redblackmap.mkDict String.compare) entries
+              fun selector_entry
+                  ({selector_smt, constructor_smt, constructor_hol,
+                    field_index, ...} : selector_info) =
+                let
+                  val (domain, ranges) =
+                    option_get
+                      ("missing constructor type for selector " ^
+                       selector_smt)
+                      (Redblackmap.peek (fields, constructor_hol))
+                in
+                  {smt_name = selector_smt, constructor = constructor_smt,
+                   domain = domain, range = Vector.sub (ranges, field_index)}
+                end
+            in List.map selector_entry selectors end
     in
       {types = ListPair.map type_entry (group, hol_types),
-       constructors = List.concat (List.map constructor_entries hol_types),
-       selectors = List.map selector_entry selectors,
+       constructors = entries,
+       selectors = selector_entries selectors,
        mk_selector_case = mk_selector_case,
        mk_tester_case = mk_tester_case}
     end

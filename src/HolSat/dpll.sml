@@ -190,9 +190,8 @@ fun mk_model_thm cnfv lfn t f =
       val model =
           if isSome cnfv then
             List.rev (RBM.foldl (fn (v,source,rest) =>
-              let val positive = is_T (f v)
-              in if is_var source then literal source positive :: rest
-                 else rest end) [] lfn)
+              if is_var source then literal source (is_T (f v)) :: rest
+              else rest) [] lfn)
           else List.map (fn v => literal v (is_T (f v))) (free_vars t)
     in satCheck model (mk_neg t) end
 

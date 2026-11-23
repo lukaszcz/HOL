@@ -471,6 +471,40 @@ local
         val atom = shared 55 (mk_var ("p",bool),mk_var ("q",bool))
         val goal = mk_neg (mk_conj (atom,F))
       in checked goal (SAT_PROVE_ONLY goal) end)
+  val _ = control "definitional CNF reuses shared Boolean subcircuits"
+    (Timeout.apply (Time.fromSeconds 30) (fn () =>
+        let
+          val x = mk_var ("shared_x",bool)
+          val depth = 50
+          fun count circuit =
+            let val (_,variables,_,clauses) =
+                  def_cnf.to_cnf false (mk_eq (x,circuit))
+            in (variables,Array.length clauses) end
+          fun repeat extend = count (funpow depth extend x)
+          val fibonacci = fst (funpow depth
+            (fn (left,right) => (mk_eq (left,right),left))
+            (x,mk_var ("shared_y",bool)))
+        in repeat (fn t => mk_eq (t,t)) = (depth + 2,4 * (depth + 1) + 1)
+           andalso
+           repeat (fn t => mk_eq (t,mk_neg t)) =
+             (2 * depth + 2,6 * depth + 5)
+           andalso
+           repeat (fn t => mk_eq (mk_neg t,mk_disj (t,x))) =
+             (3 * depth + 2,9 * depth + 5)
+           andalso count fibonacci = (depth + 3,4 * depth + 5)
+        end))
+  val _ = control "definitional CNF checks repeated conditionals"
+    (Timeout.apply (Time.fromSeconds 30) (fn () =>
+        let
+          val x = mk_var ("shared_cond",bool)
+          val depth = 20
+          val circuit = funpow depth (fn t => mk_cond (t,t,t)) x
+          val (_,variables,_,clauses) =
+            def_cnf.to_cnf false (mk_eq (x,circuit))
+          val goal = mk_eq (x,circuit)
+        in variables = depth + 2 andalso Array.length clauses = 5 * depth + 5
+           andalso checked goal (SAT_PROVE_ONLY goal)
+        end))
   val _ = control "ordinary DPLL preserves definitional refutations and models"
     (fn () =>
       let

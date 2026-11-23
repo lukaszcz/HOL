@@ -13678,18 +13678,25 @@ local
                   (43 * stop_hash (depth - 1)
                     (#2 (Term.dest_abs term))) mod hash_modulus
                 else stop_hash 0 term
-          val hashed_stops = List.map (fn stop =>
-            (stop_hash 6 stop, stop)) chain_stops
-          fun is_chain_stop term =
-            let val hash = stop_hash 6 term in
-              List.exists (fn (stop_hash, stop) =>
-                hash = stop_hash andalso
-                (Portable.pointer_eq (term, stop) orelse
-                 shared_aconv term stop)) hashed_stops
-            end
-          fun clause_pair term =
-            if is_chain_stop term then NONE
-            else Lib.total boolSyntax.dest_disj term
+          (* Only a disjunction needs to be kept opaque by a chain stop. *)
+          val hashed_stops = List.foldr (fn (stop, table) =>
+            Redblackmap.insertWith (fn (older, newer) => newer @ older)
+              (table, stop_hash 6 stop, [stop]))
+            (Redblackmap.mkDict Int.compare)
+            (List.filter boolSyntax.is_disj chain_stops)
+          val dest_disj = Lib.total boolSyntax.dest_disj
+          val clause_pair =
+            if Redblackmap.numItems hashed_stops = 0 then dest_disj
+            else fn term =>
+              case dest_disj term of
+                NONE => NONE
+              | pair =>
+                  (case Redblackmap.peek (hashed_stops, stop_hash 6 term) of
+                     NONE => pair
+                   | SOME stops =>
+                       if List.exists (fn stop =>
+                           Portable.pointer_eq (term, stop) orelse
+                           shared_aconv term stop) stops then NONE else pair)
           fun reorder_to_target theorem =
             let
               val exact_modulus = 1000000007
@@ -14532,12 +14539,14 @@ local
                        else prove theorem
             end
           fun strip_chain_clause term =
-            if is_chain_stop term then [term]
-            else
-              (case Lib.total boolSyntax.dest_disj term of
-                 SOME (left, right) =>
-                   strip_chain_clause left @ strip_chain_clause right
-               | NONE => [term])
+            let
+              fun strip [] literals = List.rev literals
+                | strip (current :: pending) literals =
+                    case clause_pair current of
+                      SOME (left, right) =>
+                        strip (left :: right :: pending) literals
+                    | NONE => strip pending (current :: literals)
+            in strip [term] [] end
           fun sat_chain_consequence () =
             let
               val atoms = ref ([] : (Term.term * Term.term) list)
@@ -15023,12 +15032,10 @@ local
                   SOME base => boolSyntax.mk_neg (atom base)
                 | NONE => atom literal
               fun abstract_clause term =
-                if is_chain_stop term then abstract_literal term
-                else
-                  case Lib.total boolSyntax.dest_disj term of
-                    SOME (left, right) => boolSyntax.mk_disj
-                      (abstract_clause left, abstract_clause right)
-                  | NONE => abstract_literal term
+                case clause_pair term of
+                  SOME (left, right) => boolSyntax.mk_disj
+                    (abstract_clause left, abstract_clause right)
+                | NONE => abstract_literal term
               val abstracted_premises = List.map
                 (abstract_clause o Thm.concl) prems
               val consequent = abstract_clause target
@@ -15207,12 +15214,10 @@ local
                     SOME body => boolSyntax.mk_neg (atom body)
                   | NONE => atom term
               fun abstract_clause term =
-                if is_chain_stop term then abstract_literal term
-                else
-                  case Lib.total boolSyntax.dest_disj term of
-                    SOME (left, right) => boolSyntax.mk_disj
-                      (abstract_clause left, abstract_clause right)
-                  | NONE => abstract_literal term
+                case clause_pair term of
+                  SOME (left, right) => boolSyntax.mk_disj
+                    (abstract_clause left, abstract_clause right)
+                | NONE => abstract_literal term
               val abstract_prems = List.map
                 (abstract_clause o Thm.concl) prems
               val abstract_pivots = ListPair.mapEq
@@ -15484,23 +15489,30 @@ local
                   val current_extras = extras theorem
                   fun candidate [] = NONE
                     | candidate (premise :: rest) =
-                        (case List.find (fn literal => List.exists
-                            (fn premise_literal => literal_equal
-                              (complement literal) premise_literal)
-                            (strip_chain_clause (Thm.concl premise)))
-                            current_extras of
-                           SOME literal => SOME (literal, premise, rest)
-                         | NONE => Option.map
-                             (fn (literal, selected, tail) =>
-                               (literal, selected, premise :: tail))
-                             (candidate rest))
+                        let
+                          val literals = strip_chain_clause (Thm.concl premise)
+                          fun matches literal = List.exists
+                            (fn premise_literal =>
+                              literal_equal (complement literal)
+                                premise_literal)
+                            literals
+                        in
+                          case List.find matches current_extras of
+                            SOME literal => SOME (literal, premise, rest)
+                          | NONE => Option.map
+                              (fn (literal, selected, tail) =>
+                                (literal, selected, premise :: tail))
+                              (candidate rest)
+                        end
                 in
-                  case candidate remaining of
-                    SOME (literal, premise, rest) =>
-                      cleanup
-                        (resolve_pair_on chain_stops literal theorem premise)
-                        rest
-                  | NONE => theorem
+                  if null current_extras then theorem
+                  else
+                    case candidate remaining of
+                      SOME (literal, premise, rest) =>
+                        cleanup
+                          (resolve_pair_on chain_stops literal theorem premise)
+                          rest
+                    | NONE => theorem
                 end
           fun contains_literal literal theorem =
             List.exists (literal_equal literal)
@@ -15523,10 +15535,14 @@ local
           val cleaned_result = profile "CPC(chain:cleanup)"
             (fn () => cleanup annotated_cleaned annotated_remaining) ()
           val _ = trace_chain "cleanup complete"
-          val structural_extras = List.filter
-            (fn literal => not (List.exists
-              (structural_literal_equal literal) target_literals))
-            (strip_chain_clause (Thm.concl cleaned_result))
+          val cleaned_conclusion = Thm.concl cleaned_result
+          val cleaned_literals = strip_chain_clause cleaned_conclusion
+          val structural_extras =
+            if ListPair.allEq Portable.pointer_eq
+                 (cleaned_literals, target_literals) then []
+            else List.filter (fn literal => not (List.exists
+                (structural_literal_equal literal) target_literals))
+              cleaned_literals
           val _ = if cpc_trace_full () then
             trace_chain ("structural extras " ^
               Int.toString (List.length structural_extras))
@@ -15961,8 +15977,7 @@ local
             List.length prems <= 250 andalso
             not (List.null (!unused_prems)) andalso
             List.length target_literals <= 16 andalso
-              List.length (strip_chain_clause
-              (Thm.concl cleaned_result)) -
+              List.length cleaned_literals -
               List.length target_literals > 0
           val _ = trace_chain ("supported schema " ^
             Bool.toString use_supported_schema ^ " unused=" ^
@@ -15989,7 +16004,7 @@ local
           resolution_profile "alignment" (fn () =>
           profile "CPC(chain:alignment)" (fn () =>
           if List.null structural_extras andalso
-             shared_aconv (Thm.concl cleaned_result) target then
+             shared_aconv cleaned_conclusion target then
             cleaned_result
           else if List.null structural_extras then
             resolution_profile "reorder" reorder_to_target cleaned_result

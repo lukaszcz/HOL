@@ -11355,10 +11355,8 @@ local
      original assumption.  Semantic proof obligations belong to their proof
      nodes; accepting them here would silently rescue an incomplete replay
      rule. *)
-  fun remove_hyps (asl, g, thm) : Thm.thm =
+  fun remove_hyps expected expected_set thm : Thm.thm =
   let
-    val expected = boolSyntax.mk_neg g :: asl
-    val expected_set = HOLset.addList (Term.empty_tmset, expected)
     val bad_hyps = HOLset.difference (Thm.hypset thm, expected_set)
     fun changed conversion term =
       (conversion term, true) handle Conv.UNCHANGED => (Thm.REFL term, false)
@@ -11491,7 +11489,10 @@ in
     definition_unification_boundary
       (fn () => raise ORDINARY_DEFINITION_UNIFICATION_DECLINE)
   val remove_extra_hyps = remove_extra_hyps
-  val remove_hyps_for_test = remove_hyps
+  fun remove_hyps_for_test (asl, g, thm) =
+    let val expected = boolSyntax.mk_neg g :: asl
+    in remove_hyps expected (HOLset.addList (Term.empty_tmset, expected)) thm
+    end
   val quantified_boolean_rewrite_prove_for_test =
     quantified_boolean_rewrite_prove
   val beta_equal_for_test = beta_equal
@@ -12245,8 +12246,8 @@ in
       else ()
 
     (* initial state *)
-    val allowed_asserted_hyps = HOLset.addList
-      (Term.empty_tmset, boolSyntax.mk_neg g :: asl)
+    val expected = boolSyntax.mk_neg g :: asl
+    val allowed_asserted_hyps = HOLset.addList (Term.empty_tmset, expected)
     val state = initial_replay_state allowed_asserted_hyps definitions proof
 
     (* ID 0 denotes the proof's root node *)
@@ -12270,15 +12271,15 @@ in
     (* if the final theorem contains hyps that are not in `asl`, it likely means
        that we've run into a Z3 issue where it slightly modifies the original
        assumptions; as a workaround we try to remove those hyps here *)
-    val final_thm = profile "check_proof(hyp_removal)" remove_hyps
-      (asl, g, final_thm)
+    val final_thm = profile "check_proof(hyp_removal)"
+      (remove_hyps expected allowed_asserted_hyps) final_thm
       handle Feedback.HOL_ERR holerr =>
         raise_final_error "hyp_removal" state final_thm holerr
 
     (* check that the final theorem contains no hyps other than those that have
        been asserted or those used by the hypothesis-removal workaround above *)
-    val allowed_hyps = HOLset.union (#asserted_hyps state,
-      HOLset.addList (Term.empty_tmset, boolSyntax.mk_neg g :: asl))
+    val allowed_hyps = HOLset.union
+      (#asserted_hyps state, allowed_asserted_hyps)
     val _ = profile "check_proof(hypcheck)" HOLset.isSubset
       (Thm.hypset final_thm, allowed_hyps) orelse
       raise ERR "check_proof" "final theorem contains additional hyp(s)"

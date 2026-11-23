@@ -1629,12 +1629,10 @@ local
                | SmtLib_Theories.ParseDecline exn => raise exn
                | error as Timeout.TIMEOUT _ => raise error
                | error as Feedback.HOL_ERR _ => raise error
-    val primary_fns = Redblackmap.find (dict, key)
-      handle Redblackmap.NotFound => []
-    val catch_all_fns =
+    val primary_fns = Option.getOpt (Redblackmap.peek (dict, key), [])
+    fun catch_all_fns () =
       if Option.isSome quoted then []
-      else Redblackmap.find (dict, "_")
-        handle Redblackmap.NotFound => []
+      else Option.getOpt (Redblackmap.peek (dict, "_"), [])
     (* Diagnostics use the decoded symbol spelling used by callbacks.  The
        separate [quoted] bit above still controls lexical fall-through. *)
     val diagnostic_token = token
@@ -1647,7 +1645,7 @@ local
     case try_fns primary_fns NONE of
       (SOME result, _) => result
     | (NONE, primary_err) =>
-        (case try_fns catch_all_fns NONE of
+        (case try_fns (catch_all_fns ()) NONE of
            (SOME result, _) => result
          | (NONE, catch_all_err) =>
              (* The entry registered under this very name knows why it
