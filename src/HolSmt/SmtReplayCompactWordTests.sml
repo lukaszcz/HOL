@@ -31,6 +31,19 @@ fun run () = let
    "large atom cache" second_atom;
  val goal=``((x:word8)+(x+1w)) + (x+(x+1w)) = (x+(x+1w)) << 1``;
  val _=checked goal (producer goal);
+ val naming_goal=``((p /\ q) /\ r) ==> r``;
+ val naming_target=``((smt_compact_atom_0 /\ smt_compact_atom_1) /\
+                     smt_compact_atom_2) ==> smt_compact_atom_2``;
+ val named_targets=ref [];
+ val named_proof=SmtSkeletonProve.with_sat_observers
+   (SOME (fn target=>named_targets:=target:: !named_targets)) NONE
+   (SmtReplayCompactWord.prove_schema (SmtBitBlastProve.new_context ())
+      (fn _=>fn prove=>prove ()) (fn _=>fn prove=>prove ())) naming_goal;
+ val _=checked naming_goal named_proof;
+ val _=case !named_targets of
+     [target]=>require (Term.aconv target naming_target)
+       "compact atom numbering changed across constructors or repeated atoms"
+   | _=>raise Fail "expected one compact SAT target";
  val _=fails (fn ()=>producer ``(x:word8)=x+1w``);
  val wide=Term.mk_var ("wide",wordsSyntax.mk_int_word_type 33);
  val _=require (not (SmtReplayCompactWord.eligible

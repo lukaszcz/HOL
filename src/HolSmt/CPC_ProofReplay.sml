@@ -23292,6 +23292,30 @@ in
             SmtFpGraph.lower_atom_domain right orelse
             SmtFpGraph.lower_atom_domain hypothesis
         | NONE => false
+      val operation_costs = SmtPointerTable.new
+        {hint = SmtReplayImport.pointer_bucket 4, initial = 7, ceiling = 4093}
+      (* Cache subterms by identity, while counting each argument occurrence
+         towards the unfolded cost used to order bridges. *)
+      fun cost term =
+        if boolSyntax.is_select term orelse not (Term.is_comb term) then 0
+        else case SmtPointerTable.lookup operation_costs term of
+          SOME total => total
+        | NONE =>
+            let
+              val (head, arguments) = boolSyntax.strip_comb term
+              val own =
+                if Term.is_const head then
+                  let val {Thy, Name, ...} = Term.dest_thy_const head
+                  in if Thy = "smtfloat" andalso
+                       List.exists (fn operation => Name = operation)
+                         ["smtfp_add", "smtfp_sub", "smtfp_mul",
+                          "smtfp_div", "smtfp_fma", "smtfp_sqrt"]
+                     then 1 else 0 end
+                else 0
+              val total = own + List.foldl
+                (fn (argument, total) => cost argument + total) 0 arguments
+              val _ = SmtPointerTable.insert operation_costs term total
+            in total end
       fun fp_operation_cost hypothesis =
         let
           val atom =
@@ -23301,37 +23325,21 @@ in
                 else if SmtFpGraph.lower_atom_domain right then right
                 else hypothesis
             | NONE => hypothesis
-          fun cost term =
-            if boolSyntax.is_select term then 0
-            else if Term.is_comb term then
-              let
-                val (head, arguments) = boolSyntax.strip_comb term
-                val own =
-                  if Term.is_const head then
-                    let val {Thy, Name, ...} =
-                      Term.dest_thy_const head
-                    in if Thy = "smtfloat" andalso
-                         List.exists (fn operation => Name = operation)
-                           ["smtfp_add", "smtfp_sub", "smtfp_mul",
-                            "smtfp_div", "smtfp_fma", "smtfp_sqrt"]
-                       then 1 else 0 end
-                  else 0
-              in own + List.foldl
-                (fn (argument, total) => cost argument + total)
-                0 arguments end
-            else 0
         in cost atom end
       (* Cheap atom bridges filter impossible private-symbol assignments
          before the shared arithmetic circuits are lowered.  Every bridge
          is still checked before a witness assignment can be selected. *)
       val bridges = Listsort.sort
-        (fn (left, right) =>
-          Int.compare (fp_operation_cost left,
-                       fp_operation_cost right))
-        (List.filter fp_bridge extra)
+        (fn ((_, left), (_, right)) =>
+          Int.compare (Portable.HOLSusp.force left,
+                       Portable.HOLSusp.force right))
+        (List.map (fn hypothesis => (hypothesis,
+           Portable.HOLSusp.delay (fn () => fp_operation_cost hypothesis)))
+           (List.filter fp_bridge extra))
+      val trace_full = cpc_trace_full ()
       fun trace_private message =
-        if cpc_trace_full () then
-          (Feedback.HOL_MESG ("CPC private FP " ^ message);
+        if trace_full then
+          (Feedback.HOL_MESG ("CPC private FP " ^ message ());
            TextIO.flushOut TextIO.stdOut)
         else ()
       val primary_gate = ref NONE
@@ -23340,11 +23348,11 @@ in
         let
           val _ = checked_bridges := []
           val substitutions = cpc_fp_private_substitutions bindings
-          fun check hypothesis =
+          fun check (hypothesis, cost) =
             let
-              val _ = trace_private
+              val _ = trace_private (fn () =>
                 ("bridge cost=" ^
-                 Int.toString (fp_operation_cost hypothesis) ^ " begin")
+                 Int.toString (Portable.HOLSusp.force cost) ^ " begin"))
               val instance = cpc_fp_term_substitution
                 substitutions hypothesis
               val proof = Timeout.apply
@@ -23353,7 +23361,8 @@ in
                   (replay_trust_admitted_mode true
                     (SmtDatatypeProve.default_admission ())
                     false true state [] [instance])) ()
-              val _ = trace_private "bridge proved at exact source endpoint"
+              val _ = trace_private (fn () =>
+                "bridge proved at exact source endpoint")
             in
               if Term.aconv (Thm.concl proof) instance andalso
                  HOLset.isSubset (Thm.hypset proof, allowed) then
@@ -23367,17 +23376,17 @@ in
            the first resource diagnostic if the whole search is unsuccessful;
            never catch an interrupt or timeout as an ordinary search miss. *)
         handle FpBindingCounterexample =>
-          (trace_private "bridge abstraction counterexample"; false)
+          (trace_private (fn () => "bridge abstraction counterexample"); false)
              | Feedback.HOL_ERR holerr =>
           (if SmtResource.is_resource_gate holerr andalso
               not (Option.isSome (!primary_gate)) then
              primary_gate := SOME holerr else ();
-           trace_private ("bridge failed: " ^
+           trace_private (fn () => "bridge failed: " ^
              Feedback.message_of holerr); false)
              | HolSatLib.SAT_cex _ =>
-          (trace_private "bridge counterexample"; false)
+          (trace_private (fn () => "bridge counterexample"); false)
              | HolSatLib.SAT_satisfiable _ =>
-          (trace_private "bridge counterexample"; false)) bindings
+          (trace_private (fn () => "bridge counterexample"); false)) bindings
       val candidate_index = ref 0
       fun find [] = (case !primary_gate of
             SOME error => raise Feedback.HOL_ERR error
@@ -23385,13 +23394,15 @@ in
               "no checked assignment discharges private FP bridges")
         | find (candidate :: remaining) =
             (candidate_index := !candidate_index + 1;
-             trace_private ("candidate " ^
+             trace_private (fn () => "candidate " ^
                Int.toString (!candidate_index) ^ "/" ^
                Int.toString (List.length candidates));
-             List.app (fn binding => trace_private
-               (#kind binding ^ " " ^
-                Library.term_to_string (#marker binding) ^ " -> " ^
-                Library.term_to_string (#source binding))) candidate;
+             if trace_full then
+               List.app (fn binding => trace_private (fn () =>
+                 #kind binding ^ " " ^
+                 Library.term_to_string (#marker binding) ^ " -> " ^
+                 Library.term_to_string (#source binding))) candidate
+             else ();
              if valid candidate then candidate else find remaining)
     in
       if List.null all_markers then theorem
@@ -23402,10 +23413,10 @@ in
         let
           val bindings = find candidates
           val substitutions = cpc_fp_private_substitutions bindings
-          val _ = trace_private "cutting checked bridge hypotheses"
+          val _ = trace_private (fn () => "cutting checked bridge hypotheses")
           val result = instantiate_cpc_fp_bridge_instances substitutions
             (List.rev (!checked_bridges)) theorem
-          val _ = trace_private "witness sequent instantiated"
+          val _ = trace_private (fn () => "witness sequent instantiated")
         in result end
     end
 

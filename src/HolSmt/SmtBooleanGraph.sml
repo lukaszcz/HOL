@@ -276,28 +276,33 @@ struct
     structure G = SmtReplayGraph
     structure P = SmtReplayProof
   in
+  (* Supported gates take at most three operands. A longer application
+     cannot be a gate, regardless of the head at the end of its spine. *)
+  fun bounded_gate_application graph node =
+    let
+      fun spine fuel node arguments =
+        case G.view graph node of
+          G.Application (operator, operand) =>
+            if fuel = 0 then NONE
+            else spine (fuel - 1) operator (operand :: arguments)
+        | G.Constant _ => SOME (G.representative graph node, arguments)
+        | _ => NONE
+    in spine 3 node [] end
+
   fun graph_gates graph roots =
     let
       val _ = List.app (fn root =>
         if Type.compare (G.type_of graph root, Type.bool) = EQUAL then ()
         else raise ERR "graph_gates" "non-Boolean graph root") roots
 
-      fun spine node arguments =
-        case G.view graph node of
-          G.Application (operator, operand) =>
-            spine operator (operand :: arguments)
-        | G.Constant _ => SOME (node, arguments)
-        | _ => NONE
-
       fun boolean node =
         Type.compare (G.type_of graph node, Type.bool) = EQUAL
 
       fun gate node =
-        case spine node [] of
+        case bounded_gate_application graph node of
           NONE => NONE
-        | SOME (head, arguments) =>
+        | SOME (term, arguments) =>
             let
-              val term = G.representative graph head
               fun constant expected = Term.same_const term expected
               val arity = List.length arguments
               val connective =

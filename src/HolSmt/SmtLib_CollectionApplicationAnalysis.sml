@@ -105,31 +105,36 @@ struct
         scan_mixed_argument operations observe subterms
       end
 
+  fun has_mixed_argument_with operations compare key is_marked subterms =
+    let
+      val positions = ref (Redblackmap.mkDict (Lib.pair_compare
+        (compare,Int.compare)))
+      fun observe function =
+        let val function_key = key function in
+          fn (index,argument) =>
+            let
+              val position = (function_key,index)
+              val marked = is_marked argument
+            in
+              case Redblackmap.peek (!positions,position) of
+                SOME saved => saved <> marked
+              | NONE =>
+                  (positions := Redblackmap.insert
+                    (!positions,position,marked); false)
+            end
+        end
+    in
+      scan_mixed_argument operations observe subterms
+    end
+
   fun has_mixed_argument_by operations compare key collection_terms subterms =
     if List.null collection_terms then false
     else
       let
         val marked = Redblackset.addList (Redblackset.empty compare,
           List.map key collection_terms)
-        val positions = ref (Redblackmap.mkDict (Lib.pair_compare
-          (compare,Int.compare)))
-        fun observe function =
-          let val function_key = key function in
-            fn (index,argument) =>
-              let
-                val position = (function_key,index)
-                val is_marked = Redblackset.member (marked,key argument)
-              in
-                case Redblackmap.peek (!positions,position) of
-                  SOME saved => saved <> is_marked
-                | NONE =>
-                    (positions := Redblackmap.insert
-                      (!positions,position,is_marked); false)
-              end
-          end
-      in
-        scan_mixed_argument operations observe subterms
-      end
+      in has_mixed_argument_with operations compare key
+        (fn term => Redblackset.member (marked,key term)) subterms end
 
   fun scan_bound_application (operations : 'term operations)
       memoize is_marked roots =
@@ -162,6 +167,8 @@ struct
     not (List.null collection_terms) andalso
     scan_bound_application operations memoize
       (fn term => member operations term collection_terms) roots
+
+  val has_bound_application_with_memo_and_membership = scan_bound_application
 
   fun has_bound_application_with operations is_marked roots =
     scan_bound_application operations

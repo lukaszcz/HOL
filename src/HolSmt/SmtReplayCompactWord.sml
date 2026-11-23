@@ -350,7 +350,7 @@ fun prove_schema bit field_law word_law source =
                SOME value=>value
              | NONE=>let
                  val variable=Term.mk_var ("smt_compact_atom_" ^
-                   Int.toString (length (!reverse)),Type.bool)
+                   Int.toString (Redblackmap.numItems (!atoms)),Type.bool)
                  val value=(variable,fresh ())
                  val _=reverse:=(variable |-> input):: !reverse
                  val _=atoms:=Redblackmap.insert (!atoms,input,value)

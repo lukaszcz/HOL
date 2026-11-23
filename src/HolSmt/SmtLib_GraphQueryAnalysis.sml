@@ -814,13 +814,20 @@ struct
                   then terms else current::terms) seed_numbers numbers
             in ([(#1 sets,#2 sets),(#1 bags,#2 bags)],
                 numbers,!number_visits,[#3 sets,#3 bags]) end
-          fun argument_analysis collection_terms =
+          fun argument_analysis [] = ([],false,false,0)
+            | argument_analysis collection_terms =
             let
+              val semantic = semantic_id []
+              val marked = List.foldl
+                (fn (current,seen) => Redblackset.add (seen,semantic current))
+                (Redblackset.empty Int.compare) collection_terms
+              fun is_marked current = Redblackset.member
+                (marked,semantic current)
               val bound_visits = ref 0
-              val computed = A.computed_applications
-                operations collection_terms ordered
-              val mixed = A.has_mixed_argument_by
-                operations Int.compare (semantic_id []) collection_terms
+              val computed = A.computed_applications_with
+                operations is_marked ordered
+              val mixed = A.has_mixed_argument_with
+                operations Int.compare semantic is_marked
                 ordered
               val bound = ref (Redblackmap.mkDict compare_bound)
               fun memoize variables term compute =
@@ -841,8 +848,9 @@ struct
                             (!bound,index,result)
                       in result end
                 end
-              val bound_application = A.has_bound_application_with_memo
-                operations memoize collection_terms roots
+              val bound_application =
+                A.has_bound_application_with_memo_and_membership
+                  operations memoize is_marked roots
             in (computed,mixed,bound_application,!bound_visits) end
           val (groups,numbers,number_visits,parameters) = case selection of
               Explicit collections => ([(List.map (fn current =>

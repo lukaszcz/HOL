@@ -29,6 +29,8 @@ sig
   (* Key equality must agree with the supplied term equality. *)
   val has_mixed_argument_by : 'term operations -> ('key * 'key -> order) ->
     ('term -> 'key) -> 'term list -> 'term list -> bool
+  val has_mixed_argument_with : 'term operations -> ('key * 'key -> order) ->
+    ('term -> 'key) -> ('term -> bool) -> 'term list -> bool
 
   (* Walk ordered roots in their lexical binder context. This is deliberately
      not a context-free visited-node fold: one node can have distinct bound
@@ -37,6 +39,9 @@ sig
   val has_bound_application_with_memo : 'term operations ->
     ('term list -> 'term -> (unit -> bool) -> bool) ->
     'term list -> 'term list -> bool
+  val has_bound_application_with_memo_and_membership : 'term operations ->
+    ('term list -> 'term -> (unit -> bool) -> bool) ->
+    ('term -> bool) -> 'term list -> bool
   (* The memo hook receives the exact ordered bound stack and current node.
      It must evaluate a cache miss synchronously, cache only a returned bool,
      and never retain the computation or an exception. Cache keys must retain

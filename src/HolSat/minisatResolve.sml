@@ -160,7 +160,7 @@ fun dualise lfn roots orc clauseth ci =
               in dualise' th2 end
      in res end
 
-fun finish_compact_cnf conjunction lfn clauseth th =
+fun finish_compact_cnf_with prove_premise conjunction lfn th =
     if RBM.numItems lfn = 0 then th
     else
       let
@@ -180,13 +180,16 @@ fun finish_compact_cnf conjunction lfn clauseth th =
         val _ = trace "instantiate done"
         val _ = trace "premise start"
         val premise =
-            profile_stage "replay-finish/premises" balanced_clause_proof
-              clauseth
+            profile_stage "replay-finish/premises" prove_premise ()
         val _ = trace "premise done"
         val result = profile_stage "replay-finish/apply"
           (MP instantiated) premise
         val _ = trace "MP done"
       in result end
+
+fun finish_compact_cnf conjunction lfn clauseth =
+    finish_compact_cnf_with (fn () => balanced_clause_proof clauseth)
+      conjunction lfn
 
 fun finish_resolution ({conjunction, ...} : root_context) =
     finish_compact_cnf conjunction

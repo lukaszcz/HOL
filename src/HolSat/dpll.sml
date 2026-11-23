@@ -160,15 +160,34 @@ fun mk_model_thm cnfv lfn t f =
     in satCheck model (mk_neg t) end
 
 local
-fun dpll_taut t (cnfv,cnf_thm,lfn,clauses) =
-  case CoreDPLL cnf_thm of
-      Unsat cnf_entails_F =>  (* [ci] |- F *)
-        undoCNF lfn clauses cnf_entails_F (* [~t] |- F *)
-    | Sat f => mk_model_thm cnfv lfn t f (* |- model ==> ~t *)
+fun reverse_conjunction leaf join clauses =
+    ArraySlice.foldl (fn (clause, rest) => join (leaf clause,rest))
+      (leaf (Array.sub (clauses,0))) (ArraySlice.slice (clauses,1,NONE))
+
+fun dpll_taut t cnfv lfn clauses =
+    (* Keep the original conjunction and split order. Generated definitional
+       clauses are disjunctions or literals. For callers supplying equality
+       clauses, preserve the assumptions that mk_satmap may inspect. *)
+    if RBM.numItems lfn <> 0 andalso Array.length clauses <> 0 andalso
+       not (Array.exists (is_eq o fst) clauses) then
+      let val cnf = reverse_conjunction fst mk_conj clauses
+      in case CoreDPLL (ASSUME cnf) of
+             Unsat th => minisatResolve.finish_compact_cnf_with
+               (fn () => reverse_conjunction snd
+                 (fn (left,right) => CONJ left right) clauses) cnf lfn th
+           | Sat f => mk_model_thm cnfv lfn t f
+      end
+    else
+      let val (_,cnf_thm,_,premises) = prepareDPLL (cnfv,lfn,clauses)
+      in case CoreDPLL cnf_thm of
+             Unsat th => undoCNF lfn premises th
+           | Sat f => mk_model_thm cnfv lfn t f
+      end
 in
-fun DPLL_TAUT t = dpll_taut t (doCNF (mk_neg t))
-fun DPLL_TAUT_PREPARED t cnfv lfn clauseth =
-    dpll_taut t (prepareDPLL (cnfv,lfn,clauseth))
+fun DPLL_TAUT t =
+    let val (cnfv,_,lfn,clauses) = to_cnf false (mk_neg t)
+    in dpll_taut t cnfv lfn clauses end
+val DPLL_TAUT_PREPARED = dpll_taut
 end
 
 (* implementation of DPLL ends *)

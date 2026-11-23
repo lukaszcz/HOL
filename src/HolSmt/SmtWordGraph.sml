@@ -2137,14 +2137,12 @@ struct
       val _ = #refresh_caches context ()
       val source = C.graph_source plan
       val result = C.graph_result plan
-      fun spine node args = case G.view graph node of
-          G.Application (operator,argument) => spine operator (argument::args)
-        | _ => (node,args)
       fun boolean node =
-        let val (head,args) = spine node []
-        in case G.view graph head of G.Constant _ =>
-            let val term = G.representative graph head
-                fun named constant n = length args=n andalso
+        case SmtBooleanGraph.bounded_gate_application graph node of
+          NONE => false
+        | SOME (term,args) =>
+            let val arity = length args
+                fun named constant n = arity=n andalso
                   Term.same_const term constant
             in named boolSyntax.T 0 orelse named boolSyntax.F 0 orelse
               named boolSyntax.negation 1 orelse
@@ -2155,8 +2153,6 @@ struct
                G.type_of graph (hd args)=Type.bool) orelse
               (named boolSyntax.conditional 3 andalso
                G.type_of graph node=Type.bool) end
-          | _ => false
-        end
       val gates = phase "gates"
         (fn () => List.filter boolean (G.reachable graph [result])) ()
       val block = phase "prepare" (fn () =>

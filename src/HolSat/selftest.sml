@@ -450,6 +450,24 @@ local
         (fn conf => checked valid (GEN_SAT conf)) andalso
       measured (internal (set_term invalid base_config))
         (fn conf => model conf invalid))
+  val _ = control "ordinary DPLL preserves definitional refutations and models"
+    (fn () =>
+      let
+        val goal = ``(p <=> q) ==> (q <=> p)``
+        val invalid = ``~(p <=> q)``
+        val (cnfv,_,lfn,clauses) = def_cnf.to_cnf false (mk_neg invalid)
+        val (_,initial,_,premises) = dpll.prepareDPLL (cnfv,lfn,clauses)
+        val expected = case dpll.CoreDPLL initial of
+            dpll.Sat f => concl (dpll.mk_model_thm cnfv lfn invalid f)
+          | dpll.Unsat _ => raise Fail "expected a DPLL countermodel"
+      in
+        isSome cnfv andalso not (null premises) andalso
+        measured (internal (set_term goal base_config))
+          (fn conf => checked goal (GEN_SAT conf)) andalso
+        measured (internal (set_term invalid base_config))
+          (fn conf => (GEN_SAT conf; false)
+            handle SAT_cex th => checked expected th)
+      end)
   val _ = control "proof-only missing-solver CNF and compound SAT contracts"
     (fn () => measured (internal (config cnf))
         (fn conf => checked (mk_neg cnf) (GEN_SAT_PROVE_ONLY conf)) andalso

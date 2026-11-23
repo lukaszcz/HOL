@@ -31,11 +31,10 @@ struct
                 SOME reference => (acc,([],reference))
               | NONE =>
                   let
-                    val incoming = environment bounds
+                    (* Ordinary children reuse the immutable lexical bounds. *)
                     fun child (acc,(child_bounds,child)) =
-                      if (List.null incoming andalso
-                          Portable.pointer_eq (bounds,child_bounds)) orelse
-                          environment child_bounds = incoming then
+                      if Portable.pointer_eq (bounds,child_bounds) orelse
+                          environment child_bounds = environment bounds then
                         translate path region (acc,(child_bounds,child))
                       else
                         let
