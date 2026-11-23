@@ -4602,14 +4602,10 @@ end
    does in Isabelle: the defining equation goes into the goal with the
    name, so the search is given back everything the abstraction said. *)
 local
-  fun binder_head term =
-    let
-      val head = fst (strip_comb term)
-    in
-      is_const head andalso
-      let val {Thy, ...} = dest_thy_const head
-      in Thy = "bool" orelse Thy = "min" end
-    end
+  fun binder_head head =
+    is_const head andalso
+    let val {Thy, ...} = dest_thy_const head
+    in Thy = "bool" orelse Thy = "min" end
 
   fun scan bound term found =
     if is_abs term then
@@ -4617,16 +4613,19 @@ local
       in scan (variable :: bound) body found end
     else if is_comb term then
       let
-        val opaque = binder_head term
         val (head, arguments) = strip_comb term
+        val opaque = binder_head head
         fun argument (argument_term, found) =
-          let val found = scan bound argument_term found
+          let val found as (seen, abstractions) = scan bound argument_term found
           in
             if is_abs argument_term andalso not opaque andalso
-               not (Lib.can Drule.ETA_CONV argument_term) andalso
-               not (List.exists (fn v => boolSyntax.tmem v bound)
-                      (free_vars argument_term))
-            then argument_term :: found
+               not (HOLset.member (seen, argument_term)) andalso
+               not (Lib.can Term.eta_conv argument_term) andalso
+               (null bound orelse
+                not (List.exists (fn v => boolSyntax.tmem v bound)
+                       (free_vars argument_term)))
+            then (HOLset.add (seen, argument_term),
+                  argument_term :: abstractions)
             else found
           end
       in
@@ -4635,7 +4634,10 @@ local
     else found
 
   fun abstractions terms =
-    op_mk_set aconv (List.foldl (fn (t, a) => scan [] t a) [] terms)
+    (* Cons the first eligible occurrence, as deduplicating the reversed
+       traversal with op_mk_set did. *)
+    #2 (List.foldl (fn (term, found) => scan [] term found)
+          (Term.empty_tmset, []) terms)
 
   fun definition (name, abstraction) =
     let

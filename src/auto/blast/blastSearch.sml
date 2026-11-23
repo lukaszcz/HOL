@@ -1352,6 +1352,15 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
           Stats => (fn _ => fn count => fn _ => count)
         | On _ => (fn mark => fn _ => fn branches => lengthAt mark branches)
 
+    (* Siblings inherit the same branch lists. Keep the measured traversals
+       in premise order so they still poll at their original checkpoints. *)
+    fun shareForPremises prems compute =
+      case (instrumentation, prems) of
+          (Stats, _ :: _ :: _) =>
+            let val shared = Portable.HOLSusp.delay compute
+            in fn () => Portable.HOLSusp.force shared end
+        | _ => compute
+
     val prepared =
       SOME (initialFormulasOf goal)
       handle INTERRUPTED => NONE
@@ -1527,7 +1536,8 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               val rules = safeRulesFor vars (trackedTerm formula)
               val rule_count = lengthAt mark rules
 
-              fun child assumptionsFor (vars', lim') (premise, hidden) =
+              fun child assumptionsFor negated (vars', lim')
+                    (premise, hidden) =
                 let
                   val (tracked, introduced) =
                     premiseChild mark (premise, hidden)
@@ -1535,12 +1545,12 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                   val child_assumptions = assumptionsFor introduced
                 in
                   if existsGoalAt mark premise then
-                    {pairs =
-                       (joined, []) ::
-                       negGoalsAt mark ((safe, unsafe) :: pairs),
-                     lits = mapNegLitsAt mark lits,
-                     vars = vars', lim = lim',
-                     assumptions = child_assumptions}
+                    let val (negated_pairs, negated_lits) = negated ()
+                    in
+                      {pairs = (joined, []) :: negated_pairs,
+                       lits = negated_lits, vars = vars', lim = lim',
+                       assumptions = child_assumptions}
+                    end
                   else
                     {pairs =
                        (joined, []) :: (safe, unsafe) :: pairs,
@@ -1621,9 +1631,13 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                           val assumptionsFor =
                             childAssumptions safeChildOrigin variant false
                               formula assumptions
+                          val negated = shareForPremises prems' (fn () =>
+                            (negGoalsAt mark ((safe, unsafe) :: pairs),
+                             mapNegLitsAt mark lits))
                           val children =
                             premiseBranches variant
-                              (child assumptionsFor (vars', limit)) brs prems'
+                              (child assumptionsFor negated (vars', limit))
+                              brs prems'
                           val count = lengthAt mark prems'
                         in
                           noteRuleInference limit;
@@ -1830,18 +1844,18 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               val rule_count = lengthAt mark rules
               val branches = branchCountAt mark open_count brs0
 
-              fun child (assumptionsFor, vars', pattern, duplicate, lim')
+              fun child (assumptionsFor, vars', pattern, requeued, negated,
+                         lim')
                     (premise, hidden) =
                 let
                   val _ = checkpointAt mark
                   val (tracked, introduced) =
                     premiseChild mark (premise, hidden)
                   val safe' = mapPairAt mark tracked
-                  val unsafe' =
-                    requeueGammaAt mark (formula, md) unsafe duplicate
+                  val unsafe' = requeued ()
                   val lits' =
                     if existsGoalAt mark premise then
-                      mapNegLitsAt mark lits
+                      negated ()
                     else lits
                   val pairs' =
                     if recursivePremiseAt mark pattern premise then
@@ -1889,11 +1903,16 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                               val assumptionsFor =
                                 childAssumptions unsafeChildOrigin rule
                                   duplicate formula assumptions
+                              val requeued = shareForPremises prems (fn () =>
+                                requeueGammaAt mark (formula, md) unsafe
+                                  duplicate)
+                              val negated = shareForPremises prems (fn () =>
+                                mapNegLitsAt mark lits)
                             in
                               premiseBranches rule
                                 (child
                                    (assumptionsFor, new_vars, pattern,
-                                    duplicate, lim'))
+                                    requeued, negated, lim'))
                                 brs prems
                             end
                         val count = lengthAt mark prems

@@ -529,36 +529,51 @@ fun safe_saturate_in ctxt config tree =
     saturate tree
   end
 
-fun proved_ancestor tree (goal : aesopTree.goal) =
-  case #parent goal of
-      NONE => false
-    | SOME parent =>
-        let
-          val parent_goal =
-            aesopTree.goal tree (#parent (aesopTree.rapp tree parent))
-        in
-          #state (aesopTree.cluster tree (#cluster goal)) =
-            aesopTree.Proved orelse
-          #state parent_goal = aesopTree.Proved orelse
-          proved_ancestor tree parent_goal
-        end
-
-fun frontier_goal tree (goal : aesopTree.goal) =
-  #safe_done goal andalso
-  not (aesopTree.has_child_rapps tree (#id goal)) andalso
-  (case #norm goal of
-       aesopTree.NormProved _ => false
-     | _ => not (proved_ancestor tree goal))
-
 fun safe_frontier tree =
-  List.mapPartial
-    (fn goal =>
-      if frontier_goal tree goal then
-        SOME (#id goal,
-              aesopTree.cgoal_under (aesopTree.active_store goal)
-                (aesopTree.active_cgoal goal))
-      else NONE)
-    (aesopTree.goals tree)
+  let
+    (* Leaves may share long parent paths. Cache only the ancestors
+       reached in this report, using the application's actual parent. *)
+    val ancestors = ref (Redblackmap.mkDict Int.compare)
+    fun remember proved [] = proved
+      | remember proved pending =
+          (ancestors :=
+             List.foldl
+               (fn (id, table) => Redblackmap.insert (table, id, proved))
+               (!ancestors) pending;
+           proved)
+    fun proved_ancestor (goal : aesopTree.goal) pending =
+      case #parent goal of
+          NONE => remember false pending
+        | SOME parent =>
+            let
+              val parent_id = #parent (aesopTree.rapp tree parent)
+              val parent_goal = aesopTree.goal tree parent_id
+            in
+              if #state (aesopTree.cluster tree (#cluster goal)) =
+                   aesopTree.Proved orelse
+                 #state parent_goal = aesopTree.Proved
+              then remember true pending
+              else
+                case Redblackmap.peek (!ancestors, parent_id) of
+                    SOME proved => remember proved pending
+                  | NONE => proved_ancestor parent_goal (parent_id :: pending)
+            end
+    fun frontier_goal (goal : aesopTree.goal) =
+      #safe_done goal andalso
+      not (aesopTree.has_child_rapps tree (#id goal)) andalso
+      (case #norm goal of
+           aesopTree.NormProved _ => false
+         | _ => not (proved_ancestor goal []))
+  in
+    List.mapPartial
+      (fn goal =>
+        if frontier_goal goal then
+          SOME (#id goal,
+                aesopTree.cgoal_under (aesopTree.active_store goal)
+                  (aesopTree.active_cgoal goal))
+        else NONE)
+      (aesopTree.goals tree)
+  end
 
 fun unsafe_percent ({phase = aesopRule.RUnsafe percent, ...} :
                     aesopRule.rule) =
@@ -644,7 +659,7 @@ fun forget_unsafe_scan (cache : scan_cache) id =
        (!(#scans cache));
    #active cache := NONE)
 
-fun unsafe_applications ctxt budget (cache : scan_cache) goal rule =
+fun resumable_unsafe_applications ctxt budget (cache : scan_cache) goal rule =
   let
     val generation = aesopRule.registry_generation ()
     (* Restarted rule assembly makes a fresh closure, so pointer identity
@@ -680,6 +695,15 @@ fun unsafe_applications ctxt budget (cache : scan_cache) goal rule =
   end
   handle HOL_ERR _ => (forget_unsafe_scan cache (#id goal); [])
        | Match => (forget_unsafe_scan cache (#id goal); [])
+
+fun unsafe_applications ctxt budget cache goal rule =
+  case budget of
+      NONE =>
+        (finish_unsafe_scan NONE
+           (new_unsafe_scan ctxt (aesopRule.registry_generation ()) goal rule)
+         handle HOL_ERR _ => []
+              | Match => [])
+    | SOME _ => resumable_unsafe_applications ctxt budget cache goal rule
 
 fun stored_application data =
   [data_with_phase data (aesopRule.RUnsafe postponed_percent)]

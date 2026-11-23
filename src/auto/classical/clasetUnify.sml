@@ -71,8 +71,18 @@ fun unify_types store config pair =
     recurse store pair
   end
 
-fun distinct_terms terms =
-  length (Lib.op_mk_set aconv terms) = length terms
+fun distinct_terms [] = true
+  | distinct_terms [_] = true
+  | distinct_terms [left, right] = not (aconv left right)
+  | distinct_terms terms =
+      let
+        fun distinct _ [] = true
+          | distinct seen (term :: rest) =
+              not (HOLset.member (seen, term)) andalso
+              distinct (HOLset.add (seen, term)) rest
+      in
+        distinct Term.empty_tmset terms
+      end
 
 datatype pattern = NoPattern | Pattern of term
 

@@ -1885,7 +1885,7 @@ fun maximal_type_joins_with budgeted charge ordered substitutions =
                   val _ = visit [] (List.tabulate (count, fn i => i)) []
                   val cliques =
                     Listsort.sort (List.collate Int.compare) (!found)
-                  fun union_parts indices =
+                  fun union_measured indices =
                     List.foldl
                       (fn (i, joined) =>
                         List.foldl
@@ -1903,7 +1903,12 @@ fun maximal_type_joins_with budgeted charge ordered substitutions =
                       case indices of
                           [] => NONE
                         | [_] => NONE
-                        | _ => SOME (union_parts indices))
+                        | _ =>
+                            if budgeted then SOME (union_measured indices)
+                            else
+                              (* The clique's substitutions agree pairwise. *)
+                              complete_type_join
+                                (map (fn i => Vector.sub (parts, i)) indices))
                     cliques
                 end
         end

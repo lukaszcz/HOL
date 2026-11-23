@@ -2574,6 +2574,36 @@ val _ =
 
 val _ =
   check
+    ("aesop frontier hides leaves below a proved alternative in order",
+     fn () =>
+       let
+         val cgoal = tree_cgoal [] [] search_frontier_q
+         val initial = new_tree clasetMeta.empty cgoal []
+         fun split tree parent =
+           let
+             val {tree, goals, ...} =
+               install_tree_rapp tree parent aesopRule.RSafe "split"
+                 clasetMeta.empty [cgoal, cgoal] []
+           in
+             case goals of
+                 [left, right] => (tree, left, right)
+               | _ => raise Fail "expected two children"
+           end
+         val (branched, left, right) = split initial (aesopTree.root initial)
+         val (left_open, hidden, left_leaf) = split branched left
+         val (deeper, hidden_left, hidden_right) = split left_open hidden
+         val (right_open, first, second) = split deeper right
+         val proved_left = close_tree_goal right_open left
+         val finished =
+           List.foldl
+             (fn (id, tree) => aesopTree.set_safe_done id true tree)
+             proved_left [hidden_left, hidden_right, left_leaf, first, second]
+       in
+         map #1 (aesopSearch.safe_frontier finished) = [first, second]
+       end)
+
+val _ =
+  check
     ("aesop search defaults bound rapps and depth",
      fn () =>
        aesopSearch.default_config =

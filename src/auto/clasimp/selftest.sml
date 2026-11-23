@@ -3751,6 +3751,36 @@ val _ =
          (clasimpLib.AMBIENT_METIS_TAC [lifted_application_def])
          lifted_application_goal)
 
+val _ =
+  check
+    ("lambda lifting preserves definition order and skips alpha duplicates",
+     fn () =>
+       let
+         val goal =
+           ([], ``(!q. f (\x. x /\ q)) /\ f (\x. p x) /\
+                  f (\x. x /\ q) /\ f (\y. y /\ q) /\ f (\x. x \/ q)``)
+         fun lifted_head definition =
+           rator (boolSyntax.lhs (#2 (boolSyntax.dest_forall definition)))
+       in
+         case residual clasimpLib.LAMBDA_LIFT_TAC goal of
+             [([], conclusion)] =>
+               (case boolSyntax.strip_imp conclusion of
+                    ([first, second], _) =>
+                      let
+                        val conj_name = lifted_head first
+                        val disj_name = lifted_head second
+                      in
+                        not (aconv conj_name disj_name) andalso
+                        aconv conclusion
+                          ``(!x. ^conj_name x = (x /\ q)) ==>
+                            (!x. ^disj_name x = (x \/ q)) ==>
+                            (!q. f (\x. x /\ q)) /\ f (\x. p x) /\
+                            f ^conj_name /\ f ^conj_name /\ f ^disj_name``
+                      end
+                  | _ => false)
+           | _ => false
+       end)
+
 (* Nothing stands in an argument position, so there is nothing to name
    and the step refuses rather than reproducing the goal. *)
 val _ =

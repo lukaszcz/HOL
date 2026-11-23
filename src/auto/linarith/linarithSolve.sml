@@ -237,30 +237,35 @@ fun partition_pivot_with work v drop_column rows =
     (List.rev independent, List.rev dependent)
   end
 
-(* One pass tallies the sign counts of every column; the pivot is the
-   column with the smallest nonzero product, favouring earlier columns.
-   Reuse the counters across rows and charge in row-then-column order. *)
+(* Count positive and negative entries in row-then-column order.
+   Packed counters avoid allocating a reference pair per column and
+   walking a second list during each row scan. *)
 fun choose_blowup_with work [] = NONE
   | choose_blowup_with work (first :: rest) =
       let
-        fun initial c =
-          (candidate work;
-           if ai_pos c then (ref 1, ref 0)
-           else if ai_neg c then (ref 0, ref 1)
-           else (ref 0, ref 0))
-        val counts = List.map initial first
-        fun tally (c, (pos, neg)) =
-          (candidate work;
-           if ai_pos c then pos := !pos + 1
-           else if ai_neg c then neg := !neg + 1
-           else ())
-        val _ = List.app (fn row => ListPair.appEq tally (row, counts)) rest
-        fun pick _ [] best = best
-          | pick i ((pos, neg) :: more) best =
+        val width = List.length first
+        val positives = Array.array (width, 0)
+        val negatives = Array.array (width, 0)
+        fun tally i [] =
+              if i = width then () else raise ListPair.UnequalLengths
+          | tally i (c :: cs) =
+              if i = width then raise ListPair.UnequalLengths
+              else
+                (candidate work;
+                 if ai_pos c then
+                   Array.update (positives, i, Array.sub (positives, i) + 1)
+                 else if ai_neg c then
+                   Array.update (negatives, i, Array.sub (negatives, i) + 1)
+                 else ();
+                 tally (i + 1) cs)
+        (* Choose the smallest nonzero product, favouring earlier columns. *)
+        fun pick i best =
+          if i = width then best
+          else
             let
               val _ = candidate work
-              val blow = !pos * !neg
-              val best' =
+              val blow = Array.sub (positives, i) * Array.sub (negatives, i)
+              val next =
                 if blow = 0 then best
                 else
                   case best of
@@ -268,10 +273,12 @@ fun choose_blowup_with work [] = NONE
                     | SOME (old, _) =>
                         if blow < old then SOME (blow, i) else best
             in
-              pick (i + 1) more best'
+              pick (i + 1) next
             end
       in
-        pick 0 counts NONE
+        tally 0 first;
+        List.app (tally 0) rest;
+        pick 0 NONE
       end
 
 (* Eliminating a variable emits |pos| x |neg| rows per round, and the same
@@ -542,19 +549,22 @@ fun differences ({width, column} : atom_index) lhs rhs =
     List.tabulate (width, coefficient)
   end
 
-fun differences_with (work : work) index lhs rhs =
+fun differences_with (work : work) index reverse lhs rhs =
   if #metered work then
     let
       val lhs_coeffs = scatter_with work index lhs
       val rhs_coeffs = scatter_with work index rhs
+      val (left, right) =
+        if reverse then (rhs_coeffs, lhs_coeffs)
+        else (lhs_coeffs, rhs_coeffs)
     in
       List.tabulate
         (#width index,
          fn i =>
-            (candidate work;
-             Arbint.- (Array.sub (rhs_coeffs, i),
-                       Array.sub (lhs_coeffs, i))))
+            (candidate work; Arbint.- (Array.sub (right, i),
+                                       Array.sub (left, i))))
     end
+  else if reverse then differences index rhs lhs
   else differences index lhs rhs
 
 fun mklineq_with work index (item, asm_index) =
@@ -562,12 +572,12 @@ fun mklineq_with work index (item, asm_index) =
     val _ = normalization work
     val (m, {lhs, lhs_const, rel, rhs, rhs_const,
              discrete, negated}) = integ item
-    val diff = differences_with work index lhs rhs
+    val reverse = negated andalso (rel = REL_LE orelse rel = REL_LT)
+    val diff = differences_with work index reverse lhs rhs
     val c = Arbint.- (lhs_const, rhs_const)
     val just = Asm asm_index
     fun lineq (constant, ty, cs, why) =
       Lineq (constant, ty, cs, mk_multiplied m why)
-    fun negate cs = List.map Arbint.~ cs
   in
     case (rel, negated) of
         (REL_LE, false) => lineq (c, Le, diff, just)
@@ -581,16 +591,16 @@ fun mklineq_with work index (item, asm_index) =
          have justified. *)
       | (REL_LE, true) =>
           if discrete then
-            lineq (Arbint.- (m, c), Le, negate diff,
+            lineq (Arbint.- (m, c), Le, diff,
                    NotLeDD just)
           else
-            lineq (Arbint.~ c, Lt, negate diff, NotLeD just)
+            lineq (Arbint.~ c, Lt, diff, NotLeD just)
       | (REL_LT, false) =>
           if discrete then
             lineq (Arbint.+ (c, m), Le, diff, LessD just)
           else lineq (c, Lt, diff, just)
       | (REL_LT, true) =>
-          lineq (Arbint.~ c, Le, negate diff, NotLessD just)
+          lineq (Arbint.~ c, Le, diff, NotLessD just)
       (* The two equational relations arrive unnegated -- see the
          invariant on decomp in linarithSolve.sig -- so each is one
          arm, not two. *)
