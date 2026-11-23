@@ -165,10 +165,25 @@ fun signal target = retry (fn () =>
    via setsid -w, or (no setsid program) as a process group leader. *)
 datatype launcher = Session of string | Group
 
-(* Unlike native_spawn's, the forked supervisor keeps the calling thread's
-   signal mask and ignored signals: resetting them in the child would need
-   the signal ABI's constants, and this route mainly serves targets whose
-   ABI is not modelled. *)
+(* Sets every signal to its default disposition in the fork route's child,
+   right before its exec, as native_spawn does: a forked child keeps the
+   ignored signals (Poly/ML's SIGPIPE) across exec, while Poly/ML's exec
+   already empties the mask.  SIG_DFL is the null pointer.  Signals above
+   64 (none on Linux or Darwin), and all signals where signal cannot be
+   called, keep their dispositions. *)
+local
+  open Foreign
+  val set_handler = buildCall2
+    (getSymbol (loadExecutable ()) "signal",(cInt,cPointer),cPointer)
+    handle Foreign _ => fn _ => Memory.null
+  val signals = List.tabulate (64,fn i => i + 1)
+in
+  fun default_signal_handling () =
+    List.app (fn number => ignore (set_handler (number,Memory.null)
+                                   handle Foreign _ => Memory.null))
+      signals
+end
+
 fun fork_system command =
   let
     val attributes = Thread.getAttributes ()
@@ -239,6 +254,7 @@ fun fork_system command =
              not stay open in this call's supervisor or command. *)
           Posix.IO.setfd (outfd,Posix.IO.FD.flags []);
           Posix.IO.setfd (script,Posix.IO.FD.flags []);
+          default_signal_handling ();
           Systeml.exec ("/bin/sh",["sh",fdpath script]))
          handle _ => Posix.Process.exit 0w127)
     | SOME pid =>
