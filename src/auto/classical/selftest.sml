@@ -66,6 +66,33 @@ val _ =
 val bool_ty = Type.bool
 val fixed = Term.mk_var ("fixed", bool_ty)
 
+val _ =
+  test
+    ("classical conversions reduce mixed redexes beside a rigid projection",
+     fn () =>
+       let
+         val input =
+           ``(((\x:'a. x) (FST (a:'a,b:'b))) IN
+              (\y. R y (SND (a,b)))) /\ FST (p:bool # 'b)``
+         val reduced = ``R (a:'a) (b:'b) /\ FST (p:bool # 'b)``
+         val applied =
+           ``R (FST (a:'a,b:'b)) (SND (a,b)) /\ FST (p:bool # 'b)``
+         val eta = ``\x:'a. P x : bool``
+         fun converts conv tm target =
+           let
+             val result = conv tm
+             val (left, right) = boolSyntax.dest_eq (concl result)
+           in
+             null (hyp result) andalso aconv left tm andalso aconv right target
+           end
+       in
+         converts clasetNorm.reduce_conv input reduced andalso
+         converts clasetNorm.goal_reduce_conv input reduced andalso
+         converts clasetNorm.applied_conv input applied andalso
+         converts clasetNorm.reduce_conv eta ``P:'a -> bool`` andalso
+         converts clasetNorm.goal_reduce_conv eta eta
+       end)
+
 fun beta_eta_term tm =
   #2
     (boolSyntax.dest_eq

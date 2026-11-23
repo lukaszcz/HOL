@@ -34,31 +34,45 @@ fun normalization (meter : meter) = #normalization meter ()
 
 val strord_tm = prim_mk_const {Thy = "relation", Name = "STRORD"}
 
+fun combination tm =
+  if is_comb tm then SOME (dest_comb tm) else NONE
+
 (* Exactly two arguments come off, and what is left is compared with the
    relation.  Peeling by [strip_comb] instead would break a relation
    that is itself an application -- [RC R] is one, and that is the shape
    a strict primitive is read in. *)
 fun dest_pair tm =
-  case Lib.total dest_comb tm of
+  case combination tm of
       NONE => NONE
     | SOME (left, right) =>
-        (case Lib.total dest_comb left of
+        (case combination left of
              NONE => NONE
            | SOME (head, argument) => SOME (head, argument, right))
 
-fun dest_weak relation tm =
-  case dest_pair tm of
-      SOME (head, x, y) => if aconv head relation then SOME (x, y) else NONE
-    | NONE => NONE
+fun at_domain domain tm = Type.compare (type_of tm, domain) = EQUAL
 
-fun dest_strict relation tm =
-  case dest_pair tm of
-      SOME (head, x, y) =>
-        (case Lib.total dest_comb head of
-             SOME (strord, argument) =>
-               if same_const strord strord_tm andalso aconv argument relation
-               then SOME (x, y) else NONE
-           | NONE => NONE)
+fun equality_of domain (head, x, y) =
+  if same_const equality head andalso at_domain domain x
+  then SOME (x, y)
+  else NONE
+
+fun positive_literal relation domain atom =
+  case dest_pair atom of
+      NONE => NONE
+    | SOME (pair as (head, x, y)) =>
+        if aconv head relation then SOME (Weak (x, y))
+        else
+          case combination head of
+              SOME (strord, argument) =>
+                if same_const strord strord_tm andalso aconv argument relation
+                then SOME (Strict (x, y))
+                else NONE
+            | NONE => Option.map Equal (equality_of domain pair)
+
+fun negated_body tm =
+  case combination tm of
+      SOME (head, body) =>
+        if same_const negation head then SOME body else NONE
     | NONE => NONE
 
 (* ------------------------------------------------------------------ *)
@@ -252,53 +266,32 @@ fun negated_rule_with meter rule {reflexive, total, ...} =
 
 fun classify_with meter (context : context) =
   let
+    val relation = #relation context
+    val (domain, _) = Type.dom_rng (type_of relation)
+    val positive = positive_literal relation domain
     val not_weak = negated_rule_with meter order_not_weak (#axioms context)
     val not_strict = negated_rule_with meter order_not_strict (#axioms context)
     fun classify theorem =
       let
-        val relation = #relation context
-        val (domain, _) = Type.dom_rng (type_of relation)
         val statement = concl theorem
-        fun at_domain tm = Type.compare (type_of tm, domain) = EQUAL
-        fun equation tm =
-          case Lib.total dest_eq tm of
-              SOME (left, right) =>
-                if at_domain left then SOME (left, right) else NONE
+        fun proved literal = SOME {literal = literal, theorem = theorem}
+        fun reverse_order derive literal =
+          case derive () of
+              SOME rule =>
+                (application meter;
+                 SOME {literal = literal, theorem = MATCH_MP rule theorem})
             | NONE => NONE
       in
-        case dest_weak relation statement of
-            SOME (x, y) => SOME {literal = Weak (x, y), theorem = theorem}
+        case positive statement of
+            SOME literal => proved literal
           | NONE =>
-        case dest_strict relation statement of
-            SOME (x, y) => SOME {literal = Strict (x, y), theorem = theorem}
-          | NONE =>
-        case equation statement of
-            SOME (x, y) => SOME {literal = Equal (x, y), theorem = theorem}
-          | NONE =>
-        case Lib.total dest_neg statement of
-            NONE => NONE
-          | SOME body =>
-        case dest_weak relation body of
-            SOME (x, y) =>
-              (case not_weak () of
-                   SOME rule =>
-                     (application meter;
-                      SOME {literal = Strict (y, x),
-                            theorem = MATCH_MP rule theorem})
-                 | NONE => NONE)
-          | NONE =>
-        case dest_strict relation body of
-            SOME (x, y) =>
-              (case not_strict () of
-                   SOME rule =>
-                     (application meter;
-                      SOME {literal = Weak (y, x),
-                            theorem = MATCH_MP rule theorem})
-                 | NONE => NONE)
-          | NONE =>
-        case equation body of
-            SOME (x, y) => SOME {literal = Distinct (x, y), theorem = theorem}
-          | NONE => NONE
+              (case Option.mapPartial positive (negated_body statement) of
+                   SOME (Weak (x, y)) =>
+                     reverse_order not_weak (Strict (y, x))
+                 | SOME (Strict (x, y)) =>
+                     reverse_order not_strict (Weak (y, x))
+                 | SOME (Equal pair) => proved (Distinct pair)
+                 | _ => NONE)
       end
   in
     classify
@@ -308,28 +301,13 @@ fun literal_of_term (context : context) tm =
   let
     val relation = #relation context
     val (domain, _) = Type.dom_rng (type_of relation)
-    fun equation t =
-      case Lib.total dest_eq t of
-          SOME (left, right) =>
-            if Type.compare (type_of left, domain) = EQUAL
-            then SOME (left, right) else NONE
-        | NONE => NONE
   in
-    case dest_weak relation tm of
-        SOME (x, y) => SOME (Weak (x, y))
+    case positive_literal relation domain tm of
+        SOME literal => SOME literal
       | NONE =>
-    case dest_strict relation tm of
-        SOME (x, y) => SOME (Strict (x, y))
-      | NONE =>
-    case equation tm of
-        SOME (x, y) => SOME (Equal (x, y))
-      | NONE =>
-    case Lib.total dest_neg tm of
-        NONE => NONE
-      | SOME body =>
-          (case equation body of
-               SOME (x, y) => SOME (Distinct (x, y))
-             | NONE => NONE)
+          Option.map Distinct
+            (Option.mapPartial (equality_of domain)
+              (Option.mapPartial dest_pair (negated_body tm)))
   end
 
 fun is_literal context tm =

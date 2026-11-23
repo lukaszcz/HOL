@@ -1694,30 +1694,32 @@ fun num_instance_with_neqE neqE =
       linarithData.linarith_instance
   end
 
-fun replay_failure assumptions conclusion =
-  (ignore
-     (linarithReplay.fwd_prove_in (Context.snapshot ()) one_split_config
-       (List.map Thm.ASSUME assumptions) conclusion);
-   NONE)
-  handle Feedback.HOL_ERR error => SOME (Feedback.top_function_of error)
-
 val _ =
   check
-    ("an inapplicable neqE is named rather than left to THENL",
+    ("a reused replay tactic reads the current neqE",
      fn () =>
        let
+         val assumptions = [split_x_neq_one, split_x_upper, split_x_lower]
+         val tactic =
+           valOf (linarithReplay.refute traceUtil.silent one_split_config
+                    assumptions split_conclusion)
+         fun replay () =
+           Tactical.VALID tactic (assumptions, split_conclusion)
+             (Context.snapshot ())
+         val initially_closed = null (#1 (replay ()))
          val _ =
            linarithData.register_instance
              (num_instance_with_neqE boolTheory.TRUTH)
          val failure =
-           replay_failure
-             [split_x_neq_one, split_x_upper, split_x_lower]
-             split_conclusion
-           handle e =>
-             (linarithData.register_instance num_instance; raise e)
+           (ignore (replay ()); NONE)
+           handle Feedback.HOL_ERR error =>
+                    SOME (Feedback.top_function_of error)
+                | e =>
+                    (linarithData.register_instance num_instance; raise e)
          val _ = linarithData.register_instance num_instance
        in
-         failure = SOME "split_assumption"
+         initially_closed andalso failure = SOME "split_assumption" andalso
+         null (#1 (replay ()))
        end)
 
 (* Public no-preprocessing surface. *)

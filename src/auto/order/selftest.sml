@@ -23,6 +23,34 @@ val _ =
          ``!R a b c d.
              relation$transitive R ==> R a b ==> R b c ==> R c d ==> R a d``)
 
+val _ =
+  check
+    ("equality as the order relation retains literal precedence",
+     fn () =>
+       let
+         val relation = boolSyntax.equality
+         val x = Term.mk_var ("order_eq_x", Type.alpha)
+         val y = Term.mk_var ("order_eq_y", Type.alpha)
+         val equation = boolSyntax.mk_eq (x, y)
+         val negated = boolSyntax.mk_neg equation
+         val context : orderData.context =
+           {relation = relation, reduction = Conv.ALL_CONV,
+            axioms = {reflexive = NONE, transitive = NONE,
+                      antisymmetric = NONE, total = NONE}}
+         val read = orderData.facts_of searchBudget.free_charger context
+         fun same (left, right) =
+           Term.aconv x left andalso Term.aconv y right
+       in
+         (case (read (Thm.ASSUME equation),
+                orderData.literal_of_term context equation,
+                orderData.literal_of_term context negated) of
+              ([{literal = orderData.Weak fact, ...}],
+               SOME (orderData.Weak target), SOME (orderData.Distinct apart)) =>
+                same fact andalso same target andalso same apart
+            | _ => false) andalso
+         null (read (Thm.ASSUME negated))
+       end)
+
 (* This finite chain has more terms than the unbudgeted graph cap.  Its
    facts are hypotheses, so a larger budgeted search must still
    reconstruct a theorem with exactly the supplied support. *)

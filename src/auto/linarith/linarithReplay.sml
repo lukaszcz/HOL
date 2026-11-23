@@ -604,10 +604,7 @@ fun extract_split theorem =
    sees.  So neqE not applying to an assumption that passed the test is
    an ill-formed instance, and is reported as one here. *)
 fun split_assumption discrete_only assumption =
-  (* Decomposition produces REL_NEQ only for a negated equality. *)
-  if not (boolSyntax.is_neg assumption andalso
-          boolSyntax.is_eq (boolSyntax.dest_neg assumption)) then NONE
-  else case Lib.total instance_of_term assumption of
+  case Lib.total instance_of_term assumption of
       NONE => NONE
     | SOME instance =>
         if not (is_disequality assumption) then NONE
@@ -635,11 +632,11 @@ fun finish_forward conclusion negated false_theorem =
     Thm.NOT_INTRO (Thm.DISCH negated false_theorem)
   else Thm.CCONTR conclusion false_theorem
 
-fun find_split discrete_only assumptions =
+fun find_split split assumptions =
   let
     fun find _ [] = NONE
       | find prefix (assumption :: rest) =
-          case split_assumption discrete_only assumption of
+          case split assumption of
               SOME split => SOME (List.revAppend (prefix, rest), split)
             | NONE => find (assumption :: prefix) rest
   in
@@ -667,18 +664,37 @@ fun neq_elim_step (common, Split (split, left, right)) =
    and would leave the user with the arity mismatch that diagnostic
    exists to replace.  Hence the loop written out: it ends exactly where
    find_split reports no splittable disequality. *)
-fun neq_elim_tac discrete_only (goal as (assumptions, conclusion)) ctxt =
-  if not (Term.aconv conclusion boolSyntax.F) then
-    Tactical.ALL_TAC goal ctxt
-  else
-    case find_split discrete_only assumptions of
-        NONE => Tactical.ALL_TAC goal ctxt
-      | SOME found =>
-          let
-            fun step (_ : goal) _ = neq_elim_step found
-          in
-            Tactical.THEN (step, neq_elim_tac discrete_only) goal ctxt
-          end
+fun neq_elim_tac discrete_only =
+  let
+    val splits = ref Termtab.empty
+    fun split assumption =
+      (* Decomposition produces REL_NEQ only for a negated equality. *)
+      if not (boolSyntax.is_neg assumption andalso
+              boolSyntax.is_eq (boolSyntax.dest_neg assumption)) then NONE
+      else
+        case Termtab.lookup (!splits) assumption of
+            SOME result => result
+          | NONE =>
+              let val result = split_assumption discrete_only assumption
+              in
+                splits := Termtab.update (assumption, result) (!splits);
+                result
+              end
+    fun eliminate (goal as (assumptions, conclusion)) ctxt =
+      if not (Term.aconv conclusion boolSyntax.F) then
+        Tactical.ALL_TAC goal ctxt
+      else
+        case find_split split assumptions of
+            NONE => Tactical.ALL_TAC goal ctxt
+          | SOME found =>
+              let
+                fun step (_ : goal) _ = neq_elim_step found
+              in
+                Tactical.THEN (step, eliminate) goal ctxt
+              end
+  in
+    eliminate
+  end
 
 fun append_negated_tac (assumptions, conclusion) _ =
   let
@@ -704,10 +720,13 @@ fun justification_tac_with charge justification
 
 fun refute_tac_with charge split_neq justifications =
   let
-    val split_tac =
+    fun split_tac goal ctxt =
       if split_neq then
-        Tactical.THEN (neq_elim_tac true, neq_elim_tac false)
-      else Tactical.ALL_TAC
+        (* Branches share the same disequalities. Reuse their kernel
+           split theorems across branches within this replay. Each pass
+           has its own cache because the first omits dense carriers. *)
+        Tactical.THEN (neq_elim_tac true, neq_elim_tac false) goal ctxt
+      else Tactical.ALL_TAC goal ctxt
     val leaves =
       List.map (justification_tac_with charge) justifications
   in

@@ -1692,6 +1692,28 @@ val _ =
        #state (aesopTree.goal bound_coupled_tree3 bound_coupled_root) =
          aesopTree.Proved)
 
+val _ =
+  check
+    ("retracting a copied singleton proof reopens its ancestors",
+     fn () =>
+       let
+         val id = bound_coupled_copy
+         val copy = aesopTree.goal bound_coupled_tree2 id
+         val closed =
+           aesopTree.set_norm_proved id
+             {records = [], store = bound_coupled_store} bound_coupled_tree2
+         val reopened =
+           aesopTree.set_normalised id
+             {records = [], cgoal = #cgoal copy, store = bound_coupled_store}
+             closed
+         fun state tree id = #state (aesopTree.goal tree id)
+       in
+         state closed bound_coupled_root = aesopTree.Proved andalso
+         state reopened bound_coupled_root = aesopTree.Unknown andalso
+         state reopened bound_coupled_right = aesopTree.Unknown andalso
+         #state (aesopTree.cluster reopened (#cluster copy)) = aesopTree.Unknown
+       end)
+
 (* A proved copy below a partially open application is not yet connected to
    the application that emitted its original.  An unrelated proof of the
    path goal must not make that orphaned copy prove the root. *)

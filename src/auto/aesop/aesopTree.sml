@@ -428,6 +428,11 @@ fun independently_proved tree (current : goal) =
           (fn rid => #state (rapp tree rid) = Proved)
           (reverse_child_rapps tree (#id current))
 
+fun has_copy_support tree (current : goal) =
+  List.exists
+    (Option.isSome o copy_support tree (#parent current) false)
+    (reverse_copy_goals tree (#id current))
+
 fun add_support_path lookup insert path required =
   let
     fun add [] required = SOME required
@@ -506,12 +511,19 @@ fun derive_cluster tree ({goals, ...} : cluster) =
       [] => Proved
     | id :: rest =>
         let
-          val state = #state (goal tree id)
+          val current = goal tree id
+          val state = #state current
+          (* A refresh can retract a proof before changing the goal state.
+             Recheck support, but one path needs no compatibility search. *)
+          fun compatible () =
+            case rest of
+                [] => independently_proved tree current orelse
+                      has_copy_support tree current
+              | _ => compatible_copy_supports tree goals
         in
           if state <> Unknown andalso
              List.all (fn id => #state (goal tree id) = state) rest andalso
-             (state = Stuck orelse not (has_copies tree) orelse
-              compatible_copy_supports tree goals)
+             (state = Stuck orelse not (has_copies tree) orelse compatible ())
           then state
           else Unknown
         end
@@ -544,11 +556,7 @@ fun derive_goal tree (current : goal) =
   let
     val id = #id current
     fun scan [] all_stuck =
-          if List.exists
-               (Option.isSome o
-                copy_support tree (#parent current) false)
-               (reverse_copy_goals tree id)
-          then Proved
+          if has_copy_support tree current then Proved
           else if all_stuck then Stuck
           else Unknown
       | scan (rid :: rest) all_stuck =

@@ -304,21 +304,18 @@ fun name_matches candidate name =
   String.isSuffix ("." ^ candidate) name orelse
   String.isSuffix ("." ^ name) candidate
 
-fun method_names_argument method candidate =
+fun method_names_argument method =
   let
     val names = method_names method
     fun cited value = List.exists (name_matches value) names
-    fun trimmed suffix =
-      if String.isSuffix suffix candidate andalso
-         size candidate > size suffix
-      then SOME (String.substring (candidate, 0, size candidate - size suffix))
-      else NONE
+    fun omitted_suffix candidate suffix =
+      size candidate > size suffix andalso
+      String.isSuffix suffix candidate andalso
+      cited (String.substring (candidate, 0, size candidate - size suffix))
   in
-    cited candidate orelse
-    List.exists (fn suffix =>
-      case trimmed suffix of
-          NONE => false
-        | SOME base => cited base) documented_suffixes
+    fn candidate =>
+      cited candidate orelse
+      List.exists (omitted_suffix candidate) documented_suffixes
   end
 
 fun translation_base name =
@@ -329,9 +326,9 @@ fun translation_base name =
 fun translation_name ({name, ...} : benchLib.named_thm) =
   translation_base name
 
-fun defines_goal_constant goal ({theorem, ...} : benchLib.named_thm) =
+fun defines_goal_constant goal_names ({theorem, ...} : benchLib.named_thm) =
   registered_definition theorem andalso
-  let val constants = goal_constants goal
+  let val constants = Portable.HOLSusp.force goal_names
   in
     List.exists
       (fn constant =>
@@ -343,16 +340,22 @@ fun defines_goal_constant goal ({theorem, ...} : benchLib.named_thm) =
 val distinct = listUtil.distinct_by String.compare I
 
 fun provenance_violations (entry : benchLib.corpus_goal) =
-  distinct
-    (List.mapPartial
-      (fn (named as {name, ...} : benchLib.named_thm) =>
-        case translation_name named of
-            NONE => NONE
-          | SOME base =>
-              if method_names_argument (#source_method entry) base then NONE
-              else if defines_goal_constant (#goal entry) named then NONE
-              else SOME name)
-      (supplied_theorems entry))
+  let
+    val method = Portable.HOLSusp.delay
+      (fn () => method_names_argument (#source_method entry))
+    val goal_names =
+      Portable.HOLSusp.delay (fn () => goal_constants (#goal entry))
+    fun violation (named as {name, ...} : benchLib.named_thm) =
+      case translation_name named of
+          NONE => NONE
+        | SOME base =>
+            if Portable.HOLSusp.force method base orelse
+               defines_goal_constant goal_names named
+            then NONE
+            else SOME name
+  in
+    distinct (List.mapPartial violation (supplied_theorems entry))
+  end
 
 fun provenance_findings goals =
   List.mapPartial

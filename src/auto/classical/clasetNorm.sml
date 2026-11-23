@@ -142,18 +142,29 @@ val crossed_conv = Conv.QCONV (formula true clasetMeta.is_meta)
    sound at every position, so this needs no notion of a formula position.
    It exists for looking a goal up in an index keyed on the rules as stated;
    nothing normalises to it. *)
-val applied_conv =
-  Conv.QCONV
-    (Conv.REDEPTH_CONV
-      (Conv.ORELSEC (Conv.REWR_CONV membership_thm, BETA_CONV)))
+fun membership_operator operator =
+  is_comb operator andalso same_const (rator operator) IN_tm
+
+val unfold_membership = Conv.REWR_CONV membership_thm
+
+fun applied_step tm =
+  if is_comb tm then
+    let val operator = rator tm
+    in
+      if membership_operator operator then unfold_membership tm
+      else if is_abs operator then BETA_CONV tm
+      else Conv.NO_CONV tm
+    end
+  else Conv.NO_CONV tm
+
+val applied_conv = Conv.QCONV (Conv.REDEPTH_CONV applied_step)
 
 (* [x IN (\y. b)] is a beta redex written through the definition of [IN],
    so reducing it is reduction and not the crossing: it makes a strictly
    simpler term, and a membership in anything else is left alone.  Leaving
    it unreduced would keep the engine's state opaque -- every step would
    have to re-cross an atom whose body the rules are stated about. *)
-val member_beta_conv =
-  Conv.THENC (Conv.REWR_CONV membership_thm, BETA_CONV)
+val member_beta_conv = Conv.THENC (unfold_membership, BETA_CONV)
 
 (* [reduce_conv] is what shapes the engine's terms: an instantiated rule is
    reduced, and its premises become goals the caller reads.  The crossing
@@ -166,8 +177,24 @@ val member_beta_conv =
    membership crossed against a pair leaves one behind.  The simpset
    reduces it and the classical layer did not, which is why AUTO_TAC
    closed such a goal and FAST_TAC and BLAST_TAC did not. *)
-val projection_conv =
-  Conv.ORELSEC (Conv.REWR_CONV pairTheory.FST, Conv.REWR_CONV pairTheory.SND)
+val fst_conv = Conv.REWR_CONV pairTheory.FST
+val snd_conv = Conv.REWR_CONV pairTheory.SND
+
+(* A bottom-up traversal visits every subterm. Test the redex shape before
+   attempting a kernel conversion, especially on the usual unchanged path. *)
+fun reduction_step eta tm =
+  if is_comb tm then
+    let val (operator, operand) = dest_comb tm
+    in
+      if is_abs operator then BETA_CONV tm
+      else if is_abs operand andalso membership_operator operator then
+        member_beta_conv tm
+      else if same_const operator pairSyntax.fst_tm then fst_conv tm
+      else if same_const operator pairSyntax.snd_tm then snd_conv tm
+      else Conv.NO_CONV tm
+    end
+  else if eta andalso is_abs tm then Drule.ETA_CONV tm
+  else Conv.NO_CONV tm
 
 (* [dest_forall] fails on [$! P], so a quantifier that reaches a caller's
    goal contracted is one no step can take apart.  The crossing spells such
@@ -189,10 +216,7 @@ fun expand_binders is_hole tm =
     Conv.THENC (here, Conv.SUB_CONV (expand_binders is_hole)) tm
   end
 
-val reduction =
-  Conv.REDEPTH_CONV
-    (Conv.ORELSEC (BETA_CONV, Conv.ORELSEC (Drule.ETA_CONV,
-     Conv.ORELSEC (member_beta_conv, projection_conv))))
+val reduction = Conv.REDEPTH_CONV (reduction_step true)
 
 val reduce_conv = Conv.QCONV reduction
 
@@ -204,9 +228,7 @@ val reduce_conv = Conv.QCONV reduction
 val goal_reduce_conv =
   Conv.QCONV
     (Conv.THENC
-      (Conv.REDEPTH_CONV
-        (Conv.ORELSEC (BETA_CONV,
-         Conv.ORELSEC (member_beta_conv, projection_conv))),
+      (Conv.REDEPTH_CONV (reduction_step false),
        expand_binders clasetMeta.is_meta))
 
 val normalize_conv =
