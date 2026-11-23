@@ -206,6 +206,13 @@ sig
   val searchGoalResumable :
     Context.t -> searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
+  (* The corresponding replay entry points return an empty proof trace. *)
+  val searchGoalBudgetedForReplay :
+    Context.t -> searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
+  val searchGoalResumableForReplay :
+    Context.t -> searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
   val tryGoal : Context.t -> claset -> int -> goal -> proof option
   val debugGoal : Context.t -> claset -> int -> goal -> debug_result
 

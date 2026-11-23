@@ -2025,11 +2025,11 @@ fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
       RunDone report => report
     | RunYielded _ => raise Fail "unbudgeted tableau yielded"
 
-fun searchGoalBudgeted ctxt budget claset depth goal cont =
+fun search_goal_budgeted keep_history ctxt budget claset depth goal cont =
   let
     val report =
       runGoal (traceUtil.level_of blastRule.tracer ctxt)
-        {keep_history = true, resumable = false} Restore
+        {keep_history = keep_history, resumable = false} Restore
         (On {debug = false, stop = fn () => false,
              budget = SOME budget}) claset depth goal cont
   in
@@ -2044,7 +2044,11 @@ fun searchGoalBudgeted ctxt budget claset depth goal cont =
   handle searchBudget.LimitReached (kind, usage) =>
     BudgetLimitReached {kind = kind, usage = usage}
 
-fun searchGoalResumable ctxt budget claset depth goal cont =
+fun searchGoalBudgeted ctxt = search_goal_budgeted true ctxt
+
+fun searchGoalBudgetedForReplay ctxt = search_goal_budgeted false ctxt
+
+fun search_goal_resumable keep_history ctxt budget claset depth goal cont =
   let
     val trace_level = traceUtil.level_of blastRule.tracer ctxt
     fun once resume =
@@ -2068,7 +2072,8 @@ fun searchGoalResumable ctxt budget claset depth goal cont =
              resume = once (fn () => convert (resume ()))}
     fun start () =
       convert
-        (runGoal trace_level {keep_history = true, resumable = true} Restore
+        (runGoal trace_level
+           {keep_history = keep_history, resumable = true} Restore
            (On {debug = false, stop = fn () => false,
                 budget = SOME budget}) claset depth goal cont)
       handle searchBudget.LimitReached (kind, usage) =>
@@ -2078,6 +2083,10 @@ fun searchGoalResumable ctxt budget claset depth goal cont =
   in
     start ()
   end
+
+fun searchGoalResumable ctxt = search_goal_resumable true ctxt
+
+fun searchGoalResumableForReplay ctxt = search_goal_resumable false ctxt
 
 fun search_with_stats keep_history ctxt claset depth goal cont =
   let

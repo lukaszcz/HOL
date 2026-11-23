@@ -27,8 +27,11 @@ val validation_of = clasetReplay.validation_of
 
 fun normalize_term store tm = clasetMeta.norm store tm
 
-fun closing_equal store left right =
-  aconv (normalize_term store left) (normalize_term store right)
+fun closing_equal_normalized store left right =
+  aconv left (normalize_term store right)
+
+fun closing_equal store left =
+  closing_equal_normalized store (normalize_term store left)
 
 val normalize_rule_thm = clasetNorm.normalize_rule_thm
 
@@ -563,11 +566,12 @@ fun settle_rule mode (core : thm) metas asl note_skip residual_terms store =
       Drule.INST_TY_TERM (term_substitution, type_substitution) core
     val normalized_rule0 = normalize_rule_thm instantiated
 
+    fun matching_assumption _ [] = NONE
+      | matching_assumption hypothesis assumptions =
+          List.find (closing_equal final_store hypothesis) assumptions
+
     fun align_hypothesis (hypothesis, current) =
-      case List.find
-        (fn assumption =>
-          closing_equal final_store hypothesis assumption) asl
-      of
+      case matching_assumption hypothesis asl of
           NONE => raise Match
         | SOME assumption =>
             Drule.PROVE_HYP
@@ -885,7 +889,8 @@ fun try_forward charge mode {source, form} immediate node pos
     datatype work =
         Expand of term list * int list * clasetMeta.store
       | CheckExact of
-          term * term list * int list * clasetMeta.store *
+          term * term Portable.HOLSusp.susp *
+          term list * int list * clasetMeta.store *
           (int * term) list * (int * term) list
       | CheckUnify of
           term * term list * int list * clasetMeta.store *
@@ -899,13 +904,20 @@ fun try_forward charge mode {source, form} immediate node pos
             (pending := rest;
              SOME (List.rev positions @ [major_pos], store))
         | Expand (premise :: later, positions, store) :: rest =>
-            (pending :=
-               CheckExact
-                 (premise, later, positions, store,
-                  positioned, []) :: rest;
-             next_assignment ())
+            let
+              (* The store is fixed throughout this exact scan. Delay
+                 normalization until its first charged comparison. *)
+              val normalized = Portable.HOLSusp.delay
+                (fn () => normalize_term store premise)
+            in
+              pending :=
+                CheckExact
+                  (premise, normalized, later, positions, store,
+                   positioned, []) :: rest;
+              next_assignment ()
+            end
         | CheckExact
-            (premise, later, positions, store, [], mismatched) ::
+            (premise, _, later, positions, store, [], mismatched) ::
             rest =>
             (pending :=
                CheckUnify
@@ -913,14 +925,15 @@ fun try_forward charge mode {source, form} immediate node pos
                   List.rev mismatched) :: rest;
              next_assignment ())
         | CheckExact
-            (premise, later, positions, store,
+            (premise, normalized, later, positions, store,
              (position, assumption) :: remaining, mismatched) :: rest =>
             let
               val _ = charge ()
-              val equal = closing_equal store premise assumption
+              val equal = closing_equal_normalized store
+                (Portable.HOLSusp.force normalized) assumption
               val tail =
                 CheckExact
-                  (premise, later, positions, store, remaining,
+                  (premise, normalized, later, positions, store, remaining,
                    if equal then mismatched
                    else (position, assumption) :: mismatched) :: rest
             in
@@ -1045,9 +1058,15 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
     (* Existing assumptions are available in the arriving store.
        Sibling results may be deduplicated only if their effects on
        pre-existing metas agree; compare their conclusions in the common
-       parent store.  Hold a produced candidate across a cutoff. *)
-    val seen = ref ([] : (term * effect) list)
+       parent store.  Share these normal forms on demand so an empty
+       sibling scan performs no normalization.  Hold a produced candidate
+       across a cutoff. *)
+    val seen = ref ([] : (term Portable.HOLSusp.susp * effect) list)
     val candidate_pending = ref (NONE : (term * direct) option)
+
+    fun already_assumed _ _ [] = false
+      | already_assumed store added assumptions =
+          List.exists (closing_equal store added) assumptions
 
     fun distinct () =
       case !candidate_pending of
@@ -1063,17 +1082,20 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
              let
                val effect = effect_of direct
              in
-               if List.exists
-                  (closing_equal (direct_store direct) added)
-                  assumptions orelse
-                  List.exists
-                    (fn (previous, prior_effect) =>
-                      closing_equal parent_store added previous andalso
-                      same_effect effect prior_effect)
-                    (!seen)
+               if already_assumed (direct_store direct) added assumptions
                then distinct ()
                else
-                 (seen := (added, effect) :: !seen; SOME direct)
+                 let
+                   val normalized = Portable.HOLSusp.delay
+                     (fn () => normalize_term parent_store added)
+                   fun duplicate (previous, prior_effect) =
+                     aconv (Portable.HOLSusp.force normalized)
+                       (Portable.HOLSusp.force previous) andalso
+                     same_effect effect prior_effect
+                 in
+                   if List.exists duplicate (!seen) then distinct ()
+                   else (seen := (normalized, effect) :: !seen; SOME direct)
+                 end
              end)
   in
     seq.fresult distinct

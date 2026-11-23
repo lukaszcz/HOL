@@ -1510,6 +1510,76 @@ val _ =
 
 val _ =
   test
+    ("budgeted replay omits history and preserves search across yields",
+     fn () =>
+       let
+         val ctxt = Context.snapshot ()
+         val cs =
+           clasetLib.add_sintros
+             [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         fun identity i =
+           let val p = mk_var ("replay_branch_" ^ Int.toString i, bool)
+           in mk_imp (p, p) end
+         val target =
+           List.foldl (fn (i, right) => mk_conj (identity i, right))
+             (identity 0) (List.tabulate (12, fn i => i + 1))
+         val goal = ([], target)
+         fun accept proof = proof
+
+         fun one_shot run =
+           let val budget = searchBudget.unbounded ()
+           in (run ctxt budget cs 0 goal accept, searchBudget.usage budget)
+           end
+
+         fun resumable run =
+           let
+             val budget = searchBudget.create
+               {candidates = NONE, applications = SOME 1,
+                normalization = NONE}
+             fun finish 0 count outcome = (count, outcome)
+               | finish turns count outcome =
+                   case outcome of
+                       blastSearch.BudgetYielded {kind, resume, ...} =>
+                         (searchBudget.extend budget kind 8;
+                          finish (turns - 1) (count + 1) (resume ()))
+                     | _ => (count, outcome)
+             val result = finish 20 0 (run ctxt budget cs 0 goal accept)
+           in
+             (result, searchBudget.usage budget)
+           end
+
+         fun agrees
+               ((blastSearch.BudgetFinished
+                   {result = SOME traced, statistics = traced_stats},
+                 traced_usage),
+                (blastSearch.BudgetFinished
+                   {result = SOME replay, statistics = replay_stats},
+                 replay_usage)) =
+               List.foldl (fn (frontier, n) => n + length frontier)
+                 0 (#trace traced) > 12 andalso
+               null (#trace replay) andalso
+               length (#script traced) = length (#script replay) andalso
+               traced_stats = replay_stats andalso
+               traced_usage = replay_usage andalso
+               (case blastReconstruct.reconstructWith ctxt cs goal replay of
+                    SOME ([], validate) =>
+                      Term.aconv (concl (validate [])) target
+                  | _ => false)
+           | agrees _ = false
+
+         val ((traced_yields, traced), traced_usage) =
+           resumable blastSearch.searchGoalResumable
+         val ((replay_yields, replay), replay_usage) =
+           resumable blastSearch.searchGoalResumableForReplay
+       in
+         agrees (one_shot blastSearch.searchGoalBudgeted,
+                 one_shot blastSearch.searchGoalBudgetedForReplay) andalso
+         traced_yields > 0 andalso traced_yields = replay_yields andalso
+         agrees ((traced, traced_usage), (replay, replay_usage))
+       end)
+
+val _ =
+  test
     ("safe fanout counts one inference and one extra branch",
      fn () =>
        let

@@ -184,7 +184,7 @@ fun CS_BLAST_DEPTH_BUDGETED budget base_cs depth goal ctxt =
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalBudgeted ctxt budget cs depth goal accept
+    blastSearch.searchGoalBudgetedForReplay ctxt budget cs depth goal accept
   end
 
 fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
@@ -195,7 +195,7 @@ fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalResumable ctxt budget cs depth goal accept
+    blastSearch.searchGoalResumableForReplay ctxt budget cs depth goal accept
   end
 
 fun next_through limit depth =

@@ -660,6 +660,40 @@ val _ =
          closes schematic_tactic other_goal
        end)
 
+val _ =
+  check
+    ("ORDER_TAC matches an applied relation head among unrelated sites",
+     fn () =>
+       let
+         val first = ``relation$TC (r:num->num->bool) x y``
+         val second = ``relation$TC (r:num->num->bool) y z``
+         val target = ``relation$TC (r:num->num->bool) x z``
+         val other = ``relation$TC (s:bool->bool->bool) p q``
+         val guard = ``order_index_guard:bool``
+         val argument = ``order_index_arg:num``
+         val noise =
+           List.tabulate
+             (12, fn i =>
+               let
+                 val relation = Term.mk_var
+                   ("order_index_noise_" ^ Int.toString i,
+                    ``:num->num->bool``)
+               in Term.list_mk_comb (relation, [argument, argument]) end)
+         val axiom = Drule.ADD_ASSUM guard
+           (Drule.SPEC_ALL relationTheory.TC_TRANSITIVE)
+         val expected = Listsort.sort Term.compare [guard, first, second]
+         val goal = (other :: noise @ expected, target)
+       in
+         case Tactical.VALID (ORDER_TAC [axiom]) goal (Context.snapshot ()) of
+             ([], validation) =>
+               let val theorem = validation []
+               in
+                 Term.aconv (Thm.concl theorem) target andalso
+                 Lib.list_eq Term.aconv (Thm.hyp theorem) expected
+               end
+           | _ => false
+       end)
+
 (* A theorem supplied directly to the simplifier keeps its schematic
    carrier.  ASSUME_TAC turns the same statement into an assumption whose
    support fixes that carrier; the reducer must not reinterpret that

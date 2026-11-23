@@ -37,12 +37,61 @@ fun concrete_relation_sites theorems =
   List.filter (null o type_vars_in_term)
     (relation_sites (map Thm.concl theorems))
 
-fun order_fact_views_with _ _ _ [] = []
-  | order_fact_views_with charge get_sites goal theorems =
+fun constant_spine term =
   let
+    fun peel arity term =
+      if is_comb term then peel (arity + 1) (rator term)
+      else if is_const term then
+        SOME (#Name (dest_thy_constid term), arity)
+      else NONE
+  in
+    peel 0 term
+  end
+
+fun select_relation_sites sites =
+  let
+    fun exceeds 0 rest = not (null rest)
+      | exceeds _ [] = false
+      | exceeds n (_ :: rest) = exceeds (n - 1) rest
+  in
+    if exceeds 8 sites then
+      let
+        val compare = Lib.pair_compare (KernelSig.id_compare, Int.compare)
+        fun add (site, index) =
+          case constant_spine site of
+              NONE => index
+            | SOME key =>
+                Redblackmap.update
+                  (index, key, fn bucket => site :: Option.getOpt (bucket, []))
+        val index = Portable.HOLSusp.delay
+          (fn () => List.foldr add (Redblackmap.mkDict compare) sites)
+      in
+        (* A first-order match must preserve a constant head and its
+           arity. Heads that can be instantiated keep the full scan. *)
+        fn pattern =>
+          case constant_spine pattern of
+              NONE => sites
+            | SOME key =>
+                Option.getOpt
+                  (Redblackmap.peek (Portable.HOLSusp.force index, key), [])
+      end
+    else fn _ => sites
+  end
+
+fun order_fact_views_with _ _ _ [] = []
+  | order_fact_views_with budget get_sites goal theorems =
+  let
+    val charge =
+      case budget of
+          NONE => (fn _ => ())
+        | SOME owned => searchBudget.charge owned
     val environment =
       clasetFacts.create_with_charge charge goal theorems
     val sites = get_sites ()
+    val sites_for =
+      case budget of
+          NONE => select_relation_sites sites
+        | SOME _ => (fn _ => sites)
     fun views entry =
       let
         val schematic = #theorem (clasetFacts.schematic_view entry)
@@ -60,7 +109,7 @@ fun order_fact_views_with _ _ _ [] = []
                     (charge searchBudget.Candidate;
                      Option.map #theorem
                        (clasetFacts.match_view entry pattern site)))
-                  sites)
+                  (sites_for pattern))
               patterns)
       in
         clasetFacts.source entry :: instances
@@ -71,7 +120,7 @@ fun order_fact_views_with _ _ _ [] = []
   end
 
 fun order_fact_views (goal as (asl, w)) theorems =
-  order_fact_views_with (fn _ => ())
+  order_fact_views_with NONE
     (fn () => relation_sites (w :: asl) @ concrete_relation_sites theorems)
     goal theorems
 
@@ -193,12 +242,8 @@ fun make_order_reducer budget =
               SOME (_, result) => result
             | NONE =>
                 let
-                  val charge =
-                    case budget of
-                        NONE => (fn _ => ())
-                      | SOME owned => searchBudget.charge owned
                   val views =
-                    order_fact_views_with charge
+                    order_fact_views_with budget
                       (fn () => atom_sites @ concrete ()) ([], tm) theorems
                   val result = (views, contexts_of views)
                   val previous = !sites

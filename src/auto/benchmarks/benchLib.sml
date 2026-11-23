@@ -482,7 +482,7 @@ fun set_definitional_context theorems =
      HOLset.addList
        (HOLset.empty String.compare, List.mapPartial defined_head theorems))
 
-fun mentions_definition heads term =
+fun mentions_constant_names heads term =
   let
     fun mentions current =
       case Term.dest_term current of
@@ -518,7 +518,7 @@ fun unfold term =
 
 fun unfolded term =
   if List.null (!definitional_context) orelse
-     not (mentions_definition (!definitional_heads) term)
+     not (mentions_constant_names (!definitional_heads) term)
   then term
   else unfold term
 
@@ -803,7 +803,7 @@ fun set_ambient_citations arguments =
     fun prepare statement =
       let
         val mentions = memoUtil.keyed_memo (curry Portable.pointer_eq)
-          (fn heads => mentions_definition heads statement)
+          (fn heads => mentions_constant_names heads statement)
       in
         (prepare_citation statement, fn () =>
           if mentions (!definitional_heads) then unfold statement
@@ -942,7 +942,7 @@ fun ambient_statement heads theorem : comparison_statement =
   let
     val statement = Thm.concl theorem
     val mentions =
-      Portable.HOLSusp.delay (fn () => mentions_definition heads statement)
+      Portable.HOLSusp.delay (fn () => mentions_constant_names heads statement)
   in
     (prepare_citation statement, fn () =>
       if Portable.HOLSusp.force mentions then unfold statement else statement)
@@ -1418,15 +1418,9 @@ fun set_correspondences theorems =
        (HOLset.empty String.compare,
         List.mapPartial correspondence_head theorems))
 
-fun mentions_correspondence term =
-  List.exists
-    (fn constant =>
-      HOLset.member (!correspondence_heads, #1 (Term.dest_const constant)))
-    (find_terms Term.is_const term)
-
 fun crossed ({name, theorem} : named_thm) =
   if List.null (!correspondences) orelse
-     not (mentions_correspondence (Thm.concl theorem))
+     not (mentions_constant_names (!correspondence_heads) (Thm.concl theorem))
   then
     NONE
   else
@@ -1474,9 +1468,10 @@ fun crossed_arg arg =
 (* A crossing that states the goal is dropped rather than reported: it
    is derived here, not cited, so it is not a recipe supplying its own
    answer. *)
-fun across_correspondence entry args =
-  args @
+fun crossing_arguments entry args =
   List.filter (permitted_arg entry) (List.mapPartial crossed_arg args)
+
+fun across_correspondence entry args = args @ crossing_arguments entry args
 
 (* The layer's own [asm_full_simp] is the analogue of the method being
    measured -- asm_full_simp_tac, premises simplified mutually -- where
@@ -1839,8 +1834,8 @@ fun compile_recipe simpset entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
         let
-          val arguments =
-            recipe_args entry (across_correspondence entry args)
+          val crossings = crossing_arguments entry args
+          val arguments = recipe_args entry args @ crossings
         in
           tactic_for (with_normalised_subjects simpset arguments)
             (#goal entry) tactic_id arguments (#excl entry)
