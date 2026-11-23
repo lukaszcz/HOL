@@ -2130,36 +2130,48 @@ fun effective_rewrites ss = map #2 (#1 (simpLib.rewrite_sources ss []))
 
 fun membership_heads_of rewrites =
   let
-    fun subject theorem =
+    (* Opening a binder can rename its variables but cannot change
+       whether the inspected head is a constant. *)
+    fun body term =
+      if boolSyntax.is_forall term then #2 (boolSyntax.strip_forall term)
+      else term
+    fun subject term =
       let
-        val (_, statement) =
-          boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
+        val (_, statement) = boolSyntax.strip_imp_only (body term)
       in
-        case Lib.total boolSyntax.dest_neg statement of
-            SOME negated => negated
+        case Lib.total boolSyntax.dest_eq statement of
+            SOME (left, _) => left
           | NONE =>
-              (case Lib.total boolSyntax.dest_eq statement of
-                   SOME (left, _) => left
-                 | NONE => statement)
+              Option.getOpt (Lib.total boolSyntax.dest_neg statement,
+                             statement)
       end
-    fun head_of theorem =
+    fun head_of term =
       let
-        val (_, set) = pred_setSyntax.dest_in (subject theorem)
+        val (_, set) = pred_setSyntax.dest_in term
         val (head, _) = boolSyntax.strip_comb set
       in
         if Term.is_const head then SOME (Term.dest_thy_const head) else NONE
       end
       handle HOL_ERR _ => NONE
-    fun readings theorem =
-      Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
-    fun record (theorem, heads) =
-      case head_of theorem of
+    fun record (term, heads) =
+      case head_of term of
           SOME {Thy, Name, ...} => Binaryset.add (heads, (Thy, Name))
         | NONE => heads
+    fun record_reading (term, heads) =
+      record (subject term, heads) handle HOL_ERR _ => heads
+    fun readings term =
+      boolSyntax.strip_conj (body term) handle HOL_ERR _ => [term]
+    fun scan (theorem, heads) =
+      let val term = Thm.concl theorem
+      in
+        case Lib.total boolSyntax.dest_eq term of
+            SOME (left, _) => record (left, heads)
+          | NONE => List.foldl record_reading heads (readings term)
+      end
   in
-    List.foldl record (Binaryset.empty (Lib.pair_compare (String.compare,
-                                                          String.compare)))
-      (List.concat (map readings rewrites))
+    List.foldl scan
+      (Binaryset.empty (Lib.pair_compare (String.compare, String.compare)))
+      rewrites
   end
 
 fun extensional_inventory ss =

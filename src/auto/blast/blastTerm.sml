@@ -56,30 +56,32 @@ struct
   fun head_of (f $ _) = head_of f
     | head_of term = term
 
-  fun aconv (Const (a, ts), Const (b, us)) =
+  fun aconv terms = Portable.pointer_eq terms orelse aconv_structural terms
+
+  and aconv_structural (Const (a, ts), Const (b, us)) =
         a = b andalso aconvs (ts, us)
-    | aconv (Skolem (a, _), Skolem (b, _)) = a = b
-    | aconv (Fvar a, Fvar b) = a = b
-    | aconv (Goal, Goal) = true
-    | aconv (False, False) = true
-    | aconv (Var v, u) =
+    | aconv_structural (Skolem (a, _), Skolem (b, _)) = a = b
+    | aconv_structural (Fvar a, Fvar b) = a = b
+    | aconv_structural (Goal, Goal) = true
+    | aconv_structural (False, False) = true
+    | aconv_structural (left as Var v, u) =
         (case !v of
              SOME t => aconv (t, u)
            | NONE =>
                (case u of
                     Var w =>
                       (case !w of
-                           SOME t => aconv (Var v, t)
+                           SOME t => aconv (left, t)
                          | NONE => v = w)
                   | _ => false))
-    | aconv (t, Var v) =
+    | aconv_structural (t, Var v) =
         (case !v of
              SOME u => aconv (t, u)
            | NONE => false)
-    | aconv (Bound i, Bound j) = i = j
-    | aconv (Abs (_, t), Abs (_, u)) = aconv (t, u)
-    | aconv (f $ t, g $ u) = aconv (f, g) andalso aconv (t, u)
-    | aconv _ = false
+    | aconv_structural (Bound i, Bound j) = i = j
+    | aconv_structural (Abs (_, t), Abs (_, u)) = aconv (t, u)
+    | aconv_structural (f $ t, g $ u) = aconv (f, g) andalso aconv (t, u)
+    | aconv_structural _ = false
 
   and aconvs ([], []) = true
     | aconvs (t :: ts, u :: us) =

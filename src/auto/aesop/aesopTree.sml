@@ -390,28 +390,35 @@ fun cluster_with_state state
    application is excluded: its state is what the copy helps derive.  Each
    pair records the goal and the exact child application extraction must
    choose to retain that path. *)
-fun copy_support_path tree original copy =
-  case #parent (goal tree original) of
+fun copy_support tree original_parent record_path copy =
+  case original_parent of
       NONE => NONE
-    | SOME original_parent =>
+    | SOME target =>
         let
-          fun walk current rev_path =
-            case #parent (goal tree current) of
+          fun walk current path =
+            case #parent (current : goal) of
                 NONE => NONE
               | SOME rid =>
-                  if rid = original_parent then SOME (List.rev rev_path)
+                  if rid = target then SOME path
                   else
                     let val application = rapp tree rid
                     in
                       if #state application <> Proved then NONE
                       else
-                        walk (#parent application)
-                          ((#parent application, rid) :: rev_path)
+                        walk (goal tree (#parent application))
+                          (if record_path then
+                             (#parent application, rid) :: path
+                           else path)
                     end
+          val current = goal tree copy
         in
-          if #state (goal tree copy) = Proved then walk copy []
+          if #state current = Proved then walk current []
           else NONE
         end
+
+fun copy_support_path tree original copy =
+  Option.map List.rev
+    (copy_support tree (#parent (goal tree original)) true copy)
 
 fun independently_proved tree (current : goal) =
   case #norm current of
@@ -538,7 +545,8 @@ fun derive_goal tree (current : goal) =
     val id = #id current
     fun scan [] all_stuck =
           if List.exists
-               (Option.isSome o copy_support_path tree id)
+               (Option.isSome o
+                copy_support tree (#parent current) false)
                (reverse_copy_goals tree id)
           then Proved
           else if all_stuck then Stuck
@@ -663,16 +671,19 @@ fun refresh_goal id independent_proof_changed tree =
       else tree
     end
 
+fun queue_goal id prio (queue, insertion) =
+  (searchHeap.add {goal = id, prio = prio, insertion = insertion} queue,
+   insertion + 1)
+
 fun enqueue_goal id
       (tree as Tree (fields as {queue, next_insertion, ...})) =
   let
-    val current = goal tree id
-    val entry =
-      {goal = id, prio = #prio current, insertion = next_insertion}
+    val (queue', next_insertion') =
+      queue_goal id (#prio (goal tree id)) (queue, next_insertion)
   in
     Tree
-      (upd_tree fields (Fld #queue (searchHeap.add entry queue))
-         (Fld #next_insertion (next_insertion + 1)) $$)
+      (upd_tree fields (Fld #queue queue')
+         (Fld #next_insertion next_insertion') $$)
   end
 
 fun create {node, unsafe_cursor} =
@@ -942,8 +953,8 @@ fun install_rapp parent_id
       (tree as
        Tree
          (fields as
-          {goals, rapps, clusters, index, next_gid, next_rid, next_cid,
-           ...})) =
+          {goals, rapps, clusters, index, queue, next_gid, next_rid, next_cid,
+           next_insertion, ...})) =
   let
     val parent = goal tree parent_id
     val _ =
@@ -1040,6 +1051,9 @@ fun install_rapp parent_id
        store = child_store, created = created_of records,
        assigned = assigned,
        clusters = cluster_ids, state = Unknown}
+    val (queue', next_insertion') =
+      List.foldl (fn (id, pending) => queue_goal id child_priority pending)
+        (queue, next_insertion) child_ids
     val installed =
       Tree
         (upd_tree fields
@@ -1055,20 +1069,18 @@ fun install_rapp parent_id
                  index))
            (Fld #next_gid next_gid')
            (Fld #next_rid (next_rid + 1))
-           (Fld #next_cid next_cid') $$)
-    val queued =
-      List.foldl
-        (fn (id, current) => enqueue_goal id current)
-        installed child_ids
+           (Fld #next_cid next_cid')
+           (Fld #queue queue')
+           (Fld #next_insertion next_insertion') $$)
   in
     (* A nonclosing application starts Unknown, as do all its children
        and copies.  Its parent is not Stuck, so adding the alternative
        and the new copy links cannot change an existing state. *)
     {rapp = rid, goals = child_ids,
      tree =
-       if not (null child_ids) then queued
-       else if has_copies queued then refresh queued
-       else refresh_rapp_ancestors rid queued}
+       if not (null child_ids) then installed
+       else if has_copies installed then refresh installed
+       else refresh_rapp_ancestors rid installed}
   end
 
 (* The goal's identity and parent link are unchanged, so the index stands. *)

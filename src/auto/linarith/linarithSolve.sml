@@ -281,7 +281,27 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
            | order => order)
     | order => order
 
-datatype pair_result = PairRows of lineq list | PairContradiction of injust
+datatype elimination_result = Rows of lineq list | Contradiction of injust
+
+(* Independent rows are already nontrivial. Derived rows are examined in
+   their original order, so a constant contradiction can stop the scan. *)
+fun eliminate_equation work drop_column pivot independent dependent =
+  let
+    fun derive row =
+      (application work; elim_var_with work drop_column pivot row)
+    fun collect kept [] = Rows (List.revAppend (kept, independent))
+      | collect kept (row :: rest) =
+          let val derived as Lineq (_, _, _, just) = derive row
+          in
+            if is_trivial_with work derived then
+              if is_contradictory derived then Contradiction just
+              else collect kept rest
+            else collect (derived :: kept) rest
+          end
+  in
+    if #metered work then Rows (List.map derive dependent @ independent)
+    else collect [] dependent
+  end
 
 fun eliminate_pairs (work : work) drop_column independent pos neg =
   let
@@ -296,7 +316,7 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
       end
     val empty =
       (HOLset.empty (fn pair => (candidate work; compare_key pair)), [])
-    fun finish (_, rev_rows) = PairRows (List.rev rev_rows)
+    fun finish (_, rev_rows) = Rows (List.rev rev_rows)
     fun positives [] kept = finish kept
       | positives (p :: ps) kept = negatives p ps neg kept
     and negatives p ps [] kept = positives ps kept
@@ -307,7 +327,7 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
                new row before indexing it, so constant rows need neither
                a key nor another pass at the start of the next round. *)
             if is_trivial_with work row then
-              if is_contradictory row then PairContradiction just
+              if is_contradictory row then Contradiction just
               else negatives p ps ns kept
             else negatives p ps ns (keep (row, kept))
           end
@@ -358,15 +378,13 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
                 val drop_column = drop_leading v
                 val (independent, dependent) =
                   partition_pivot_with work v drop_column (other_eqs @ noneqs)
-                val others =
-                  List.map
-                    (fn row =>
-                      (application work;
-                       elim_var_with work drop_column eq row))
-                    dependent @ independent
+                val result =
+                  eliminate_equation work drop_column eq independent dependent
               in
                 report_pivot "equation" v;
-                next drop_column false others
+                case result of
+                    Rows rows => next drop_column (not (#metered work)) rows
+                  | Contradiction just => SOME just
               end
           | NONE =>
               let
@@ -390,9 +408,9 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
                         report_pivot "inequality" v;
                         case eliminate_pairs work drop_column
                                independent pos neg of
-                            PairRows rows =>
+                            Rows rows =>
                               next drop_column (not (#metered work)) rows
-                          | PairContradiction just => SOME just
+                          | Contradiction just => SOME just
                       end
               end
       end

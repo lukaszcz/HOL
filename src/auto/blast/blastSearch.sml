@@ -703,10 +703,22 @@ fun substAtomicWith checkpoint (old, replacement) term =
              (case !variable of
                   SOME assigned => subst assigned
                 | NONE =>
-                    if aconv (Var variable, old) then replacement
-                    else Var variable)
-         | Abs (name, body) => Abs (name, subst body)
-         | left $ right => subst left $ subst right
+                    if aconv (value, old) then replacement else value)
+         | Abs (name, body) =>
+             let val body' = subst body
+             in
+               if Portable.pointer_eq (body', body) then value
+               else Abs (name, body')
+             end
+         | left $ right =>
+             let
+               val left' = subst left
+               val right' = subst right
+             in
+               if Portable.pointer_eq (left', left) andalso
+                  Portable.pointer_eq (right', right) then value
+               else left' $ right'
+             end
          | _ => if aconv (value, old) then replacement else value)
   in
     subst term

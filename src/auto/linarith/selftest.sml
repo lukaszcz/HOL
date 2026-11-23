@@ -707,6 +707,34 @@ fun fm_budgeted budget items =
 
 val _ =
   check
+    ("FM equation elimination keeps the first constant contradiction",
+     fn () =>
+       let
+         val rows = map (SOME o fm_equation (1, 0)) [0, 0, 1, 2]
+         val items =
+           map
+             (fn (i, row) =>
+               (Term.mk_var ("fm_eq_" ^ Int.toString i, Type.bool), row))
+             (Lib.enumerate 0 rows)
+         fun first (Added (Asm 0, Multiplied (scale, Asm 2))) =
+               scale = Arbint.~ Arbint.one
+           | first _ = false
+         val limited = searchBudget.create
+           {candidates = NONE, applications = SOME 2, normalization = NONE}
+       in
+         Option.getOpt (Option.map first (fm_refute rows), false) andalso
+         (case fm_budgeted (searchBudget.unbounded ()) items of
+              CertificateFound {justifications = [just], ...} => first just
+            | _ => false) andalso
+         (case fm_budgeted limited items of
+              CertificateLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 2
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("FM budget distinguishes a certificate from exhaustion and limits",
      fn () =>
        let

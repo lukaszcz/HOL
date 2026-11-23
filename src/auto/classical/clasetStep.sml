@@ -177,15 +177,14 @@ fun first_nonempty [] _ = seq.empty
 
 fun list_seq thunk = seq.delay (fn () => seq.fromList (thunk ()))
 
-fun assumption_results (node, pos) =
+type closing_goal =
+  {input : node * goalpos, asl : term list, store : clasetMeta.store,
+   normalized_w : term, positioned : (int * term * term) list}
+
+fun assumption_results ({store, normalized_w, positioned, ...} : closing_goal) =
   list_seq
     (fn () =>
       let
-        val (asl, w) = clasetGoal.render node pos
-        val store = clasetGoal.store node
-        val normalized_w = normalize_term store w
-        fun closes (asm_pos, asm) =
-          aconv (normalize_term store asm) normalized_w
         fun result (asm_pos, asm) =
           let
             fun validation [] =
@@ -203,7 +202,11 @@ fun assumption_results (node, pos) =
                closed = [], store = store}
           end
       in
-        map result (List.filter closes (numbered asl))
+        List.mapPartial
+          (fn (pos, asm, normalized) =>
+            if aconv normalized normalized_w then SOME (result (pos, asm))
+            else NONE)
+          positioned
       end)
 
 fun normalized_assumptions store asl =
@@ -227,14 +230,11 @@ fun assumption_lookup positioned (_ :: _ :: _) =
             if aconv normalized term then SOME (pos, asm) else NONE)
           positioned
 
-fun contradiction_results (node, pos) =
+fun contradiction_results
+      ({store, normalized_w, positioned, ...} : closing_goal) =
   list_seq
     (fn () =>
       let
-        val (asl, w) = clasetGoal.render node pos
-        val store = clasetGoal.store node
-        val normalized_w = normalize_term store w
-        val positioned = normalized_assumptions store asl
         val negatives =
           List.filter (fn (_, _, normalized) => is_neg normalized)
             positioned
@@ -277,17 +277,12 @@ fun contradiction_results (node, pos) =
         results negatives
       end)
 
-fun assume_or_contradiction input =
-  first_nonempty [assumption_results, contradiction_results] input
-
-fun mp_results (node, pos) =
+fun mp_results
+      ({input = (node, pos), asl, store, normalized_w, positioned}
+       : closing_goal) =
   list_seq
     (fn () =>
       let
-        val (asl, w) = clasetGoal.render node pos
-        val store = clasetGoal.store node
-        val normalized_w = normalize_term store w
-        val positioned = normalized_assumptions store asl
         val {params, ...} = clasetGoal.goal_at node pos
         val implications =
           List.mapPartial
@@ -358,8 +353,25 @@ fun mp_results (node, pos) =
         results implications
       end)
 
-fun eq_mp_results input =
-  first_nonempty [contradiction_results, mp_results] input
+fun closing_results methods (input as (node, pos)) =
+  seq.delay
+    (fn () =>
+      let
+        val (asl, w) = clasetGoal.render node pos
+        val store = clasetGoal.store node
+        val normalized_w = normalize_term store w
+        val positioned = normalized_assumptions store asl
+      in
+        first_nonempty methods
+          {input = input, asl = asl, store = store,
+           normalized_w = normalized_w, positioned = positioned}
+      end)
+
+val assume_or_contradiction =
+  closing_results [assumption_results, contradiction_results]
+
+val assume_or_eq_mp =
+  closing_results [assumption_results, contradiction_results, mp_results]
 
 fun tag_equal
   ({weight = weight1, index = index1} : clasetLib.tag,
@@ -1540,8 +1552,7 @@ fun safe_cascade_in ctxt cs input =
   let val note_skip = skip_note ctxt
   in
     first_nonempty
-      [assumption_results,
-       eq_mp_results,
+      [assume_or_eq_mp,
        rule_results note_skip clasetUnify.Match cs false
          (clasetLib.safe0_part cs) all_weights,
        builtin_results_in ctxt,

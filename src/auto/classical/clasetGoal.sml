@@ -496,11 +496,26 @@ fun lookup_spellings (node as Node {spellings, ...}) pos =
         let
           val (asl, w) = render node pos
           fun spelling conversion tm = rhs (concl (conversion tm))
+          fun has_membership tm =
+            case dest_term tm of
+                CONST _ => same_const tm IN_tm
+              | COMB (rator, rand) =>
+                  has_membership rator orelse has_membership rand
+              | LAMB (_, body) => has_membership body
+              | VAR _ => false
+          fun applied tm =
+            (* Rendering has already reduced beta redexes. An applied
+               spelling can change only at a membership subterm. *)
+            if has_membership tm then spelling clasetNorm.applied_conv tm
+            else tm
           fun forms tm =
-            Lib.op_mk_set aconv
-              [tm, spelling clasetNorm.membership_conv tm,
-               spelling clasetNorm.crossed_conv tm,
-               spelling clasetNorm.applied_conv tm]
+            case dest_term tm of
+                VAR _ => [tm]
+              | CONST _ => [tm]
+              | _ =>
+                  Lib.op_mk_set aconv
+                    [tm, spelling clasetNorm.membership_conv tm,
+                     spelling clasetNorm.crossed_conv tm, applied tm]
           val computed = {conclusion = forms w, assumptions = map forms asl}
           val _ = spellings := Inttab.update (pos, computed) (!spellings)
         in

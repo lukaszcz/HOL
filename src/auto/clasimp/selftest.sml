@@ -3976,6 +3976,26 @@ val membership_ss =
 
 val _ =
   check
+    ("membership inventory reads quantified conjunctive rewrites",
+     fn () =>
+       let
+         val guard = Term.mk_var ("membership_guard", Type.bool)
+         val source = Thm.GEN guard
+           (Thm.CONJ (Thm.DISCH guard IN_UNION)
+              (Thm.CONJ NOT_IN_EMPTY IN_INTER))
+         val ss = simpLib.++
+           (pureSimps.pure_ss, simpLib.rewrites [source])
+         val reads = clasimpLib.reads_as_membership ss
+       in
+         reads ``(s UNION t : num -> bool) = u`` andalso
+         reads ``(EMPTY : num -> bool) = u`` andalso
+         reads ``(s INTER t : num -> bool) = u`` andalso
+         not (reads ``(s DIFF t : num -> bool) = u``) andalso
+         not (reads ``(s : num -> bool) = u``)
+       end)
+
+val _ =
+  check
     ("an equation between sets meets the rules stated on membership",
      fn () =>
        valid_closes

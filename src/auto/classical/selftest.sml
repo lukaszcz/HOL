@@ -2565,6 +2565,47 @@ val _ =
 
 val _ =
   test
+    ("lookup spellings follow beta reductions after instantiation",
+     fn () =>
+       let
+         val residue = ``\x:ind. x IN (lookup_f x : ind -> bool)``
+         val (meta, pending) =
+           clasetMeta.new_meta {allow = [], ty = type_of residue}
+             clasetMeta.empty
+         val store = the_store (clasetMeta.bind (meta, residue) pending)
+         val exposed = mk_comb (meta, phase1_a)
+         val unused = mk_var ("unused", Type.bool)
+         val erased = mk_comb (mk_abs (unused, phase1_pa), exposed)
+         val goal = {params = [], asl = [erased, exposed], w = exposed}
+         fun expected tm =
+           let fun spell conv = boolSyntax.rhs (concl (conv tm))
+           in
+             Lib.op_mk_set aconv
+               [tm, spell clasetNorm.membership_conv,
+                spell clasetNorm.crossed_conv, spell clasetNorm.applied_conv]
+           end
+         fun check use_size =
+           let
+             val node = clasetGoal.create
+               {goals = [goal], store = store, level = 0}
+             val _ = if use_size then ignore (clasetGoal.size node) else ()
+             val {conclusion, assumptions} = clasetGoal.lookup_spellings node 1
+             val (asl, w) = clasetGoal.render node 1
+             val (head, _) = strip_comb w
+             fun same left right =
+               ListPair.allEq (uncurry aconv) (left, right)
+           in
+             same_const head boolSyntax.IN_tm andalso
+             aconv (hd asl) phase1_pa andalso
+             same conclusion (expected w) andalso
+             ListPair.allEq (uncurry same) (assumptions, map expected asl)
+           end
+       in
+         check false andalso check true
+       end)
+
+val _ =
+  test
     ("safe cascade slot 3 applies a safe zero-premise rule",
      fn () =>
        step_gives cascade_cs ([], boolSyntax.T)
