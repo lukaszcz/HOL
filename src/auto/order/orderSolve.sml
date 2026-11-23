@@ -254,11 +254,18 @@ fun reachable work transitivity edges outgoing observe source =
             case #max_nodes work of
                 NONE => ReachedList []
               | SOME _ => ReachedIndex Termtab.empty
-          fun chain first second =
+          fun chain first (edge : edge) =
             let
               fun derive () =
-                MATCH_MP (MATCH_MP (path_theorem step) (path_theorem first))
-                  (path_theorem second)
+                let
+                  (* The graph already supplies the three endpoints of
+                     the relation-instantiated transitivity rule. *)
+                  val rule =
+                    SPECL [source, #source edge, #target edge]
+                      (path_theorem step)
+                in
+                  MP (MP rule (path_theorem first)) (path_theorem (#path edge))
+                end
             in
               application work;
               derive_path work derive
@@ -275,7 +282,7 @@ fun reachable work transitivity edges outgoing observe source =
              else
                (case reached work known (#source e) of
                     SOME path =>
-                      settle_edge (#target e) (chain path (#path e)) known
+                      settle_edge (#target e) (chain path e) known
                   | NONE => (known, changed)))
           (* A changing round settles a new target from the finite
              edge list. *)

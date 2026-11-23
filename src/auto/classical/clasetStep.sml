@@ -197,41 +197,48 @@ type closing_goal =
   {input : node * goalpos, asl : term list, store : clasetMeta.store,
    normalized_w : term, positioned : (int * term * term) list}
 
-(* Consume closing alternatives in positional order.  A first-result
-   consumer need not build every pair of matching assumptions. *)
-fun assumption_results ({store, normalized_w, positioned, ...} : closing_goal) =
-  seq.delay
-    (fn () =>
+(* Normalize assumptions in positional order. Once an assumption closes
+   the goal, neither the caller taking just that result nor the remaining
+   assumption alternatives need the full list for a fallback method. *)
+fun assumption_results store normalized_w asl fallback =
+  let
+    fun result (asm_pos, asm) =
       let
-        fun result (asm_pos, asm) =
-          let
-            fun validation [] =
-                  assumption_thm asm normalized_w
-              | validation _ =
-                  raise mk_HOL_ERR "clasetStep" "assumption_results"
-                    "assumption validation received child theorems"
-          in
-            Direct
-              {kind = Assumption asm_pos,
-               consumed = SOME asm_pos, created = no_created,
-               eigenvariables = [], result = ([], validation),
-               children = SOME [],
-               action = clasetReplay.assumption_action asm_pos,
-               closed = [], store = store}
-          end
-        fun scan [] = seq.empty
-          | scan ((pos, asm, normalized) :: rest) =
-              if aconv normalized normalized_w then
-                seq.cons (result (pos, asm))
-                  (seq.delay (fn () => scan rest))
-              else scan rest
+        fun validation [] =
+              assumption_thm asm normalized_w
+          | validation _ =
+              raise mk_HOL_ERR "clasetStep" "assumption_results"
+                "assumption validation received child theorems"
       in
-        scan positioned
-      end)
+        Direct
+          {kind = Assumption asm_pos,
+           consumed = SOME asm_pos, created = no_created,
+           eigenvariables = [], result = ([], validation),
+           children = SOME [],
+           action = clasetReplay.assumption_action asm_pos,
+           closed = [], store = store}
+      end
+    fun alternatives _ [] = seq.empty
+      | alternatives pos (asm :: rest) =
+          if aconv (normalize_term store asm) normalized_w then
+            matched pos asm rest
+          else alternatives (pos + 1) rest
+    and matched pos asm rest =
+      seq.cons (result (pos, asm))
+        (seq.delay (fn () => alternatives (pos + 1) rest))
 
-fun normalized_assumptions store asl =
-  Portable.mapi
-    (fn index => fn asm => (index + 1, asm, normalize_term store asm)) asl
+    fun scan _ [] missed = fallback (List.rev missed)
+      | scan pos (asm :: rest) missed =
+          let val normalized = normalize_term store asm
+          in
+            if aconv normalized normalized_w then
+              matched pos asm rest
+            else
+              scan (pos + 1) rest ((pos, asm, normalized) :: missed)
+          end
+  in
+    scan 1 asl []
+  end
 
 fun assumption_lookup positioned (_ :: _ :: _) =
       let
@@ -263,7 +270,6 @@ fun contradiction_results
         fun results (neg_pos, neg_tm, normalized_neg) =
           let
             val positive = dest_neg normalized_neg
-            val normalized_positive = normalize_term store positive
             fun make (pos_pos, pos_tm) =
               let
                 fun validation [] =
@@ -290,7 +296,7 @@ fun contradiction_results
                    closed = [], store = store}
               end
           in
-            seq.map make (seq.fromList (lookup normalized_positive))
+            seq.map make (seq.fromList (lookup positive))
           end
       in
         seq.bind (seq.fromList negatives) results
@@ -315,7 +321,6 @@ fun mp_results
         fun results
             (imp_pos, imp_tm, normalized_imp, (antecedent, consequent)) =
           let
-            val normalized_antecedent = normalize_term store antecedent
             fun make_matches [] = seq.empty
               | make_matches matches =
                   let
@@ -364,7 +369,7 @@ fun mp_results
                     seq.map make (seq.fromList matches)
                   end
           in
-            make_matches (lookup normalized_antecedent)
+            make_matches (lookup antecedent)
           end
       in
         seq.bind (seq.fromList implications) results
@@ -375,20 +380,26 @@ fun closing_results methods (input as (node, pos)) =
     (fn () =>
       let
         val (asl, w) = clasetGoal.render node pos
-        val store = clasetGoal.store node
-        val normalized_w = normalize_term store w
-        val positioned = normalized_assumptions store asl
       in
-        first_nonempty methods
-          {input = input, asl = asl, store = store,
-           normalized_w = normalized_w, positioned = positioned}
+        if null asl then seq.empty
+        else
+          let
+            val store = clasetGoal.store node
+            val normalized_w = normalize_term store w
+            fun fallback positioned =
+              first_nonempty methods
+                {input = input, asl = asl, store = store,
+                 normalized_w = normalized_w, positioned = positioned}
+          in
+            assumption_results store normalized_w asl fallback
+          end
       end)
 
 val assume_or_contradiction =
-  closing_results [assumption_results, contradiction_results]
+  closing_results [contradiction_results]
 
 val assume_or_eq_mp =
-  closing_results [assumption_results, contradiction_results, mp_results]
+  closing_results [contradiction_results, mp_results]
 
 fun tag_equal
   ({weight = weight1, index = index1} : clasetLib.tag,

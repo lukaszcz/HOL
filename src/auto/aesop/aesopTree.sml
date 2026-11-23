@@ -670,12 +670,20 @@ and refresh_rapp_ancestors id (tree as Tree fields) =
       end
   end
 
-fun refresh_goal id independent_proof_changed tree =
+(* Adding an independent proof is monotone in the state order
+   Stuck < Unknown < Proved. Seed the fixed point by propagating along the
+   parent path, then let the global sweeps resolve any off-path copies. *)
+fun refresh_after_proof propagate tree =
+  let val next = propagate tree
+  in if has_copies next then refresh next else next
+  end
+
+fun refresh_goal id proof_retracted tree =
   if not (has_copies tree) then refresh_goal_ancestors id tree
   else
     let val current = goal tree id
     in
-      if independent_proof_changed orelse
+      if proof_retracted orelse
          derive_goal tree current <> #state current
       then refresh tree
       else tree
@@ -1088,8 +1096,7 @@ fun install_rapp parent_id
     {rapp = rid, goals = child_ids,
      tree =
        if not (null child_ids) then installed
-       else if has_copies installed then refresh installed
-       else refresh_rapp_ancestors rid installed}
+       else refresh_after_proof (refresh_rapp_ancestors rid) installed}
   end
 
 (* The goal's identity and parent link are unchanged, so the index stands. *)
@@ -1124,7 +1131,7 @@ fun set_normalised id {records, cgoal, store} tree =
 fun set_norm_proved id {records, store} tree =
   let val current = goal tree id
   in
-    refresh_goal id true
+    refresh_after_proof (refresh_goal_ancestors id)
       (store_goal
         (replace_norm
           (NormProved {records = records, store = store})

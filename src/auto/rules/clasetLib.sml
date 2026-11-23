@@ -1722,6 +1722,25 @@ fun sorted_types_compatible
              sorted_types_compatible ls rs)
   | sorted_types_compatible _ _ = true
 
+(* If every binding agrees, the compatibility graph is complete and its
+   sole maximal clique is the full input. Preserve the first occurrence
+   of each binding, as in the general clique union. *)
+fun complete_type_join substitutions =
+  let
+    exception Conflict
+    fun add (binding as {redex, residue}, state as (seen, reversed)) =
+      case Redblackmap.peek (seen, redex) of
+          NONE => (Redblackmap.insert (seen, redex, residue),
+                   binding :: reversed)
+        | SOME earlier =>
+            if Type.compare (earlier, residue) = EQUAL then state
+            else raise Conflict
+    val (_, reversed) = List.foldl
+      (fn (types, state) => List.foldl add state types)
+      (Redblackmap.mkDict Type.compare, []) substitutions
+  in SOME (List.rev reversed) end
+  handle Conflict => NONE
+
 (* Maximal compatible unions avoid enumerating every compatible subset. *)
 fun maximal_type_joins_with budgeted charge ordered substitutions =
   case substitutions of
@@ -1759,11 +1778,18 @@ fun maximal_type_joins_with budgeted charge ordered substitutions =
                   if List.exists (same_types types) kept then kept
                   else kept @ [types]) [] substitutions
             else substitutions
+          val direct =
+            case unique of
+                [] => SOME []
+              | [_] => SOME []
+              | _ =>
+                  if budgeted then NONE
+                  else Option.map (fn joined => [joined])
+                         (complete_type_join unique)
         in
-          case unique of
-              [] => []
-            | [_] => []
-            | _ =>
+          case direct of
+              SOME joins => joins
+            | NONE =>
                 let
                   val parts = Vector.fromList unique
                   val count = Vector.length parts

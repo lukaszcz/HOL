@@ -2668,6 +2668,27 @@ val _ =
 
 val _ =
   test
+    ("safe assumption alternatives keep their order and precedence",
+     fn () =>
+       let
+         val x = mk_var ("safe_closure_x", bool_ty)
+         val f = mk_var ("safe_closure_f", bool_ty --> bool_ty)
+         val g = mk_var ("safe_closure_g", bool_ty --> bool_ty)
+         val target = boolSyntax.mk_eq (f, g)
+         val eta = boolSyntax.mk_eq (mk_abs (x, mk_comb (f, x)), g)
+         val goal = ([phase1_pa, eta, boolSyntax.mk_neg phase1_pa, target],
+                     target)
+         val steps = seq.take 3
+           (safe_step cascade_cs (clasetGoal.from_goal goal, 1))
+       in
+         (case map (clasetStep.kind_of o #1) steps of
+              [clasetStep.Assumption 2, clasetStep.Assumption 4] => true
+            | _ => false) andalso
+         List.all (valid_step goal) steps
+       end)
+
+val _ =
+  test
     ("lookup spellings follow beta reductions after instantiation",
      fn () =>
        let

@@ -4829,11 +4829,12 @@ val _ =
                [``x:'a # 'b # 'c # 'd``, ``y:'a # 'b # 'c # 'e``,
                 ``z:'f``]
              val wide = GENL binders (Drule.ISPECL binders fact)
-             val assumptions =
+             val compatible =
                [``join_p (0:num, T, []:num list, SOME T)``,
                 ``join_q (0:num, T, []:num list, SOME 0)``,
-                ``join_q (T, T, []:num list, SOME 0)``,
                 ``join_r T``]
+             val conflicting =
+               ``join_q (T, T, []:num list, SOME 0)`` :: compatible
              fun shape tm =
                map (fn binder =>
                  let val ty = type_of binder in
@@ -4841,18 +4842,23 @@ val _ =
                        [] => (0, SOME ty)
                      | vars => (length vars, NONE)
                  end) (fst (strip_forall tm))
-             val ordinary =
-               map shape (inserted clasetLib.INSERT_FACTS_TAC wide assumptions)
-             val metered =
-               map shape (inserted
-                 (clasetLib.INSERT_FACTS_TAC_BUDGETED
-                   (searchBudget.unbounded ())) wide assumptions)
              val full =
                [(0, SOME (type_of ``(0:num, T, []:num list, SOME T)``)),
                 (0, SOME (type_of ``(0:num, T, []:num list, SOME 0)``)),
                 (0, SOME Type.bool)]
+             fun same_joins assumptions =
+               let
+                 val ordinary = map shape
+                   (inserted clasetLib.INSERT_FACTS_TAC wide assumptions)
+                 val metered = map shape
+                   (inserted
+                     (clasetLib.INSERT_FACTS_TAC_BUDGETED
+                       (searchBudget.unbounded ())) wide assumptions)
+               in
+                 ordinary = metered andalso List.exists (equal full) ordinary
+               end
            in
-             ordinary = metered andalso List.exists (equal full) ordinary
+             same_joins compatible andalso same_joins conflicting
            end))
 
 (* bounded_memo keeps the values of the most recently asked-for keys.

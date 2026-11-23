@@ -92,6 +92,38 @@ fun count_primitives f x =
     (result, prims)
   end
 
+val _ =
+  check
+    ("chain replay uses the graph endpoints without rematching each edge",
+     fn () =>
+       let
+         val transitive = Thm.ASSUME
+           (Term.mk_comb
+              (Term.prim_mk_const {Thy = "relation", Name = "transitive"},
+               long_order_relation))
+         val first = Thm.ASSUME (long_order_edge 0 1)
+         val rest = List.tabulate
+           (47, fn i => Thm.ASSUME (long_order_edge (i + 1) (i + 2)))
+         val target = long_order_edge 0 48
+         val (theorem, replay_work) = count_primitives
+           (fn () =>
+             orderSolve.prove_with (transitive :: first :: rest) target) ()
+         val (reference, matching_work) = count_primitives
+           (fn () =>
+             let
+               val step =
+                 Drule.MATCH_MP orderRulesTheory.order_weak_trans transitive
+               fun join (next, path) =
+                 Drule.MATCH_MP (Drule.MATCH_MP step path) next
+             in
+               List.foldl join first rest
+             end) ()
+       in
+         Term.aconv (Thm.concl theorem) target andalso
+         Lib.list_eq Term.aconv (Thm.hyp theorem) (Thm.hyp reference) andalso
+         replay_work < matching_work
+       end)
+
 fun unrelated_edges_unproved edge =
   let
     val target = long_order_edge 0 1
