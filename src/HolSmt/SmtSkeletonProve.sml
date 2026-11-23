@@ -117,9 +117,9 @@ struct
   val live_bucket_count = 127
   val live_term_bucket_count = 4093
   type 'a live_bucket = {values : 'a array, next : int ref}
-  type 'a live_buckets =
-    {peek:int -> 'a live_bucket option,put:int * 'a live_bucket -> unit}
-  fun new_live_buckets count : 'a live_buckets =
+  type 'a sparse_buckets =
+    {peek:int -> 'a option,put:int * 'a -> unit}
+  fun new_sparse_buckets count : 'a sparse_buckets =
     let
       val size = 32
       val blocks = Array.array ((count+size-1) div size,NONE)
@@ -134,6 +134,8 @@ struct
                   in Array.update (blocks,slot,SOME block);block end
         in Array.update (block,index mod size,SOME value) end
     in {peek=peek,put=put} end
+  type 'a live_buckets = 'a live_bucket sparse_buckets
+  fun new_live_buckets count : 'a live_buckets = new_sparse_buckets count
   type live_memo =
     {terms : Term.term live_buckets,types : Type.hol_type live_buckets}
   fun new_live_memo () : live_memo =
@@ -856,7 +858,8 @@ struct
      Applications and Types are compared nodewise; only the public binder
      island uses native comparison, after BOTH operands have been admitted.
      Comparison results are lookup keys, never theorem evidence. *)
-  fun new_semantic_order () =
+  local
+  fun make_semantic_order () =
     let
       val count = 4093
       (* A shallow structural hash sends every suffix of a homogeneous
@@ -864,19 +867,21 @@ struct
          even for lookup. Assign physical IDs in single-term buckets, then
          index the pair memo by integer pairs. IDs only route memo entries;
          the semantic order below still determines every returned result. *)
-      val physical = Array.array (count, [] : (term * int) list)
+      val physical : (term * int) list sparse_buckets =
+        new_sparse_buckets count
       val next_physical = ref 0
       fun physical_id term =
-        let val bucket = SmtResource.pointer_bucket count term in
+        let
+          val bucket = SmtResource.pointer_bucket count term
+          val entries = Option.getOpt (#peek physical bucket, [])
+        in
           case List.find (fn (saved, _) =>
-              Portable.pointer_eq (term, saved))
-              (Array.sub (physical, bucket)) of
+              Portable.pointer_eq (term, saved)) entries of
             SOME (_, id) => id
           | NONE =>
               let val id = !next_physical in
                 next_physical := id + 1;
-                Array.update (physical, bucket,
-                  (term, id) :: Array.sub (physical, bucket));
+                #put physical (bucket, (term, id) :: entries);
                 id
               end
         end
@@ -954,6 +959,17 @@ struct
                 in result end
           end
     in compare_env [] [] end
+  in
+  (* Pointer-identical comparisons need no comparison state. *)
+  fun new_semantic_order () =
+    let
+      val order = Susp.delay make_semantic_order
+    in
+      fn (left,right) =>
+        if Portable.pointer_eq (left,right) then EQUAL
+        else Susp.force order (left,right)
+    end
+  end
 
   fun new_cache_index maximum =
     let

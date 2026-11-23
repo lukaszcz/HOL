@@ -1345,23 +1345,26 @@ struct
          val _ = memo_save g scope source raw
        in source end)
 
-  fun reachable_using descend_binders g roots =
+  fun fold_reachable descend_binders collect g roots initial =
     let
-      fun children node = case view g node of
-          Application (left,right) => [left,right]
+      fun pending node rest = case view g node of
+          Application (left,right) => left :: right :: rest
         | AdmittedBinder {binder,body,...} =>
-            if descend_binders then [binder,body] else []
-        | _ => []
-      fun loop [] _ result = List.rev result
+            if descend_binders then binder :: body :: rest else rest
+        | _ => rest
+      fun loop [] _ result = result
         | loop (node::rest) visited result =
           if Redblackset.member (visited,node_id node) then
             (ignore (entry g node); loop rest visited result)
-          else loop (children node @ rest)
-            (Redblackset.add (visited,node_id node)) (node::result)
-    in loop roots (Redblackset.empty Int.compare) [] end
+          else loop (pending node rest)
+            (Redblackset.add (visited,node_id node)) (collect (node,result))
+    in loop roots (Redblackset.empty Int.compare) initial end
+  fun reachable_using descend_binders g roots =
+    List.rev (fold_reachable descend_binders (op ::) g roots [])
   val reachable = reachable_using true
   val block_reachable = reachable_using false
-  fun dag_nodes g roots = List.length (reachable g roots)
+  fun dag_nodes g roots =
+    fold_reachable true (fn (_,count) => count + 1) g roots 0
   fun partial_scope_live g scope =
     let val {parent,active,...} = scope_frame g scope
     in !active andalso (case parent of NONE => true

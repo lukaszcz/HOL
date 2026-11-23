@@ -1370,7 +1370,7 @@ local
       | NONE => Redblackmap.find (tydict, ty)
 
   (* structural term/type helpers shared via Library (see Library.sml) *)
-  val type_contains = Library.type_contains
+  val type_contains = Library.type_contains_pure
   val type_contains_word = Library.type_contains_word
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
@@ -1385,9 +1385,17 @@ local
   fun type_is_binary_ieee_float ty =
     type_has_name "binary_ieee" "float" ty
   fun type_contains_fp ty =
-    type_is_smtfp ty orelse
-    (List.exists type_contains_fp (Lib.snd (Type.dest_type ty))
-      handle Feedback.HOL_ERR _ => false)
+    let
+      fun visit ty = type_is_smtfp ty orelse
+        ((case #2 (Type.dest_type ty) of
+           [] => false
+         | first :: rest => visit first orelse remaining first rest)
+         handle Feedback.HOL_ERR _ => false)
+      and remaining _ [] = false
+        | remaining previous (child :: rest) =
+            (not (Portable.pointer_eq (previous, child)) andalso visit child)
+            orelse remaining child rest
+    in visit ty end
   (* smtstr only, which is exactly the set of types that 'builtin_types' maps
      to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
@@ -2418,16 +2426,25 @@ local
     let
       val totalized =
         List.filter (#totalized term_sequence_eligibility) subterms
-      val totalized_subterms = query_subterms totalized
-      fun is_totalized_part tm =
-        List.exists (fn part => Term.aconv tm part) totalized_subterms
+      fun membership terms =
+        let val index = Susp.delay (fn () =>
+          HOLset.addList (Term.empty_tmset, terms ()))
+        in fn tm => HOLset.member (Susp.force index, tm) end
+      val (is_totalized_part, is_totalized_whole) =
+        case totalized of
+          [] => (Lib.K false, Lib.K false)
+        | [whole] =>
+            let val parts = Susp.delay (fn () => Library.subterms whole)
+            in (fn tm => List.exists (Term.aconv tm) (Susp.force parts),
+                Term.aconv whole)
+            end
+        | _ => (membership (fn () => query_subterms totalized),
+                membership (fn () => totalized))
       val supported =
         (#supported term_sequence_eligibility) is_totalized_part
       fun native_sequence_parts tm =
         List.all (#native_part term_sequence_eligibility)
           (Library.subterms tm)
-      fun is_totalized_whole tm =
-        List.exists (fn whole => Term.aconv tm whole) totalized
       val selects_seq = (#selects_seq term_sequence_eligibility)
         {native_parts=native_sequence_parts,
          is_totalized_whole=is_totalized_whole}
@@ -2543,30 +2560,26 @@ local
       | NONE => try_whole ()
     end
 
-  fun insert_builtin_record (record, records) =
-    if List.exists
-        (fn EncodedSymbol {hol_term, smt_symbol, arity} =>
-              (case record of
-                 EncodedSymbol {hol_term = hol_term',
-                   smt_symbol = smt_symbol', arity = arity'} =>
-                   Term.compare (hol_term, hol_term') = EQUAL andalso
-                   smt_symbol = smt_symbol' andalso arity = arity'
-               | _ => false)
-          | _ => false) records
-    then records
-    else record :: records
-
   fun encoded_symbol_records terms =
     let
-      fun add (tm, records) =
+      val empty = Redblackset.empty (Lib.pair_compare (Term.compare,
+        Lib.pair_compare (String.compare, Int.compare)))
+      fun add (tm, state as (seen, records)) =
         case builtin_encoding tm of
-          SOME (symbol, arity) =>
-            insert_builtin_record
-              (EncodedSymbol {hol_term = Lib.fst (boolSyntax.strip_comb tm),
-                smt_symbol = symbol, arity = arity}, records)
-        | NONE => records
+          SOME (encoding as (symbol, arity)) =>
+            let
+              val head = Lib.fst (boolSyntax.strip_comb tm)
+              val key = (head, encoding)
+            in
+              if Redblackset.member (seen, key) then state
+              else (Redblackset.add (seen, key),
+                EncodedSymbol {hol_term = head, smt_symbol = symbol,
+                  arity = arity} :: records)
+            end
+        | NONE => state
+      fun add_root (tm, state) = List.foldl add state (subterms tm)
     in
-      List.foldl add [] (List.concat (List.map subterms terms))
+      Lib.snd (List.foldl add_root (empty, []) terms)
     end
 
   fun features_to_string (LogicFeatures {
@@ -2907,24 +2920,23 @@ local
               (List.map type_name_stem Args)
         end
 
-  fun dict_type_names tydict =
-    Redblackmap.foldl (fn (_, name, acc) => name :: acc) [] tydict
-
-  fun fresh_smt_name reserved used stem =
+  fun fresh_smt_name_avoiding unavailable stem =
     let
       val stem = smt_simple_symbol "S_" stem
-      fun unavailable s =
-        is_smt_reserved reserved s orelse List.exists (fn t => t = s) used
       fun loop n =
         let
           val candidate =
             if n = 0 then stem else stem ^ "_" ^ Int.toString n
         in
-          if unavailable candidate then loop (n + 1) else candidate
+          if unavailable (n, candidate) then loop (n + 1) else candidate
         end
     in
       loop 0
     end
+
+  fun fresh_smt_name reserved used =
+    fresh_smt_name_avoiding (fn (_, name) =>
+      is_smt_reserved reserved name orelse List.exists (Lib.equal name) used)
 
   fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
 
@@ -3382,7 +3394,7 @@ local
           val strings =
             emitted_types type_contains_string orelse
             emitted_types
-              (Library.type_contains
+              (type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
             List.exists (fn tm => (test_constant is_string_const)
               (Lib.fst (strip_comb tm))) all_subterms
@@ -3436,7 +3448,7 @@ local
             in
               (test_constant is_native_string_const) rator orelse
               type_contains_string (type_of tm) orelse
-              Library.type_contains
+              type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)
                 (type_of tm)
             end
@@ -4249,16 +4261,24 @@ local
               (field_dependencies field)) graph (constructor_doms ty)
         val components = DatatypeGraph.strong_conn
           (List.foldl add_dependencies graph family)
-        val used0 = dict_type_names tydict @ smt_reserved_type_names
-        fun add_name (fam_ty, (used, acc)) =
+        (* Most stems need only a direct probe. Once suffixes also collide,
+           index the existing names so retries need not scan the map. *)
+        val used_names = Susp.delay (fn () => Redblackmap.foldl
+          (fn (_, name, names) => Redblackset.add (names, name))
+          (Redblackset.empty String.compare) tydict)
+        fun add_name (fam_ty, used) =
           let
-            val name = fresh_smt_name smt_reserved_type_names used
-              (type_name_stem fam_ty)
+            fun unavailable (suffix, name) =
+              is_smt_reserved smt_reserved_type_names name orelse
+              List.exists (Lib.equal name) used orelse
+              (if suffix < 2 then Redblackmap.exists (Lib.equal name) tydict
+               else Redblackset.member (Susp.force used_names, name))
+            val name =
+              fresh_smt_name_avoiding unavailable (type_name_stem fam_ty)
           in
-            (name :: used, name :: acc)
+            name :: used
           end
-        val (_, names_rev) = List.foldl add_name (used0, []) family
-        val names = List.rev names_rev
+        val names = List.rev (List.foldl add_name [] family)
         val tydict_with_family = ListPair.foldlEq
           (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
           tydict (family, names)
@@ -6644,8 +6664,8 @@ local
     val marked_bags = Redblackset.addList (empty_marked_terms, bag_terms)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
-    val raw_num_terms = SmtLib_RawNumAnalysis.collect
-      raw_num_operations bag_terms roots
+    val raw_num_terms = SmtLib_RawNumAnalysis.collect_by
+      raw_num_operations Term.compare bag_terms roots
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
@@ -8187,12 +8207,16 @@ local
       Term.is_var v andalso
       List.exists (fn ty => Type.compare (ty, numSyntax.num) = EQUAL)
         (Lib.fst (boolSyntax.strip_fun (Term.type_of v)))
-    val asm_fvs = List.concat (List.map Term.free_vars asms)
-    fun free_in_asms v = List.exists (fn w => Term.aconv v w) asm_fvs
+    val candidates =
+      List.filter (fn v => is_num_var v orelse is_bag_var v orelse
+                           has_num_arg v)
+        (Term.free_vars concl)
   in
-    List.filter (fn v =>
-      (is_num_var v orelse is_bag_var v orelse has_num_arg v) andalso
-      not (free_in_asms v)) (Term.free_vars concl)
+    if null candidates then []
+    else
+      let val asm_fvs = Term.FVL asms Term.empty_tmset
+      in List.filter (fn v => not (HOLset.member (asm_fvs, v))) candidates
+      end
   end
 
   fun SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude g =
@@ -8394,7 +8418,10 @@ in
     let
       val roots = goal :: assumptions
       val {bags, ...} = collect_query_collection_markers roots
-    in SmtLib_RawNumAnalysis.collect raw_num_operations bags roots end
+    in
+      SmtLib_RawNumAnalysis.collect_by raw_num_operations Term.compare
+        bags roots
+    end
 
   fun outbound_pair_constant (left, right) =
     Term.inst [{redex = Type.alpha, residue = left},
@@ -8623,7 +8650,7 @@ in
         val inventory = Susp.delay (fn () => query_subterms (concl :: asms))
         val sequence_emission = Susp.delay
           (fn () => native_sequence_subterms (Susp.force inventory))
-        val _ = preflight sequence_emission
+        val _ = preflight inventory sequence_emission
         val _ = reject_reglan_hol_equalities goal
         val tail = outbound_query_tail string_output_operations get_proof
       in
@@ -8678,7 +8705,7 @@ in
   in
 
     fun goal_to_SmtLib_translation_gen opts goal =
-      translate_with_preflight (fn _ => ()) opts goal
+      translate_with_preflight (fn _ => fn _ => ()) opts goal
 
     fun goal_to_SmtLib_gen opts goal =
       Lib.apfst translation_dicts (goal_to_SmtLib_translation_gen opts goal)
@@ -8689,12 +8716,22 @@ in
     fun goal_to_SmtLib_translation_for_solver
         {policy, dialect, apply_operator, get_proof, target} goal =
       let
-        fun preflight sequence_emission =
+        fun preflight inventory sequence_emission =
           case target of
             NONE => ()
           | SOME solver_target =>
-              check_goal_operator_availability_for_sequence
-                (Susp.force sequence_emission) solver_target goal
+              let
+                val sequence_emission = Susp.force sequence_emission
+                val constants = Susp.delay (fn () =>
+                  List.filter Term.is_const (Susp.force inventory))
+                fun occurs head = List.exists (fn constant =>
+                  Term.same_const constant head andalso
+                  counts_for_operator_availability constant)
+                  (Susp.force constants)
+              in
+                outbound_check_operator_availability
+                  {sequence_emission = sequence_emission} solver_target occurs
+              end
       in
         translate_with_preflight preflight
           (emit_options [with_request (AutomaticRegime dialect),

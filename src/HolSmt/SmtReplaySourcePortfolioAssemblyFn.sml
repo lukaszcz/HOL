@@ -16,21 +16,10 @@ functor SmtReplaySourcePortfolioAssemblyFn
     | Transport of SmtReplayCanonGraph.graph_conversion * fact
     | BinderTransport of SmtReplayProof.closed_conversion * fact
     | Apply of {law : fact,premises : fact list}
-  datatype validation = Validation of
-    {graph : SmtReplayGraph.graph, scope : SmtReplayGraph.scope, sources :
-       SmtReplaySource.sources,
-     assumptions : fact list, goal : SmtReplayGraph.node, denied : fact, roots
-       : SmtReplayGraph.node list,
-     template_limit : int,closed_facts : SmtReplayProof.closed_fact list,
-     conversions : SmtReplayProof.closed_conversion list}
-    | PolicyValidation of
-    {work:SmtReplayInvocationWork.portfolio, graph:SmtReplayGraph.graph,
-       scope:SmtReplayGraph.scope, sources:SmtReplaySource.sources,
-     limits:SmtReplayResourcePolicy.semantic_policy, assumptions:fact list,
-       goal:SmtReplayGraph.node,
-     denied:fact, roots:SmtReplayGraph.node list,
-       closed_facts:SmtReplayProof.closed_fact list,
-     conversions:SmtReplayProof.closed_conversion list}
+     type validation
+     val policy_inputs : SmtReplayInvocationWork.portfolio -> validation ->
+       {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
+        sources:SmtReplaySource.sources,assumptions:fact list,denied:fact}
      val owner_for:SmtReplayInvocationWork.portfolio -> block ->
        {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
         contract:SmtReplayNativeContract.contract}
@@ -75,12 +64,8 @@ struct
   fun assembler_with_policy expected value block =
     ((W.with_step expected (fn () =>
       let
-        val {graph,scope,sources,assumptions,denied,...} = case value of
-            PolicyValidation (fields as {work,...}) =>
-              if Portable.pointer_eq (expected,work) then fields else
-                raise ERR "policy_assembler" "different original Work"
-          | Validation _ =>
-              raise ERR "policy_assembler" "policy portfolio required"
+        val {graph,scope,sources,assumptions,denied} =
+          policy_inputs expected value
         val owner = Input.owner_for expected block
         fun valid () =
           (validate_with_policy expected value;

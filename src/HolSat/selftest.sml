@@ -450,12 +450,49 @@ local
         (fn conf => checked valid (GEN_SAT conf)) andalso
       measured (internal (set_term invalid base_config))
         (fn conf => model conf invalid))
+  val _ = control "ordinary DPLL preserves definitional refutations and models"
+    (fn () =>
+      let
+        val goal = ``(p <=> q) ==> (q <=> p)``
+        val invalid = ``~(p <=> q)``
+        val (cnfv,_,lfn,clauses) = def_cnf.to_cnf false (mk_neg invalid)
+        val (_,initial,_,premises) = dpll.prepareDPLL (cnfv,lfn,clauses)
+        val expected = case dpll.CoreDPLL initial of
+            dpll.Sat f => concl (dpll.mk_model_thm cnfv lfn invalid f)
+          | dpll.Unsat _ => raise Fail "expected a DPLL countermodel"
+      in
+        isSome cnfv andalso not (null premises) andalso
+        measured (internal (set_term goal base_config))
+          (fn conf => checked goal (GEN_SAT conf)) andalso
+        measured (internal (set_term invalid base_config))
+          (fn conf => (GEN_SAT conf; false)
+            handle SAT_cex th => checked expected th)
+      end)
   val _ = control "proof-only missing-solver CNF and compound SAT contracts"
     (fn () => measured (internal (config cnf))
         (fn conf => checked (mk_neg cnf) (GEN_SAT_PROVE_ONLY conf)) andalso
       measured (internal (config compound)) sat_only andalso
       measured (internal (set_term invalid base_config)) sat_only andalso
       sat_only (set_term F base_config))
+  val _ = control "missing solvers do not write generated DIMACS"
+    (fn () =>
+      let val previous = !dimacsTools.tmp_name
+          val conf = internal (set_term valid base_config)
+      in checked valid (GEN_SAT conf) andalso
+         checked valid (GEN_SAT_PROVE_ONLY conf) andalso
+         !dimacsTools.tmp_name = previous
+      end)
+  val _ = control "DPLL chooses the first unit before counting literals"
+    (fn () => List.all (fn formula =>
+      dpll.find_splitting_var formula ~~ ``r:bool``)
+      [``((p \/ q) /\ ~r) /\ s``, ``(p \/ q) /\ (~r /\ s)``])
+  val _ = control "DPLL keeps frequency counts and tie order without units"
+    (fn () => dpll.find_splitting_var ``(q \/ p) /\ (~q \/ r)`` ~~ ``q:bool``
+      andalso dpll.find_splitting_var ``(q \/ p) /\ (s \/ r)`` ~~ ``p:bool``)
+  val _ = control "DPLL counts both signs of a compound atom once per use"
+    (fn () =>
+      dpll.find_splitting_var
+        ``((r \/ (p:bool = q)) \/ s) /\ (~(p = q) \/ t)`` ~~ ``p:bool = q``)
   val _ = control "balanced and asymmetric explicit CNF preserve clause order"
     (fn () =>
       let
@@ -481,6 +518,21 @@ local
     (fn () => measured (set_proof missing (config cnf))
         (fn conf => checked (mk_neg cnf) (GEN_SAT_PROVE_ONLY conf)) andalso
       measured (set_proof missing (config compound)) sat_only)
+  val _ = control "proof-only fallback handles empty, unit and non-unit CNF"
+    (fn () =>
+      let
+        val nonunit =
+          ``((p \/ q) /\ (~p \/ q)) /\ ((p \/ ~q) /\ (~p \/ ~q))``
+        fun refute goal = measured (internal (config goal))
+            (fn conf => checked (mk_neg goal) (GEN_SAT_PROVE_ONLY conf))
+      in
+        not (isSome (dpll.DPLL_REFUTE
+          (Redblackmap.mkDict Term.var_compare) (Array.fromList []))) andalso
+        refute F andalso measured (internal (config invalid)) sat_only andalso
+        refute nonunit andalso
+        measured (internal (set_term valid base_config))
+          (fn conf => checked valid (GEN_SAT_PROVE_ONLY conf))
+      end)
   val _ = control "ordinary missing-proof checked UNSAT/model contracts"
     (fn () => measured
         (set_flag_is_cnf false (set_proof missing

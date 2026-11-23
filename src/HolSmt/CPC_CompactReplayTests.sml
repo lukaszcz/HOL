@@ -11,6 +11,7 @@ struct
   structure F = SmtLib_GraphFrontend
   structure P = SmtLib_Parser
   structure R = CPC_GraphProofReplay
+  structure Plan = CPC_SharedReplayPlan
   val maximum = 512
   val goal = ``SUC (task37_n:num) = SUC task37_n``
   fun require message yes = if yes then () else raise Fail message
@@ -201,8 +202,108 @@ struct
     end
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
+  fun indexed_cnf () =
+    let
+      val count = 64
+      val names = List.tabulate (count,fn i => "cnf_p" ^ Int.toString i)
+      val variables = List.map (fn name => Term.mk_var (name,Type.bool)) names
+      val variables_by_name = ListPair.zip (names,variables)
+      val last = List.last variables
+      val assumptions = [boolSyntax.list_mk_conj variables,
+        boolSyntax.mk_neg last]
+      val aggregate = "(and " ^ String.concatWith " " names ^ ")"
+      fun measure repeats =
+        let
+          val graph = G.new ()
+          val scope = G.root_scope graph
+          val sources = S.new graph scope maximum
+            {goal=boolSyntax.F,assumptions=assumptions}
+          val options = Z3_CompactReplayTests.options graph scope
+            variables_by_name
+          fun selector index =
+            let val serial = Int.toString (count-repeats+index)
+            in "(step @c" ^ serial ^ " :rule cnf_and_pos :args (@wide " ^
+              serial ^ "))" end
+          val text = "((define @wide () " ^ aggregate ^ ")" ^
+            "(assume @whole @wide)(assume @neg (not " ^
+            List.last names ^ "))" ^
+            String.concat (List.tabulate (repeats,selector)) ^
+            "(step @last :rule resolution :premises (@c" ^
+            Int.toString (count-1) ^ " @whole))" ^
+            "(step @done false :rule resolution :premises (@last @neg)))"
+          val stream = TextIO.openString text
+          fun check () =
+            let
+              val proof = Q.parse_graph_stream_with_version options
+                (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream
+              val (theorem,stats) = G.with_node_statistics graph scope
+                (fn () => R.prove
+                  {graph=graph,scope=scope,sources=sources,proof=proof,
+                   ordinary_limit=maximum,template_limit=4096,
+                   worker=fn _ => raise Fail "unexpected CNF fallback"})
+              val _ = exact boolSyntax.F assumptions theorem
+            in #node_accesses stats end
+        in Portable.finally
+          (fn () => (TextIO.closeIn stream;G.close_scope graph scope))
+          check () end
+      val short = measure 4
+      val wide = measure count
+    in require ("CPC indexed CNF graph accesses (64/4): " ^
+      IntInf.toString wide ^ "/" ^ IntInf.toString short)
+      (wide < 4 * short) end
+  fun exact_transitivity_path () =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val count = 512
+      val ty = SmtRegLanProve.reglan_ty
+      val variables = Vector.tabulate (count + 2,fn i =>
+        G.variable graph scope G.RigidSource
+          (Term.mk_var ("cpc_trans_" ^ Int.toString i,ty)))
+      fun graph_relation tm =
+        let val head = G.constant graph scope tm
+        in fn (left,right) => G.application graph scope
+          (G.application graph scope (head,Vector.sub (variables,left)),
+           Vector.sub (variables,right))
+        end
+      val equality = graph_relation
+        (Term.inst [{redex=Type.alpha,residue=ty}] boolSyntax.equality)
+      val equivalence = graph_relation SmtRegLanProve.equiv_tm
+      val chain = List.tabulate (count,fn i =>
+        if i mod 2 = 0 then equality (i,i+1) else equality (i+1,i))
+      val premises = chain @ [equality (3,3),hd chain,
+        equivalence (count,count+1)]
+      val relation = SmtReplayRules.relation graph
+      fun measure search target =
+        let val visits = ref 0
+            val reachable = search (fn () => visits := !visits + 1)
+              target premises
+        in (reachable,!visits) end
+      fun legacy visit = Plan.relation_path
+        {visit=visit,relation=relation,map_partial=List.mapPartial,
+         same_kind=op =,same=op =,key=G.node_id,
+         empty=fn () => Redblackset.empty Int.compare,
+         member=Redblackset.member,add=Redblackset.add,
+         push=op ::,fold=List.foldl,error=Fail}
+      fun indexed visit = Plan.exact_relation_path
+        {visit=visit,relation=relation,key=G.node_id,error=Fail}
+      fun check endpoint expected =
+        let val target = equality (0,endpoint)
+            val (before_reachable,before_visits) = measure legacy target
+            val (after_reachable,after_visits) = measure indexed target
+        in
+          require "indexed CPC transitivity changed exact reachability"
+            (after_reachable = expected andalso
+             before_reachable = after_reachable);
+          require "indexed CPC transitivity repeated full premise scans"
+            (after_visits < before_visits div 3)
+        end
+    in check count true; check (count+1) false end
   fun run () =
-    (test "CPC fitting law drops all unused original Sources"
+    (test "CPC indexed CNF reuses validated definition operands" indexed_cnf;
+     test "CPC indexed transitivity matches exact reachability and kind"
+       exact_transitivity_path;
+     test "CPC fitting law drops all unused original Sources"
        (positive false Closed);
      test "CPC wider law drops all unused original Sources"
        (positive true Closed);

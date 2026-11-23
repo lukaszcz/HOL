@@ -14,6 +14,7 @@ struct
      Poly/ML's portable counter is synchronized; overflow cannot reuse IDs. *)
   val next_identity = Portable.make_counter {init = 0,inc = 1}
   structure RP = SmtReplayResourcePolicy
+  type validation_stamp = IntInf.int * int * int
   datatype fact = Fact of
     {identity : int,graph : G.graph,scope : G.scope,node : G.node,row : row}
   and row = Original of S.sources * int
@@ -32,7 +33,8 @@ struct
     {work:W.portfolio,graph:G.graph,scope:G.scope,sources:S.sources,
      limits:RP.semantic_policy,assumptions:fact list,goal:G.node,
      denied:fact,roots:G.node list,closed_facts:P.closed_fact list,
-     conversions:P.closed_conversion list}
+     conversions:P.closed_conversion list,
+     original_validation:(validation_stamp * IntInf.int) option ref}
   fun nodes sources = S.assumption_nodes sources @ [S.denied_goal_node sources]
   fun endpoint (Fact {graph,scope,node,...}) =
     (G.validate_scope graph scope;ignore (G.view graph node);node)
@@ -393,9 +395,8 @@ struct
   (* This pass precedes endpoint/Type getters, just as the finite owned
      validator's guard_facts pass does. Foreign facts cannot activate their
      graph or proof backing while the expected Work is being validated. *)
-  fun guard_policy_facts work graph scope sources inputs =
+  fun guard_policy_facts_using charge work graph scope sources inputs =
     let
-      fun charge () = W.spend_guard_policy work 1
       fun compare keys = (charge ();Int.compare keys)
       val completed = ref (Redblackmap.mkDict compare : (int,fact)
         Redblackmap.dict)
@@ -433,14 +434,36 @@ struct
           completed := Redblackmap.insert (!completed,identity,fact)))
     in List.app visit inputs end
 
+  fun guard_policy_facts work =
+    guard_policy_facts_using (fn () => W.spend_guard_policy work 1) work
+
+  fun original_fact (Fact {row=Original _,...}) = true
+    | original_fact (Fact {row=PolicyOriginal _,...}) = true
+    | original_fact _ = false
+
+  fun validation_stamp work graph scope =
+    if W.ordinary_policy_guard_mode work then
+      Option.map (fn revision =>
+        (revision,Type.type_epoch (),Term.term_epoch ()))
+        (G.unpriced_validation_revision graph scope)
+    else NONE
+
   fun validate_policy_portfolio work {assumptions,goal,denied} =
     let
       val expected = policy_expected work
       val graph = #graph expected val scope = #scope expected
       val sources = #sources expected val limits = #limits expected
       val template = #template_limit limits
-      val _ = guard_policy_facts work graph scope sources
-        (denied::assumptions)
+      val inputs = denied::assumptions
+      val stamp = validation_stamp work graph scope
+      val only_original = ref (Option.isSome stamp)
+      val paid = ref (0:IntInf.int)
+      val _ = case stamp of NONE =>
+          guard_policy_facts work graph scope sources inputs
+        | SOME _ =>
+            guard_policy_facts_using
+              (fn () => (W.spend_guard_policy work 1;paid := !paid+1))
+              work graph scope sources inputs
       val _ = G.validate_scope graph scope
       val _ = visible graph scope goal
       val originals = nodes sources
@@ -505,6 +528,8 @@ struct
                      = EQUAL then () else
                    raise ERR "validate_with_policy"
                      "query dependency is not Boolean"
+                 val _ = if !only_original andalso not (original_fact fact)
+                         then only_original := false else ()
                  val roots = node::roots
              in case row of
                   Original (saved,index) =>
@@ -544,12 +569,18 @@ struct
                     (charge 1;List.app (fn _=>charge 1) premises;
                      walk (law::premises@rest) roots)
              end)
-      val roots = walk (denied::assumptions) (goal::originals)
+      val roots = walk inputs (goal::originals)
       val _ = W.validate_policy work graph scope sources limits
+      val original_validation = case stamp of NONE => NONE
+        | SOME saved =>
+            if !only_original andalso
+                validation_stamp work graph scope = stamp
+            then SOME (saved,!paid) else NONE
     in PolicyValidation {work=work,graph=graph,scope=scope,sources=sources,
       limits=limits,assumptions=assumptions,goal=goal,denied=denied,
       roots=roots,closed_facts=List.rev (!closed_facts),
-      conversions=List.rev (!conversions)} end
+      conversions=List.rev (!conversions),
+      original_validation=ref original_validation} end
 
   fun validate_portfolio_with_policy work input =
     (validate_policy_portfolio work input
@@ -563,12 +594,27 @@ struct
         raise ERR rule "policy portfolio required"
 
   fun validate_policy_for expected value =
-    ((let val {graph,scope,sources,limits,assumptions,goal,denied,...} =
+    ((let val {graph,scope,sources,limits,assumptions,goal,denied,
+               original_validation,...} =
             policy_fields "validate_with_policy" expected value
           val _ = W.validate_policy expected graph scope sources limits
-          val _ = validate_policy_portfolio expected
-            {assumptions=assumptions,goal=goal,denied=denied}
-      in () end)
+          fun recheck () =
+            case validate_policy_portfolio expected
+                {assumptions=assumptions,goal=goal,denied=denied} of
+                PolicyValidation fields =>
+                  original_validation := !(#original_validation fields)
+              | Validation _ => raise Fail "policy validation expected"
+      in case !original_validation of
+           SOME (stamp,paid) =>
+             if validation_stamp expected graph scope = SOME stamp andalso
+                 RP.allows (W.remaining_policy expected) paid then
+               (* Original rows have no live proof obligations. With the
+                  owner and revision unchanged, only their Work debit is
+                  due. Fall back to individual debits on a refusal. *)
+               W.spend_ordinary_guard_policy expected paid
+             else recheck ()
+         | NONE => recheck ()
+      end)
      handle primary => (W.close expected;raise primary))
 
   fun validate_with_work expected (saved as PolicyValidation _) =
@@ -724,6 +770,12 @@ struct
           val _=guard_policy_facts work graph scope sources [result]
       in result end)
      handle primary=>(W.close work;raise primary))
+  fun policy_assembly_inputs expected value =
+    let val {graph,scope,sources,assumptions,denied,...} =
+          policy_fields "policy_assembler" expected value
+    in {graph=graph,scope=scope,sources=sources,
+        assumptions=assumptions,denied=denied} end
+
   structure OrdinaryPolicyAssembly=SmtReplaySourcePortfolioAssemblyFn
     (struct
        type block=P.block
@@ -731,7 +783,8 @@ struct
        type inst_plan=P.policy_closed_named_inst_plan
        datatype fact = datatype fact
        datatype row = datatype row
-       datatype validation = datatype validation
+       type validation = validation
+       val policy_inputs=policy_assembly_inputs
        val validate_with_policy=validate_with_policy
        val nodes=nodes
        val endpoint=endpoint
@@ -775,7 +828,8 @@ struct
        type inst_plan=P.policy_sparse_named_inst_plan
        datatype fact = datatype fact
        datatype row = datatype row
-       datatype validation = datatype validation
+       type validation = validation
+       val policy_inputs=policy_assembly_inputs
        val validate_with_policy=validate_with_policy
        val nodes=nodes
        val endpoint=endpoint

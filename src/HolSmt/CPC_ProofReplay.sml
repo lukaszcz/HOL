@@ -274,34 +274,40 @@ local
      semantic rules consume those exact boundaries even when no conjunction
      occurs below them.  Other conjunction-irrelevant application and binder
      shells can still be collapsed to keep large arithmetic proofs bounded. *)
-  fun compact_live_provenance provenance =
+  fun compact_live_provenance AtomicProvenance = AtomicProvenance
+    | compact_live_provenance (item as UnavailableProvenance _) = item
+    | compact_live_provenance (item as AmbiguousProvenance _) = item
+    | compact_live_provenance provenance =
     let
       type summary = term_provenance * bool * bool
-      val buckets = Array.array
-        (4093, [] : (term_provenance * summary) list)
+      val bucket_count = 4093
+      val {peek,put} = SmtSkeletonProve.new_sparse_buckets bucket_count
+      fun entries bucket : (term_provenance * summary) list =
+        Option.getOpt (peek bucket, [])
       fun string_hash string =
         let
           fun loop index hash =
             if index = String.size string then hash
             else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod 4093)
+              ((hash * 33 + Char.ord (String.sub (string, index))) mod
+               bucket_count)
         in loop 0 5381 end
       fun tag item =
         case item of
           AtomicProvenance => 0
         | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod 4093
+            (17 * string_hash head + List.length operands) mod bucket_count
         | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod 4093
+            (31 * string_hash head + 1) mod bucket_count
         | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod 4093
+            (37 * string_hash head + size) mod bucket_count
         | EqualityProvenance _ => 41
         | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod 4093
+            (43 + List.length operands) mod bucket_count
         | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod 4093
+            (47 * string_hash reason) mod bucket_count
         | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod 4093
+            (53 * string_hash reason) mod bucket_count
       fun lookup [] _ = NONE
         | lookup ((saved, result) :: rest) item =
             if Portable.pointer_eq (saved, item) then SOME result
@@ -310,7 +316,7 @@ local
         let
           val bucket = tag item
         in
-          case lookup (Array.sub (buckets, bucket)) item of
+          case lookup (entries bucket) item of
             SOME result => result
           | NONE =>
               let
@@ -361,8 +367,7 @@ local
                         (BinderBlockProvenance (head, size, body'),
                          clear, true)
                       end
-                val _ = Array.update (buckets, bucket,
-                  (item, result) :: Array.sub (buckets, bucket))
+                val _ = put (bucket, (item, result) :: entries bucket)
               in result end
         end
     in #1 (summarize provenance) end
@@ -15500,34 +15505,6 @@ local
             trace_chain ("structural extras " ^
               Int.toString (List.length structural_extras))
           else ()
-          fun structural_deep_literals term =
-            if boolSyntax.is_disj term then
-              let val (left, right) = boolSyntax.dest_disj term
-              in structural_deep_literals left @
-                 structural_deep_literals right end
-            else
-              case Lib.total boolSyntax.dest_neg term of
-                SOME body =>
-                  if boolSyntax.is_disj body then
-                    let val (left, right) = boolSyntax.dest_disj body
-                    in structural_deep_literals
-                         (boolSyntax.mk_neg left) @
-                       structural_deep_literals
-                         (boolSyntax.mk_neg right) end
-                  else if boolSyntax.is_conj body then
-                    let val (left, right) = boolSyntax.dest_conj body
-                    in structural_deep_literals
-                         (boolSyntax.mk_neg left) @
-                       structural_deep_literals
-                         (boolSyntax.mk_neg right) end
-                  else [term]
-              | NONE => [term]
-          val structural_deep_extras = List.filter
-            (fn literal => not (List.exists
-              (structural_literal_equal literal) target_literals))
-            (List.concat (List.map structural_deep_literals
-              structural_extras))
-          val _ = trace_chain "deep extras complete"
           fun atomic_boolean_literal term =
             if boolSyntax.is_disj term orelse boolSyntax.is_conj term then false
             else case Lib.total boolSyntax.dest_neg term of
@@ -15550,6 +15527,36 @@ local
                  boolSyntax.is_conj body orelse boolSyntax.is_neg body
              | NONE => boolSyntax.is_disj term orelse
                  boolSyntax.is_conj term)
+          fun deep_extras_supported () =
+            let
+              (* Count literal occurrences in clause order. Shared children
+                 can contribute several occurrences to the limit. *)
+              fun walk [] _ = true
+                | walk (term :: rest) remaining =
+                    let
+                      fun leaf () =
+                        if List.exists (structural_literal_equal term)
+                            target_literals then walk rest remaining
+                        else remaining > 0 andalso
+                          supported_deep_literal term andalso
+                          walk rest (remaining - 1)
+                      fun negated (left,right) =
+                        walk (boolSyntax.mk_neg left ::
+                          boolSyntax.mk_neg right :: rest) remaining
+                    in case Lib.total boolSyntax.dest_disj term of
+                        SOME (left,right) => walk (left :: right :: rest)
+                          remaining
+                      | NONE =>
+                          (case Lib.total boolSyntax.dest_neg term of
+                             SOME body =>
+                               if boolSyntax.is_disj body then
+                                 negated (boolSyntax.dest_disj body)
+                               else if boolSyntax.is_conj body then
+                                 negated (boolSyntax.dest_conj body)
+                               else leaf ()
+                           | NONE => leaf ())
+                    end
+            in walk structural_extras 64 end
           val _ = unused_prems := annotated_remaining
           val supported_result = List.foldl
             (fn (theorem, accumulated) =>
@@ -15578,18 +15585,13 @@ local
           fun deep_disjunction_alignment () =
             let
               val _ = trace_chain "deep disjunction alignment"
-              fun deep_literals term =
-                if boolSyntax.is_disj term then
-                  let val (left, right) = boolSyntax.dest_disj term
-                  in deep_literals left @ deep_literals right end
-                else [term]
               fun find_pivot theorem premise =
                 let val premise_literals =
-                  deep_literals (Thm.concl premise)
+                  boolSyntax.strip_disj (Thm.concl premise)
                 in List.find
                   (fn literal => List.exists
                     (literal_equal (complement literal)) premise_literals)
-                  (deep_literals (Thm.concl theorem))
+                  (boolSyntax.strip_disj (Thm.concl theorem))
                 end
               fun resolve_remaining theorem [] kept =
                     (theorem, List.rev kept)
@@ -15945,8 +15947,8 @@ local
             List.null (!unused_prems) andalso
             not (List.null structural_extras) andalso
             List.all atomic_boolean_literal target_literals andalso
-            List.length structural_deep_extras <= 64 andalso
-            List.all supported_deep_literal structural_deep_extras
+            deep_extras_supported ()
+          val _ = trace_chain "deep extras complete"
           val _ = trace_chain ("Boolean DAG eligible " ^
             Bool.toString boolean_dag_eligible)
           fun semantic_extras_empty () =
@@ -22028,31 +22030,34 @@ local
      checked normalization bridge, never an assumption drop. *)
   fun remove_extra_hyps (asl, g, thm) =
     let
-      val expected = HOLset.addList (Term.empty_tmset,
-        boolSyntax.mk_neg g :: asl)
-      val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
       val context = boolSyntax.mk_neg g :: asl
+      val expected = HOLset.addList (Term.empty_tmset, context)
+      val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
+      fun delay_context prove = Susp.delay (fn () =>
+        List.map (fn assumption => Susp.delay (fn () => prove assumption))
+          context)
       (* Match assumptions only after both sides pass through the same proved
          canonical conversion.  In particular, this absorbs cvc5's SMT-LIB
          ceiling-as-negated-floor spelling without a dedicated bridge rung. *)
+      val canonical_context = delay_context
+        (SmtReplayCanon.cpc_canon_rule o Thm.ASSUME)
       fun prove_canonical_hyp hyp =
         let
           val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
           fun match assumption =
             case SmtReplayCanon.transport_hypothesis hyp_canon
-                   (SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)) of
+                   (Susp.force assumption) of
               NONE =>
                 raise ERR "remove_extra_hyps"
                   "canonical assumption did not match extra hypothesis"
-            | SOME theorem =>
-                (profile_event "CPC(canon:assumption-interface)"; theorem)
+              | SOME theorem =>
+                  (profile_event "CPC(canon:assumption-interface)"; theorem)
         in
-          Lib.tryfind match context
+          Lib.tryfind match (Susp.force canonical_context)
         end
-      val array_set_context = List.map
-        (fn assumption => Susp.delay (fn () =>
-          Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
-            (Thm.ASSUME assumption))) context
+      val array_set_context = delay_context (fn assumption =>
+        Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
+          (Thm.ASSUME assumption))
       fun prove_array_set_hyp hyp =
         let
           val _ = List.exists contains_array_set_echo (hyp :: context) orelse
@@ -22075,7 +22080,7 @@ local
             | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
-            Lib.tryfind match array_set_context
+            Lib.tryfind match (Susp.force array_set_context)
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
@@ -23287,6 +23292,30 @@ in
             SmtFpGraph.lower_atom_domain right orelse
             SmtFpGraph.lower_atom_domain hypothesis
         | NONE => false
+      val operation_costs = SmtPointerTable.new
+        {hint = SmtReplayImport.pointer_bucket 4, initial = 7, ceiling = 4093}
+      (* Cache subterms by identity, while counting each argument occurrence
+         towards the unfolded cost used to order bridges. *)
+      fun cost term =
+        if boolSyntax.is_select term orelse not (Term.is_comb term) then 0
+        else case SmtPointerTable.lookup operation_costs term of
+          SOME total => total
+        | NONE =>
+            let
+              val (head, arguments) = boolSyntax.strip_comb term
+              val own =
+                if Term.is_const head then
+                  let val {Thy, Name, ...} = Term.dest_thy_const head
+                  in if Thy = "smtfloat" andalso
+                       List.exists (fn operation => Name = operation)
+                         ["smtfp_add", "smtfp_sub", "smtfp_mul",
+                          "smtfp_div", "smtfp_fma", "smtfp_sqrt"]
+                     then 1 else 0 end
+                else 0
+              val total = own + List.foldl
+                (fn (argument, total) => cost argument + total) 0 arguments
+              val _ = SmtPointerTable.insert operation_costs term total
+            in total end
       fun fp_operation_cost hypothesis =
         let
           val atom =
@@ -23296,37 +23325,21 @@ in
                 else if SmtFpGraph.lower_atom_domain right then right
                 else hypothesis
             | NONE => hypothesis
-          fun cost term =
-            if boolSyntax.is_select term then 0
-            else if Term.is_comb term then
-              let
-                val (head, arguments) = boolSyntax.strip_comb term
-                val own =
-                  if Term.is_const head then
-                    let val {Thy, Name, ...} =
-                      Term.dest_thy_const head
-                    in if Thy = "smtfloat" andalso
-                         List.exists (fn operation => Name = operation)
-                           ["smtfp_add", "smtfp_sub", "smtfp_mul",
-                            "smtfp_div", "smtfp_fma", "smtfp_sqrt"]
-                       then 1 else 0 end
-                  else 0
-              in own + List.foldl
-                (fn (argument, total) => cost argument + total)
-                0 arguments end
-            else 0
         in cost atom end
       (* Cheap atom bridges filter impossible private-symbol assignments
          before the shared arithmetic circuits are lowered.  Every bridge
          is still checked before a witness assignment can be selected. *)
       val bridges = Listsort.sort
-        (fn (left, right) =>
-          Int.compare (fp_operation_cost left,
-                       fp_operation_cost right))
-        (List.filter fp_bridge extra)
+        (fn ((_, left), (_, right)) =>
+          Int.compare (Portable.HOLSusp.force left,
+                       Portable.HOLSusp.force right))
+        (List.map (fn hypothesis => (hypothesis,
+           Portable.HOLSusp.delay (fn () => fp_operation_cost hypothesis)))
+           (List.filter fp_bridge extra))
+      val trace_full = cpc_trace_full ()
       fun trace_private message =
-        if cpc_trace_full () then
-          (Feedback.HOL_MESG ("CPC private FP " ^ message);
+        if trace_full then
+          (Feedback.HOL_MESG ("CPC private FP " ^ message ());
            TextIO.flushOut TextIO.stdOut)
         else ()
       val primary_gate = ref NONE
@@ -23335,11 +23348,11 @@ in
         let
           val _ = checked_bridges := []
           val substitutions = cpc_fp_private_substitutions bindings
-          fun check hypothesis =
+          fun check (hypothesis, cost) =
             let
-              val _ = trace_private
+              val _ = trace_private (fn () =>
                 ("bridge cost=" ^
-                 Int.toString (fp_operation_cost hypothesis) ^ " begin")
+                 Int.toString (Portable.HOLSusp.force cost) ^ " begin"))
               val instance = cpc_fp_term_substitution
                 substitutions hypothesis
               val proof = Timeout.apply
@@ -23348,7 +23361,8 @@ in
                   (replay_trust_admitted_mode true
                     (SmtDatatypeProve.default_admission ())
                     false true state [] [instance])) ()
-              val _ = trace_private "bridge proved at exact source endpoint"
+              val _ = trace_private (fn () =>
+                "bridge proved at exact source endpoint")
             in
               if Term.aconv (Thm.concl proof) instance andalso
                  HOLset.isSubset (Thm.hypset proof, allowed) then
@@ -23362,17 +23376,17 @@ in
            the first resource diagnostic if the whole search is unsuccessful;
            never catch an interrupt or timeout as an ordinary search miss. *)
         handle FpBindingCounterexample =>
-          (trace_private "bridge abstraction counterexample"; false)
+          (trace_private (fn () => "bridge abstraction counterexample"); false)
              | Feedback.HOL_ERR holerr =>
           (if SmtResource.is_resource_gate holerr andalso
               not (Option.isSome (!primary_gate)) then
              primary_gate := SOME holerr else ();
-           trace_private ("bridge failed: " ^
+           trace_private (fn () => "bridge failed: " ^
              Feedback.message_of holerr); false)
              | HolSatLib.SAT_cex _ =>
-          (trace_private "bridge counterexample"; false)
+          (trace_private (fn () => "bridge counterexample"); false)
              | HolSatLib.SAT_satisfiable _ =>
-          (trace_private "bridge counterexample"; false)) bindings
+          (trace_private (fn () => "bridge counterexample"); false)) bindings
       val candidate_index = ref 0
       fun find [] = (case !primary_gate of
             SOME error => raise Feedback.HOL_ERR error
@@ -23380,13 +23394,15 @@ in
               "no checked assignment discharges private FP bridges")
         | find (candidate :: remaining) =
             (candidate_index := !candidate_index + 1;
-             trace_private ("candidate " ^
+             trace_private (fn () => "candidate " ^
                Int.toString (!candidate_index) ^ "/" ^
                Int.toString (List.length candidates));
-             List.app (fn binding => trace_private
-               (#kind binding ^ " " ^
-                Library.term_to_string (#marker binding) ^ " -> " ^
-                Library.term_to_string (#source binding))) candidate;
+             if trace_full then
+               List.app (fn binding => trace_private (fn () =>
+                 #kind binding ^ " " ^
+                 Library.term_to_string (#marker binding) ^ " -> " ^
+                 Library.term_to_string (#source binding))) candidate
+             else ();
              if valid candidate then candidate else find remaining)
     in
       if List.null all_markers then theorem
@@ -23397,10 +23413,10 @@ in
         let
           val bindings = find candidates
           val substitutions = cpc_fp_private_substitutions bindings
-          val _ = trace_private "cutting checked bridge hypotheses"
+          val _ = trace_private (fn () => "cutting checked bridge hypotheses")
           val result = instantiate_cpc_fp_bridge_instances substitutions
             (List.rev (!checked_bridges)) theorem
-          val _ = trace_private "witness sequent instantiated"
+          val _ = trace_private (fn () => "witness sequent instantiated")
         in result end
     end
 
@@ -23489,7 +23505,7 @@ in
       val checked_count = ref 0
       fun trace_checked message =
         if trace then
-          (Feedback.HOL_MESG ("CPC checked closure: " ^ message);
+          (Feedback.HOL_MESG ("CPC checked closure: " ^ message ());
            TextIO.flushOut TextIO.stdOut)
         else ()
       fun shallow_shape depth term =
@@ -23516,10 +23532,9 @@ in
                   (take 4 arguments)) ^ ")"
             end
         end
-      val _ = trace_checked
-        ("hypotheses=" ^ Int.toString
-          (List.length (HOLset.listItems extra)))
-      val dependency_memo = ref ([] : (Term.term * Thm.thm) list)
+      val _ = trace_checked (fn () =>
+        "hypotheses=" ^ Int.toString (HOLset.numItems extra))
+      val dependency_memo = ref (Redblackmap.mkDict Term.compare)
       fun prove_exact_hyp proof result =
         let
           val conclusion = Thm.concl proof
@@ -23543,13 +23558,11 @@ in
                 proof
         in Thm.MP (Thm.DISCH hypothesis result) proof end
       fun dependency_proof ancestors target =
-        case List.find (fn (saved, _) => Term.aconv saved target)
-            (!dependency_memo) of
-          SOME (_, proof) => proof
+        case Redblackmap.peek (!dependency_memo, target) of
+          SOME proof => proof
         | NONE =>
             let
-              val _ = List.exists (fn saved => Term.aconv saved target)
-                  ancestors andalso
+              val _ = HOLset.member (ancestors, target) andalso
                 raise ERR "discharge_later_checked_steps"
                   "cyclic deferred proof dependency"
               fun conclusion_matches cached =
@@ -23560,6 +23573,7 @@ in
                 (fn cached => conclusion_matches cached andalso
                   not (raw_self (#thm cached)))
                 (Net.match target (#thm_cache state))
+              val ancestors = HOLset.add (ancestors, target)
               fun close theorem =
                 let
                   val dependencies = HOLset.listItems
@@ -23568,7 +23582,7 @@ in
                   List.foldl
                     (fn (dependency, current) =>
                       prove_exact_hyp
-                        (dependency_proof (target :: ancestors) dependency)
+                        (dependency_proof ancestors dependency)
                         current)
                     theorem dependencies
                 end
@@ -23578,18 +23592,18 @@ in
                   (fn () => close (#thm cached))
                   (fn () => attempt rest)
               val proof = attempt candidates
-              val _ = dependency_memo := (target, proof) :: !dependency_memo
+              val _ = dependency_memo :=
+                Redblackmap.insert (!dependency_memo, target, proof)
             in proof end
       fun discharge (hypothesis, result) = Timeout.apply
         SmtResource.max_hypothesis_entailment_time (fn () =>
         let
-          val _ = checked_count := !checked_count + 1
-          val ordinal = Int.toString (!checked_count)
-          val _ = trace_checked ("begin=" ^ ordinal ^ " nodes=" ^
-            Int.toString (SmtResource.dag_nodes_up_to 1025 hypothesis))
-          val _ = if trace then
-            trace_checked ("shape=" ^ shallow_shape 3 hypothesis)
-            else ()
+          val _ = trace_checked (fn () =>
+            (checked_count := !checked_count + 1;
+             "begin=" ^ Int.toString (!checked_count) ^ " nodes=" ^
+             Int.toString (SmtResource.dag_nodes_up_to 1025 hypothesis)))
+          val _ = trace_checked (fn () =>
+            "shape=" ^ shallow_shape 3 hypothesis)
           fun replay_checked () =
             let
               val proof = replay_trust_admitted_mode false
@@ -23612,7 +23626,7 @@ in
                  (fn () => cached_thm state hypothesis)
                  (fn () =>
                    SmtResource.or_else
-                     (fn () => dependency_proof [] hypothesis)
+                     (fn () => dependency_proof Term.empty_tmset hypothesis)
                      replay_checked))
             end
           fun checked_generalization () =
@@ -23637,14 +23651,15 @@ in
                  checked_then_generalized)
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
-          val _ = trace_checked ("done=" ^ ordinal)
+          val _ = trace_checked (fn () =>
+            "done=" ^ Int.toString (!checked_count))
         in discharged end) ()
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else
-            (trace_checked
-               ("deferred: " ^ Feedback.message_of holerr);
+            (trace_checked (fn () =>
+               "deferred: " ^ Feedback.message_of holerr);
              result)
     in
       HOLset.foldl discharge theorem extra

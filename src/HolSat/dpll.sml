@@ -11,15 +11,15 @@ open HolKernel Parse boolLib def_cnf satCommonTools satTools
 
 datatype result = Unsat of thm | Sat of term -> term
 
+fun count_atom (v,acc) = Termtab.map_default (v,0) (fn n => n + 1) acc
+
 fun count_vars ds acc =
     case ds of
       [] => acc
     | lit::lits => let
         val v = dest_neg lit handle HOL_ERR _ => lit
       in
-        case Termtab.lookup acc v of
-          NONE => count_vars lits (Termtab.update (v,1) acc)
-        | SOME n => count_vars lits (Termtab.update (v,n + 1) acc)
+        count_vars lits (count_atom (v,acc))
       end
 
 fun getBiggest acc =
@@ -29,18 +29,20 @@ fun getBiggest acc =
                      (boolSyntax.T, 0))
 
 (* The first unit we see, or the var that occurs most often *)
-fun find_splitting_var phi = let
-  fun recurse acc [] = getBiggest acc
-    | recurse acc (c::cs) = let
-        val ds = strip_disj c
-      in
-        case ds of
-          [lit] => (dest_neg lit handle HOL_ERR _ => lit)
-        | _ => recurse (count_vars ds acc) cs
-      end
-in
-  recurse Termtab.empty (strip_conj phi)
-end
+fun find_splitting_var phi =
+  let
+    fun count (clause,acc) = fold_clause_atoms count_atom clause acc
+    fun scan clause pending visited =
+        case total dest_conj clause of
+            SOME (left,right) => scan left (right :: pending) visited
+          | NONE =>
+              if is_disj clause then
+                case pending of
+                    next :: rest => scan next rest (clause :: visited)
+                  | [] => getBiggest (List.foldl count Termtab.empty
+                            (List.rev (clause :: visited)))
+              else (dest_neg clause handle HOL_ERR _ => clause)
+  in scan phi [] [] end
 
 fun split_branch v value th =
   REWRITE_RULE [ASSUME (mk_eq (v,value))] th
@@ -127,12 +129,19 @@ fun undoCNF lfn clauses th = (* th is [ci] |-  F *)
    CNF with compound atoms.  Do not re-clausify it or reconstruct a model. *)
 fun DPLL_REFUTE lfn clauseth =
     let
-        val clauses = Array.foldr (op ::) [] clauseth
-        val initial = List.foldr
-          (fn ((clause,_),th) => CONJ (ASSUME clause) th) TRUTH clauses
+        val compact = RBM.numItems lfn <> 0
+        (* Balancing preserves left-to-right clause order for unit selection.
+           Without substitution, each premise already proves its clause. *)
+        val initial =
+            if compact then
+              ASSUME (minisatResolve.balanced_array
+                boolSyntax.T fst boolSyntax.mk_conj clauseth)
+            else minisatResolve.balanced_clause_proof clauseth
     in
       case search initial of
-        Refutation th => SOME (undoCNF lfn clauses th)
+        Refutation th =>
+          SOME (if compact then minisatResolve.finish_compact_cnf
+                  (concl initial) lfn clauseth th else th)
       | Assignment _ => NONE
     end
 
@@ -151,15 +160,34 @@ fun mk_model_thm cnfv lfn t f =
     in satCheck model (mk_neg t) end
 
 local
-fun dpll_taut t (cnfv,cnf_thm,lfn,clauses) =
-  case CoreDPLL cnf_thm of
-      Unsat cnf_entails_F =>  (* [ci] |- F *)
-        undoCNF lfn clauses cnf_entails_F (* [~t] |- F *)
-    | Sat f => mk_model_thm cnfv lfn t f (* |- model ==> ~t *)
+fun reverse_conjunction leaf join clauses =
+    ArraySlice.foldl (fn (clause, rest) => join (leaf clause,rest))
+      (leaf (Array.sub (clauses,0))) (ArraySlice.slice (clauses,1,NONE))
+
+fun dpll_taut t cnfv lfn clauses =
+    (* Keep the original conjunction and split order. Generated definitional
+       clauses are disjunctions or literals. For callers supplying equality
+       clauses, preserve the assumptions that mk_satmap may inspect. *)
+    if RBM.numItems lfn <> 0 andalso Array.length clauses <> 0 andalso
+       not (Array.exists (is_eq o fst) clauses) then
+      let val cnf = reverse_conjunction fst mk_conj clauses
+      in case CoreDPLL (ASSUME cnf) of
+             Unsat th => minisatResolve.finish_compact_cnf_with
+               (fn () => reverse_conjunction snd
+                 (fn (left,right) => CONJ left right) clauses) cnf lfn th
+           | Sat f => mk_model_thm cnfv lfn t f
+      end
+    else
+      let val (_,cnf_thm,_,premises) = prepareDPLL (cnfv,lfn,clauses)
+      in case CoreDPLL cnf_thm of
+             Unsat th => undoCNF lfn premises th
+           | Sat f => mk_model_thm cnfv lfn t f
+      end
 in
-fun DPLL_TAUT t = dpll_taut t (doCNF (mk_neg t))
-fun DPLL_TAUT_PREPARED t cnfv lfn clauseth =
-    dpll_taut t (prepareDPLL (cnfv,lfn,clauseth))
+fun DPLL_TAUT t =
+    let val (cnfv,_,lfn,clauses) = to_cnf false (mk_neg t)
+    in dpll_taut t cnfv lfn clauses end
+val DPLL_TAUT_PREPARED = dpll_taut
 end
 
 (* implementation of DPLL ends *)

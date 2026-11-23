@@ -4842,13 +4842,54 @@ local
     List.concat
       (List.map (List.rev o typecheck_frame_local_definitions) (List.rev frames))
 
-  fun typechecked_check_sat_query state assumptions =
-    QueryCheckSat {
-      assumptions = assumptions,
-      assertions = active_typechecked_assertions state,
-      local_definitions = active_typechecked_local_definitions state,
-      transfer_hypotheses = active_typechecked_finite_sets state
-    }
+  fun typechecked_query_snapshots () =
+    let
+      (* Share the flattened lists between checks. Dictionary changes can
+         replace the top frame without changing any snapshot payload. *)
+      val previous = ref NONE
+      fun snapshot state =
+        case !previous of
+          SOME active => active
+        | NONE =>
+            let
+              val active = (active_typechecked_assertions state,
+                active_typechecked_local_definitions state,
+                active_typechecked_finite_sets state)
+            in previous := SOME active; active end
+      fun check_sat state assumptions =
+        let
+          val (assertions, local_definitions, transfer_hypotheses) =
+            snapshot state
+        in
+          QueryCheckSat {
+            assumptions = assumptions,
+            assertions = assertions,
+            local_definitions = local_definitions,
+            transfer_hypotheses = transfer_hypotheses
+          }
+        end
+      fun same_payloads (old_frame :: old_rest, new_frame :: new_rest) =
+            Portable.pointer_eq (old_rest, new_rest) andalso
+            Portable.pointer_eq (typecheck_frame_assertions old_frame,
+              typecheck_frame_assertions new_frame) andalso
+            Portable.pointer_eq (typecheck_frame_local_definitions old_frame,
+              typecheck_frame_local_definitions new_frame) andalso
+            Portable.pointer_eq (typecheck_frame_finite_sets old_frame,
+              typecheck_frame_finite_sets new_frame)
+        | same_payloads _ = false
+      fun discard_retired (old: typecheck_state option,
+                           next: typecheck_state option) =
+        case (!previous, old, next) of
+          (NONE, _, _) => ()
+        | (SOME _, SOME {frames = before_frames, ...},
+                   SOME {frames = after_frames, ...}) =>
+            if Portable.pointer_eq (before_frames, after_frames) orelse
+               same_payloads (before_frames, after_frames) then ()
+            else previous := NONE
+        | _ => previous := NONE
+    in
+      (check_sat, discard_retired)
+    end
 
   val reset_logic_prefix = "__HOLSMT_RESET__:"
 
@@ -7213,6 +7254,7 @@ local
       end) terms
 
   fun typecheck_command dictionary_logic metadata_index
+      typechecked_check_sat_query
       ({solver, elaborate_datatypes, ...}: typecheck_options) command state =
     let
       fun parsedicts_for_solver logic =
@@ -7639,12 +7681,18 @@ local
           SOME (cached_logic, index) =>
             if logic = cached_logic then index else rebuild_index logic
         | NONE => rebuild_index logic
-      val check = typecheck_command dictionary_logic metadata_index options
+      val (check_sat, discard_retired) = typechecked_query_snapshots ()
+      val check = typecheck_command dictionary_logic metadata_index
+        check_sat options
       fun loop [] state = finalize_typecheck_state "(end-of-stream)" state
         | loop (command :: rest) state =
             (case node_of command of
                CmdExit => finalize_typecheck_state "exit" state
-             | _ => loop rest (check command state))
+             | _ =>
+                 let
+                   val next = check command state
+                   val _ = discard_retired (state, next)
+                 in loop rest next end)
     in
       loop script NONE
     end

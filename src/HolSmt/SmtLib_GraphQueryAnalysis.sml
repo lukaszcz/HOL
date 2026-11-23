@@ -814,13 +814,20 @@ struct
                   then terms else current::terms) seed_numbers numbers
             in ([(#1 sets,#2 sets),(#1 bags,#2 bags)],
                 numbers,!number_visits,[#3 sets,#3 bags]) end
-          fun argument_analysis collection_terms =
+          fun argument_analysis [] = ([],false,false,0)
+            | argument_analysis collection_terms =
             let
+              val semantic = semantic_id []
+              val marked = List.foldl
+                (fn (current,seen) => Redblackset.add (seen,semantic current))
+                (Redblackset.empty Int.compare) collection_terms
+              fun is_marked current = Redblackset.member
+                (marked,semantic current)
               val bound_visits = ref 0
-              val computed = A.computed_applications
-                operations collection_terms ordered
-              val mixed = A.has_mixed_argument_by
-                operations Int.compare (semantic_id []) collection_terms
+              val computed = A.computed_applications_with
+                operations is_marked ordered
+              val mixed = A.has_mixed_argument_with
+                operations Int.compare semantic is_marked
                 ordered
               val bound = ref (Redblackmap.mkDict compare_bound)
               fun memoize variables term compute =
@@ -841,8 +848,9 @@ struct
                             (!bound,index,result)
                       in result end
                 end
-              val bound_application = A.has_bound_application_with_memo
-                operations memoize collection_terms roots
+              val bound_application =
+                A.has_bound_application_with_memo_and_membership
+                  operations memoize is_marked roots
             in (computed,mixed,bound_application,!bound_visits) end
           val (groups,numbers,number_visits,parameters) = case selection of
               Explicit collections => ([(List.map (fn current =>
@@ -904,6 +912,51 @@ struct
                 end
               fun contains terms current = List.exists
                 (fn saved => (#same operations) (current,saved)) terms
+              val raw_number_index = ref NONE
+              val ordinary_guard = W.ordinary_policy_guard_mode expected
+              fun raw_number current =
+                if null numbers then false
+                else if not ordinary_guard then contains numbers current
+                else
+                  case G.unpriced_validation_revision graph root of
+                    NONE => contains numbers current
+                  | revision =>
+                      let
+                        (* Only a miss has authenticated every marker.
+                           Preserve first match order after a revision change. *)
+                        fun scan [] observed =
+                              (if G.unpriced_validation_revision graph root =
+                                  revision then
+                                 raw_number_index := SOME (revision,
+                                   List.foldl (fn ((id,saved),table) =>
+                                     Redblackmap.insert (table,id,saved))
+                                     (Redblackmap.mkDict Int.compare) observed)
+                               else ();
+                               false)
+                          | scan (saved :: rest) observed =
+                              let
+                                val wanted = semantic_id [] current
+                                val id = semantic_id [] saved
+                              in
+                                id = wanted orelse
+                                scan rest ((id,saved) :: observed)
+                              end
+                        fun lookup table =
+                          let val wanted = semantic_id [] current in
+                            if G.unpriced_validation_revision graph root =
+                               revision then
+                              (case Redblackmap.peek (table,wanted) of
+                                 SOME term => semantic_id [] term = wanted
+                               | NONE => false)
+                            else scan numbers []
+                          end
+                      in
+                        case !raw_number_index of
+                          SOME (saved,table) =>
+                            if saved = revision then lookup table
+                            else scan numbers []
+                        | NONE => scan numbers []
+                      end
               val (sets,bags) = case groups of
                   [(sets,_),(bags,_)] => (sets,bags)
                 | _ => raise ERR "borrow" "native analysis required"
@@ -938,7 +991,7 @@ struct
                  strip_comb=unary strip_comb,
                  is_set=unary (contains sets),
                  is_bag=unary (contains bags),
-                 is_raw_number=unary (contains numbers),
+                 is_raw_number=unary raw_number,
                  contextual_argument=fn (current,index) =>
                    unary (fn current => contextual (current,index)) current,
                  describe=unary describe,key=unary (key o resolve),

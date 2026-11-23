@@ -2560,6 +2560,56 @@ fun assert_num_free_transfer label text =
    assert_not_contains label "Num" text;
    assert_not_contains label "int_of_num" text)
 
+fun raw_num_analysis_application_spines () =
+let
+  val n = numSyntax.num
+  val x = Term.mk_var ("x", n)
+  val unary_type = Type.--> (n, n)
+  val bag = Term.mk_var ("b", unary_type)
+  val lookup = Term.mk_comb (bag, x)
+  val consumer = Term.mk_var ("consume", Type.--> (n, Type.bool))
+  val width = 128
+  val args = List.tabulate (width, fn _ => x)
+  val f = Term.mk_var ("f", boolSyntax.list_mk_fun (List.map type_of args, n))
+  val wide = Term.list_mk_comb (f, args)
+  val partial = List.foldl (fn (arg, term) => Term.mk_comb (term, arg))
+    f (List.take (args, width - 1))
+  val stripped = ref 0
+  val ops : Term.term SmtLib_RawNumAnalysis.operations =
+    {same = fn (left, right) => Term.aconv left right, type_of = Term.type_of,
+     is_abstraction = Term.is_abs, dest_abs = Term.dest_abs,
+     is_combination = Term.is_comb, dest_comb = Term.dest_comb,
+     strip_comb = fn term =>
+       let val result as (_, args) = boolSyntax.strip_comb term
+       in stripped := !stripped + List.length args; result end,
+     is_integer_coercion = Term.aconv intSyntax.int_injection,
+     is_num_head = Term.aconv intSyntax.Num_tm,
+     is_bag_card_head = Term.aconv bagSyntax.BAG_CARD_tm,
+     number_type = n}
+  val num = intSyntax.mk_Num (Term.mk_var ("i", intSyntax.int_ty))
+  val bags = [bag, partial]
+  val analyse = SmtLib_RawNumAnalysis.collect_by ops Term.compare bags
+  val result = analyse
+    [Term.mk_comb (consumer, wide), intSyntax.mk_injected wide]
+  val other_num = intSyntax.mk_Num (Term.mk_var ("j", intSyntax.int_ty))
+  val equal = boolSyntax.mk_eq (num, lookup)
+  val roots = [equal, intSyntax.mk_injected other_num, equal]
+in
+  assert (null result, "curried applications must not be marked bag lookups");
+  assert (!stripped <= 4 * width,
+    "raw-num analysis repeatedly flattened curried application spines");
+  assert
+    (case analyse [Term.mk_comb (consumer, lookup),
+                   intSyntax.mk_injected num, intSyntax.mk_injected lookup] of
+       [a, b] => Term.aconv a num andalso Term.aconv b lookup
+     | _ => false,
+     "raw-num analysis lost a unary bag lookup or Num coercion");
+  assert
+    (ListPair.allEq (fn (left, right) => Term.aconv left right)
+       (analyse roots, SmtLib_RawNumAnalysis.collect ops bags roots),
+     "indexed raw-num analysis changed merge order or duplicate suppression")
+end
+
 fun num_transfer_literal_normalization_success () =
 let
   val text = transferred_smtlib_text ``42n = n``
@@ -3854,6 +3904,70 @@ in
     "get-option query was not recorded in the state snapshot")
 end
 
+fun parse_file_repeated_check_sat_snapshots () =
+let
+  val {queries, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(define-fun id ((p Bool)) Bool p)\n" ^
+       "(assert a)\n" ^
+       "(check-sat)\n" ^
+       "(declare-fun unused (Bool) Bool)\n" ^
+       "(check-sat-assuming (a))\n" ^
+       "(push 1)\n" ^
+       "(assert false)\n" ^
+       "(check-sat)\n" ^
+       "(pop 1)\n" ^
+       "(check-sat)\n" ^
+       "(reset-assertions)\n" ^
+       "(check-sat)\n")
+  open SmtLib_Parser
+  val {queries = finite_queries, ...} = typecheck_script_string_with_options
+    {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
+    ("(set-logic ALL)\n" ^
+     "(declare-const s (Set Int))\n(check-sat)\n" ^
+     "(declare-const flag Bool)\n(check-sat)\n" ^
+     "(declare-const b (Bag Int))\n(check-sat)\n" ^
+     "(push 1)\n(declare-const t (Set Int))\n(check-sat)\n" ^
+     "(pop 1)\n(check-sat)\n")
+  val () = case finite_queries of
+      [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat extended,
+       QueryCheckSat pushed, QueryCheckSat popped] =>
+        (assert (Portable.pointer_eq (#transfer_hypotheses first,
+             #transfer_hypotheses repeated),
+           "dictionary-only change copied finite hypotheses");
+         assert (List.map (List.length o #transfer_hypotheses)
+             [first, extended, pushed, popped] = [1, 2, 3, 2] andalso
+           ListPair.allEq (fn (left, right) => Term.aconv left right)
+             (#transfer_hypotheses extended, #transfer_hypotheses popped),
+           "check-sat did not refresh scoped finite hypotheses"))
+    | _ => die "unexpected sequence of finite check-sat queries"
+in
+  case queries of
+    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat pushed,
+     QueryCheckSat popped, QueryCheckSat reset] =>
+      (assert (Portable.pointer_eq (#assertions first, #assertions repeated),
+         "repeated check copied the assertions");
+       assert (List.length (#local_definitions first) = 1 andalso
+         Portable.pointer_eq
+           (#local_definitions first, #local_definitions repeated),
+         "repeated check failed to reuse the local definitions");
+       assert (null (#assumptions first) andalso
+         List.exists (term_is_var_named "a") (#assumptions repeated),
+         "repeated check did not record its assumptions");
+       assert (case #assertions pushed of
+           [outer, inner] => term_is_var_named "a" outer andalso
+             Term.term_eq inner boolSyntax.F
+         | _ => false, "check after push lost an assertion");
+       assert (case #assertions popped of
+           [outer] => term_is_var_named "a" outer
+         | _ => false, "check after pop used stale assertions");
+       assert (null (#assertions reset),
+         "check after reset used stale assertions"))
+  | _ => die "unexpected sequence of check-sat queries"
+end
+
 fun parse_file_define_fun_fragment_scope_success () =
 let
   val {assertions, local_definitions, queries, ...} =
@@ -4889,7 +5003,27 @@ fun smtlib_logic_fragment_diagnostics () =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
     val cvc5_options =
       {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
+    fun shared 0 = boolSyntax.T
+      | shared depth =
+          let val child = shared (depth - 1)
+          in boolSyntax.mk_conj
+               (boolSyntax.mk_neg child, boolSyntax.mk_disj (child, boolSyntax.T))
+          end
+    val shared_assertion = shared 28
+    fun shared_sum 0 = ``x:int``
+      | shared_sum depth =
+          let val child = shared_sum (depth - 1)
+          in intSyntax.mk_plus (child, child) end
+    val shared_int_atom = intSyntax.mk_less (shared_sum 28, ``y:int``)
   in
+    expect_no_term_fragment "shared Boolean assertion" "QF_UF" shared_assertion;
+    expect_term_fragment "quantifier after shared Boolean assertion" "QF_UF"
+      (boolSyntax.mk_conj (shared_assertion, ``!n:num. n = n``))
+      "quantified formula";
+    expect_term_fragment "shared integer sum" "QF_IDL" shared_int_atom
+      "difference logic atom shape";
+    expect_term_fragment "shared pure integer atom" "QF_BV" shared_int_atom
+      "integer atom";
     expect_fragment_with_options "nested Seq datatype unavailable"
       all_elaborated "QF_S"
       (script "QF_S"
@@ -7946,6 +8080,120 @@ in
     (P:(int -> int set) -> bool) f``;
   check true ``let f (a:int) = ({}:int set) in
     (P:(int set) -> bool) (f a)``
+end
+
+fun smtlib_graph_original_portfolio_accounting () =
+let
+  val limit = SmtReplayResourcePolicy.Uncapped
+  fun with_portfolio plain work_limit check =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val sources = S.new_with_policy graph scope limit
+        {assumptions=[boolSyntax.T,boolSyntax.T],goal=boolSyntax.F}
+      val work = W.begin_with_policy graph scope sources
+        {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+         work_limit=work_limit}
+      fun run () =
+        let
+          val {assumptions,denied} = if plain then
+              let val original = V.original graph scope sources
+              in {assumptions=[original 0,original 1],denied=original 2} end
+            else V.originals_with_policy work
+          val value = V.validate_portfolio_with_policy work
+            {assumptions=assumptions,denied=denied,
+             goal= #node (S.goal_source sources)}
+        in check graph scope (fn () => W.audit_policy work)
+             (fn () => V.validate_with_policy work value) end
+      val result = Exn.capture run ()
+      val _ = W.close work
+      val _ = G.close_scope graph scope
+    in Exn.release result end
+  fun check plain =
+    let
+      val (initial,fee) = with_portfolio plain limit
+        (fn graph => fn scope => fn audit => fn validate =>
+          let
+            val initial = #charged (audit ())
+            fun accesses () = #node_accesses
+              (#2 (G.with_node_statistics graph scope validate))
+            val warm = accesses ()
+            val fee = #charged (audit ()) - initial
+            val child = G.new_scope graph scope []
+            val _ = G.close_scope graph child
+            val cold = accesses ()
+          in
+            assert (fee > 1 andalso warm < cold,
+              "original portfolio did not refresh after scope retirement");
+            assert (#charged (audit ()) = initial + 2*fee,
+              "original portfolio warm and cold charges differ");
+            (initial,fee)
+          end)
+      fun refuse partial = with_portfolio plain
+        (SmtReplayResourcePolicy.AtMost (initial+partial))
+        (fn _ => fn _ => fn audit =>
+          fn validate =>
+            let
+              val exhausted = (validate (); false)
+                handle Feedback.HOL_ERR error =>
+                  Feedback.message_of error =
+                    "original cumulative work allowance exhausted"
+              val {charged,retired} = audit ()
+            in assert (exhausted andalso retired andalso
+                 charged = initial+partial,
+                 "original portfolio changed the refused debit prefix")
+            end)
+    in List.app refuse [0,fee-1] end
+in List.app check [true,false] end
+
+fun smtlib_graph_raw_number_scope_retirement () =
+let
+  val limit = SmtReplayResourcePolicy.Uncapped
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val sources = S.new_with_policy graph scope limit
+    {assumptions=[],goal=boolSyntax.F}
+  val work = W.begin_with_policy graph scope sources
+    {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+     work_limit=limit}
+  val {assumptions,denied} = V.originals_with_policy work
+  val validation = V.validate_portfolio_with_policy work
+    {assumptions=assumptions,goal= #node (S.goal_source sources),denied=denied}
+  val query = GP.prepare_query_with_policy work
+    (GP.from_portfolio_with_policy work validation)
+  fun open_view caller node = ignore
+    (G.record_opened_view_with_policy graph caller limit node)
+  val child = G.new_scope graph scope []
+  val argument = G.fresh_bound_variable graph child
+    (Term.mk_var ("i",intSyntax.int_ty))
+  val head = G.constant graph child intSyntax.Num_tm
+  val marker = G.application graph child (head,argument)
+  val retired = ref false
+  val result = Exn.capture (fn () =>
+    SmtLib_GraphTranslation.with_outbound_seeded_query_analysis_with_policy
+      work query open_view
+        {graph=graph,scope=scope,sets=[],bags=[],
+         raw_numbers=[{node=marker,scope=child}]} (fn context =>
+          let
+            val marked = #is_raw_number context
+            val subject = #goal context
+            val {raw_numbers,...} = (#collection_terms context) ()
+            val _ = assert (not (marked subject), "unexpected raw number")
+            val _ = assert (List.exists marked raw_numbers,
+              "live indexed raw number was not found")
+            val _ = G.close_scope graph child
+            val _ = GP.validate_query_with_policy work query
+            val _ = retired := true
+            val _ = marked subject
+          in raise Fail "indexed lookup accepted a retired scope" end)) ()
+  val _ = W.close work
+  val _ = G.close_scope graph scope
+in
+  case result of
+    Exn.Exn (Feedback.HOL_ERR _) =>
+      assert (!retired, "failed before the indexed lookup of a retired scope")
+  | Exn.Exn error => raise error
+  | Exn.Res _ => assert (false, "unexpected successful graph borrow")
 end
 end
 
@@ -23373,11 +23621,36 @@ let
   (* Each call of [shared] builds its own objects. *)
   val copies = within_mutator_seconds 2 SmtDatatypeProve.term_types
     (boolSyntax.mk_conj (shared 40, shared 40))
+  fun products 0 = (numSyntax.num, [numSyntax.num])
+    | products n =
+        let
+          val (child, descendants) = products (n - 1)
+          val ty = Type.mk_type ("prod", [child, child])
+        in (ty, ty :: descendants) end
+  val (left_ty, chain) = products 40
+  val (right_ty, _) = products 40
+  val initial = [right_ty, Type.bool, right_ty]
+  val closure = within_mutator_seconds 2
+    (SmtDatatypeProve.type_closure left_ty) initial
+  fun apply name ty = Term.mk_comb
+    (Term.mk_var ("P_" ^ name, Type.--> (ty, Type.bool)), Term.mk_var (name, ty))
+  val right = apply "y" right_ty
+  val single = within_mutator_seconds 2 SmtDatatypeProve.term_types right
+  val both = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (boolSyntax.mk_conj (apply "x" left_ty, right))
 in
   assert (List.length types = List.length (occurrences (shared 1)),
     "term_types changed its types on a shared term");
   assert (copies = types,
-    "term_types changed its types on two equal copies")
+    "term_types changed its types on two equal copies");
+  assert (not (Portable.pointer_eq (left_ty, right_ty)),
+    "fixture needs independently built equal types");
+  assert (ListPair.allEq Portable.pointer_eq
+      (closure, List.rev (List.tl chain) @ initial),
+    "type_closure changed its order or replaced an initial type");
+  assert (List.length single = List.length chain + 2 andalso
+      ListPair.allEq Portable.pointer_eq (List.drop (both, 2), single),
+    "term_types did not deduplicate independently built shared types")
 end
 
 (* The sequence prover takes a step with APPEND or LENGTH, either alone. *)
@@ -25775,6 +26048,28 @@ fun shared 0 = ``seed:bool``
   | shared n = let val child = shared (n - 1)
     in boolSyntax.mk_conj (child, child) end;
 val _ = check true (boolSyntax.mk_imp (shared 16, ``seed:bool``));
+val _ =
+  let
+    val graph = SmtBooleanGraph.new
+      {chunk_depth = NONE, stops = [], stop_conversion = fn _ => NONE,
+       leaf = I, unfold = fn _ => NONE}
+    val circuit = #circuit graph
+    val seed = ``seed:bool``
+    fun prefix 0 atom = atom
+      | prefix n atom = boolSyntax.mk_conj (prefix (n - 1) atom, seed)
+    val original = ``!x:num. opaque x``
+    val renamed = ``!y:num. opaque y``
+    val different = ``!y:num. other y``
+    val names = Vector.tabulate (32,fn n => circuit (prefix n original))
+    val distinct = circuit (prefix 31 different)
+  in
+    Vector.appi (fn (n,name) => assert
+      (Portable.pointer_eq (name,circuit (prefix n renamed)),
+       "Boolean graph lost alpha-equivalent prefixes in a crowded bucket"))
+      names;
+    assert (not (Term.aconv (Vector.sub (names,31)) distinct),
+      "Boolean graph reused an inequivalent prefix in a crowded bucket")
+  end;
 in () end
 
 fun circuit_cnf_checked_success () =
@@ -33985,11 +34280,45 @@ let
   val nested_int = listSyntax.mk_list_type intSyntax.int_ty
   val nested_real = listSyntax.mk_list_type
     (listSyntax.mk_list_type realSyntax.real_ty)
+  fun shared combine 0 = Type.bool
+    | shared combine depth =
+        let val child = shared combine (depth - 1)
+        in combine (child, child) end
+  fun prod (left, right) = Type.mk_type ("prod", [left, right])
+  val funs = shared Type.--> 40
+  val prods = shared prod 40
+  val fp = ``:smt_rounding``
+  fun false_flag () = false
+  val state : SmtLib.outbound_feature_state =
+    {generated_forall = false_flag, sequence_emission = false_flag,
+     has_set_terms = false_flag, native_set_backend = false_flag,
+     has_bag_terms = false_flag, native_bag_backend = false_flag}
+  fun has_fp ty =
+    let
+      val SmtLib.LogicFeatures {floating_point, ...} =
+        SmtLib.outbound_infer_features_with_state state SmtLib.FirstOrder
+          [Term.mk_var ("feature_probe", ty)]
+          (Redblackmap.mkDict Type.compare)
+          (Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare)))
+    in floating_point end
+  val calls = ref 0
+  val _ = Library.type_contains (fn _ => (calls := !calls + 1; false))
+    (Type.--> (Type.bool, Type.bool))
 in
   assert (Library.type_contains_int nested_int,
     "nested list element did not contribute its Int feature");
   assert (Library.type_contains_real nested_real,
-    "nested list element did not contribute its Real feature")
+    "nested list element did not contribute its Real feature");
+  assert (within_mutator_seconds 2 Library.type_contains_int
+      (Type.--> (funs, nested_int)) andalso
+      not (Library.type_contains_int (prod (prods, nested_int))),
+    "function and sequence traversal changed its Int feature");
+  assert (has_fp (prod (Type.bool, fp))
+      andalso within_mutator_seconds 2 has_fp (Type.--> (funs, fp))
+      andalso not (within_mutator_seconds 2 has_fp funs)
+      andalso not (has_fp Type.alpha),
+    "datatype traversal changed its floating-point feature");
+  assert (!calls = 3, "generic type_contains skipped an occurrence")
 end
 
 fun binder_opening_resource_success () =
@@ -39785,6 +40114,8 @@ let
       smtfloat_rounding_conversions_success),
     ("smtfloat_ground_evaluation_success",
       smtfloat_ground_evaluation_success),
+    ("raw_num_analysis_application_spines",
+      raw_num_analysis_application_spines),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",
@@ -39867,6 +40198,8 @@ let
     ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
     ("parse_file_reset_state", parse_file_reset_state),
     ("parse_file_query_commands_success", parse_file_query_commands_success),
+    ("parse_file_repeated_check_sat_snapshots",
+      parse_file_repeated_check_sat_snapshots),
     ("parse_file_define_fun_fragment_scope_success",
       parse_file_define_fun_fragment_scope_success),
     ("parse_file_define_fun_body_fragment_violation_success",
@@ -40003,6 +40336,10 @@ let
       smtlib_native_set_translation_success),
     ("smtlib_graph_function_let_collection_success",
       smtlib_graph_function_let_collection_success),
+    ("smtlib_graph_original_portfolio_accounting",
+      smtlib_graph_original_portfolio_accounting),
+    ("smtlib_graph_raw_number_scope_retirement",
+      smtlib_graph_raw_number_scope_retirement),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",

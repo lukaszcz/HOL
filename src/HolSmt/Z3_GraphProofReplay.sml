@@ -1023,6 +1023,9 @@ struct
                    if P.sources result = source_nodes then () else
                      raise ERR "owned_freeze" "actual occurrence slots differ")
               in result end
+          val reconciled_edge = Option.map
+            (fn original => Z3_GraphSourceReconcile.assemble original block)
+            reconciliation
           val derived_edge = case preprocessing of NONE => NONE
             | SOME {validation,...} => SOME (case owned of NONE =>
                 SmtLib_GraphPreprocess.assembler validation block
@@ -1045,8 +1048,7 @@ struct
               val result = owned_action current_frame scope (fn () =>
                 case plan of Source (_,index) => P.source block index
                 | ReconciledSource node =>
-                    (case reconciliation of SOME original =>
-                       Z3_GraphSourceReconcile.assemble original block node
+                    (case reconciled_edge of SOME assemble => assemble node
                      | NONE => raise ERR "assemble"
                          "missing original Source reconciliation")
                 | PreprocessedSource node =>

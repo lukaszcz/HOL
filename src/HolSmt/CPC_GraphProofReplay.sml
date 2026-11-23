@@ -1193,6 +1193,12 @@ struct
            check=fn count=>if count >= template_limit then
              raise ERR "discover" "recorded aggregate exceeds template limit"
              else (),error=ERR "discover"} node provenance end
+      (* References to a proof definition share its original occurrence, even
+         when the parser creates a fresh reference wrapper at each use. *)
+      datatype cnf_entries =
+          CnfList of (G.node * term_provenance) list
+        | CnfVector of (G.node * term_provenance) vector
+      val last_indexed_cnf = ref NONE
       fun cnf (step : Q.graph_rule_step) premises =
         let
           val _ = if List.null premises then () else
@@ -1202,7 +1208,26 @@ struct
           val root = #node argument
           val _ = if Type.compare (G.type_of graph root,Type.bool) = EQUAL
             then () else raise ERR "cnf" "non-Boolean CNF operand"
-          val provenance = occurrence_provenance (#occurrence argument)
+          val rule = #name (#rule step)
+          val cache_key = case (owned_work,#occurrence argument) of
+              (NONE,S.ConstructionOccurrence
+                {role = S.ConstructionReference _,children = [body],...}) =>
+                if rule = "cnf_and_pos" orelse rule = "cnf_or_neg" then
+                  Option.map (fn revision => (revision,body))
+                    (G.unpriced_validation_revision graph scope)
+                else NONE
+            | _ => NONE
+          val cached = case (cache_key,!last_indexed_cnf) of
+              (SOME (revision,body),
+               SOME (old_revision,old_root,old_rule,old_body,value)) =>
+                if revision = old_revision andalso root = old_root andalso
+                   rule = old_rule andalso Portable.pointer_eq (body,old_body)
+                then SOME value else NONE
+            | _ => NONE
+          val provenance = case cached of SOME (provenance,_) => provenance
+            | NONE => occurrence_provenance (#occurrence argument)
+          val retained = Option.map
+            (fn (_,body) => (body,ref (Option.map #2 cached))) cache_key
           val schemas = ref ([] : K.graph_conversion list)
           val whole = (root,provenance)
           fun positive (node,ApplicationProvenance ("not",[_])) : C.literal =
@@ -1234,9 +1259,24 @@ struct
               val index = case #args step of
                   [Q.GraphTerm _,Q.GraphIndex index] => index
                 | _ => raise ERR "cnf" "expected aggregate and index"
-              val entries = aggregate_entries operator token root provenance
-            in List.nth (entries,index)
-              handle Subscript => raise ERR "cnf" "aggregate index out of range"
+              fun out_of_range () =
+                raise ERR "cnf" "aggregate index out of range"
+              fun list_at entries = List.nth (entries,index)
+                handle Subscript => out_of_range ()
+              fun vector_at entries = Vector.sub (entries,index)
+                handle Subscript => out_of_range ()
+              fun remember entries = Option.app
+                (fn (_,saved) => saved := SOME entries) retained
+            in case cached of SOME (_,CnfVector entries) => vector_at entries
+              | SOME (_,CnfList entries) =>
+                  let val vector = Vector.fromList entries
+                      val result = vector_at vector
+                  in remember (CnfVector vector);result end
+              | NONE =>
+                  let val entries =
+                        aggregate_entries operator token root provenance
+                      val result = list_at entries
+                  in remember (CnfList entries);result end
             end
           fun aggregate operator token =
             (case #args step of [Q.GraphTerm _] => ()
@@ -1262,9 +1302,17 @@ struct
             | _ => raise Fail "conditional CNF operands"
           val literals = CPC_SharedReplayPlan.cnf_literals
             binary_nodes indexed aggregate xor_nodes ite_nodes
-            positive negative List.map ERR (#name (#rule step)) whole
+            positive negative List.map ERR rule whole
           val current = exact_target (#conclusion step)
             (clause_fact (C.discover graph scope literals))
+          (* Clause discovery can intern fresh nodes without changing the
+             existing operand spine. Publish only after that step succeeds. *)
+          val _ = Option.app (fn (body,saved) => case !saved of
+                NONE => ()
+              | SOME entries => Option.app (fn revision =>
+                  last_indexed_cnf := SOME
+                    (revision,root,rule,body,(provenance,entries)))
+                  (G.unpriced_validation_revision graph scope)) retained
         in (current,if List.null (!schemas) then Boolean
                     else BooleanSchemas (!schemas)) end
       val cache_selection = Option.isSome
@@ -1557,20 +1605,13 @@ struct
                           "nonmatching graph transitivity chain"
                       end
                   fun existing_path work (target:F.term) = action (fn () =>
-                    let
-                      (* Callback-free DAG search inside the guarded
-                         action; each visit still debits live SAME Work. *)
-                      fun observe () = W.spend work 1
-                    in CPC_SharedReplayPlan.relation_path
-                      {visit=observe,relation=R.relation graph,
-                       map_partial=fn action=>fn nodes=>
-                         List.mapPartial action nodes,
-                       same_kind=op =,same=op =,key=G.node_id,
-                       empty=fn()=>Redblackset.empty Int.compare,
-                       member=Redblackset.member,add=Redblackset.add,
-                       push=fn(node,rest)=>node::rest,
-                       fold=List.foldl,error=ERR "trans"}
-                      (#node target) premise_nodes end)
+                    (* relation reads endpoints from this graph's owned nodes,
+                       for which the integer IDs are exact keys. *)
+                    CPC_SharedReplayPlan.exact_relation_path
+                      {visit=fn () => W.spend work 1,
+                       relation=R.relation graph,key=G.node_id,
+                       error=ERR "trans"}
+                      (#node target) premise_nodes)
                 in case #conclusion step of
                     SOME target => (case owned_work of NONE =>
                         located_fact graph scope target

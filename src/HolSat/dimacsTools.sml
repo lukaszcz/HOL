@@ -426,18 +426,20 @@ fun stripPreamble get src =
            | _ => NONE)
       | _ => NONE
 
+local
+fun insert_dimacs_var (c,svm) sva v i =
+    let
+      val svm' = SVM.insert (svm,v,(v,i))
+      val next = Int.max (i,c)+1
+      val _ = Array.update (sva,i,v)
+              handle Subscript =>
+                failwith ("update_mapsError: " ^ term_to_string v ^ "::" ^
+                          int_to_string i ^ "\n")
+    in (next,svm') end
+in
+
 fun update_maps svm sva s i =
-    if is_T (Array.sub(sva,i))
-    then let val (c,svm1) = svm
-             val svm2 = SVM.insert(svm1,s,(s,i))
-             val c' = if i>c then i else c
-             val svm' = (c'+1,svm2)
-             val _    = Array.update(sva,i,s)
-                 handle Subscript =>
-                        (failwith ("update_mapsError: "^(term_to_string s)^"::"
-                                   ^(int_to_string i)^"\n"))
-         in svm' end
-    else svm
+    if is_T (Array.sub (sva,i)) then insert_dimacs_var svm sva s i else svm
 
 
 fun getIntClause sva svm get src =
@@ -448,7 +450,7 @@ fun getIntClause sva svm get src =
                                     let val ai = Int.abs i
                                         val svm' =
                                             if is_T (Array.sub(sva,ai)) then
-                                              update_maps svm sva
+                                              insert_dimacs_var svm sva
                                                 (intToPrefixedLiteral ai) ai
                                             else svm
                                     in loop src ((i::acc),svm') end
@@ -456,6 +458,8 @@ fun getIntClause sva svm get src =
                                 else SOME((acc,svm), src)
     in  loop src ([],svm)
     end
+
+end
 
 (* This implementation is inspired by (and hopefully faithful to)
 ** dimacsToTerm.

@@ -44,16 +44,30 @@ struct
   fun add_ty ty tys = if List.exists (fn ty' => ty' = ty) tys then tys
                       else ty :: tys
 
-  fun type_closure ty tys =
-    let
-      val tys = add_ty ty tys
-      val args = Lib.total (Lib.snd o Type.dest_type) ty
-    in
-      case args of
-        NONE => tys
-      | SOME args => List.foldl (fn (arg, acc) => type_closure arg acc)
-          tys args
-    end
+  local
+    fun closure_for initial =
+      let
+        val {type_id, ...} = SmtSkeletonProve.new_type_admission_context ()
+        (* Initial types are already listed, but may still have unlisted
+           arguments. IDs also identify equal, independently built types. *)
+        val types = ref (Redblackmap.fromList Int.compare
+          (List.map (fn ty => (type_id ty, false)) initial))
+        fun visit (ty, tys) =
+          let val id = type_id ty in
+            case Redblackmap.peek (!types, id) of
+              SOME true => tys
+            | seen =>
+                let
+                  val _ = types := Redblackmap.insert (!types, id, true)
+                  val tys = if Option.isSome seen then tys else ty :: tys
+                in
+                  if Type.is_vartype ty then tys
+                  else List.foldl visit tys (#2 (Type.dest_type ty))
+                end
+          end
+      in visit end
+  in
+  fun type_closure ty tys = closure_for tys (ty, tys)
 
   fun subterms t = HolKernel.find_terms (fn _ => true) t
 
@@ -65,6 +79,7 @@ struct
      objects walks every path through them. *)
   fun term_types t =
     let
+      val visit_type = closure_for []
       val table = ref (Array.array (64, [] : Term.term list))
       val entries = ref 0
       fun insert buckets tm =
@@ -93,8 +108,9 @@ struct
                 let val (operator, operand) = Term.dest_comb tm
                 in visit (operator, visit (operand, tys)) end
               else tys
-          in type_closure (Term.type_of tm) tys end
+          in visit_type (Term.type_of tm, tys) end
     in visit (t, []) end
+  end
 
   fun has_constructors ty =
     case TypeBase.fetch ty of

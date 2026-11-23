@@ -648,10 +648,10 @@ struct
   let
     fun trace_stage stage =
       if OS.Process.getEnv "HOL4_FP_TRACE" = SOME "1" then
-        (Feedback.HOL_MESG ("FP symbolic circuit: " ^ stage);
+        (Feedback.HOL_MESG ("FP symbolic circuit: " ^ stage ());
          TextIO.flushOut TextIO.stdOut)
       else ()
-    val _ = trace_stage "begin"
+    val _ = trace_stage (fn () => "begin")
     val has_addsub = dag_contains "fp-addsub-domain" is_addsub_const t
     val has_mul = dag_contains "fp-mul-domain" is_mul_const t
     val _ = has_addsub orelse has_mul orelse
@@ -679,19 +679,18 @@ struct
           else
             (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
              handle Conv.UNCHANGED => Thm.REFL t)
-    val _ = trace_stage
-      ("normalized nodes=" ^ Int.toString
-        (SmtResource.dag_nodes_up_to 200001
-          (boolSyntax.rhs (Thm.concl normalized))))
     val residue = boolSyntax.rhs (Thm.concl normalized)
+    val _ = trace_stage (fn () =>
+      ("normalized nodes=" ^ Int.toString
+        (SmtResource.dag_nodes_up_to 200001 residue)))
     val residue_thm =
       if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
       else if SmtResource.term_nodes_up_to 257 residue > 256 then
-        (trace_stage "word graph begin";
+        (trace_stage (fn () => "word graph begin");
          word_prover residue)
       else
         (SmtResource.check_bitblast_goal case_id residue;
-         trace_stage "bitblast begin"; tier2_bv_prove residue)
+         trace_stage (fn () => "bitblast begin"); tier2_bv_prove residue)
   in
     Thm.EQ_MP (Thm.SYM normalized) residue_thm
   end

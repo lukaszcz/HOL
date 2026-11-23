@@ -13,7 +13,7 @@ struct
       List.null (Tag.axioms_of (Thm.tag proof))
     end
   datatype binding = Binding of
-    {replay : G.node, original : int, law : int option}
+    {original : int * G.node, law : (int * G.node) option}
   datatype plan = Plan of
     {graph : G.graph, scope : G.scope, originals : S.sources,
      original_nodes : G.node list, source_nodes : G.node list,
@@ -254,7 +254,7 @@ struct
             | SOME proof =>
               let val term = boolSyntax.rhs (Thm.concl proof) in
                 (index+1,if Redblackmap.inDomain (table,term) then table
-                  else Redblackmap.insert (table,term,(index,proof)))
+                  else Redblackmap.insert (table,term,(index,node,proof)))
               end
           end) (0,Redblackmap.mkDict Term.compare) original_nodes
       val expected_index = #2 expected_index
@@ -262,12 +262,12 @@ struct
       val law_proofs = ref (Redblackmap.mkDict Int.compare)
       val next_law = ref (length original_nodes)
       fun bind node = case original_index node of SOME index =>
-            Binding {replay = node,original = index,law = NONE}
+            Binding {original = (index,node),law = NONE}
         | NONE =>
           let
             val hyp = normalize node
             val canonical = boolSyntax.rhs (Thm.concl hyp)
-            val (index,expected) = case Redblackmap.peek
+            val (index,original,expected) = case Redblackmap.peek
                 (expected_index,canonical) of SOME value => value
               | NONE => raise ERR "prepare"
                   "unsupported extra hypothesis: beta-eta-canonical-lookup"
@@ -278,8 +278,7 @@ struct
             val _ = admit_equality canonical (boolSyntax.lhs (Thm.concl hyp))
             val reverse = call "SYM" (fn () => Thm.SYM hyp)
             val equality = trans expected (trans alpha reverse)
-            val _ = bridge_endpoints
-              (G.representative graph (List.nth (original_nodes,index)))
+            val _ = bridge_endpoints (G.representative graph original)
               (G.representative graph node) equality
             val law_term = Thm.concl equality
             val _ = within (measure law_term)
@@ -297,7 +296,8 @@ struct
             val _ = law_nodes := #node law_source :: !law_nodes
             val _ = law_proofs := Redblackmap.insert
               (!law_proofs,law_index,(#node law_source,proof))
-          in Binding {replay = node,original = index,law = SOME law_index} end
+          in Binding {original = (index,original),
+                      law = SOME (law_index,#node law_source)} end
       val bindings = List.foldl (fn (node,table) =>
           if Redblackmap.inDomain (table,G.node_id node) then table
           else Redblackmap.insert (table,G.node_id node,bind node))
@@ -320,21 +320,44 @@ struct
     case G.unpriced_validation_revision graph scope of
       SOME _ => (active plan;SOME (Redblackmap.listItems' laws))
     | NONE => NONE
-  fun assemble (plan as Plan {graph,bindings,source_nodes,...}) block node =
+  fun assemble (plan as Plan {graph,scope,originals,bindings,source_nodes,...})
+      block =
     let
-      val _ = active plan
-      val current = P.sources block
-      val _ = need (length current >= length source_nodes andalso
-        List.take (current,length source_nodes) = source_nodes)
-        "reconciliation block changed original occurrence portfolio"
-      val Binding {original,law,...} = case Redblackmap.peek
-          (bindings,G.node_id node) of
-          SOME value => value | NONE => raise ERR "assemble"
-            "unrecorded replay Source"
-      val premise = (List.nth (source_nodes,original),P.source block original)
-    in case law of NONE => #2 premise
-      | SOME index => SmtReplayRules.apply_law graph block
-          {law = (List.nth (source_nodes,index),P.source block index),
-           target = node,premises = [premise]}
+      val validated = ref NONE
+      fun validate () =
+        let
+          val _ = active plan
+          val current = P.sources block
+        in need (length current >= length source_nodes andalso
+            List.take (current,length source_nodes) = source_nodes)
+            "reconciliation block changed original occurrence portfolio"
+        end
+      fun validate_for_use () =
+        case G.unpriced_validation_revision graph scope of
+          NONE => validate ()
+        | SOME revision =>
+            if !validated = SOME revision then
+              (* Source rows and block slots are immutable. Their owners
+                 can still become inactive between assembly calls. *)
+              (ignore (S.reconciliation_sources originals);
+               ignore (P.scope block))
+            else
+              (validate ();
+               if G.unpriced_validation_revision graph scope = SOME revision
+               then validated := SOME revision else validated := NONE)
+      fun edge node =
+        let
+          val _ = validate_for_use ()
+          val Binding {original = (index,premise),law} = case Redblackmap.peek
+              (bindings,G.node_id node) of
+              SOME value => value | NONE => raise ERR "assemble"
+                "unrecorded replay Source"
+          val edge = P.source block index
+        in case law of NONE => edge
+          | SOME (law_index,law_node) => SmtReplayRules.apply_law graph block
+              {law = (law_node,P.source block law_index),
+               target = node,premises = [(premise,edge)]}
+        end
+    in edge
     end
 end

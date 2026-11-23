@@ -104,6 +104,21 @@ struct
   fun original_int_refusal p operation =
     fail p operation "original route requires policy methods"
 
+  fun validate_ordinary_owner graph scope sources epoch =
+    let
+      (* Construction checked the immutable owner fields and claimed an
+         ordinary Source. On legacy graphs this fresh scope check also
+         covers the Source owner's liveness. Keep all paid graph checks. *)
+      val same_owner = case G.unpriced_validation_revision graph scope of
+          SOME _ => true
+        | NONE =>
+            (G.validate_scope graph scope;
+             Portable.pointer_eq (graph,S.owning_graph sources) andalso
+             scope = S.owning_scope sources)
+    in
+      if same_owner andalso Type.type_epoch () = epoch then () else
+        raise ERR "active" "original owner or epoch changed"
+    end
   (* Policy portfolios use one exact counter, including all genuine G/R
      programs. The optional path is a mode, not a second allowance. *)
   fun policy_debit (p as PolicyPortfolio {limit,used,...}) amount =
@@ -116,11 +131,7 @@ struct
     (((case !phase of Retired =>
         raise ERR "active" "work portfolio retired" | _ => ());
      (case priced of NONE =>
-        (G.validate_scope graph scope;
-         if Portable.pointer_eq (graph,S.owning_graph sources) andalso
-             scope=S.owning_scope sources andalso Type.type_epoch ()=epoch
-           then () else
-             raise ERR "active" "original owner or epoch changed")
+        validate_ordinary_owner graph scope sources epoch
       | SOME(path,_) =>
         (policy_debit p (12+G.scope_path_validation_work path);
          if Type.type_epoch ()=epoch then () else
@@ -189,10 +200,7 @@ struct
     | active (p as Portfolio {graph,scope,sources,epoch,phase,...}) =
       (((case !phase of Retired =>
           raise ERR "active" "work portfolio retired" | _ => ());
-       G.validate_scope graph scope;
-       if Portable.pointer_eq (graph,S.owning_graph sources) andalso
-           scope = S.owning_scope sources andalso Type.type_epoch () = epoch
-         then () else raise ERR "active" "original owner or epoch changed")
+       validate_ordinary_owner graph scope sources epoch)
       handle primary => (close p;raise primary))
     | active (p as GuardedPortfolio {graph,scope,epoch,phase,path,...}) =
       (((case !phase of Retired =>

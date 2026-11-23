@@ -860,23 +860,26 @@ struct
                 ((key, parse), !sorts_ref);
                 proof_sorts := HOLset.add (!proof_sorts, key) end
         end
-      fun blocks (P.ConstructionOccurrence
-          {value, role, token, children, ...}) =
-        let val nested = List.concat (List.map blocks children) in
-          case role of P.ConstructionBinder {kind, variables} =>
-            (kind, List.length variables, value) :: nested
-          | P.ConstructionAtom =>
-              (case (if policy=CPC then Redblackmap.peek
-                  (!captured_blocks,(symbol_key token,identity value))
-                else NONE) of SOME captured => captured @ nested
-               | NONE => case Redblackmap.peek
-                   (!aliases_ref,symbol_key token) of
-                 SOME (alias : 'a constructed_term) =>
-                   if same_alias (#node alias,value) then
-                     #binder_blocks alias @ nested else nested
-               | NONE => nested)
-          | _ => nested
-        end
+      fun atom_blocks token value =
+        case (if policy=CPC then Redblackmap.peek
+                (!captured_blocks,(symbol_key token,identity value))
+              else NONE) of
+            SOME captured => captured
+          | NONE => case Redblackmap.peek (!aliases_ref,symbol_key token) of
+              SOME (alias : 'a constructed_term) =>
+                if same_alias (#node alias,value) then #binder_blocks alias
+                else []
+            | NONE => []
+      fun collect_blocks (P.ConstructionOccurrence
+          {value, role, token, children, ...}, reversed) =
+        let val reversed =
+              case role of P.ConstructionBinder {kind, variables} =>
+                (kind, List.length variables, value) :: reversed
+              | P.ConstructionAtom =>
+                  (* Both sourced parsers use this role for leaves. *)
+                  List.revAppend (atom_blocks token value, reversed)
+              | _ => reversed
+        in List.foldl collect_blocks reversed children end
       fun parse_from tokens =
         let val _ = check ()
             val (occurrence, source) =
@@ -885,7 +888,7 @@ struct
                 (!sorts_ref, !dictionary_ref)
             val source = cpc_normalized_source backend policy
               occurrence source
-            val blocks = blocks occurrence
+            val blocks = List.rev (collect_blocks (occurrence,[]))
             val blocks = if policy=CPC then
               unique_blocks backend identity blocks else blocks
         in {node = P.construction_value occurrence, scope = scope,
