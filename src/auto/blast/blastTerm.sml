@@ -619,16 +619,19 @@ struct
                true)
         | update _ = false
 
-      fun unifyAux (t, u) =
-        case (wkNorm t, wkNorm u) of
-            (nt as Var _, nu) => update (nt, nu)
-          | (nu, nt as Var _) => update (nt, nu)
-          | (Const (a, ats), Const (b, bts)) =>
-              a = b andalso unifysAux (ats, bts)
-          | (Abs (_, t'), Abs (_, u')) => unifyAux (t', u')
-          | (f $ t', g $ u') =>
-              unifyAux (f, g) andalso unifyAux (t', u')
-          | (nt, nu) => aconv (nt, nu)
+      (* Identical subterms see the same variable assignments. They need
+         no bindings, even if weak normalization would expose a redex. *)
+      fun unifyAux (terms as (t, u)) =
+        Portable.pointer_eq terms orelse
+        (case (wkNorm t, wkNorm u) of
+             (nt as Var _, nu) => update (nt, nu)
+           | (nu, nt as Var _) => update (nt, nu)
+           | (Const (a, ats), Const (b, bts)) =>
+               a = b andalso unifysAux (ats, bts)
+           | (Abs (_, t'), Abs (_, u')) => unifyAux (t', u')
+           | (f $ t', g $ u') =>
+               unifyAux (f, g) andalso unifyAux (t', u')
+           | (nt, nu) => aconv (nt, nu))
 
       and unifysAux ([], []) = true
         | unifysAux (t :: ts, u :: us) =

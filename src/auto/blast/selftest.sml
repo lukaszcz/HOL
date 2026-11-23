@@ -140,6 +140,35 @@ val _ =
 
 val _ =
   test
+    ("shared application subterms leave sibling bindings and rollback intact",
+     fn () =>
+       let
+         val state = newState ()
+         val dependency = ref NONE
+         val argument = ref NONE
+         val combine = Const (test_name "combine", [])
+         val leaf = Abs ("x", Skolem ("s", [dependency]) $ Bound 0)
+         fun double 0 term = term
+           | double n term = double (n - 1) (combine $ term $ term)
+         val shared = double 18 leaf
+         val value = Fvar "value"
+         val left = (combine $ Var argument $ shared) $ Fvar "end"
+         fun right last = (combine $ value $ shared) $ Fvar last
+         val matches =
+           unify state ([], left, right "end") andalso
+           trailSize state = 1 andalso
+           (case !argument of
+                SOME term => aconv (term, value)
+              | NONE => false)
+         val _ = clearTo state 0
+       in
+         matches andalso not (unify state ([], left, right "mismatch")) andalso
+         trailSize state = 0 andalso unassigned argument andalso
+         unassigned dependency
+       end)
+
+val _ =
+  test
     ("clearTo restores exactly the requested trail suffix",
      fn () =>
        let

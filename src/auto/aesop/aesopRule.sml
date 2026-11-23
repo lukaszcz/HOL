@@ -127,16 +127,32 @@ fun forward_duplicate store previous candidate =
       previous
   end
 
-fun pattern_matches patterns store assumptions =
-  null patterns orelse
-  List.exists
-    (fn pattern =>
+fun pattern_matches [] _ _ = true
+  | pattern_matches [pattern] store assumptions =
       List.exists
         (fn assumption =>
           can (Term.match_term pattern)
             (clasetMeta.instantiate store assumption))
-        assumptions)
-    patterns
+        assumptions
+  | pattern_matches patterns store assumptions =
+      let
+        (* Share instantiation across patterns while stopping at the first
+           match in pattern order. *)
+        fun instantiate [] = seq.empty
+          | instantiate (assumption :: rest) =
+              seq.delay (fn () =>
+                seq.cons (clasetMeta.instantiate store assumption)
+                  (instantiate rest))
+        val instances = instantiate assumptions
+        fun matches pattern pending =
+          case seq.cases pending of
+              NONE => false
+            | SOME (instance, rest) =>
+                can (Term.match_term pattern) instance orelse
+                matches pattern rest
+      in
+        List.exists (fn pattern => matches pattern instances) patterns
+      end
 
 fun gated_engine_step patterns step (node, pos) =
   let

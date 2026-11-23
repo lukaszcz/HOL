@@ -534,19 +534,23 @@ fun prove_literal work context
         orderData.Weak pair => Option.map path_theorem (weak pair)
       | orderData.Equal pair => crossing work context reach_crossing pair
       | orderData.Strict (x, y) =>
-          (case weak (x, y) of
-               NONE => NONE
-             | SOME path =>
-                 (case refute_equation work context
-                         (edges, equalities, distinctions) (x, y) of
-                      NONE => NONE
-                    | SOME apart =>
-                        let val step = path_theorem path
-                        in
-                          application work;
-                          SOME (MATCH_MP
-                            (MATCH_MP order_strict_intro step) apart)
-                        end))
+          (* An added equation cannot supply the missing distinction. *)
+          if null distinctions andalso Option.isSome (#max_nodes work) then
+            NONE
+          else
+            (case weak (x, y) of
+                 NONE => NONE
+               | SOME path =>
+                   (case refute_equation work context
+                           (edges, equalities, distinctions) (x, y) of
+                        NONE => NONE
+                      | SOME apart =>
+                          let val step = path_theorem path
+                          in
+                            application work;
+                            SOME (MATCH_MP
+                              (MATCH_MP order_strict_intro step) apart)
+                          end))
       | orderData.Distinct pair =>
           refute_equation work context
             (edges, equalities, distinctions) pair

@@ -53,10 +53,9 @@ fun assumption_thm asm target =
           "the assumption does not close the target"
   end
 
-fun supplied_major_thm store major target =
+fun supplied_major_thm store (type_substitution, term_substitution)
+      major target =
   let
-    val (type_substitution, term_substitution) =
-      clasetMeta.collapse store
     val instantiated =
       Drule.INST_TY_TERM
         (term_substitution, type_substitution) (ASSUME major)
@@ -566,7 +565,7 @@ fun settle_rule mode (core : thm) metas asl note_skip residual_terms store =
       case mode of
           clasetUnify.Match => ground_created store metas
         | clasetUnify.Unify => store
-    val (type_substitution, term_substitution) =
+    val substitutions as (type_substitution, term_substitution) =
       clasetMeta.collapse final_store
     val instantiated =
       Drule.INST_TY_TERM (term_substitution, type_substitution) core
@@ -584,7 +583,8 @@ fun settle_rule mode (core : thm) metas asl note_skip residual_terms store =
               (assumption_thm assumption hypothesis) current
   in
     (final_store,
-     List.foldl align_hypothesis normalized_rule0 (hyp normalized_rule0))
+     List.foldl align_hypothesis normalized_rule0 (hyp normalized_rule0),
+     substitutions)
   end
 
 fun cgoal_render store ({asl, w, ...} : clasetGoal.cgoal) =
@@ -717,7 +717,7 @@ fun try_rule note_skip policy mode cs duplicated node pos
         end
       else (NONE, [], #premises fresh, store1)
     val residual_terms = remaining @ hyp (#core fresh)
-    val (final_store, normalized_rule) =
+    val (final_store, normalized_rule, substitutions) =
       settle_rule mode (#core fresh) (#metas fresh) asl note_skip
         residual_terms store2
     val (all_premises, _) =
@@ -756,7 +756,8 @@ fun try_rule note_skip policy mode cs duplicated node pos
     val supplied_thms =
       case (is_elim, assumption) of
           (true, SOME (_, major)) =>
-            [supplied_major_thm final_store major (hd all_premises)]
+            [supplied_major_thm final_store substitutions major
+               (hd all_premises)]
         | _ => []
     val target = normalize_term child_store w
     val validation =
@@ -844,7 +845,7 @@ fun try_forward charge mode {source, prepared} immediate positioned node pos
 
     fun build (positions, matched_store) =
       let
-        val (final_store, normalized_rule) =
+        val (final_store, normalized_rule, substitutions) =
           settle_rule mode (#core fresh) (#metas fresh) asl no_note
             residual_terms matched_store
         val (normalized_premises, _) =
@@ -852,7 +853,7 @@ fun try_forward charge mode {source, prepared} immediate positioned node pos
         val supplied =
           ListPair.map
             (fn (premise, position) =>
-              supplied_major_thm final_store
+              supplied_major_thm final_store substitutions
                 (nth1 asl position) premise)
             (List.take (normalized_premises, immediate), positions)
         val forward = Drule.LIST_MP supplied normalized_rule
@@ -1061,11 +1062,32 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
           Type.compare (left_value, right_value) = EQUAL)
         (#types left, #types right)
 
-    (* Compare conclusions in the parent store. Only matching conclusions
-       require comparing effects on pre-existing metas. Hold a produced
-       candidate across a cutoff. *)
-    val seen = ref
-      ([] : (term Portable.HOLSusp.susp * effect Portable.HOLSusp.susp) list)
+    (* Index conclusions in the parent store. Delay insertion until the
+       next comparison so a single result never needs a normalized key. *)
+    val seen = ref (Portable.HOLSusp.delay (fn () => Termtab.empty))
+
+    fun remember added store created =
+      let
+        val index = Portable.HOLSusp.force (!seen)
+        val effect = Portable.HOLSusp.delay (fn () => effect_of store created)
+        val normalized =
+          Portable.HOLSusp.delay (fn () => normalize_term parent_store added)
+        fun conclusion () = Portable.HOLSusp.force normalized
+        fun duplicate prior =
+          same_effect (Portable.HOLSusp.force effect)
+            (Portable.HOLSusp.force prior)
+      in
+        if Termtab.is_empty index orelse
+           not (List.exists duplicate
+                  (Termtab.lookup_list index (conclusion ())))
+        then
+          (seen := Portable.HOLSusp.delay
+             (fn () => Termtab.cons_list (conclusion (), effect) index);
+           true)
+        else false
+      end
+
+    (* Hold a produced candidate across a cutoff. *)
     val candidate_pending = ref (NONE : (term * direct) option)
 
     fun already_assumed _ _ [] = false
@@ -1086,24 +1108,10 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
              let
                val store = direct_store direct
              in
-               if already_assumed store added assumptions
-               then distinct ()
-               else
-                 let
-                   val created = direct_created direct
-                   val effect = Portable.HOLSusp.delay
-                     (fn () => effect_of store created)
-                   val normalized = Portable.HOLSusp.delay
-                     (fn () => normalize_term parent_store added)
-                   fun duplicate (previous, prior_effect) =
-                     aconv (Portable.HOLSusp.force normalized)
-                       (Portable.HOLSusp.force previous) andalso
-                     same_effect (Portable.HOLSusp.force effect)
-                       (Portable.HOLSusp.force prior_effect)
-                 in
-                   if List.exists duplicate (!seen) then distinct ()
-                   else (seen := (normalized, effect) :: !seen; SOME direct)
-                 end
+               if not (already_assumed store added assumptions) andalso
+                  remember added store (direct_created direct)
+               then SOME direct
+               else distinct ()
              end)
   in
     seq.fresult distinct

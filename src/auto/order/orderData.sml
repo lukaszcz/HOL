@@ -343,7 +343,9 @@ fun literal_of_term (context : context) tm =
 
 fun is_literal context tm =
   let
-    val tm = rhs (concl (Conv.QCONV (#reduction (context : context)) tm))
+    val tm =
+      rhs (concl (#reduction (context : context) tm))
+      handle Conv.UNCHANGED => tm
     fun positive t = Option.isSome (literal_of_term context t)
   in
     positive tm orelse
@@ -354,7 +356,8 @@ fun is_literal context tm =
 
 fun reduce (context : context) tm = Conv.QCONV (#reduction context) tm
 
-fun normalise context theorem = CONV_RULE (reduce context) theorem
+(* An unchanged fact already has the theorem the reader needs. *)
+fun normalise (context : context) = Conv.CONV_RULE (#reduction context)
 
 fun facts_of meter context =
   let

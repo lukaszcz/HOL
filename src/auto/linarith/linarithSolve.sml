@@ -322,14 +322,14 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
     fun derive p n =
       (application work; elim_var_with work drop_column p n)
 
+    (* Abort a duplicate insertion before rebuilding the tree path.
+       Keep the row and justification first encountered. *)
+    exception DuplicateRow
+    fun duplicate _ = raise DuplicateRow
     fun keep (row, acc as (seen, rev_rows)) =
-      let val key = row_key row
-      in
-        if HOLset.member (seen, key) then acc
-        else (HOLset.add (seen, key), row :: rev_rows)
-      end
-    val empty =
-      (HOLset.empty (fn pair => (candidate work; compare_key pair)), [])
+      (Redblackmap.insertWith duplicate (seen, row_key row, ()),
+       row :: rev_rows)
+      handle DuplicateRow => acc
     fun finish (_, rev_rows) = Rows (List.rev rev_rows)
     fun positives [] kept = finish kept
       | positives (p :: ps) kept = negatives p ps neg kept
@@ -349,12 +349,23 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
     if #metered work then
       (* Charge all row applications before any key comparisons, as
          callers with limited budgets can observe the cutoff order. *)
-      let val derived = List.map (fn p => List.map (derive p) neg) pos
+      let
+        val derived = List.map (fn p => List.map (derive p) neg) pos
+        fun keep (row, acc as (seen, rev_rows)) =
+          let val key = row_key row
+          in
+            if HOLset.member (seen, key) then acc
+            else (HOLset.add (seen, key), row :: rev_rows)
+          end
+        val empty =
+          (HOLset.empty (fn pair => (candidate work; compare_key pair)), [])
       in
         finish (List.foldl (fn (rows, kept) => List.foldl keep kept rows)
           (List.foldl keep empty independent) derived)
       end
-    else positives pos (List.foldl keep empty independent)
+    else
+      positives pos (List.foldl keep (Redblackmap.mkDict compare_key, [])
+        independent)
   end
 
 (* Elimination traces one line per pivot, so the message is built only

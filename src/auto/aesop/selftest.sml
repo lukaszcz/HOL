@@ -729,7 +729,8 @@ val _ =
          val allowed =
            aesopRule.cases_rule
              {name = "cases", phase = aesopRule.RUnsafe 50,
-              theorem = cases_theorem, patterns = [boolSyntax.T],
+              theorem = cases_theorem,
+              patterns = [boolSyntax.F, boolSyntax.T],
               mode = clasetUnify.Match}
          val blocked =
            aesopRule.cases_rule

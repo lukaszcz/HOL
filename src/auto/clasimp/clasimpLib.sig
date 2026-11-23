@@ -275,6 +275,10 @@ sig
      make the same decision about its own set-equality pass. *)
   val states_a_reading : thm -> bool
 
+  (* True if a supplied rewrite applies to the function equation as given.
+     The rewrites may be quantified or conjoined. *)
+  val reads_as_supplied : thm list -> term -> bool
+
   (* Bind citations once, suspending ambient converses for this invocation.
      Public ambient views remain pending the construction-placement choice. *)
   val asm_full_simp : simpExtLib.simpset -> thm list -> tactic

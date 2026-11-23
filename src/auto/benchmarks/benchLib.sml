@@ -1507,16 +1507,7 @@ fun across_correspondence entry args = args @ crossing_arguments entry args
    rewrites the method named, as [preprocess_fires] below decides its
    pass. *)
 fun reading_is_supplied goal rewrites =
-  let
-    val statement = forall_body goal
-    fun readings theorem =
-      Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
-    fun applies theorem =
-      clasimpLib.states_a_reading theorem andalso
-      Lib.can (fn subject => Conv.REWR_CONV theorem subject) statement
-  in
-    List.exists (List.exists applies o readings) rewrites
-  end
+  clasimpLib.reads_as_supplied rewrites (forall_body goal)
 
 fun set_equality_pass simpset goal rewrites =
   if reading_is_supplied goal rewrites then Tactical.ALL_TAC

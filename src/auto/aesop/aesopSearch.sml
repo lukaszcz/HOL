@@ -465,7 +465,11 @@ fun next_safe_with ctxt level include_irrelevant pop_goal
                     in
                       if
                         #state goal <> aesopTree.Unknown orelse
-                        (not include_irrelevant andalso
+                        (* The queue already checked the ancestry. With
+                           no rewrite, normalisation only records that
+                           the goal is ready and may exhaust it. *)
+                        (iterations <> 0 andalso
+                         not include_irrelevant andalso
                          aesopTree.goal_irrelevant normalised id)
                       then
                         next_safe_with ctxt level include_irrelevant pop_goal

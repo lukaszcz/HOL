@@ -3971,16 +3971,22 @@ fun read_by_a_rewrite rewrites term =
       rewrites
   end
 
+val function_equation =
+  Lib.can (Type.dom_rng o Term.type_of o boolSyntax.lhs)
+
+fun supplied_reading get_rewrites term =
+  function_equation term andalso read_by_a_rewrite (get_rewrites ()) term
+
+fun reads_as_supplied rewrites term =
+  not (null rewrites) andalso supplied_reading (fn () => rewrites) term
+
 fun extensional_normalize {rewrites,heads} =
-  let
-    val function_equation =
-      Lib.can (Type.dom_rng o Term.type_of o boolSyntax.lhs)
+  let val reads = supplied_reading (fn () => Susp.force rewrites)
   in
     Tactical.CONV_TAC
       (Conv.CHANGED_CONV
          (fn term =>
-            if function_equation term andalso
-               read_by_a_rewrite (Susp.force rewrites) term then
+            if reads term then
               raise ERR "extensional_normalize"
                 "a rewrite of the invocation's takes the equation"
             else
@@ -4192,7 +4198,7 @@ fun valid_slice
       ({candidates, applications, normalization} : force_slice) =
   candidates > 0 andalso applications > 0 andalso normalization > 0
 
-fun force_search schedule budget add_simp cs goal ctxt =
+fun force_search schedule budget cs search_cs goal ctxt =
   let
     val {best, tableau, depth, blast_depth, classical_depth} =
       schedule
@@ -4200,10 +4206,9 @@ fun force_search schedule budget add_simp cs goal ctxt =
     val best_budget = searchBudget.child budget (slice_limits best)
     (* Atomic simplification retains its invocation policy and budget;
        yielding engines alone receive the resumable slice budgets. *)
-    val best_cs = add_simp cs
     val best_session =
       classicalLib.CS_FIRST_BEST_SESSION best_budget
-        best_cs goal ctxt
+        search_cs goal ctxt
     val best_slice = ref best
     val tableau_slice = ref tableau
     val tableau_current =
@@ -4311,10 +4316,9 @@ fun force_search schedule budget add_simp cs goal ctxt =
                         val turn =
                           searchBudget.child budget
                             (slice_limits (!depth_slice))
-                        val depth_cs = add_simp cs
                         val session =
                           classicalLib.CS_DEPTH_SESSION turn
-                            {dup = false} bound depth_cs goal ctxt
+                            {dup = false} bound search_cs goal ctxt
                         val current = (turn, session)
                       in
                         depth_current := SOME current;
@@ -4368,7 +4372,7 @@ fun force_driver name budget
        constructor constraints from which tableau search builds a witness. *)
     val safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
-    val search = force_search schedule budget add_simp cs
+    val search = force_search schedule budget cs search_cs
     val inventory = extensional_inventory ss
     val script =
       Tactical.EVERY

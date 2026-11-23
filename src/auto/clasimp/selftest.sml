@@ -4159,10 +4159,18 @@ val _ =
   check
     ("a supplied rewrite decides the reading of an equation",
      fn () =>
-       valid_closes
-         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
-            clasetLib.empty_cs supplied_reading_ss)
-         supplied_reading_goal)
+       let
+         val target = snd supplied_reading_goal
+         val rewrites = [Thm.CONJ listTheory.EVERY_MEM boolTheory.FUN_EQ_THM]
+       in
+         clasimpLib.reads_as_supplied rewrites target andalso
+         not (clasimpLib.reads_as_supplied rewrites (boolSyntax.mk_eq
+           (boolSyntax.T, boolSyntax.F))) andalso
+         valid_closes
+           (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+              clasetLib.empty_cs supplied_reading_ss)
+           supplied_reading_goal
+       end)
 
 (* Which reading the default takes is decided by the head, not by the
    head being a constant.  [EVERY clasimp_ext_q] is constant-headed at

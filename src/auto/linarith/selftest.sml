@@ -805,24 +805,29 @@ val _ =
      fn () =>
        let
          val width = 12
-         val positive = SOME (fm_row (1, 0) 0)
-         val negative = SOME (fm_row (~1, 0) 1)
+         (* The pivots tie, so x is eliminated first. Its derived
+            copies of 0 <= z must retain the first justification. *)
+         val positive = SOME (fm_row (1, 1) 0)
+         val negative = SOME (fm_row (~1, 0) 0)
+         val opposing = SOME (fm_row (0, ~1) 1)
          val rows =
            List.tabulate (width, fn _ => positive) @
-           List.tabulate (width, fn _ => negative)
+           List.tabulate (width, fn _ => negative) @
+           List.tabulate (width, fn _ => opposing)
          val items =
            ListPair.map
              (fn (i, row) =>
                (Term.mk_var ("fm_dup_" ^ Int.toString i, Type.bool), row))
-             (List.tabulate (2 * width, Lib.I), rows)
+             (List.tabulate (3 * width, Lib.I), rows)
+         fun first (Added (Added (Asm 0, Asm second), Asm third)) =
+               second = width andalso third = 2 * width
+           | first _ = false
        in
          (case fm_refute rows of
-              SOME (Added (Asm 0, Asm second)) => second = width
+              SOME just => first just
             | _ => false) andalso
          (case fm_budgeted (searchBudget.unbounded ()) items of
-              CertificateFound
-                {justifications = [Added (Asm 0, Asm second)], ...} =>
-                  second = width
+              CertificateFound {justifications = [just], ...} => first just
             | _ => false)
        end)
 

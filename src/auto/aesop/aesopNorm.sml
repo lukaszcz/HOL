@@ -98,40 +98,42 @@ fun normalise_in ctxt budget {max_depth, rules} id tree =
   if max_depth < 0 then
     raise ERR "normalise" "max_depth must not be negative"
   else
-    let
-      val goal = aesopTree.goal tree id
-      val ordered = ordered_rules rules
-
-      fun scan original reversed_records iterations node [] =
-            finish id reversed_records iterations node original
-        | scan original reversed_records iterations node (rule :: rest) =
-            (Option.app
-               (fn meter =>
-                 searchBudget.charge meter searchBudget.Normalization)
-               budget;
-             case application ctxt rule node of
-                 Inapplicable =>
-                   scan original reversed_records iterations node rest
-               | Applied {record, node = next} =>
-                   if iterations >= max_depth then
-                     IterationLimit
-                       {tree = original, iterations = iterations,
-                        rule = #name rule}
-                   else
-                     let
-                       val records' = record :: reversed_records
-                       val iterations' = iterations + 1
-                     in
-                       if null (clasetGoal.goals next) then
-                         finish id records' iterations' next original
-                       else
-                         scan original records' iterations' next ordered
-                     end)
+    let val goal = aesopTree.goal tree id
     in
       if aesopTree.is_normalised goal then
         Complete {tree = tree, iterations = 0}
       else
-        scan tree [] 0 (aesopTree.goal_node goal) ordered
+        let
+          val ordered = ordered_rules rules
+
+          fun scan reversed_records iterations node [] =
+                finish id reversed_records iterations node tree
+            | scan reversed_records iterations node (rule :: rest) =
+                (Option.app
+                   (fn meter =>
+                     searchBudget.charge meter searchBudget.Normalization)
+                   budget;
+                 case application ctxt rule node of
+                     Inapplicable =>
+                       scan reversed_records iterations node rest
+                   | Applied {record, node = next} =>
+                       if iterations >= max_depth then
+                         IterationLimit
+                           {tree = tree, iterations = iterations,
+                            rule = #name rule}
+                       else
+                         let
+                           val records' = record :: reversed_records
+                           val iterations' = iterations + 1
+                         in
+                           if null (clasetGoal.goals next) then
+                             finish id records' iterations' next tree
+                           else
+                             scan records' iterations' next ordered
+                         end)
+        in
+          scan [] 0 (aesopTree.goal_node goal) ordered
+        end
     end
 
 end
