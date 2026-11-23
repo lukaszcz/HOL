@@ -1228,7 +1228,39 @@ struct
           end
     in List.all allowed (subterms t) end
 
-  fun datatype_prove t =
+  (* A lemma about a compound case scrutinee, such as
+     [x = SOME (THE x) \/ ~IS_SOME x] or record eta for a large conditional
+     [x], holds for every value of [x]: split each outermost such scrutinee
+     as a fresh variable, then instantiate back.  Smallest-first splitting
+     of [x]'s inner scrutinees exhausts the split cap. *)
+  fun generalized_exhaustiveness fallback t =
+    let
+      val goal_vars = Term.free_vars t
+      fun is_goal_var variable = List.exists (Term.aconv variable) goal_vars
+      fun scrutinee tm =
+        Option.map (fn (_, x, _) => x) (Lib.total TypeBase.dest_case tm)
+      fun candidate x =
+        not (Term.is_var x) andalso not (constructor_headed x) andalso
+        has_constructors (Term.type_of x) andalso
+        List.all is_goal_var (Term.free_vars x)
+      val compound =
+        List.filter candidate (List.mapPartial scrutinee (subterms t))
+      fun inside x y = not (Term.aconv x y) andalso HolKernel.free_in x y
+      val outermost = Lib.op_mk_set Term.aconv (List.filter
+        (fn x => not (List.exists (inside x) compound)) compound)
+      val _ = not (List.null outermost) orelse unsupported t
+      val vars = List.map (Term.genvar o Term.type_of) outermost
+      val general = Term.subst
+        (ListPair.map (fn (x, v) => {redex = x, residue = v})
+          (outermost, vars)) t
+      val theorem = Thm.INST
+        (ListPair.map (fn (v, x) => {redex = v, residue = x})
+          (vars, outermost))
+        (exhaustiveness_with_fallback fallback general)
+    in
+      if Term.aconv (Thm.concl theorem) t then theorem else unsupported t
+    end
+  fun direct_datatype_prove use_metis t =
     let val _ = admit t
         val _ = profile "datatype(fragment-precondition)"
           require_datatype_fragment t
@@ -1239,7 +1271,8 @@ struct
           profile "datatype(exhaustiveness)"
             (exhaustiveness_with_fallback fallback) t
         fun finish () =
-          profile "datatype(metis)" metis_datatype_prove t
+          if use_metis then profile "datatype(metis)" metis_datatype_prove t
+          else unsupported t
     in
       (simplify immediate handle Feedback.HOL_ERR _ =>
        profile "datatype(acyclicity)" acyclicity_prove t)
@@ -1248,6 +1281,21 @@ struct
             (simplify true handle Feedback.HOL_ERR _ => finish ()))
          handle Feedback.HOL_ERR _ => unsupported t)
     end
+  fun datatype_prove t = direct_datatype_prove true t
+  (* Z3's datatype th-lemmas only: on a failure, generalize the lemma's
+     outermost compound case scrutinees. *)
+  fun datatype_prove_generalizing t =
+    direct_datatype_prove true t
+    handle Feedback.HOL_ERR _ =>
+      (profile "datatype(generalized)" (generalized_exhaustiveness true) t
+       handle Feedback.HOL_ERR _ => unsupported t)
+  (* Rewrite replay meets many targets no datatype procedure proves; each
+     metis attempt there spends its whole limit, and a later rewrite rung
+     proves the target instead.  This skips only the final metis search
+     over the datatype rewrites: the acyclicity rung still calls metis once
+     it has a size inequality for one of the target's equalities, which is
+     how acyclicity rewrites such as (x = C (D x)) = F replay. *)
+  fun datatype_prove_without_metis t = direct_datatype_prove false t
 
   (* Establish a datatype consequence under its actual HOL assumptions.  The
      closed implication is proved from TypeBase facts and then instantiated
@@ -1265,7 +1313,10 @@ struct
     end
 
   in
-    {prove=protect datatype_prove,simp=protect datatype_simp_prove,
+    {prove=protect datatype_prove,
+     prove_without_metis=protect datatype_prove_without_metis,
+     prove_generalizing=protect datatype_prove_generalizing,
+     simp=protect datatype_simp_prove,
      exhaustiveness=protect exhaustiveness_prove,
      acyclicity=protect acyclicity_prove,
      consequence=protect datatype_consequence_prove,
@@ -1307,6 +1358,10 @@ struct
   fun datatype_prove_with_admission admit t =
     #prove (checked_procedures admit) t
   fun datatype_prove t = datatype_prove_with_admission (default_admission ()) t
+  fun datatype_prove_without_metis_with_admission admit t =
+    #prove_without_metis (checked_procedures admit) t
+  fun datatype_prove_generalizing_with_admission admit t =
+    #prove_generalizing (checked_procedures admit) t
   fun datatype_simp_prove t =
     #simp (checked_procedures (default_admission ())) t
   fun exhaustiveness_prove t =

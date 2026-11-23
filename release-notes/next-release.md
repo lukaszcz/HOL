@@ -248,6 +248,10 @@ Bugs fixed
     this leads to, including goals that use asserted function definitions
     and goals over sequences, sets and higher-order functions.
 
+-   `Z3_TAC` and `CVC_TAC` now prove goals that apply a function variable
+    `f : num -> 'a` to natural-number terms, such as
+    `a < b /\ b < a + 2 ==> f (a + 1) = f b`; they used to fail on them.
+
 -   HolSmt's oracles no longer return false theorems about word division by
     zero.  `word_div` and `word_quot` were translated to `bvudiv` and
     `bvsdiv`, which return all ones (or 1) at a zero divisor where HOL gives
@@ -272,6 +276,14 @@ Bugs fixed
     as `x = (x && m) || (x && ~m)`.  `CVC_TAC` checks goals about commuting
     function updates and set difference again, and checks some 256-bit word
     goals with adders and masks that used to time out.
+
+-   `Z3_TAC` now replays more proof steps of large goals: rewrites that
+    reorder the children of a disjunction or conjunction, or that write a
+    conditional with a `T` or `F` branch, an implication or a negated
+    connective as the disjunction or conjunction it stands for; rewrites that are propositional identities over
+    their theory atoms; and datatype lemmas about a compound case
+    scrutinee, such as `x = SOME (THE x) \/ ~IS_SOME x` where `x` is a
+    large `case` term.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at

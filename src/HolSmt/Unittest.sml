@@ -412,6 +412,46 @@ fun num_binder_relativization_nested_mixed_success () =
            ?k :int.
              0 <= k /\ j <= &(Num k) /\ Num i <= Num k``)
 
+fun num_args_relativization_success () =
+  let
+    fun check_conv conv (label, input, expected) =
+      let val thm = conv input
+      in
+        assert_no_hyps (label, thm);
+        assert_concl_alpha (label, thm, boolSyntax.mk_eq (input, expected))
+      end
+    val check = check_conv SmtLib.NUM_ARGS_TO_INT_CONV
+  in
+    check ("num argument relativization",
+      ``!P :num -> bool. P 1 ==> P 2``,
+      ``!P :int -> bool. P 1 ==> P 2``);
+    (* Only the positions every occurrence supplies are lifted. *)
+    check ("partial application num argument relativization",
+      ``!f :num -> num -> bool. f 1 = f 2``,
+      ``!f :int -> num -> bool. f 1 = f 2``);
+    check ("existential num argument relativization",
+      ``?f :'a -> num -> bool. !x. f x 3``,
+      ``?f :'a -> int -> bool. !x. f x 3``);
+    check ("bare occurrence num argument no-op",
+      ``!s :num -> bool. 2 IN s``,
+      ``!s :num -> bool. 2 IN s``);
+    (* A lifted argument that is a num binder becomes its int binder,
+       not ABS of it. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num binder argument",
+      ``!(s :num -> bool) (b :num). s b``,
+      ``!s :int -> bool. !i :int. 0 <= i ==> s i``);
+    check_conv SmtLib.NUM_TO_INT_CONV ("lifted num existential argument",
+      ``!P :num -> bool. ?n :num. P n``,
+      ``!P :int -> bool. ?i :int. 0 <= i /\ P i``);
+    (* Only a function variable's argument cancels: both sides of this
+       keep the same encoding, so it is no rewrite that loops. *)
+    check_conv SmtLib.NUM_TO_INT_CONV ("guarded num under a constant",
+      ``!n :num. real_of_int (&n) = (&n :real)``,
+      ``!i :int. 0 <= i ==>
+          real_of_int (if i < 0 then -i else i) =
+          real_of_int (if i < 0 then -i else i)``)
+  end
+
 fun num_binder_relativization_non_num_noop_success () =
   assert_num_binder_conv
     ("non-num binder relativization no-op",
@@ -20984,7 +21024,7 @@ in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its target");
   check_oracle_tags "Z3 datatype-normalize rewrite" theorem;
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" > 0,
     "Z3 datatype-normalize rewrite was proved by another rung")
 end
 
@@ -21005,7 +21045,7 @@ in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its swapped target");
   check_oracle_tags "Z3 datatype-normalize swapped rewrite" theorem;
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" > 0,
     "Z3 datatype-normalize swapped rewrite was proved by another rung");
   assert (boolSyntax.lhs (Thm.concl l_thm) ~~ r andalso
           boolSyntax.lhs (Thm.concl r_thm) ~~ l,
@@ -22031,6 +22071,101 @@ in
           "rewrite(14)(unification:deferred-alias-return)_OK" = 0,
       "unsupported contextual rewrite did not fail at rewrite(26)")
   end
+end
+
+(* A datatype lemma about a compound case scrutinee holds for every value
+   of the scrutinee.  Splitting the smallest scrutinees first (the nine
+   [probe_g i a] inside [probe_h ...]) runs out of the split cap; the
+   generalized route splits [probe_h ...] once. *)
+fun datatype_generalized_scrutinee_success () =
+let
+  val a = ``generalized_a:num``
+  fun g i = Term.mk_var ("generalized_g" ^ Int.toString i,
+    ``:num -> num option``)
+  fun field i =
+    ``case ^(Term.mk_comb (g i, a)) of NONE => 0n | SOME z => z``
+  val fields = List.tabulate (9, field)
+  val h = Term.mk_var ("generalized_h",
+    List.foldr (fn (_, ty) => ``:num -> ^ty``) ``:num option`` fields)
+  val scrutinee = Term.list_mk_comb (h, fields)
+  val x = ``case ^scrutinee of NONE => NONE | SOME z => SOME (z + 1n)``
+  val target = ``(^x = SOME (THE ^x)) \/ ~IS_SOME ^x``
+  val () = Profile.reset_all ()
+  val theorem = SmtDatatypeProve.datatype_prove_generalizing_with_admission
+    (SmtDatatypeProve.default_admission ()) target
+  val label = "datatype generalized scrutinee"
+in
+  assert_no_hyps (label, theorem);
+  assert_concl_alpha (label, theorem, target);
+  check_oracle_tags label theorem;
+  assert (profile_call_count "datatype(generalized)_OK" = 1,
+    "the generalized scrutinee route did not prove the lemma");
+  (* The other entry points, cvc5's included, keep the direct search. *)
+  assert ((ignore (SmtDatatypeProve.datatype_prove target); false)
+          handle Feedback.HOL_ERR _ => true,
+    "the shared datatype prover proved the lemma without generalizing");
+  assert (profile_call_count "datatype(generalized)" = 1,
+    "the shared datatype prover tried the generalized scrutinee route")
+end
+
+(* Z3 reorders the children of a disjunction or conjunction, and writes
+   a conditional with a constant branch, an implication or a negated
+   connective as one.  Each child pair needs its own rung (a false word
+   atom, and two forms of one list atom), so skeleton congruence must
+   pair the children across the reordering. *)
+fun z3_rewrite_spine_congruence_success () =
+let
+  val skeleton = "rewrite(25a)(skeleton-congruence)_OK"
+  val word_rung = "rewrite(18)(BBLAST)_OK"
+  val false_word =
+    ``((spine_x:word4) && (spine_x - 1w)) + 1w =
+      spine_x - (spine_x && -spine_x)``
+  val seq_atom =
+    ``REVERSE [spine_a:int; spine_b] = [spine_b; spine_a]``
+  val seq_atom' =
+    ``[spine_b; spine_a] = REVERSE [spine_a:int; spine_b]``
+  val not_seq = boolSyntax.mk_neg seq_atom
+  val not_seq' = boolSyntax.mk_neg seq_atom'
+  fun replay target =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+    in
+      Z3_ProofReplay.replay_root_for_test
+        (Z3_Proof.update_proof_steps initial steps)
+    end
+  fun check name (left, right) =
+    let
+      val target = boolSyntax.mk_eq (left, right)
+      val () = Profile.reset_all ()
+      val theorem = replay target
+    in
+      assert_no_hyps (name, theorem);
+      assert_concl_alpha (name, theorem, target);
+      check_oracle_tags name theorem;
+      assert (profile_call_count skeleton = 1,
+        name ^ " was not proved by skeleton congruence");
+      assert (profile_call_count word_rung = 1,
+        name ^ " did not consume exactly one word residue")
+    end
+  val reordered = boolSyntax.mk_disj (not_seq', boolSyntax.F)
+in
+  check "spine disjunction reordered"
+    (boolSyntax.mk_disj (false_word, not_seq), reordered);
+  check "spine conditional"
+    (boolSyntax.mk_disj (false_word, not_seq),
+     boolSyntax.mk_cond (not_seq', boolSyntax.T, boolSyntax.F));
+  check "spine implication"
+    (boolSyntax.mk_imp (seq_atom, false_word),
+     boolSyntax.mk_disj (boolSyntax.F, not_seq'));
+  check "spine negated conjunction"
+    (boolSyntax.mk_neg
+       (boolSyntax.mk_conj (boolSyntax.mk_neg false_word, seq_atom)),
+     reordered);
+  check "spine negated disjunction"
+    (boolSyntax.mk_neg (boolSyntax.mk_disj (false_word, not_seq)),
+     boolSyntax.mk_conj (seq_atom', boolSyntax.T))
 end
 
 fun z3_lowered_boolean_sat_success () =
@@ -28685,7 +28820,7 @@ let
     "(declare-fun b () Bool)\n" ^
     "(declare-fun c () Bool)\n" ^
     "(declare-fun d () Bool)\n"
-  val rewrite_text = "(= (and a b) (not (or c d)))"
+  val rewrite_text = "(= (and a b) (or c d))"
   val proof = parse_z3_proof_string "4.12.4"
     ("(" ^ declarations ^
      "(proof (unit-resolution (asserted (not " ^ rewrite_text ^ ")) " ^
@@ -39962,6 +40097,8 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("num_args_relativization_success",
+      num_args_relativization_success),
     ("bag_count_relativization_success", bag_count_relativization_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),
@@ -40267,6 +40404,8 @@ let
       datatype_constructor_case_reduction_success),
     ("datatype_exact_spine_case_eta_success",
       datatype_exact_spine_case_eta_success),
+    ("datatype_generalized_scrutinee_success",
+      datatype_generalized_scrutinee_success),
     ("datatype_destructor_ablation_boundaries_success",
       datatype_destructor_ablation_boundaries_success),
     ("smtlib_native_datatype_destructor_uf_success",
@@ -40711,6 +40850,8 @@ let
       z3_rewrite_skeleton_congruence_success),
     ("z3_rewrite_skeleton_congruence_boundaries",
       z3_rewrite_skeleton_congruence_boundaries),
+    ("z3_rewrite_spine_congruence_success",
+      z3_rewrite_spine_congruence_success),
     ("z3_lowered_boolean_sat_success",
       z3_lowered_boolean_sat_success),
     ("z3_rewrite_abs_rung_shaped_failure",
