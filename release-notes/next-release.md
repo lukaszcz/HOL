@@ -278,9 +278,9 @@ Bugs fixed
     goals with adders and masks that used to time out.
 
 -   `Z3_TAC` now replays more proof steps of large goals: rewrites that
-    reorder the children of a disjunction or conjunction, or write a
+    reorder the children of a disjunction or conjunction, or that write a
     conditional with a `T` or `F` branch, an implication or a negated
-    connective as one; rewrites that are propositional identities over
+    connective as the disjunction or conjunction it stands for; rewrites that are propositional identities over
     their theory atoms; and datatype lemmas about a compound case
     scrutinee, such as `x = SOME (THE x) \/ ~IS_SOME x` where `x` is a
     large `case` term.

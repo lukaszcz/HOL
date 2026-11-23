@@ -1275,7 +1275,10 @@ struct
        handle Feedback.HOL_ERR _ => unsupported t)
   (* Rewrite replay meets many targets no datatype procedure proves; each
      metis attempt there spends its whole limit, and a later rewrite rung
-     proves the target instead. *)
+     proves the target instead.  This skips only the final metis search
+     over the datatype rewrites: the acyclicity rung still calls metis once
+     it has a size inequality for one of the target's equalities, which is
+     how acyclicity rewrites such as (x = C (D x)) = F replay. *)
   fun datatype_prove_without_metis t = direct_datatype_prove false t
 
   (* Establish a datatype consequence under its actual HOL assumptions.  The
