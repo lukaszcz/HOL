@@ -263,8 +263,7 @@ fun reachable work transitivity edges outgoing observe source =
 
 fun reach_from work transitive edges =
   let
-    (* A contradiction can test several starting points on the same graph.
-       Build the shared index only if one needs more than two scans. *)
+    (* Share the index across traversals and repeated crossing checks. *)
     val outgoing = Portable.HOLSusp.delay (fn () => outgoing_edges edges)
     (* Share the rule across ordinary traversals, and instantiate it only
        when a composed path is used. Metered traversals keep the original
@@ -293,6 +292,25 @@ fun reach_from work transitive edges =
       let val known = from source
       in reached work known
       end
+    val reach_crossing =
+      case #max_nodes work of
+          NONE => reach
+        | SOME _ =>
+            let
+              val scans = ref 2
+              fun has_edges tm =
+                Option.isSome
+                  (Termtab.lookup (Portable.HOLSusp.force outgoing) tm)
+            in
+              fn source => fn target =>
+                (* Both ends need outgoing edges for a crossing. Check
+                   the index only after the first few path queries. *)
+                if !scans > 0 then
+                  (scans := !scans - 1; reach source target)
+                else if has_edges source andalso has_edges target then
+                  reach source target
+                else NONE
+            end
     fun reach_one source target =
       case (#max_nodes work, step) of
           (SOME _, SOME _) =>
@@ -315,7 +333,7 @@ fun reach_from work transitive edges =
               edges
         | (NONE, _) => reach source target
   in
-    {reach = reach, reach_one = reach_one}
+    {reach_crossing = reach_crossing, reach_one = reach_one}
   end
 
 (* The two chains that meet on a distinction. *)
@@ -394,7 +412,8 @@ fun equality_lookup (work : work) equalities =
 
 fun close work (context : orderData.context) (edges, equalities) =
   let
-    val {reach, ...} = reach_from work (#transitive (#axioms context)) edges
+    val {reach_crossing, ...} =
+      reach_from work (#transitive (#axioms context)) edges
     val lookup = equality_lookup work equalities
     fun one (x, y, distinction) =
       let
@@ -407,7 +426,8 @@ fun close work (context : orderData.context) (edges, equalities) =
           case lookup (x, y) of
               SOME equality => SOME (contradiction equality)
             | NONE =>
-                Option.map contradiction (crossing work context reach (x, y))
+                Option.map contradiction
+                  (crossing work context reach_crossing (x, y))
       end
   in
     one
@@ -431,7 +451,7 @@ fun prove_literal work context
       (edges, equalities, distinctions) target =
   let
     val {reflexive, transitive, ...} = #axioms (context : orderData.context)
-    val {reach, reach_one} = reach_from work transitive edges
+    val {reach_crossing, reach_one} = reach_from work transitive edges
     fun weak (x, y) =
       if aconv x y then
         Option.map
@@ -441,7 +461,7 @@ fun prove_literal work context
   in
     case target of
         orderData.Weak pair => weak pair
-      | orderData.Equal pair => crossing work context reach pair
+      | orderData.Equal pair => crossing work context reach_crossing pair
       | orderData.Strict (x, y) =>
           (case weak (x, y) of
                NONE => NONE

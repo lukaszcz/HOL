@@ -248,9 +248,27 @@ struct
 
   fun subst_bound (arg, term) =
     let
+      (* Adjacent uses at the same depth can share the raised argument.
+         Keep only the most recent depth and reuse the unchanged argument
+         outside binders. *)
+      val cached = ref (0, arg)
+      fun raise_compound level =
+        let val (previous, raised) = !cached
+        in
+          if level = previous then raised
+          else
+            let val next = incr_boundvars level arg
+            in cached := (level, next); next end
+        end
+      fun raise_arg level =
+        case arg of
+            Abs _ => raise_compound level
+          | _ $ _ => raise_compound level
+          | _ => incr_boundvars level arg
       fun subst (body as Bound i, level) =
             if i < level then body
-            else if i = level then incr_boundvars level arg
+            else if i = level then
+              if level = 0 then arg else raise_arg level
             else Bound (i - 1)
         | subst (Abs (name, body), level) =
             Abs (name, subst (body, level + 1))

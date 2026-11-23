@@ -1534,12 +1534,10 @@ fun invocation_facts theorems =
     else (check_aesop_markers "invocation_facts" rest; rest)
   end
 
-(* The subterms a match can be attempted at: applications at a constant
-   head.  On the fact's side [eligible] also rejects a subterm under one of
-   the fact's own abstractions -- matching there would read a type off a
-   variable that exists only under the binder -- and on the goal's side
-   every variable is one of its own. *)
-fun matchable_subterms_with charge eligible term =
+(* Matching uses applications with a constant head. After crossing an
+   abstraction on the fact's side, check that the site's variables also
+   occur free in the whole fact. *)
+fun matchable_subterms_with charge under_abstraction term =
   let
     fun head_name sub =
       if is_comb sub then head_name (rator sub)
@@ -1548,7 +1546,7 @@ fun matchable_subterms_with charge eligible term =
 
     (* Visit in [find_terms] order, returning the sites in reverse.  Every
        operator in an application spine has the same head. *)
-    fun visit head sub sites =
+    fun visit head under_binder sub sites =
       let val _ = charge searchBudget.Candidate
       in
         if is_comb sub then
@@ -1561,16 +1559,18 @@ fun matchable_subterms_with charge eligible term =
             val sites' =
               case name of
                   SOME key =>
-                    if eligible sub then (key, sub) :: sites else sites
+                    if not under_binder orelse under_abstraction sub
+                    then (key, sub) :: sites else sites
                 | NONE => sites
           in
-            visit NONE operand (visit (SOME name) operator sites')
+            visit NONE under_binder operand
+              (visit (SOME name) under_binder operator sites')
           end
-        else if is_abs sub then visit NONE (body sub) sites
+        else if is_abs sub then visit NONE true (body sub) sites
         else sites
       end
   in
-    visit NONE term []
+    visit NONE false term []
   end
 
 fun matching_pairs_with charge goal_terms patterns =
@@ -1870,12 +1870,16 @@ fun polymorphic_instances_with budgeted charge
                 (fst (boolSyntax.strip_forall (Thm.concl match_fact))))
               match_fact)
         val match_loose = map #residue fresh_types
-        val schematic = free_vars match_body
+        val schematic = Portable.HOLSusp.delay
+          (fn () => Term.FVL [match_body] Term.empty_tmset)
+        fun eligible sub =
+          case free_vars sub of
+              [] => true
+            | variables =>
+                let val free = Portable.HOLSusp.force schematic
+                in List.all (fn v => HOLset.member (free, v)) variables end
         val patterns =
-          matchable_subterms_with charge
-            (fn sub => List.all (fn v => Lib.op_mem aconv v schematic)
-                         (free_vars sub))
-            match_body
+          matchable_subterms_with charge eligible match_body
         fun instance_of (pattern, site) =
           (charge searchBudget.Candidate;
            case Lib.total (Term.match_term pattern) site of

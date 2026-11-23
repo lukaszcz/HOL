@@ -3884,6 +3884,30 @@ val hygiene_behavior_fact_z =
 
 val _ =
   test
+    ("fact insertion checks scope at sites under an abstraction",
+     fn () =>
+       let
+         val bound = REFL ``\x:'a. hygiene_p x``
+         val free = REFL ``\x:'a. hygiene_p (y:'a)``
+         val goal = ([], ``hygiene_p T``)
+         val instantiated = Thm.INST_TYPE [alpha |-> Type.bool] free
+         fun inserts insert fact expected =
+           case Tactical.VALID (insert [fact]) goal (Context.snapshot ()) of
+               ([([assumption], target)], _) =>
+                 aconv assumption (concl expected) andalso
+                 aconv target (#2 goal)
+             | _ => false
+       in
+         List.all
+           (fn insert =>
+             inserts insert bound bound andalso
+             inserts insert free instantiated)
+           [INSERT_FACTS_TAC,
+            INSERT_FACTS_TAC_BUDGETED (searchBudget.unbounded ())]
+       end)
+
+val _ =
+  test
     ("the second carrier remains usable after binder collision",
      fn () =>
        let

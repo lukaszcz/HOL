@@ -267,7 +267,32 @@ val _ =
          aconv (subst_bound (Fvar "a", body), Abs ("y", Fvar "a"))
          andalso
          aconv (subst_bound (Bound 0, body), Abs ("y", Bound 1))
+         andalso
+         aconv (subst_bound (Bound (~1), body), Abs ("y", Bound (~1)))
          andalso loose_bnos (Abs ("x", Bound 1)) = [0]
+       end)
+
+val _ =
+  test
+    ("de Bruijn substitution reuses shifts without capturing arguments",
+     fn () =>
+       let
+         val shared = ref NONE
+         val argument = Abs ("a", Bound 0 $ Bound 1 $ Var shared)
+         val body =
+           Bound 0 $
+             Abs ("x", Bound 1 $ Bound 1 $
+               Abs ("y", Bound 2 $ Bound 2 $ Bound 0) $ Bound 1)
+         val under_x = Abs ("a", Bound 0 $ Bound 2 $ Var shared)
+         val under_y = Abs ("a", Bound 0 $ Bound 3 $ Var shared)
+         val expected =
+           argument $
+             Abs ("x", under_x $ under_x $
+               Abs ("y", under_y $ under_y $ Bound 0) $ under_x)
+       in
+         aconv (subst_bound (argument, body), expected) andalso
+         aconv
+           (subst_bound_measured (fn () => ()) (argument, body), expected)
        end)
 
 val _ =

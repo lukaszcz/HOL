@@ -105,6 +105,8 @@ fun elim_var_with (work : work) drop_column
     (* Both pivot coefficients are nonzero. LCM(a1,a2)/a1 = a2/GCD(a1,a2). *)
     val (m1, m2) =
       if ai_eq a1 a2 then (one, one)
+      else if ai_one a1 then (a2, one)
+      else if ai_one a2 then (one, a1)
       else
         let val gcd = Arbint.gcd (a1, a2)
         in (Arbint.div (a2, gcd), Arbint.div (a1, gcd)) end

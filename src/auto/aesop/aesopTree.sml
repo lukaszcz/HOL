@@ -993,8 +993,6 @@ fun install_rapp parent_id
              #forwarded source_goal)
           end)
         copy_sources
-    val all_specs = child_specs @ copy_specs
-
     fun make_child
           ((cgoal, deps, copy_of, forwarded), (id, children)) =
       let
@@ -1011,7 +1009,8 @@ fun install_rapp parent_id
       end
 
     val (next_gid', reversed_children) =
-      List.foldl make_child (next_gid, []) all_specs
+      List.foldl make_child
+        (List.foldl make_child (next_gid, []) child_specs) copy_specs
     val ordered_children = List.rev reversed_children
     val child_ids = map #id ordered_children
     (* The copy links this application adds, for the inverted index.  This

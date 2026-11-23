@@ -1466,10 +1466,11 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
 
     fun premiseBranches (rule : tableau_rule) child brs prems =
       let
-        fun make [] = brs
-          | make (premise :: rest) = child premise :: make rest
+        fun make (premise :: rest) (hidden :: more) =
+              child (premise, hidden) :: make rest more
+          | make _ _ = brs
       in
-        make (ListPair.zip (prems, #hidden_assumptions rule))
+        make prems (#hidden_assumptions rule)
       end
 
     fun contraposing mark formula prems (lits, levels) =

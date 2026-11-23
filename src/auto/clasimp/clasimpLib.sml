@@ -3882,16 +3882,34 @@ fun must_close name =
    predicate short of an argument, and no set, meets none of the facts
    the predicate's own are stated on, and no rewrite brings the two
    readings back together. *)
-fun states_a_reading theorem =
+fun equation_reading term =
   let
-    val (premises, equivalence) =
-      boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
-    val (equation, _) = boolSyntax.dest_eq equivalence
+    val (equation, _) = boolSyntax.dest_eq term
     val (equated, _) = boolSyntax.dest_eq equation
   in
-    null premises andalso Lib.can Type.dom_rng (Term.type_of equated)
+    Lib.can Type.dom_rng (Term.type_of equated)
   end
   handle HOL_ERR _ => false
+
+fun states_a_reading theorem =
+  equation_reading (Thm.concl (Drule.SPEC_ALL theorem))
+  handle HOL_ERR _ => false
+
+fun may_state_a_reading theorem =
+  let
+    fun strip term =
+      if boolSyntax.is_forall term then snd (boolSyntax.strip_forall term)
+      else term
+    fun inspect term =
+      if boolSyntax.is_conj term then
+        let val (left, right) = boolSyntax.dest_conj term
+        in inspect left orelse inspect right end
+      else equation_reading (strip term)
+  in
+    (* Mirror SPEC_ALL followed by CONJUNCTS. A quantifier at a leaf
+       can expose an equation, but does not expose more conjuncts. *)
+    inspect (strip (Thm.concl theorem))
+  end
 
 (* [Conv.REWR_CONV] rejects a theorem it cannot read as a rewrite when
    it is given the theorem, not when the conversion is run, so the
@@ -3907,7 +3925,10 @@ fun read_by_a_rewrite rewrites term =
       states_a_reading theorem andalso
       Lib.can (fn subject => Conv.REWR_CONV theorem subject) term
   in
-    List.exists (List.exists applies o readings)
+    List.exists
+      (fn theorem =>
+        may_state_a_reading theorem andalso
+        List.exists applies (readings theorem))
       rewrites
   end
 

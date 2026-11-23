@@ -262,7 +262,8 @@ val _ =
                (boolSyntax.mk_eq (List.nth (long_order_nodes, left),
                             List.nth (long_order_nodes, right))))
          val chain = List.rev (List.tabulate (40, fn i => fact i (i + 1)))
-         val distinctions = [apart 0 43, apart 1 43, apart 0 40]
+         val distinctions =
+           [apart 0 43, apart 1 43, apart 2 44, apart 45 46, apart 0 40]
          val facts =
            (Thm.ASSUME long_order_axiom :: chain) @
            (fact 40 0 :: distinctions)

@@ -1081,15 +1081,16 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
 
 (* [derive] runs before each lazy constructor pair a Unify lookup derives
    afresh; see [clasetLib.unify_elim_candidates_with]. *)
-fun rule_results_with derive note_skip mode cs duplicated part weight_filter
-      (node, pos) =
+fun rule_candidates derive mode part (node, pos) =
+  candidates derive (clasetGoal.store node) mode part
+    (clasetGoal.lookup_spellings node pos)
+
+fun rule_applications note_skip mode cs duplicated get_tagged (node, pos) =
   seq.delay
     (fn () =>
       let
         val (asl, _) = clasetGoal.render node pos
-        val tagged = List.filter (weight_filter o #1)
-          (candidates derive (clasetGoal.store node) mode part
-            (clasetGoal.lookup_spellings node pos))
+        val tagged = get_tagged ()
         val majors = Portable.HOLSusp.delay (fn () => numbered asl)
 
         fun applications (entry as (_, (is_elim, theorem))) =
@@ -1127,6 +1128,12 @@ fun rule_results_with derive note_skip mode cs duplicated part weight_filter
       in
         entries tagged
       end)
+
+fun rule_results_with derive note_skip mode cs duplicated part weight_filter
+      input =
+  rule_applications note_skip mode cs duplicated
+    (fn () => List.filter (weight_filter o #1)
+      (rule_candidates derive mode part input)) input
 
 fun rule_results note_skip =
   rule_results_with listUtil.no_checkpoint note_skip
@@ -1622,13 +1629,18 @@ fun close_one_child direct =
       | _ => NONE
   end
 
-fun bimatch2_results note_skip cs part input =
-  seq.mapPartial close_one_child
-    (rule_results note_skip clasetUnify.Match cs false part (weight_is 2)
-       input)
-
 fun clarify_cascade_in ctxt cs input =
-  let val note_skip = skip_note ctxt
+  let
+    val note_skip = skip_note ctxt
+    (* The one- and two-child phases filter the same ordered candidates. *)
+    val safep_candidates = Portable.HOLSusp.delay
+      (fn () =>
+        rule_candidates listUtil.no_checkpoint clasetUnify.Match
+          (clasetLib.safep_part cs) input)
+    fun safep_results weight goal =
+      rule_applications note_skip clasetUnify.Match cs false
+        (fn () => List.filter (weight_is weight o #1)
+          (Portable.HOLSusp.force safep_candidates)) goal
   in
     first_nonempty
       [assume_or_contradiction,
@@ -1637,9 +1649,8 @@ fun clarify_cascade_in ctxt cs input =
        builtin_results_in ctxt,
        swapped_builtin_results_in ctxt,
        hyp_subst_results_in ctxt,
-       rule_results note_skip clasetUnify.Match cs false
-         (clasetLib.safep_part cs) (weight_is 1),
-       bimatch2_results note_skip cs (clasetLib.safep_part cs)]
+       safep_results 1,
+       seq.mapPartial close_one_child o safep_results 2]
       input
   end
 
