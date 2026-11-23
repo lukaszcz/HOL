@@ -6664,8 +6664,8 @@ local
     val marked_bags = Redblackset.addList (empty_marked_terms, bag_terms)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
-    val raw_num_terms = SmtLib_RawNumAnalysis.collect
-      raw_num_operations bag_terms roots
+    val raw_num_terms = SmtLib_RawNumAnalysis.collect_by
+      raw_num_operations Term.compare bag_terms roots
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
@@ -8284,7 +8284,10 @@ in
     let
       val roots = goal :: assumptions
       val {bags, ...} = collect_query_collection_markers roots
-    in SmtLib_RawNumAnalysis.collect raw_num_operations bags roots end
+    in
+      SmtLib_RawNumAnalysis.collect_by raw_num_operations Term.compare
+        bags roots
+    end
 
   fun outbound_pair_constant (left, right) =
     Term.inst [{redex = Type.alpha, residue = left},

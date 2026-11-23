@@ -24,15 +24,25 @@ exception to_cnf_unsat of thm
 (* ------------------------------------------------------------------------- *)
 (* Split up a theorem according to conjuncts, in a general sense.            *)
 (* ------------------------------------------------------------------------- *)
+fun dest_disjunction term =
+    if is_comb term then
+      let val (operator,right) = dest_comb term in
+        if is_comb operator then
+          let val (head,left) = dest_comb operator in
+            if same_const disjunction head then SOME (left,right) else NONE
+          end
+        else NONE
+      end
+    else NONE
+
 local
 val p_tm = mk_var("p",bool)
 val q_tm = mk_var("q",bool)
 fun is_literal tm = is_var tm orelse (is_neg tm andalso is_var(rand tm))
-val spine_disj = HolKernel.spine_binop (total dest_disj)
-                    (*FIXME: fold is_lit check into this *)
 fun is_clausal tm =
-  let val djs = spine_disj tm
-  in all is_literal djs end
+    case dest_disjunction tm of
+        SOME (left,right) => is_literal left andalso is_clausal right
+      | NONE => is_literal tm
 in
 val GCONJUNCTS  =
     let
@@ -83,9 +93,11 @@ val GCONJUNCTS  =
                                if is_clausal (concl th) then (true,th)
                                else (is_cnf:=false;(false,th)))
                            (List.concat ths1)
+              (* A clause of variable literals contains no T or F. *)
               val ths3 = if !is_cnf then ths2 else
                          List.map (fn (is_c,th) =>
-                                      if isSome (findTF (concl th))
+                                      if not is_c andalso
+                                         isSome (findTF (concl th))
                                       then (is_c,CONV_RULE presimp_conv th)
                                       else (is_c,th))
                                   ths2
@@ -161,16 +173,19 @@ fun transvar_lit cnfv (n,tm,vdefs,lfn) =
     else transvar_var cnfv (n,tm,vdefs,lfn)
 
 fun transvar_clause cnfv (n,tm,vdefs,lfn) =
-    let val lits = List.rev (strip_disj tm)
-        val (h,t) = (hd lits,tl lits)
-        val (n,tm,vdefs,lfn) =
-            List.foldl
-                (fn (p,(n,tm,vdefs,lfn)) =>
-                    let val (n1,p1,vdefs1,lfn1) =
-                            transvar_lit cnfv (n,p,vdefs,lfn)
-                    in (n1,mk_disj(p1,tm),vdefs1,lfn1) end)
-                (transvar_lit cnfv (n,h,vdefs,lfn)) t
-    in (n,tm,vdefs,lfn) end
+    let
+      fun rename (literal,(n,clause,vdefs,lfn)) =
+          let val (n',literal',vdefs',lfn') =
+                transvar_lit cnfv (n,literal,vdefs,lfn)
+          in (n',mk_disj (literal',clause),vdefs',lfn') end
+      (* is_clausal has already checked the literal left operands. *)
+      fun walk clause pending =
+          case dest_disjunction clause of
+              SOME (left,right) => walk right (left :: pending)
+            | NONE =>
+                List.foldl rename
+                  (transvar_lit cnfv (n,clause,vdefs,lfn)) pending
+    in walk tm [] end
 
 (* ------------------------------------------------------------------------- *)
 (* Check if something is clausal (slightly stupid).                          *)

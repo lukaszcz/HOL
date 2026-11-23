@@ -2547,9 +2547,13 @@ let
      is_bag_card_head = Term.aconv bagSyntax.BAG_CARD_tm,
      number_type = n}
   val num = intSyntax.mk_Num (Term.mk_var ("i", intSyntax.int_ty))
-  fun analyse roots = SmtLib_RawNumAnalysis.collect ops [bag, partial] roots
+  val bags = [bag, partial]
+  val analyse = SmtLib_RawNumAnalysis.collect_by ops Term.compare bags
   val result = analyse
     [Term.mk_comb (consumer, wide), intSyntax.mk_injected wide]
+  val other_num = intSyntax.mk_Num (Term.mk_var ("j", intSyntax.int_ty))
+  val equal = boolSyntax.mk_eq (num, lookup)
+  val roots = [equal, intSyntax.mk_injected other_num, equal]
 in
   assert (null result, "curried applications must not be marked bag lookups");
   assert (!stripped <= 4 * width,
@@ -2559,7 +2563,11 @@ in
                    intSyntax.mk_injected num, intSyntax.mk_injected lookup] of
        [a, b] => Term.aconv a num andalso Term.aconv b lookup
      | _ => false,
-     "raw-num analysis lost a unary bag lookup or Num coercion")
+     "raw-num analysis lost a unary bag lookup or Num coercion");
+  assert
+    (ListPair.allEq (fn (left, right) => Term.aconv left right)
+       (analyse roots, SmtLib_RawNumAnalysis.collect ops bags roots),
+     "indexed raw-num analysis changed merge order or duplicate suppression")
 end
 
 fun num_transfer_literal_normalization_success () =
@@ -8032,6 +8040,120 @@ in
     (P:(int -> int set) -> bool) f``;
   check true ``let f (a:int) = ({}:int set) in
     (P:(int set) -> bool) (f a)``
+end
+
+fun smtlib_graph_original_portfolio_accounting () =
+let
+  val limit = SmtReplayResourcePolicy.Uncapped
+  fun with_portfolio plain work_limit check =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val sources = S.new_with_policy graph scope limit
+        {assumptions=[boolSyntax.T,boolSyntax.T],goal=boolSyntax.F}
+      val work = W.begin_with_policy graph scope sources
+        {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+         work_limit=work_limit}
+      fun run () =
+        let
+          val {assumptions,denied} = if plain then
+              let val original = V.original graph scope sources
+              in {assumptions=[original 0,original 1],denied=original 2} end
+            else V.originals_with_policy work
+          val value = V.validate_portfolio_with_policy work
+            {assumptions=assumptions,denied=denied,
+             goal= #node (S.goal_source sources)}
+        in check graph scope (fn () => W.audit_policy work)
+             (fn () => V.validate_with_policy work value) end
+      val result = Exn.capture run ()
+      val _ = W.close work
+      val _ = G.close_scope graph scope
+    in Exn.release result end
+  fun check plain =
+    let
+      val (initial,fee) = with_portfolio plain limit
+        (fn graph => fn scope => fn audit => fn validate =>
+          let
+            val initial = #charged (audit ())
+            fun accesses () = #node_accesses
+              (#2 (G.with_node_statistics graph scope validate))
+            val warm = accesses ()
+            val fee = #charged (audit ()) - initial
+            val child = G.new_scope graph scope []
+            val _ = G.close_scope graph child
+            val cold = accesses ()
+          in
+            assert (fee > 1 andalso warm < cold,
+              "original portfolio did not refresh after scope retirement");
+            assert (#charged (audit ()) = initial + 2*fee,
+              "original portfolio warm and cold charges differ");
+            (initial,fee)
+          end)
+      fun refuse partial = with_portfolio plain
+        (SmtReplayResourcePolicy.AtMost (initial+partial))
+        (fn _ => fn _ => fn audit =>
+          fn validate =>
+            let
+              val exhausted = (validate (); false)
+                handle Feedback.HOL_ERR error =>
+                  Feedback.message_of error =
+                    "original cumulative work allowance exhausted"
+              val {charged,retired} = audit ()
+            in assert (exhausted andalso retired andalso
+                 charged = initial+partial,
+                 "original portfolio changed the refused debit prefix")
+            end)
+    in List.app refuse [0,fee-1] end
+in List.app check [true,false] end
+
+fun smtlib_graph_raw_number_scope_retirement () =
+let
+  val limit = SmtReplayResourcePolicy.Uncapped
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val sources = S.new_with_policy graph scope limit
+    {assumptions=[],goal=boolSyntax.F}
+  val work = W.begin_with_policy graph scope sources
+    {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+     work_limit=limit}
+  val {assumptions,denied} = V.originals_with_policy work
+  val validation = V.validate_portfolio_with_policy work
+    {assumptions=assumptions,goal= #node (S.goal_source sources),denied=denied}
+  val query = GP.prepare_query_with_policy work
+    (GP.from_portfolio_with_policy work validation)
+  fun open_view caller node = ignore
+    (G.record_opened_view_with_policy graph caller limit node)
+  val child = G.new_scope graph scope []
+  val argument = G.fresh_bound_variable graph child
+    (Term.mk_var ("i",intSyntax.int_ty))
+  val head = G.constant graph child intSyntax.Num_tm
+  val marker = G.application graph child (head,argument)
+  val retired = ref false
+  val result = Exn.capture (fn () =>
+    SmtLib_GraphTranslation.with_outbound_seeded_query_analysis_with_policy
+      work query open_view
+        {graph=graph,scope=scope,sets=[],bags=[],
+         raw_numbers=[{node=marker,scope=child}]} (fn context =>
+          let
+            val marked = #is_raw_number context
+            val subject = #goal context
+            val {raw_numbers,...} = (#collection_terms context) ()
+            val _ = assert (not (marked subject), "unexpected raw number")
+            val _ = assert (List.exists marked raw_numbers,
+              "live indexed raw number was not found")
+            val _ = G.close_scope graph child
+            val _ = GP.validate_query_with_policy work query
+            val _ = retired := true
+            val _ = marked subject
+          in raise Fail "indexed lookup accepted a retired scope" end)) ()
+  val _ = W.close work
+  val _ = G.close_scope graph scope
+in
+  case result of
+    Exn.Exn (Feedback.HOL_ERR _) =>
+      assert (!retired, "failed before the indexed lookup of a retired scope")
+  | Exn.Exn error => raise error
+  | Exn.Res _ => assert (false, "unexpected successful graph borrow")
 end
 end
 
@@ -40077,6 +40199,10 @@ let
       smtlib_native_set_translation_success),
     ("smtlib_graph_function_let_collection_success",
       smtlib_graph_function_let_collection_success),
+    ("smtlib_graph_original_portfolio_accounting",
+      smtlib_graph_original_portfolio_accounting),
+    ("smtlib_graph_raw_number_scope_retirement",
+      smtlib_graph_raw_number_scope_retirement),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",

@@ -3766,12 +3766,15 @@ local
                     parse_cpc_type
                       (Library.undo_look_ahead tokens get_token) tydict)
                 end
+              fun set_sort_position [_] = is_set_sort_metadata rule_name 2
+                | set_sort_position [_, _] = is_set_sort_metadata rule_name 3
+                | set_sort_position _ = false
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
                   else if token = "@bv_empty" andalso
                           rule_name = "bv-extract-concat-1" andalso
-                          List.length acc = 1 then
+                          (case acc of [_] => true | _ => false) then
                     terms (unavailable_term "empty CPC bit-vector list"
                       (listSyntax.mk_nil Type.bool) :: acc)
                   else if token = "(" then
@@ -3784,9 +3787,7 @@ local
                           (List.map (unavailable_term
                             "expanded CPC argument-list syntax")
                             (list_terms []), acc))
-                      else if head = "Set" andalso
-                              is_set_sort_metadata rule_name
-                                (List.length acc + 1) then
+                      else if head = "Set" andalso set_sort_position acc then
                         let
                           val tm = sort_marker ["(", head]
                             handle Feedback.HOL_ERR holerr =>

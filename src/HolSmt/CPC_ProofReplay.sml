@@ -23534,7 +23534,7 @@ in
         end
       val _ = trace_checked (fn () =>
         "hypotheses=" ^ Int.toString (HOLset.numItems extra))
-      val dependency_memo = ref ([] : (Term.term * Thm.thm) list)
+      val dependency_memo = ref (Redblackmap.mkDict Term.compare)
       fun prove_exact_hyp proof result =
         let
           val conclusion = Thm.concl proof
@@ -23558,13 +23558,11 @@ in
                 proof
         in Thm.MP (Thm.DISCH hypothesis result) proof end
       fun dependency_proof ancestors target =
-        case List.find (fn (saved, _) => Term.aconv saved target)
-            (!dependency_memo) of
-          SOME (_, proof) => proof
+        case Redblackmap.peek (!dependency_memo, target) of
+          SOME proof => proof
         | NONE =>
             let
-              val _ = List.exists (fn saved => Term.aconv saved target)
-                  ancestors andalso
+              val _ = HOLset.member (ancestors, target) andalso
                 raise ERR "discharge_later_checked_steps"
                   "cyclic deferred proof dependency"
               fun conclusion_matches cached =
@@ -23575,6 +23573,7 @@ in
                 (fn cached => conclusion_matches cached andalso
                   not (raw_self (#thm cached)))
                 (Net.match target (#thm_cache state))
+              val ancestors = HOLset.add (ancestors, target)
               fun close theorem =
                 let
                   val dependencies = HOLset.listItems
@@ -23583,7 +23582,7 @@ in
                   List.foldl
                     (fn (dependency, current) =>
                       prove_exact_hyp
-                        (dependency_proof (target :: ancestors) dependency)
+                        (dependency_proof ancestors dependency)
                         current)
                     theorem dependencies
                 end
@@ -23593,7 +23592,8 @@ in
                   (fn () => close (#thm cached))
                   (fn () => attempt rest)
               val proof = attempt candidates
-              val _ = dependency_memo := (target, proof) :: !dependency_memo
+              val _ = dependency_memo :=
+                Redblackmap.insert (!dependency_memo, target, proof)
             in proof end
       fun discharge (hypothesis, result) = Timeout.apply
         SmtResource.max_hypothesis_entailment_time (fn () =>
@@ -23626,7 +23626,7 @@ in
                  (fn () => cached_thm state hypothesis)
                  (fn () =>
                    SmtResource.or_else
-                     (fn () => dependency_proof [] hypothesis)
+                     (fn () => dependency_proof Term.empty_tmset hypothesis)
                      replay_checked))
             end
           fun checked_generalization () =

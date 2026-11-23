@@ -153,8 +153,10 @@ fun initialise check_sat_model infile is_cnf tm =
                 (* The ordinary explicit-CNF entry historically uses the
                    zero-free-variable shortcut, even for T/F clauses.
                    Counting compound atoms must not change that contract.
+                   DIMACS files already supply the count of their variables.
                    Proof-only callers instead refute the prepared clauses. *)
                 val vc = if check_sat_model andalso is_cnf andalso
+                            not (isSome known_count) andalso
                             not (has_free_variable tm) then 0 else vc
             in (cnfv,vc,lfn,clauses) end
             handle to_cnf_unsat nottm_thm =>

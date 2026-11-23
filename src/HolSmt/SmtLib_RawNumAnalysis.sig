@@ -27,6 +27,11 @@ sig
      This direct traversal deliberately introduces no memo or new bound. *)
   val collect : 'term operations -> 'term list -> 'term list -> 'term list
 
+  (* Indexed duplicate suppression. The order must agree with same on
+     equality. The traversal and returned marker order match collect. *)
+  val collect_by : 'term operations -> ('term * 'term -> order) ->
+    'term list -> 'term list -> 'term list
+
   (* Each visit supplies its exact expected type (including NONE), current
      term, immutable incoming per-root list and synchronous computation.
      A graph caller keys successful full output lists on expected type,
