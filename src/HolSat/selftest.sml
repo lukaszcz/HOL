@@ -930,12 +930,16 @@ end
    the command starts sends itself the signal and reports success if it
    survives; the command's own shell reports how it ended, so it keeps
    that report out of the test's output.  ulimit -c 0 stops SIGXCPU from
-   dumping core. *)
+   dumping core.  Signal 0 only checks that the shell exists, so that case
+   must succeed: a command that fails to start fails the test. *)
+fun signal_survived signal = OS.Process.isSuccess (SatProcess.system
+  ("exec 2>/dev/null; ulimit -c 0; /bin/sh -c 'kill -" ^ signal ^
+   " $$; exit 0'; exit $?"))
 val _ = if not Systeml.isUnix then () else
-  List.app (fn signal =>
-    (tprint ("SatProcess command is not blocking or ignoring SIG" ^ signal);
-     if OS.Process.isSuccess (SatProcess.system
-          ("exec 2>/dev/null; ulimit -c 0; /bin/sh -c 'kill -" ^ signal ^
-           " $$; exit 0'; exit $?"))
-     then die "the command survived the signal" else OK ()))
-  ["PIPE","TERM","INT","XCPU"]
+  (tprint "SatProcess command survives kill -0";
+   if signal_survived "0" then OK () else die "the command failed";
+   List.app (fn signal =>
+     (tprint ("SatProcess command is not blocking or ignoring SIG" ^ signal);
+      if signal_survived signal
+      then die "the command survived the signal" else OK ()))
+   ["PIPE","TERM","INT","XCPU"])

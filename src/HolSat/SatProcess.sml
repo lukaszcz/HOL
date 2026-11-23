@@ -67,6 +67,16 @@ local
     handle Foreign _ => fn _ => raise FastUnavailable
   val sigemptyset = sigset "sigemptyset"
   val sigfillset = sigset "sigfillset"
+  val sigdelset = buildCall2
+    (getSymbol (loadExecutable ()) "sigdelset",(cPointer,cInt),cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  (* Every signal whose disposition can be set: OpenBSD's posix_spawn fails
+     in the child when the defaults set holds SIGKILL or SIGSTOP. *)
+  fun settable_signals set =
+    let fun remove signal =
+          sigdelset (set,SysWord.toInt (Posix.Signal.toWord signal)) = 0
+    in sigfillset set = 0 andalso remove Posix.Signal.kill andalso
+       remove Posix.Signal.stop end
   (* POSIX_SPAWN_SETPGROUP is 0x02 on every ABI accepted by setsid_path.
      POSIX_SPAWN_SETSIGDEF and _SETSIGMASK are 0x04 and 0x08 on Linux and
      Darwin, 0x10 and 0x20 on the BSDs. *)
@@ -122,7 +132,7 @@ in
         handle Foreign _ => raise FastUnavailable
       val attr = block
       val no_signals = Memory.++ (block,attr_bytes)
-      val all_signals = Memory.++ (block,0w2 * attr_bytes)
+      val defaults = Memory.++ (block,0w2 * attr_bytes)
       (* Never raise after a successful spawn: its PID must reach owner. *)
       fun release () = Memory.free block handle _ => ()
       val _ = if (attr_init attr handle e => (release (); raise e)) = 0
@@ -131,11 +141,11 @@ in
                        release ())
       val pid =
         (if sigemptyset no_signals = 0 andalso
-            sigfillset all_signals = 0 andalso
+            settable_signals defaults andalso
             attr_setflags (attr,signal_flags () +
               (if group then setpgroup_flag else 0)) = 0 andalso
             attr_setsigmask (attr,no_signals) = 0 andalso
-            attr_setsigdefault (attr,all_signals) = 0 andalso
+            attr_setsigdefault (attr,defaults) = 0 andalso
             (not group orelse attr_setpgroup (attr,0) = 0)
          then spawn_with attr command else raise FastUnavailable)
         handle e => (finish (); raise e)
