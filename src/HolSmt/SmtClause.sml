@@ -89,28 +89,25 @@ struct
       val _ = same (term literals) (Thm.concl thm) orelse
         raise ERR "from_literals" "clause/theorem endpoint mismatch"
       val _ = Library.check_oracle_tags "SmtClause" "clause" thm
-      val index = ref (Redblackmap.mkDict Int.compare)
-      fun add [] _ = ()
-        | add (literal :: rest) position =
-            let val key = hash 6 literal
-            in
-              index := Redblackmap.insert (!index, key,
-                (literal, position) ::
-                Option.getOpt (Redblackmap.peek (!index, key), []));
-              add rest (position + 1)
-            end
-      val _ = add literals 0
+      (* Prepend from right to left so lookup can stop at the first
+         matching source occurrence, including in duplicate-heavy clauses. *)
+      fun add (literal, (position, index)) =
+        let
+          val key = hash 6 literal
+          val first = position - 1
+        in (first, Redblackmap.insertWith (fn (saved, entry) => entry @ saved)
+          (index, key, [(literal, first)])) end
+      val (_, index) = List.foldr add
+        (List.length literals, Redblackmap.mkDict Int.compare) literals
     in observe #clause_objects;
       Clause {occurrences = List.map occurrence literals,
-      thm = thm, index = !index} end
+      thm = thm, index = index} end
   fun find literal (Clause {index, ...}) =
     let val key = hash 6 literal in
-      (* Buckets are stored in reverse occurrence order.  Keep the first
-         source occurrence, even when duplicates are separated by literals. *)
       let val _ = observe #clause_accesses
-          val result = List.foldl (fn ((saved, position), chosen) =>
-            if same saved literal then SOME position else chosen) NONE
-            (Option.getOpt (Redblackmap.peek (index, key), []))
+          val result = Option.map #2 (List.find (fn (saved, _) =>
+            same saved literal)
+            (Option.getOpt (Redblackmap.peek (index, key), [])))
           val _ = case result of SOME _ => observe #index_hits
             | NONE => observe #index_misses
       in result end

@@ -8286,6 +8286,40 @@ fun smtlib_graph_marker_order () =
           check ("Raw number",#raw_numbers result,[third,second,first])
         end)
   end
+
+fun smtlib_graph_raw_number_marker_scaling () =
+  let
+    fun measure width =
+      let
+        val raw = Vector.tabulate (width, fn i => intSyntax.mk_Num
+          (Term.mk_var ("marker_" ^ Int.toString i, intSyntax.int_ty)))
+        val target = Term.mk_var ("target", intSyntax.int_ty)
+        fun conjunction lo hi =
+          if hi = lo + 1 then boolSyntax.mk_eq
+            (Term.mk_comb (intSyntax.int_injection, Vector.sub (raw,lo)),
+             target)
+          else let val mid = (lo + hi) div 2 in
+            boolSyntax.mk_conj (conjunction lo mid, conjunction mid hi)
+          end
+      in with_graph_marker_query [conjunction 0 width]
+        (fn {graph,scope,work,query,open_view} =>
+          let
+            val (result,counts) = G.with_node_statistics graph scope (fn () =>
+              SmtLib_GraphTranslation.analyse_native_query_with_policy
+                work query open_view)
+            val markers = List.map (G.representative graph o #node)
+              (#raw_numbers result)
+          in
+            assert (ListPair.allEq (Lib.uncurry Term.aconv)
+              (markers,Vector.foldr op:: [] raw),
+              "raw-number analysis changed the markers of a wide root");
+            #node_accesses counts
+          end)
+      end
+    val small = measure 128
+    val large = measure 512
+  in assert (large <= 7 * small,
+    "raw-number analysis rescanned the growing marker list") end
 end
 end
 
@@ -39981,6 +40015,50 @@ in
   List.app check (unpreprocessed_solvers ())
 end
 
+fun library_shared_term_walks () =
+let
+  val bound = Term.mk_var ("walks_bound", Type.bool)
+  fun atom index = Term.mk_var ("walks_" ^ Int.toString index, Type.bool)
+  fun balanced special 0 index = if index = 0 then special else atom index
+    | balanced special depth index =
+        boolSyntax.mk_conj (balanced special (depth-1) (2*index),
+                           balanced special (depth-1) (2*index+1))
+  fun diamond 0 base = base
+    | diamond depth base =
+        let val child = diamond (depth-1) base
+        in boolSyntax.mk_conj (child, child) end
+  fun asymmetric 0 base = base
+    | asymmetric depth base =
+        let val child = asymmetric (depth-1) base
+            val unrelated = balanced (atom 0) 3 depth
+        in boolSyntax.mk_conj
+          (child, boolSyntax.mk_disj (unrelated, child)) end
+  fun goal share body =
+    let val binder_leaf = boolSyntax.mk_eq
+          (Term.mk_abs (bound, atom 0), Term.mk_abs (bound, body))
+    in share 40 (balanced binder_leaf 4 0) end
+  val rows = [("first", boolSyntax.conjunction, [1,2]),
+              ("unused", boolSyntax.disjunction, [3]),
+              ("quantifier", boolSyntax.existential, [4]),
+              ("duplicate", boolSyntax.conjunction, [1]),
+              ("binder test", boolSyntax.equality, [5])]
+  fun check (share, expected) =
+    let val plain = goal share (atom 16)
+        val quantified = goal share (boolSyntax.mk_exists (bound, bound))
+    in
+      assert (not (Library.has_quantifier plain),
+        "abstraction alone should not count as a quantifier");
+      assert (Library.has_quantifier quantified,
+        "shared traversal should find a quantifier under an abstraction");
+      assert (Library.goal_directed_rewrites rows plain = expected @ [1,5],
+        "shared traversal should retain rewrite order and duplicates");
+      assert (Library.goal_directed_rewrites rows quantified =
+        expected @ [4,1,5],
+        "shared traversal should find constants under an abstraction")
+    end
+in Timeout.apply (Time.fromSeconds 30) (List.app check)
+  [(diamond,[1,2]),(asymmetric,[1,2,3])] end
+
 fun smt_pointer_table () =
 let
   fun check name b = if b then () else die ("FAIL: pointer table " ^ name)
@@ -40175,6 +40253,7 @@ let
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
     ("string_named_obligations", SmtReplayStringTests.run),
     ("bag_named_obligations", bag_named_obligations),
+    ("library_shared_term_walks", library_shared_term_walks),
     ("smt_pointer_table", smt_pointer_table),
     ("public_wrapper_finalization", SmtPublicWrapperTests.run),
     ("rulematch_shared_contract", SmtLib_RuleMatchContractTests.run),
@@ -40569,6 +40648,8 @@ let
     ("smtlib_graph_marker_collection_scope_retirement",
       smtlib_graph_marker_collection_scope_retirement),
     ("smtlib_graph_marker_order",smtlib_graph_marker_order),
+    ("smtlib_graph_raw_number_marker_scaling",
+      smtlib_graph_raw_number_marker_scaling),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",

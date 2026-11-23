@@ -823,6 +823,9 @@ local
                "2 -1 \n0\n" ^ String.concat (List.tabulate (1100,fn _ =>
                  "2 -1 ")) ^ "\n0\n"
              val parsed = readDimacs path
+             val (parsed_short,parsed_wide) = dest_conj parsed
+             val (_,short_neg) = dest_disj parsed_short
+             val (wide_neg,_) = dest_disj (snd (dest_disj parsed_wide))
              val expected_term = subst
                [x |-> intToPrefixedLiteral 2,y |-> intToPrefixedLiteral 1]
                (mk_conj (short,mk_disj (x,mk_disj (mk_neg y,wide_tail))))
@@ -842,7 +845,9 @@ local
                            lookup_sat_num sva 1 ~~ y andalso
                            lookup_sat_num sva 2 ~~ x) ()
            in rejected andalso contents path = expected path andalso
-              parsed ~~ expected_term andalso streamed end) ()
+              parsed ~~ expected_term andalso
+              Portable.pointer_eq (short_neg,wide_neg) andalso streamed
+           end) ()
       end)
 
   val _ = control "ordinary DIMACS endpoints and caller-owned files"

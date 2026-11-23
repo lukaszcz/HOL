@@ -2159,15 +2159,36 @@ struct
       val _ = if same_constant graph (node root) boolSyntax.F then () else
         raise ERR "check_contradiction" "final CPC conclusion is not F"
 
+      (* Legacy representatives are immutable. Paid graph reads are part
+         of the Work contract and must still take the ordinary path. *)
+      val index_hypotheses = cache_selection andalso
+        not (Option.isSome owned_work) andalso
+        (case canonical_sources of _ :: _ :: _ => true | _ => false)
+      fun hypothesis_index terms =
+        let val index = SmtPointerTable.new
+              {hint = SmtReplayImport.pointer_bucket 4,
+               initial = 7, ceiling = 4093}
+            val _ = List.app (fn term => ignore
+              (SmtPointerTable.mark index term)) terms
+        in fn term => Option.isSome (SmtPointerTable.lookup index term) end
+      val allowed_hypotheses = Portable.HOLSusp.delay (fn () =>
+        hypothesis_index (List.map (G.representative graph) canonical_sources))
+      fun hypotheses_permitted theorem =
+        case Thm.hyp theorem of
+          [] => true
+        | hypotheses =>
+            if index_hypotheses then
+              List.all (Portable.HOLSusp.force allowed_hypotheses) hypotheses
+            else List.all (fn hypothesis => List.exists (fn source =>
+              Portable.pointer_eq (hypothesis,
+                G.representative graph source)) canonical_sources) hypotheses
+
       (* Child scope laws discharge every active local source while compact.
          The parent applies their conditional antecedents to its own local
          edges. Completed witnesses retain only canonical original sources. *)
       fun permitted theorem =
         (Library.check_oracle_tags "CPC_GraphProofReplay" "obligation" theorem;
-         if List.all (fn hypothesis => List.exists (fn source =>
-              Portable.pointer_eq
-                (hypothesis,G.representative graph source)) canonical_sources)
-              (Thm.hyp theorem) then () else raise ERR "obligation"
+         if hypotheses_permitted theorem then () else raise ERR "obligation"
             "deferred proof retains a local or unpermitted hypothesis")
       fun validate_force_target obligation =
         (G.validate_scope graph scope;
@@ -4806,10 +4827,7 @@ struct
         (Library.check_oracle_tags "CPC_GraphProofReplay"
            "completion" theorem;
          if null (Tag.axioms_of (Thm.tag theorem)) andalso
-             List.all (fn hypothesis => List.exists (fn source =>
-               Portable.pointer_eq (hypothesis,
-                 G.representative graph source)) canonical_sources)
-               (Thm.hyp theorem) then () else
+             hypotheses_permitted theorem then () else
            raise ERR "completion" "unpermitted actual witness Hyp or axiom")
       fun accept ({resolution,contradiction,witnesses} : completion_result) =
         let
@@ -4821,10 +4839,13 @@ struct
             canonical_sources
           val _ = if length witnesses = length mandatory then () else
             raise ERR "completion" "mandatory occurrence inventory changed"
+          val witness_index = List.foldl (fn (value, index) =>
+              Redblackmap.insertWith (fn _ => NONE)
+                (index, #serial value, SOME value))
+            (Redblackmap.mkDict Int.compare) witnesses
           fun validate {serial = expected,target = original} =
-            let val matches = List.filter (fn {serial,...} =>
-                    serial = expected) witnesses
-                val value = case matches of [value] => value
+            let val value = case Redblackmap.peek (witness_index, expected) of
+                    SOME (SOME value) => value
                   | _ => raise ERR "completion" "missing unique occurrence"
                 val {target,witness,original = recorded,...} = value
                 val _ = if recorded = original andalso
@@ -4844,9 +4865,12 @@ struct
               G.representative graph (node root)) then () else
             raise ERR "completion" "checked contradiction endpoint changed"
           val actual = Thm.hyp contradiction
-          val _ = if List.all (fn source => List.exists (fn term =>
+          val retained = if index_hypotheses then
+                hypothesis_index actual o G.representative graph
+              else fn source => List.exists (fn term =>
                 Portable.pointer_eq (term,G.representative graph source))
-                actual) canonical_sources then () else
+                actual
+          val _ = if List.all retained canonical_sources then () else
             raise ERR "completion" "mandatory original Source was removed"
           val _ = G.validate_scope graph scope
         in contradiction end

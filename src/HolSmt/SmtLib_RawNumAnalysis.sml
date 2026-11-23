@@ -61,20 +61,26 @@ struct
         else acc)
     in visit NONE root [] end
 
-  fun collect_with_merge_member (operations : 'term operations) memoize
-      merge_member bag_terms roots =
+  fun collect_with_membership (operations : 'term operations) memoize
+      {bag_member, number_member, merge_member} bag_terms roots =
     let
-      fun member term terms =
-        List.exists (fn saved => (#same operations) (term,saved)) terms
       fun insert term terms =
-        if member term terms then terms else term :: terms
+        if number_member term terms then terms else term :: terms
       val collect = collect_root operations memoize (not (null bag_terms))
-        (fn term => member term bag_terms) insert
+        (bag_member bag_terms) insert
     in
       List.foldl (fn (root,terms) =>
         List.foldl (fn (number,acc) =>
           if merge_member number acc then acc else number :: acc) terms
           (collect root)) [] roots
+    end
+
+  fun collect_with_merge_member (operations : 'term operations) memoize
+      merge_member =
+    let fun member term = List.exists
+          (fn saved => (#same operations) (term,saved))
+    in collect_with_membership operations memoize
+      {bag_member=Lib.C member,number_member=member,merge_member=merge_member}
     end
 
   fun collect_with_memo (operations : 'term operations) memoize =

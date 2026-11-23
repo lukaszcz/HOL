@@ -1474,22 +1474,96 @@ struct
     Option.isSome (HolKernel.gen_find_term
       (fn (_, subterm) => if predicate subterm then SOME () else NONE) tm)
 
+  local
+  fun exists_subterm_with_sharing test_app test_atom tm =
+    let
+      fun compound term = Term.is_comb term orelse Term.is_abs term
+      val recent = ref boolSyntax.T
+      val previous = ref boolSyntax.T
+      val quick_forks = ref 0
+      exception PauseQuick of Term.term list
+      exception QuickResult of bool
+      fun walk fork [] finish = finish ()
+        | walk fork (term :: rest) finish =
+            if Term.is_comb term then
+              test_app term orelse
+              (let val (rator, rand) = Term.dest_comb term
+               in if compound rand then follow fork term rator rand rest finish
+                  else walk fork (rator :: rand :: rest) finish
+               end)
+            else if Term.is_abs term then
+              walk fork (#2 (Term.dest_abs term) :: rest) finish
+            else test_atom term orelse walk fork rest finish
+      and follow fork term rator rand rest finish =
+        if Term.is_comb rator then
+          let val (head, lhs) = Term.dest_comb rator
+          in
+            (* Visiting the rator already checks its immediate children.
+               This also handles diamonds over large unshared bases. *)
+            if compound lhs orelse compound head then
+              if Portable.pointer_eq (lhs, rand) orelse
+                  Portable.pointer_eq (head, rand) then
+                walk fork (rator :: rest) finish
+              else fork term rator rand rest finish
+            else walk fork (rator :: rand :: rest) finish
+          end
+        else if Term.is_abs rator then fork term rator rand rest finish
+        else walk fork (rator :: rand :: rest) finish
+      fun quick_fork term rator rand rest finish =
+        if Portable.pointer_eq (!recent,term) orelse
+            Portable.pointer_eq (!previous,term) then
+          walk quick_fork rest finish
+        else if !quick_forks = 0 then raise PauseQuick (term :: rest)
+        else
+          (quick_forks := !quick_forks - 1;
+           previous := !recent;
+           recent := term;
+           walk quick_fork (rator :: rand :: rest) finish)
+      fun done () = false
+      fun quick fuel pending =
+        (quick_forks := fuel; walk quick_fork pending done)
+      fun race pending =
+        let
+          val frontier = ref pending
+          val completed = SmtPointerTable.new
+            {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093}
+          fun advance fuel =
+            (raise QuickResult (quick fuel (!frontier)))
+            handle PauseQuick rest => frontier := rest
+          fun memo_fork term rator rand rest finish =
+            (advance 64;
+             case SmtPointerTable.lookup completed term of
+               SOME () => walk memo_fork rest finish
+             | NONE =>
+                 (* Exclude pending ancestors from the lookup buckets. *)
+                 walk memo_fork [rator, rand] (fn () =>
+                   (SmtPointerTable.insert completed term ();
+                    walk memo_fork rest finish)))
+        in walk memo_fork pending done handle QuickResult result => result end
+    in
+      (* Most queries end at the recent cache. Race completions on larger
+         traversals since only one walker needs to finish. Atom collection
+         is idempotent and quantifier detection may end either walk early. *)
+      quick 32768 [tm] handle PauseQuick pending => race pending
+    end
+  in
   (* Rewrites contributed by the rows of a goal-directed fact table whose
-     head constant occurs in 'tm'.  The goal is traversed once, rather than
-     once per row: constants are identified by theory and name, exactly as
-     'same_const' compares them. *)
+     head constant occurs in the goal. Identify constants by theory and name,
+     as in 'same_const', and avoid repeating detected shared branches. *)
   fun goal_directed_rewrites table tm =
     let
       val name_compare = Lib.pair_compare (String.compare, String.compare)
-      fun add (subterm, names) =
-        case Lib.total Term.dest_thy_const subterm of
-          SOME {Thy, Name, ...} => HOLset.add (names, (Thy, Name))
-        | NONE => names
-      val names =
-        List.foldl add (HOLset.empty name_compare) (subterms tm)
+      val names = ref (HOLset.empty name_compare)
+      fun collect subterm =
+        (if Term.is_const subterm then
+           let val {Thy, Name, ...} = Term.dest_thy_const subterm
+           in names := HOLset.add (!names, (Thy, Name)) end
+         else ();
+         false)
+      val _ = exists_subterm_with_sharing (fn _ => false) collect tm
       fun occurs head =
         case Lib.total Term.dest_thy_const head of
-          SOME {Thy, Name, ...} => HOLset.member (names, (Thy, Name))
+          SOME {Thy, Name, ...} => HOLset.member (!names, (Thy, Name))
         | NONE => false
     in
       List.concat
@@ -1498,13 +1572,10 @@ struct
     end
 
   fun has_quantifier tm =
-    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
-    (let val (rator, rand) = Term.dest_comb tm
-     in has_quantifier rator orelse has_quantifier rand end
-     handle Feedback.HOL_ERR _ =>
-       (let val (_, body) = Term.dest_abs tm
-        in has_quantifier body end
-        handle Feedback.HOL_ERR _ => false))
+    exists_subterm_with_sharing
+      (fn term => boolSyntax.is_forall term orelse boolSyntax.is_exists term)
+      (fn _ => false) tm
+  end
 
   (***************************************************************************)
   (* nonlinear arithmetic detection and proving                              *)

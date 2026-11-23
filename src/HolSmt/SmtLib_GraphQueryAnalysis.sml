@@ -476,6 +476,62 @@ struct
              is_abstraction=fn term =>
                (case view term of Abstraction => true | _ => false),
              dest_abs=abstraction,free_variables=free_variables}
+          fun find_match subject entries current = List.find
+            (fn saved => (#same operations) (current,subject saved))
+            entries
+          val ordinary_guard = W.ordinary_policy_guard_mode expected
+          fun indexed_lookup subject entries =
+            let
+              val index = ref NONE
+              fun lookup current =
+                case G.unpriced_validation_revision graph root of
+                  NONE => find_match subject entries current
+                | SOME revision =>
+                  let
+                    val (table,pending) = case !index of
+                        SOME (saved,table,pending) =>
+                          if saved = revision then (table,pending)
+                          else (Redblackmap.mkDict Int.compare,entries)
+                      | NONE => (Redblackmap.mkDict Int.compare,entries)
+                    fun stable () =
+                      G.unpriced_validation_revision graph root =
+                        SOME revision
+                    val wanted = semantic_id [] current
+                    (* Index only the prefix already authenticated in
+                       order. A successful lookup leaves the tail alone. *)
+                    fun scan table [] =
+                        (index := SOME (revision,table,[]);NONE)
+                      | scan table (saved :: rest) =
+                          let val id = semantic_id [] (subject saved) in
+                            if stable () then
+                              let
+                                val table = Redblackmap.insertWith Lib.fst
+                                  (table,id,saved)
+                              in
+                                if id = wanted then
+                                  (index := SOME (revision,table,rest);
+                                   SOME saved)
+                                else scan table rest
+                              end
+                            else if id = wanted then SOME saved
+                            else find_match subject rest current
+                          end
+                  in
+                    if stable () then
+                      (case Redblackmap.peek (table,wanted) of
+                         SOME saved =>
+                           if semantic_id [] (subject saved) = wanted
+                           then SOME saved else NONE
+                       | NONE => scan table pending)
+                    else find_match subject entries current
+                  end
+            in
+              if null entries then (fn _ => NONE)
+              else if ordinary_guard then lookup
+              else find_match subject entries
+            end
+          fun indexed_membership terms =
+            Option.isSome o indexed_lookup Lib.I terms
           val next_pattern = ref 0
           fun synthetic function argument ty =
             let val _ = spend 8 val id = !next_pattern
@@ -891,8 +947,10 @@ struct
                 end
               (* Keep the helper's separate empty accumulator per root and
                  final outer merge; one expected-type visit is not another. *)
-              val numbers = R.collect_with_merge_member
-                number_ops number_memo (new_marker_member ()) (#1 bags) roots
+              val numbers = R.collect_with_membership number_ops number_memo
+                {bag_member=indexed_membership,
+                 number_member=new_marker_member (),
+                 merge_member=new_marker_member ()} (#1 bags) roots
               val numbers = case seeds of NONE => numbers | SOME _ =>
                 List.foldr (fn (current,terms) =>
                   if List.exists (fn saved =>
@@ -996,55 +1054,6 @@ struct
                   | Application => ApplicationView (application actual)
                   | Abstraction => AbstractionView (abstraction actual)
                 end
-              fun contains terms current = List.exists
-                (fn saved => (#same operations) (current,saved)) terms
-              val raw_number_index = ref NONE
-              val ordinary_guard = W.ordinary_policy_guard_mode expected
-              fun raw_number current =
-                if null numbers then false
-                else if not ordinary_guard then contains numbers current
-                else
-                  case G.unpriced_validation_revision graph root of
-                    NONE => contains numbers current
-                  | SOME revision =>
-                      let
-                        val (table,pending) = case !raw_number_index of
-                            SOME (saved,table,pending) =>
-                              if saved = revision then (table,pending)
-                              else (Redblackmap.mkDict Int.compare,numbers)
-                          | NONE => (Redblackmap.mkDict Int.compare,numbers)
-                        fun stable () =
-                          G.unpriced_validation_revision graph root =
-                            SOME revision
-                        val wanted = semantic_id [] current
-                        (* Index only the prefix already authenticated in
-                           order. A successful lookup leaves the tail alone. *)
-                        fun scan table [] =
-                              (raw_number_index := SOME (revision,table,[]);
-                               false)
-                          | scan table (saved :: rest) =
-                              let val id = semantic_id [] saved in
-                                if stable () then
-                                  let
-                                    val table =
-                                      if Redblackmap.inDomain (table,id)
-                                      then table
-                                      else Redblackmap.insert (table,id,saved)
-                                  in
-                                    if id = wanted then
-                                      (raw_number_index :=
-                                         SOME (revision,table,rest);true)
-                                    else scan table rest
-                                  end
-                                else id = wanted orelse contains rest current
-                              end
-                      in
-                        if stable () then
-                          (case Redblackmap.peek (table,wanted) of
-                             SOME term => semantic_id [] term = wanted
-                           | NONE => scan table pending)
-                        else contains numbers current
-                      end
               val (sets,bags) = case groups of
                   [(sets,_),(bags,_)] => (sets,bags)
                 | _ => raise ERR "borrow" "native analysis required"
@@ -1077,9 +1086,9 @@ struct
                  same=binary (#same operations),
                  free_variables=unary free_variables,
                  strip_comb=unary strip_comb,
-                 is_set=unary (contains sets),
-                 is_bag=unary (contains bags),
-                 is_raw_number=unary raw_number,
+                 is_set=unary (indexed_membership sets),
+                 is_bag=unary (indexed_membership bags),
+                 is_raw_number=unary (indexed_membership numbers),
                  contextual_argument=fn (current,index) =>
                    unary (fn current => contextual (current,index)) current,
                  describe=unary describe,key=unary (key o resolve),

@@ -208,7 +208,6 @@ fun build_clause literal l =
 in
 val buildClause = build_clause intToPrefixedLiteral
 val buildMappedClause = build_clause o intToLiteral
-end
 
 (*
 ** dimacsToTerm l
@@ -465,9 +464,9 @@ end
 ** dimacsToTerm.
 *)
 
-fun getTerms sva svm get src =
-    let val build = buildMappedClause sva
-        fun loop src (acc,svm,sva) =
+local
+fun get_terms build sva svm get src =
+    let fun loop src (acc,svm,sva) =
             let val res = getIntClause sva svm get src
             in case res of
                 SOME((ns,svm'), src) => loop src (build ns::acc,svm',sva)
@@ -478,14 +477,36 @@ fun getTerms sva svm get src =
          | NONE          => NONE
     end;
 
+in
+fun getTerms sva = get_terms (buildMappedClause sva) sva
+
 fun readTerms get src =
     case stripPreamble get src of
         SOME (src,var_count) =>
                   let val svm = (0,  SVM.mkDict rbmcomp) (* sat_var_map *)
                       val sva = Array.array(var_count+1,T) (* sat_var_arr *)
-                  in getTerms sva svm get src end
+                      (* Repeated negative literals can share a term, too.
+                         Keep the extra space bounded for sparse headers. *)
+                      val capacity = Int.min (Array.length sva, 4096)
+                      val negated = Portable.HOLSusp.delay
+                        (fn () => Array.array (capacity,T))
+                      fun literal n =
+                          if n >= 0 orelse n <= ~capacity then
+                            intToLiteral sva n
+                          else
+                            let val i = ~n
+                                val terms = Portable.HOLSusp.force negated
+                                val cached = Array.sub (terms,i)
+                            in
+                              if Portable.pointer_eq (cached,T) then
+                                let val term = intToLiteral sva n
+                                in Array.update (terms,i,term); term end
+                              else cached
+                            end
+                  in get_terms (build_clause literal) sva svm get src end
       | NONE     => NONE
-
+end
+end
 
 exception readDimacsError;
 

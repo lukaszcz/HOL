@@ -383,16 +383,55 @@ struct
   datatype 'a alias_view = AliasAtom
     | AliasApplication of 'a * 'a | AliasBinder of 'a * 'a
   fun scoped_alias
-      {spend,key,free,resolve,visible,atom,view,apply,abstract}
-      base root =
+      {spend,key,free,resolve,visible,atom,view,apply,abstract,track_all}
+      base root blocks =
     let
       fun compare ((ls,ln),(rs,rn)) =
         (spend 1;case Int.compare (ls,rs) of
            EQUAL => Int.compare (ln,rn) | order => order)
       val memo = ref (Redblackmap.mkDict compare)
-      val translated = ref (Redblackmap.mkDict
-        (fn (a,b) => (spend 1;Int.compare (a,b))))
       fun same (a,b) = (spend 1;key a=key b)
+      val (record,translate) =
+        if track_all then
+          (* Value replay accounts for each of these lookups and checks. *)
+          let
+            val translated = ref (Redblackmap.mkDict
+              (fn (a,b) => (spend 1;Int.compare (a,b))))
+            fun record node result =
+              let
+                val previous = Option.getOpt
+                  (Redblackmap.peek (!translated,key node),[])
+                val next = if List.exists (fn saved => same (saved,result))
+                    previous then previous else previous @ [result]
+              in translated := Redblackmap.insert
+                (!translated,key node,next) end
+            fun translate node = Option.getOpt
+              (Redblackmap.peek (!translated,key node),[node])
+          in (record,translate) end
+        else if null blocks then (fn _ => fn _ => (),fn node => [node])
+        else
+          let
+            val empty = ([],Redblackset.empty Int.compare)
+            val translated = ref (List.foldl (fn ((_,_,node),index) =>
+                Redblackmap.insert (index,key node,empty))
+              (Redblackmap.mkDict Int.compare) blocks)
+            fun record node result =
+              let val id = key node in
+                case Redblackmap.peek (!translated,id) of
+                  SOME (nodes,seen) =>
+                    let val result_id = key result in
+                      if Redblackset.member (seen,result_id) then ()
+                      else translated := Redblackmap.insert
+                        (!translated,id,
+                         (result::nodes,Redblackset.add (seen,result_id)))
+                    end
+                | NONE => ()
+              end
+            fun translate node =
+              case Redblackmap.peek (!translated,key node) of
+                SOME (nodes as _::_,_) => List.rev nodes
+              | _ => [node]
+          in (record,translate) end
       fun replacement bindings node =
         case List.find (fn (old,_,_) => same (old,node)) bindings of
           SOME (_,value,_) => value | NONE => resolve node
@@ -430,18 +469,10 @@ struct
                   abstract scope binder (fn child => fn variable =>
                     visit child ((binder,variable,child)::bindings) body)
             val _ = memo := Redblackmap.insert (!memo,index,result)
-            val previous = case Redblackmap.peek (!translated,key node) of
-                NONE => [] | SOME nodes => nodes
-            val next = if List.exists (fn saved => same (saved,result))
-                previous then previous else previous @ [result]
-            val _ = translated := Redblackmap.insert
-              (!translated,key node,next)
+            val _ = record node result
           in result end
         end
       val value = visit base [] root
-      fun translate node =
-        case Redblackmap.peek (!translated,key node) of
-          SOME nodes => nodes | NONE => [node]
     in {value=value,translate=translate} end
 
   fun graph_lexical_alias graph variables descriptors node =
@@ -458,6 +489,7 @@ struct
       identities (root,blocks) =
     capture_blocks (scoped_alias
       {spend=fn _ => (),key=G.node_id,free=G.free_variable_nodes graph,
+       track_all=false,
        resolve=fn node =>
          case List.find (fn (old,_) => old=node) identities of
            SOME (_,bound) => bound
@@ -502,7 +534,7 @@ struct
                  {binder=binder,body=body child binder,body_frame=child} end
          in build () handle primary =>
            ((G.close_scope graph child handle _ => ());raise primary) end}
-      scope root) blocks
+      scope root blocks) blocks
 
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
@@ -1269,7 +1301,7 @@ struct
              | NONE => NONE)
       fun capture environment identities (root,blocks) =
         capture_blocks (scoped_alias
-        {spend=PV.spend context,key=PV.key context,
+        {spend=PV.spend context,key=PV.key context,track_all=true,
          free=fn value => SOME (PV.free_variables context value),
          resolve=fn value =>
            case List.find (fn (old,_) =>
@@ -1313,7 +1345,7 @@ struct
            in build () handle primary =>
              ((PV.close_scope context child handle _ => ());raise primary)
            end}
-        (construction environment) root) blocks
+        (construction environment) root blocks) blocks
       val backend = Backend
         {owner=owner,graph=SOME graph,index_callbacks=index_callbacks,
          constructor_state=new_constructor_state (),

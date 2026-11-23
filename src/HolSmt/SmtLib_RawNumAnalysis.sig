@@ -44,9 +44,15 @@ sig
   val collect_with_memo : 'term operations -> 'term memo ->
     'term list -> 'term list -> 'term list
 
-  (* The membership hook applies only to the final merge and must agree
-     with same on the returned membership result. *)
   val collect_with_merge_member : 'term operations -> 'term memo ->
     ('term -> 'term list -> bool) ->
+    'term list -> 'term list -> 'term list
+
+  (* Membership hooks for the fixed bag list, per-root accumulator and
+     final merge must agree with same on the returned membership result. *)
+  val collect_with_membership : 'term operations -> 'term memo ->
+    {bag_member : 'term list -> 'term -> bool,
+     number_member : 'term -> 'term list -> bool,
+     merge_member : 'term -> 'term list -> bool} ->
     'term list -> 'term list -> 'term list
 end

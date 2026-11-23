@@ -172,12 +172,10 @@ local
   val z3_char_width = Arbnum.fromInt 18
   val z3_char_index_ty = fcpLib.index_type z3_char_width
   val z3_char_ty = wordsSyntax.mk_word_type z3_char_index_ty
-  val z3_char_terms = ref ([] : Term.term list)
   val z3_char_result_terms = ref ([] : Term.term list)
   val z3_seen_char_sort = ref false
 
   fun is_z3_char c =
-    List.exists (Term.aconv c) (!z3_char_terms) orelse
     (case Lib.total boolSyntax.dest_cond c of
        SOME (_, then_tm, else_tm) =>
          is_z3_char then_tm andalso is_z3_char else_tm
@@ -198,9 +196,6 @@ local
 
   fun z3_num_to_char n =
     wordsSyntax.mk_n2w (n, z3_char_index_ty)
-
-  fun z3_char_result char =
-    (z3_char_terms := char :: !z3_char_terms; char)
 
   fun z3_string_const name =
     Term.prim_mk_const {Thy = "smtstringz3", Name = name}
@@ -255,8 +250,7 @@ local
 
   fun z3_seq_unit_inv s =
     if is_z3_string s then
-      z3_char_result
-        (z3_num_to_char (z3_string_app "seq_unit_inv" [s]))
+      z3_num_to_char (z3_string_app "seq_unit_inv" [s])
     else
       holsmt_app "smt_seq_nth" [s, intSyntax.zero_tm]
 
@@ -415,7 +409,7 @@ local
         | add_bit _ = SmtLib_Theories.decline "<z3_string_dict.bits2char>"
             "exactly 18 Boolean arguments expected"
     in
-      z3_char_result (add_bit (bits, 0, zero))
+      add_bit (bits, 0, zero)
     end
 
   (* Z3 treats String as (Seq Char), but `Char` and `(_ BitVec 18)` have
@@ -495,9 +489,7 @@ local
                 {Thy = "smtstring", Name = "reglan_diff"}, [x, y]))),
         ("Char", fn _ => fn indices => fn args =>
           case (indices, args) of
-            ([code], []) =>
-              let val char = z3_num_to_char (z3_natural code)
-              in z3_char_terms := char :: !z3_char_terms; char end
+            ([code], []) => z3_num_to_char (z3_natural code)
           | ([], []) => z3_char_sort_marker
           | _ => SmtLib_Theories.decline "<z3_string_dict.Char>"
               "one code-point index or a sort marker expected"),
@@ -525,8 +517,8 @@ local
         ("seq.extract", SmtLib_Theories.K_zero_three seq_extract),
         ("seq.at", SmtLib_Theories.K_zero_two seq_at),
         ("seq.nth", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
            else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.contains", SmtLib_Theories.K_zero_two
           (fn (s, t) => if is_z3_string s then
@@ -549,8 +541,8 @@ local
              smtstring_app "smtstr_suffixof" [s, t]
            else rich_list_app "IS_SUFFIX" [t, s])),
         ("seq.unit", SmtLib_Theories.K_zero_one
-          (fn c => if is_z3_char c orelse
-              Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
+          (fn c => if Type.compare (Term.type_of c, z3_char_ty) = EQUAL
+                      orelse is_z3_char c then
              z3_string_app "seq_unit" [z3_char_to_num c]
            else listSyntax.mk_cons
              (c, listSyntax.mk_nil (Term.type_of c)))),
@@ -562,12 +554,12 @@ local
            The nth_i/tail uses are guarded by Z3's in-range branch, while
            nth_u is deliberately the existing totalized Seq access. *)
         ("seq.nth_i", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
            else listSyntax.mk_el (intSyntax.mk_Num i, s))),
         ("seq.nth_u", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
            else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.pre", z3_indexed_binary_marker "seq_pre" z3_seq_pre),
         ("seq.post", z3_indexed_binary_marker "seq_post" z3_seq_post),
@@ -1432,7 +1424,6 @@ local
     (* Resolve once, here: everything downstream -- rule lookup, gating and
        diagnostics -- then works with a tested anchor. *)
     val z3_version = resolve_version z3_version
-    val _ = z3_char_terms := []
     val _ = z3_char_result_terms := []
     val string_witnesses = z3_string_witness_specs z3_version
     val _ = z3_char_result_terms :=
