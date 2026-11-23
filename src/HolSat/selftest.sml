@@ -931,7 +931,9 @@ end
    survives; the command's own shell reports how it ended, so it keeps
    that report out of the test's output.  ulimit -c 0 stops SIGXCPU from
    dumping core.  Signal 0 only checks that the shell exists, so that case
-   must succeed: a command that fails to start fails the test. *)
+   must succeed: a command that fails to start fails the test.  Where
+   /bin/sh is dash, which empties its mask at startup, the cases check only
+   the dispositions. *)
 fun signal_survived signal = OS.Process.isSuccess (SatProcess.system
   ("exec 2>/dev/null; ulimit -c 0; /bin/sh -c 'kill -" ^ signal ^
    " $$; exit 0'; exit $?"))

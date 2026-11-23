@@ -180,7 +180,9 @@ datatype launcher = Session of string | Group
    ignored signals (Poly/ML's SIGPIPE) across exec, while Poly/ML's exec
    already empties the mask.  SIG_DFL is the null pointer.  Signals above
    64 (none on Linux or Darwin), and all signals where signal cannot be
-   called, keep their dispositions. *)
+   called, keep their dispositions.  prepare_signal_handling, called in the
+   parent before the fork, makes the first call: Poly/ML looks the symbol
+   up on first use, and the child must not run the dynamic loader. *)
 local
   open Foreign
   val set_handler = buildCall2
@@ -188,6 +190,9 @@ local
     handle Foreign _ => fn _ => Memory.null
   val signals = List.tabulate (64,fn i => i + 1)
 in
+  (* Signal 0 is invalid, so this call changes no disposition. *)
+  fun prepare_signal_handling () =
+    ignore (set_handler (0,Memory.null) handle Foreign _ => Memory.null)
   fun default_signal_handling () =
     List.app (fn number => ignore (set_handler (number,Memory.null)
                                    handle Foreign _ => Memory.null))
@@ -249,6 +254,7 @@ fun fork_system command =
          "case $? in 0) printf 0;; *) printf 1;; esac > " ^
          fdpath outfd ^ "\n")
        handle e => (close_all (); reraise e))
+    val _ = prepare_signal_handling ()
     val child = Posix.Process.fork ()
       handle e => (close_all (); reraise e)
   in
