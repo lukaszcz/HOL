@@ -277,6 +277,14 @@ Bugs fixed
     function updates and set difference again, and checks some 256-bit word
     goals with adders and masks that used to time out.
 
+-   `Z3_TAC` now replays more proof steps of large goals: rewrites that
+    reorder the children of a disjunction or conjunction, or that write a
+    conditional with a `T` or `F` branch, an implication or a negated
+    connective as the disjunction or conjunction it stands for; rewrites that are propositional identities over
+    their theory atoms; and datatype lemmas about a compound case
+    scrutinee, such as `x = SOME (THE x) \/ ~IS_SOME x` where `x` is a
+    large `case` term.
+
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
     the Z3 boundary, and Z3 `(error ...)` output can no longer be skipped

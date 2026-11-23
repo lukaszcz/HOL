@@ -1611,6 +1611,18 @@ local
     fun reflexive_target () =
       let val (l, r) = boolSyntax.dest_eq t
       in Thm.ALPHA l r end
+    (* Only premises that a rewrite of the target could use: one whose
+       term, negated term or equation side occurs in it. *)
+    fun relevant target thm =
+      let
+        val c = Thm.concl thm
+        fun occurs tm = Lib.can (HolKernel.find_term (Term.aconv tm)) target
+      in
+        occurs c orelse
+        (boolSyntax.is_neg c andalso occurs (boolSyntax.dest_neg c)) orelse
+        (boolSyntax.is_eq c andalso
+         (occurs (boolSyntax.lhs c) orelse occurs (boolSyntax.rhs c)))
+      end
   in
     Lib.tryfind oriented_premise thms
     handle Feedback.HOL_ERR _ =>
@@ -1624,6 +1636,11 @@ local
           val _ = SmtResource.check_dag_size_with_limit
             "Skeleton" "z3-nnf-taut" maximum observed
         in
+          Tactical.TAC_PROOF ((HOLset.listItems asms, target),
+            Tactical.MAP_EVERY Tactic.MP_TAC
+              (List.filter (relevant target) rewrite_thms) THEN
+            PURE_REWRITE_TAC nnf_rewrites THEN tautLib.TAUT_TAC)
+          handle Feedback.HOL_ERR _ =>
           Tactical.TAC_PROOF ((HOLset.listItems asms, target),
             PURE_REWRITE_TAC (rewrite_thms @ nnf_rewrites) THEN
             bossLib.SIMP_TAC bossLib.bool_ss
@@ -1916,6 +1933,14 @@ local
       else raise ERR "arith_prove" (Hol_pp.term_to_string t)
 
   and arith_prove_smt_rdiv t =
+    (* srw_ss normalization is costly on large targets; without reals
+       there is no division for it to normalize. *)
+    if not (SmtResource.contains
+        (fn tm => Term.type_of tm = realSyntax.real_ty) t) andalso
+       SmtResource.term_nodes_up_to arith_split_max_target_nodes t >
+         arith_split_max_target_nodes then
+      raise ERR "arith_prove_smt_rdiv" "large target without reals"
+    else
     let
       val t_eq_t' =
         simpLib.SIMP_CONV (bossLib.srw_ss())
@@ -2009,9 +2034,13 @@ local
         else
           profile ("arith-linear(" ^ rung ^ ")(int)") intLib.ARITH_TAC goal
       val TRY = Tactical.TRY
+      fun arithmetic tm =
+        let val ty = Term.type_of tm
+        in ty = intSyntax.int_ty orelse ty = realSyntax.real_ty end
       val normalize_tac =
         if SmtResource.term_nodes_up_to arith_split_max_target_nodes t <=
-             arith_split_max_target_nodes
+             arith_split_max_target_nodes andalso
+           SmtResource.contains arithmetic t
         then bossLib.RW_TAC else simpLib.SIMP_TAC
     in
       Tactical.TAC_PROOF (([], t),
@@ -7204,7 +7233,8 @@ local
             handle Feedback.HOL_ERR _ => integer_conditional residue
             handle Feedback.HOL_ERR _ => real_macro residue
             handle Feedback.HOL_ERR _ =>
-              SmtDatatypeProve.datatype_prove_with_admission admit residue
+              SmtDatatypeProve.datatype_prove_without_metis_with_admission
+                admit residue
           fun boolean_equality tm =
             let val (left, _) = boolSyntax.dest_eq tm
             in Term.type_of left = Type.bool end
@@ -7343,6 +7373,23 @@ local
         first (attempts false @ attempts true @
                [fn () => attempt_with true false []])
     end
+
+    (* Boolean conditionals with a constant branch, implications and negated
+       connectives, as the disjunction or conjunction Z3 writes for them. *)
+    val (if_t_or, if_t_imp, if_f_and, if_and_f) =
+      case List.map Drule.SPEC_ALL
+          (Drule.CONJUNCTS boolTheory.COND_BOOL_CLAUSES) of
+        [a, b, c, d] => (a, b, c, d)
+      | _ => raise ERR "z3_rewrite" "COND_BOOL_CLAUSES"
+    val double_negation = Drule.SPEC_ALL (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES)
+    val (not_and, not_or) =
+      Drule.CONJ_PAIR (Drule.SPEC_ALL boolTheory.DE_MORGAN_THM)
+    val spine_disj_bridges =
+      [if_t_or, if_t_imp, Drule.SPEC_ALL boolTheory.IMP_DISJ_THM, not_and,
+       double_negation]
+    val spine_conj_bridges =
+      [if_f_and, if_and_f, Drule.SPEC_ALL boolTheory.NOT_IMP, not_or,
+       double_negation]
 
     fun z3_rewrite (state, t) =
   let
@@ -7483,10 +7530,178 @@ local
                   SOME theorem =>
                     build state theorem right_no right_yes true
                 | NONE =>
-                    let val (state', theorem) = child (state, left, right)
-                        (left_guard, right_guard)
-                    in build state' theorem right_yes right_no false end
+                    let
+                      fun direct () =
+                        let val (state', theorem) = child (state, left, right)
+                            (left_guard, right_guard)
+                        in build state' theorem right_yes right_no false end
+                      fun flipped () =
+                        let val (state', theorem) = child (state, left, right)
+                            (left_guard, boolSyntax.mk_neg right_guard)
+                        in build state' theorem right_no right_yes true end
+                      fun gate holerr =
+                        if SmtResource.is_resource_gate holerr
+                        then raise Feedback.HOL_ERR holerr else ()
+                    in
+                      if left_yes ~~ right_no orelse left_no ~~ right_yes then
+                        flipped () handle Feedback.HOL_ERR holerr =>
+                          (gate holerr; direct ())
+                      else
+                        direct () handle Feedback.HOL_ERR holerr =>
+                          (gate holerr; flipped ())
+                    end
           end
+        (* Z3 writes a Boolean conditional with a constant branch, or an
+           implication, as a disjunction or conjunction.  Along a spine of
+           one connective, unfold those forms, then pair the flattened
+           children; the reassociation and any permutation of the children
+           is proved on fresh Boolean variables, never on the children. *)
+        fun spine_conv bridges is_op tm =
+          let
+            val step = Conv.FIRST_CONV (List.map Conv.REWR_CONV bridges)
+            fun go tm =
+              (Conv.THENC (step, go) tm)
+              handle Feedback.HOL_ERR _ =>
+                if is_op tm then Conv.BINOP_CONV go tm
+                else raise Conv.UNCHANGED
+          in
+            Conv.QCONV go tm
+          end
+        fun shape term =
+          if boolSyntax.is_neg term then "~"
+          else if boolSyntax.is_conj term then "/\\"
+          else if boolSyntax.is_disj term then "\\/"
+          else if boolSyntax.is_imp term then "==>"
+          else if boolSyntax.is_cond term then "COND"
+          else if boolSyntax.is_eq term then "="
+          else
+            let val (head, _) = boolSyntax.strip_comb term in
+              if Term.is_const head then #Name (Term.dest_thy_const head)
+              else "?"
+            end
+        fun permutation lefts rights =
+          let
+            val used = Array.array (List.length rights, false)
+            val rights_array = Array.fromList rights
+            val indices =
+              List.tabulate (Array.length rights_array, fn j => j)
+            fun free j = not (Array.sub (used, j))
+            (* Identical children pair first, so that siblings of one shape
+               are not paired across a reordering. *)
+            fun same (_, left) =
+              case List.find (fn j => free j andalso
+                     Term.aconv left (Array.sub (rights_array, j))) indices of
+                SOME j => (Array.update (used, j, true); SOME j)
+              | NONE => NONE
+            val identical = List.map same (Portable.enumerate 0 lefts)
+            (* Then children of one shape, the same position first. *)
+            fun similar ((i, left), SOME j) = SOME j
+              | similar ((i, left), NONE) =
+              let
+                val key = shape left
+                fun ok j = free j andalso
+                  shape (Array.sub (rights_array, j)) = key
+                val found =
+                  if i < Array.length rights_array andalso ok i then SOME i
+                  else List.find ok indices
+              in
+                Option.app (fn j => Array.update (used, j, true)) found;
+                found
+              end
+            val shaped = ListPair.map similar
+              (Portable.enumerate 0 lefts, identical)
+            (* The rest in order: a rewritten atom can change its head. *)
+            fun rest (SOME j) = j
+              | rest NONE =
+              case List.find free indices of
+                SOME j => (Array.update (used, j, true); j)
+              | NONE => raise ERR "skeleton_congruence"
+                  "spine children do not pair"
+          in
+            List.map rest shaped
+          end
+        fun nary strip mk_op is_op dest (state, left, right) =
+          let
+            val lefts = strip left
+            val rights = strip right
+            val n = List.length lefts
+            val _ = n >= 2 andalso n = List.length rights orelse
+              raise ERR "skeleton_congruence" "spine lengths differ"
+            val pairs = permutation lefts rights
+            val vars = List.map (fn _ => Term.genvar Type.bool) lefts
+            val right_vars = Array.array (n, Term.genvar Type.bool)
+            val _ = List.app (fn (i, j) =>
+                Array.update (right_vars, j, List.nth (vars, i)))
+              (Portable.enumerate 0 pairs)
+            fun pattern leaves tm =
+              if is_op tm then
+                let val (a, b) = dest tm in mk_op (pattern leaves a,
+                  pattern leaves b) end
+              else
+                (case !leaves of
+                   v :: rest => (leaves := rest; v)
+                 | [] => raise ERR "skeleton_congruence" "spine pattern")
+            val left_pattern = pattern (ref vars) left
+            val right_pattern =
+              pattern (ref (Array.foldr op:: [] right_vars)) right
+            val shape_theorem =
+              if boolSyntax.is_conj left then
+                Drule.CONJUNCTS_AC (left_pattern, right_pattern)
+              else Drule.DISJUNCTS_AC (left_pattern, right_pattern)
+            val left_theorem = Thm.INST
+              (ListPair.map (fn (v, l) => {redex = v, residue = l})
+                 (vars, lefts)) shape_theorem
+            val (state', child_theorems) = List.foldl
+              (fn ((i, j), (state, theorems)) =>
+                let val (state', theorem) = child (state, left, right)
+                      (List.nth (lefts, i), List.nth (rights, j))
+                in (state', theorem :: theorems) end)
+              (state, []) (Portable.enumerate 0 pairs)
+            val substitution = ListPair.map
+              (fn (v, theorem) => {redex = v, residue = theorem})
+              (vars, List.rev child_theorems)
+            val right_theorem = Drule.SUBST_CONV substitution right_pattern
+              (boolSyntax.rhs (Thm.concl left_theorem))
+          in
+            (state', Thm.TRANS left_theorem right_theorem)
+          end
+        fun spine (state, left, right) =
+          let
+            val disjunctive =
+              boolSyntax.is_disj left orelse boolSyntax.is_disj right
+            val (bridges, is_op, strip, mk_op, dest) =
+              if disjunctive then
+                (spine_disj_bridges, boolSyntax.is_disj,
+                 boolSyntax.strip_disj, boolSyntax.mk_disj,
+                 boolSyntax.dest_disj)
+              else
+                (spine_conj_bridges, boolSyntax.is_conj,
+                 boolSyntax.strip_conj, boolSyntax.mk_conj,
+                 boolSyntax.dest_conj)
+            val left_bridge = spine_conv bridges is_op left
+            val right_bridge = spine_conv bridges is_op right
+            val (left', right') = (boolSyntax.rhs (Thm.concl left_bridge),
+              boolSyntax.rhs (Thm.concl right_bridge))
+            val _ = is_op left' andalso is_op right' orelse
+              raise ERR "skeleton_congruence" "no shared spine"
+            val (state', aligned) =
+              nary strip mk_op is_op dest (state, left', right')
+              handle Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else binary dest (state, left', right')
+          in
+            (state', Thm.TRANS left_bridge
+               (Thm.TRANS aligned (Thm.SYM right_bridge)))
+          end
+        fun spine_head term =
+          boolSyntax.is_conj term orelse boolSyntax.is_disj term
+        fun spine_operand term =
+          spine_head term orelse boolSyntax.is_imp term orelse
+          (boolSyntax.is_cond term andalso
+           Term.type_of term = Type.bool) orelse
+          (boolSyntax.is_neg term andalso
+           spine_operand (boolSyntax.dest_neg term))
         fun boolean_equality term =
           let val (left, right) = boolSyntax.dest_eq term in
             Term.type_of left = Type.bool andalso
@@ -7496,24 +7711,9 @@ local
         val result =
           if boolSyntax.is_neg l andalso boolSyntax.is_neg r then
             unary boolSyntax.dest_neg (state, l, r)
-          else if boolSyntax.is_conj l andalso boolSyntax.is_conj r then
-            binary boolSyntax.dest_conj (state, l, r)
-          else if boolSyntax.is_disj l andalso boolSyntax.is_disj r then
-            binary boolSyntax.dest_disj (state, l, r)
-          else if boolSyntax.is_imp l andalso boolSyntax.is_disj r then
-            let
-              val bridge = Conv.REWR_CONV boolTheory.IMP_DISJ_THM l
-              val normalized = boolSyntax.rhs (Thm.concl bridge)
-              val (state', aligned) =
-                binary boolSyntax.dest_disj (state, normalized, r)
-            in (state', Thm.TRANS bridge aligned) end
-          else if boolSyntax.is_disj l andalso boolSyntax.is_imp r then
-            let
-              val bridge = Conv.REWR_CONV boolTheory.IMP_DISJ_THM r
-              val normalized = boolSyntax.rhs (Thm.concl bridge)
-              val (state', aligned) =
-                binary boolSyntax.dest_disj (state, l, normalized)
-            in (state', Thm.TRANS aligned (Thm.SYM bridge)) end
+          else if (spine_head l andalso spine_operand r) orelse
+                  (spine_operand l andalso spine_head r) then
+            spine (state, l, r)
           else if boolSyntax.is_imp l andalso boolSyntax.is_imp r then
             binary boolSyntax.dest_imp (state, l, r)
           else if boolean_equality l andalso boolean_equality r then
@@ -7914,7 +8114,7 @@ local
            acyclicity procedure is general for selected registered datatype
            facts and fails loudly outside those shapes. *)
         rewrite_profile "datatypes" "rewrite(21)(datatype)"
-          (SmtDatatypeProve.datatype_prove_with_admission
+          (SmtDatatypeProve.datatype_prove_without_metis_with_admission
             (#datatype_admit state)) t
 
     in
@@ -7923,6 +8123,31 @@ local
        | NONE => (state_cache_thm state thm, thm))
     end
 
+    handle Feedback.HOL_ERR _ =>
+
+    (* A rewrite can be a propositional identity over theory atoms.  Decide
+       its propositional abstraction, atoms opaque, before the recursive
+       congruence rungs below. *)
+    (state, rewrite_profile "propositional" "rewrite(21-)(propositional)"
+      (fn target =>
+        let
+          val maximum = SmtResource.max_skeleton_replay_dag_nodes
+          val _ = SmtResource.dag_nodes_up_to maximum target <= maximum
+            orelse raise ERR "z3_rewrite" "propositional target too large"
+        in
+          SmtResource.with_resource_step_time "Skeleton"
+            "z3-rewrite-propositional"
+            (SmtSkeletonProve.propositional_prove_in
+              (#frontier_context state)) target
+          handle Feedback.HOL_ERR holerr =>
+                   if SmtResource.is_resource_gate holerr then
+                     raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
+                   else raise Feedback.HOL_ERR holerr
+               | HolSatLib.SAT_cex _ =>
+                   raise ERR "z3_rewrite" "propositional abstraction fails"
+               | HolSatLib.SAT_satisfiable _ =>
+                   raise ERR "z3_rewrite" "propositional abstraction fails"
+        end) t)
     handle Feedback.HOL_ERR _ =>
 
     (* Z3 can reduce datatype redexes (case of a constructor) and reorient or
@@ -7950,14 +8175,38 @@ local
                         boolSyntax.rhs (Thm.concl r_thm))
         val _ = not (Term.aconv l l' andalso Term.aconv r r') orelse
           raise ERR "z3_rewrite" "datatype rewrites leave the target unchanged"
-        val (state', normalized) =
-          if Term.aconv l' r' then (state, Thm.REFL l')
-          else recursive_rewrite_boundary z3_rewrite
-            (state, boolSyntax.mk_eq (l', r'))
-        val thm = Thm.TRANS l_thm (Thm.TRANS normalized (Thm.SYM r_thm))
-        val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl thm) t) thm
+        (* When only one side had a redex, the other side still has Z3's
+           own skeleton, which the normalization of the reduced side need
+           not reproduce: try congruence on the original target first. *)
+        val skeleton_first =
+          if Term.aconv l' r' orelse
+             not (Term.aconv l l' orelse Term.aconv r r') orelse
+             !pre_bblast_skeleton_attempted
+          then NONE
+          else
+            (pre_bblast_skeleton_attempted := true;
+             record_measured_target MeasuredSkeletonCongruence t;
+             SOME (rewrite_profile "boolean/binder-skeleton"
+               "rewrite(21a)(skeleton-first)" skeleton_congruence ()))
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
+              else NONE
       in
-        (state_cache_thm state' thm, thm)
+        case skeleton_first of
+          SOME result => result
+        | NONE =>
+          let
+            val (state', normalized) =
+              if Term.aconv l' r' then (state, Thm.REFL l')
+              else recursive_rewrite_boundary z3_rewrite
+                (state, boolSyntax.mk_eq (l', r'))
+            val thm =
+              Thm.TRANS l_thm (Thm.TRANS normalized (Thm.SYM r_thm))
+            val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl thm) t) thm
+          in
+            (state_cache_thm state' thm, thm)
+          end
       end) ()
     handle Feedback.HOL_ERR _ =>
 
@@ -9528,7 +9777,7 @@ local
         (* E1(b): TypeBase-driven reconstruction is general for selected
            registered datatype facts and fails loudly outside those shapes. *)
         val thm = profile "th_lemma[datatype](2)"
-          (SmtDatatypeProve.datatype_prove_with_admission
+          (SmtDatatypeProve.datatype_prove_generalizing_with_admission
             (#datatype_admit state)) t
       in
         (* cache 'thm' *)
