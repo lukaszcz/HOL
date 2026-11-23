@@ -1611,6 +1611,18 @@ local
     fun reflexive_target () =
       let val (l, r) = boolSyntax.dest_eq t
       in Thm.ALPHA l r end
+    (* Only premises that a rewrite of the target could use: one whose
+       term, negated term or equation side occurs in it. *)
+    fun relevant target thm =
+      let
+        val c = Thm.concl thm
+        fun occurs tm = Lib.can (HolKernel.find_term (Term.aconv tm)) target
+      in
+        occurs c orelse
+        (boolSyntax.is_neg c andalso occurs (boolSyntax.dest_neg c)) orelse
+        (boolSyntax.is_eq c andalso
+         (occurs (boolSyntax.lhs c) orelse occurs (boolSyntax.rhs c)))
+      end
   in
     Lib.tryfind oriented_premise thms
     handle Feedback.HOL_ERR _ =>
@@ -1625,7 +1637,8 @@ local
             "Skeleton" "z3-nnf-taut" maximum observed
         in
           Tactical.TAC_PROOF ((HOLset.listItems asms, target),
-            Tactical.MAP_EVERY Tactic.MP_TAC rewrite_thms THEN
+            Tactical.MAP_EVERY Tactic.MP_TAC
+              (List.filter (relevant target) rewrite_thms) THEN
             PURE_REWRITE_TAC nnf_rewrites THEN tautLib.TAUT_TAC)
           handle Feedback.HOL_ERR _ =>
           Tactical.TAC_PROOF ((HOLset.listItems asms, target),

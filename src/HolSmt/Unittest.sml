@@ -28518,7 +28518,7 @@ let
     "(declare-fun b () Bool)\n" ^
     "(declare-fun c () Bool)\n" ^
     "(declare-fun d () Bool)\n"
-  val rewrite_text = "(= (and a b) (not (or c d)))"
+  val rewrite_text = "(= (and a b) (or c d))"
   val proof = parse_z3_proof_string "4.12.4"
     ("(" ^ declarations ^
      "(proof (unit-resolution (asserted (not " ^ rewrite_text ^ ")) " ^
