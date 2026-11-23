@@ -86,9 +86,9 @@ struct
           val contents=VP.contents_with_policy_for work query packet
           val context= #context contents val scope= #scope contents
           val proof= #proof contents
-          fun guard()=
-            (ignore(VP.contents_with_policy_for work query packet);
-             NC.validate_for work native_contract)
+          val packet_guard=VP.prepare_scoped_guard_with_policy_for
+            work query packet
+          fun guard()=(packet_guard();NC.validate_for work native_contract)
           fun pay amount=(guard();W.spend_policy work amount)
           fun tick()=pay 1
           (* One handler constructor dispatch or comparison costs one unit,
@@ -358,12 +358,39 @@ struct
           fun save id current recipe target=
             (pay 4;known:=Redblackmap.insert(!known,id,current);
              commands:={id=id,target=target,recipe=recipe}:: !commands)
+          val _=pay 4
+          fun source_compare((a,b),(c,d))=
+            (* The surrounding search guards the packet. Dictionary
+               comparisons only use its already validated integer keys. *)
+            (W.spend_policy work 2;
+             case Int.compare(a,c)of EQUAL=>Int.compare(b,d)|order=>order)
+          val source_prefix=ref(0,assertions,Redblackmap.mkDict source_compare)
           fun source_index target=
-            let fun walk [] _=NONE
-                  | walk(value::rest)index=
-                      (tick();if same(PV.proof_term context value,target)
-                        then SOME index else walk rest(index+1))
-            in walk assertions 0 end
+            let
+              val _=tick()
+              val wanted=PV.proof_key context target
+              val (next,pending,indices)= !source_prefix
+              (* Index only rows reached by the original ordered search.
+                 Keep the first occurrence and its guarded parser Value. *)
+              fun walk [] _ _=(guard();NONE)
+                | walk(value::rest)index indices=
+                    let
+                      val _=tick()
+                      val key=PV.proof_key context(PV.proof_term context value)
+                      val _=pay 7
+                      val indices=Redblackmap.insertWith
+                        (fn (first,_)=>first)(indices,key,(index,value))
+                      val _=source_prefix:=(index+1,rest,indices)
+                    in if source_compare(key,wanted)=EQUAL then SOME index
+                       else walk rest(index+1)indices end
+            in case Redblackmap.peek(indices,wanted)of
+                NONE=>walk pending next indices
+              | SOME(index,value)=>
+                  if source_compare
+                      (PV.proof_key context(PV.proof_term context value),
+                       wanted)=EQUAL then SOME index
+                  else raise ERR "source" "indexed assertion key changed"
+            end
           exception PendingEquality
           fun relation node =
             (tick();case PV.proof_view context node of

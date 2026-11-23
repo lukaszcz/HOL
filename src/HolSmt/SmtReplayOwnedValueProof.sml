@@ -388,15 +388,14 @@ struct
               val _=W.validate_policy expected original_graph original_scope
                 sources (W.semantic_policy expected)
               val assumptions=SmtReplaySource.assumption_nodes sources
-              (* Quote this actual snapshot read/copy before any held
-                 packet is activated. The later indexed walks are paid
-                 separately at each real visit. *)
-              fun snapshot []=W.spend_policy expected 1
+              (* Prepay the actual indexed copy before any held packet is
+                 activated. Original ordinals keep their exact order. *)
+              fun snapshot []=W.spend_policy expected 2
                 | snapshot (_::rest)=
-                    (W.spend_policy expected 2;snapshot rest)
+                    (W.spend_policy expected 4;snapshot rest)
               val _=snapshot assumptions
-          in SOME {assumptions=assumptions,
-            denied=SmtReplaySource.denied_goal_node sources} end
+              val denied=SmtReplaySource.denied_goal_node sources
+          in SOME {assumptions=Vector.fromList assumptions,denied=denied} end
         val contents=VP.contents_with_policy_for expected query packet
         val context= #context contents
         val lifetime=ref NONE
@@ -485,13 +484,12 @@ struct
           else case original_backing of NONE=>
               raise ERR "prepare" "missing original Source owner"
             | SOME {assumptions,denied}=>
-                let fun find [] 0=(step ();denied)
-                      | find [] _=raise ERR "prepare"
-                          "unknown original occurrence"
-                      | find (node::rest) remaining=
-                          (step ();if remaining=0 then node else
-                            find rest (remaining-1))
-                in find assumptions index end
+                let val _=step ()
+                    val count=Vector.length assumptions
+                in if index<count then Vector.sub(assumptions,index)
+                   else if index=count then denied
+                   else raise ERR "prepare" "unknown original occurrence"
+                end
         fun reserve []=(guard ();[])
           | reserve ((index,value)::rest)=
               let val _=step () val node=original_node index

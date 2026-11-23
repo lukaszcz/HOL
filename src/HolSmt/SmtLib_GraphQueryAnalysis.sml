@@ -1059,9 +1059,26 @@ struct
                 | _ => raise ERR "borrow" "native analysis required"
               val computed = List.concat parameters @ List.concat
                 (List.map (fn (entries,_,_,_) => entries) analyses)
+              (* A linear lookup tests the index before comparing carriers.
+                 Each bucket keeps the original order of those comparisons. *)
+              val contextual_index = Susp.delay (fn () =>
+                let
+                  val groups = List.foldr (fn (entry as (_,i,_), groups) =>
+                    Redblackmap.insertWith (fn (entries,_) => entry::entries)
+                      (groups,i,[entry]))
+                    (Redblackmap.mkDict Int.compare) computed
+                in
+                  Redblackmap.map
+                    (fn (_,entries) => indexed_lookup #1 entries) groups
+                end)
               fun contextual (function,index) =
                 Option.map (fn (_,_,argument) => argument)
-                  (List.find (fn (other,other_index,_) =>
+                  (if ordinary_guard then
+                     case Redblackmap.peek
+                         (Susp.force contextual_index,index) of
+                       NONE => NONE
+                     | SOME lookup => lookup function
+                   else List.find (fn (other,other_index,_) =>
                     index = other_index andalso
                     (#same operations) (function,other)) computed)
               fun constant raw = protected (fn () =>
