@@ -455,7 +455,8 @@ fun defined_head theorem =
 
 type 'a susp = 'a Portable.HOLSusp.susp
 type symmetry_term = term * term susp
-type stripped_reading = term option * symmetry_term
+type stripped_reading =
+  term option * (int * bool susp) susp * symmetry_term
 type premise_groups = symmetry_term list susp list
 
 datatype citation_reading =
@@ -579,7 +580,13 @@ fun rigid_head term =
   else NONE
 
 fun prepare_stripped term =
-  (rigid_head term, prepare_symmetry statement_symmetry_normal_form term)
+  let
+    open Portable.HOLSusp
+    val size = delay (fn () =>
+      (Term.term_size term, delay (fn () => Term.free_in predecessor term)))
+  in
+    (rigid_head term, size, prepare_symmetry statement_symmetry_normal_form term)
+  end
 
 fun prepare_normal term =
   prepare_stripped (strip_normal_truth_equivalence term)
@@ -636,15 +643,29 @@ fun prepare_statement_comparison goal =
     val goal = strip_truth_equivalence goal
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
-    fun same (left, left_normal) (right, right_normal) =
-      Term.aconv left right orelse variants left right orelse
+    fun symmetric (_, left_normal) (_, right_normal) =
       Term.aconv (force left_normal) (force right_normal)
+    fun same (left as (a, _)) (right as (b, _)) =
+      Term.aconv a b orelse variants a b orelse symmetric left right
     (* Mutual matching and the symmetry normal form preserve rigid heads
        here, after beta and eta reduction and with PRE excluded. *)
-    fun same_stripped (left_head, left) (right_head, right) =
+    fun same_stripped (left_head, left_size, left as (left_term, _))
+                      (right_head, right_size, right as (right_term, _)) =
       (case (left_head, right_head) of
            (SOME a, SOME b) => Term.same_const a b
-         | _ => true) andalso same left right
+         | _ => true) andalso
+      (Portable.pointer_eq (left_term, right_term) orelse
+       let
+         val (a, left_pre) = force left_size
+         val (b, right_pre) = force right_size
+       in
+         (* First-order matching can only increase term size. These
+            readings already went through beta and eta reduction, so
+            only PRE can change size in the symmetry pass. *)
+         if a = b then same left right
+         else
+           (force left_pre orelse force right_pre) andalso symmetric left right
+       end)
     val (goal_premises, goal_body) = statement_parts goal
     val whole = prepare_stripped goal
     (* Stripping the prefix and premises preserves the beta-eta normal
@@ -657,7 +678,7 @@ fun prepare_statement_comparison goal =
     fun covered premise = List.exists (same premise) premises
     (* Beta and eta preserve a rigid head. An equality can expose a
        different head when a truth equivalence is stripped. *)
-    fun different_head raw (expected, _) =
+    fun different_head raw (expected, _, _) =
       case (raw, expected) of
           (SOME a, SOME b) =>
             not (Term.same_const a boolSyntax.equality) andalso

@@ -262,11 +262,20 @@ val _ =
                (boolSyntax.mk_eq (List.nth (long_order_nodes, left),
                             List.nth (long_order_nodes, right))))
          val chain = List.rev (List.tabulate (40, fn i => fact i (i + 1)))
+         val other_nodes = [41, 42, 47, 48, 49, 50, 51]
+         val other_edges =
+           ListPair.mapEq (fn (x, y) => fact x y)
+             (List.take (other_nodes, 6), tl other_nodes)
+         val misses =
+           List.concat
+             (List.tabulate (3, fn x =>
+               map (fn y => apart x y) (List.take (other_nodes, 6))))
          val distinctions =
-           [apart 0 43, apart 1 43, apart 2 44, apart 45 46, apart 0 40]
+           [apart 0 43, apart 1 43, apart 2 44, apart 45 46] @
+           misses @ [apart 0 40]
          val facts =
            (Thm.ASSUME long_order_axiom :: chain) @
-           (fact 40 0 :: distinctions)
+           (fact 40 0 :: other_edges) @ distinctions
          val target = boolSyntax.F
          val ordinary = orderSolve.prove_with facts target
          fun same_hypotheses theorem =

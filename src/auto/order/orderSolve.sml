@@ -148,6 +148,30 @@ fun outgoing_edges edges =
     #2 (List.foldl add (0, Termtab.empty) edges)
   end
 
+structure TermGraph = Graph(
+  type key = term
+  val ord = Term.compare
+  val pp = Parse.pp_term
+)
+
+fun cyclic_components edges =
+  let
+    fun add ({source, target, ...} : edge, graph) =
+      graph
+      |> TermGraph.default_node (source, ())
+      |> TermGraph.default_node (target, ())
+      |> TermGraph.add_edge (source, target)
+    val graph = List.foldl add TermGraph.empty edges
+    fun index (nodes, (i, table)) =
+      case nodes of
+          _ :: _ :: _ =>
+            (i + 1, List.foldl
+              (fn (node, acc) => Termtab.update (node, i) acc) table nodes)
+        | _ => (i, table)
+  in
+    #2 (List.foldl index (0, Termtab.empty) (TermGraph.strong_conn graph))
+  end
+
 (* A scan can use a newly reached node at later edges in the same round.
    Earlier edges must wait for the next round. Schedule just the edges
    that can relax, in the same (round, original position) order, so that
@@ -261,7 +285,7 @@ fun reachable work transitivity edges outgoing observe source =
           rounds (if Option.isSome (#max_nodes work) then 2 else 0) empty
         end
 
-fun reach_from work transitive edges =
+fun reach_from work transitive distinctions edges =
   let
     (* Share the index across traversals and repeated crossing checks. *)
     val outgoing = Portable.HOLSusp.delay (fn () => outgoing_edges edges)
@@ -292,25 +316,50 @@ fun reach_from work transitive edges =
       let val known = from source
       in reached work known
       end
-    val reach_crossing =
+    val may_cross =
       case #max_nodes work of
-          NONE => reach
+          NONE => (fn _ => true)
         | SOME _ =>
             let
-              val scans = ref 2
+              val first = ref true
+              val attempts = ref 3
+              (* A bounded scan is enough to detect when building the
+                 index can pay for itself over many crossing checks. *)
+              fun many_distinctions () =
+                (ignore (List.drop (distinctions, 16)); true)
+                handle Subscript => false
+              val components =
+                Portable.HOLSusp.delay (fn () =>
+                  if many_distinctions () then SOME (cyclic_components edges)
+                  else NONE)
               fun has_edges tm =
                 Option.isSome
                   (Termtab.lookup (Portable.HOLSusp.force outgoing) tm)
+              fun same_cycle source target =
+                case Portable.HOLSusp.force components of
+                    NONE => true
+                  | SOME table =>
+                      (case Termtab.lookup table source of
+                           NONE => false
+                         | SOME index =>
+                             Termtab.lookup table target = SOME index)
             in
-              fn source => fn target =>
-                (* Both ends need outgoing edges for a crossing. Check
-                   the index only after the first few path queries. *)
-                if !scans > 0 then
-                  (scans := !scans - 1; reach source target)
-                else if has_edges source andalso has_edges target then
-                  reach source target
-                else NONE
+              fn (source, target) =>
+                (* Keep the first crossing cheap. Check for outgoing
+                   edges before counting a pair toward the SCC scan. *)
+                if !first then
+                  (first := false; true)
+                else
+                  has_edges source andalso has_edges target andalso
+                  (if !attempts > 0 then (attempts := !attempts - 1; true)
+                   else same_cycle source target)
             end
+    fun reach_crossing (x, y) =
+      if may_cross (x, y) then
+        Option.mapPartial
+          (fn up => Option.map (fn down => (up, down)) (reach y x))
+          (reach x y)
+      else NONE
     fun reach_one source target =
       case (#max_nodes work, step) of
           (SOME _, SOME _) =>
@@ -337,32 +386,28 @@ fun reach_from work transitive edges =
   end
 
 (* The two chains that meet on a distinction. *)
-fun crossing work (context : orderData.context) reach (x, y) =
+fun crossing work (context : orderData.context) reach pair =
   let
     val {antisymmetric, ...} = #axioms context
   in
     case antisymmetric of
         NONE => NONE
       | SOME antisymmetric =>
-          (case reach x y of
+          (case reach pair of
                NONE => NONE
-             | SOME up =>
-                 (case reach y x of
-                      NONE => NONE
-                    | SOME down =>
-                        let
-                          val up_theorem = path_theorem up
-                          val down_theorem = path_theorem down
-                        in
-                          SOME
-                            (application work;
-                             MATCH_MP
-                               (MATCH_MP
-                                  (MATCH_MP order_weak_antisymmetric
-                                     antisymmetric)
-                                  up_theorem)
-                               down_theorem)
-                        end))
+             | SOME (up, down) =>
+                 let
+                   val up_theorem = path_theorem up
+                   val down_theorem = path_theorem down
+                 in
+                   SOME
+                     (application work;
+                      MATCH_MP
+                        (MATCH_MP
+                           (MATCH_MP order_weak_antisymmetric antisymmetric)
+                           up_theorem)
+                        down_theorem)
+                 end)
   end
 
 fun stated work equalities (x, y) =
@@ -410,10 +455,10 @@ fun equality_lookup (work : work) equalities =
         end
     | _ => stated work equalities
 
-fun close work (context : orderData.context) (edges, equalities) =
+fun close work (context : orderData.context) (edges, equalities) distinctions =
   let
     val {reach_crossing, ...} =
-      reach_from work (#transitive (#axioms context)) edges
+      reach_from work (#transitive (#axioms context)) distinctions edges
     val lookup = equality_lookup work equalities
     fun one (x, y, distinction) =
       let
@@ -430,7 +475,7 @@ fun close work (context : orderData.context) (edges, equalities) =
                   (crossing work context reach_crossing (x, y))
       end
   in
-    one
+    search work one distinctions
   end
 
 fun bounded_graph (work : work) (parts as (edges, _, _)) =
@@ -440,7 +485,7 @@ fun bounded_graph (work : work) (parts as (edges, _, _)) =
     | NONE => SOME parts
 
 fun refute_graph work context (edges, equalities, distinctions) =
-  search work (close work context (edges, equalities)) distinctions
+  close work context (edges, equalities) distinctions
 
 (* Proving a literal outright is the other half of the procedure.  A
    refutation reads the negated goal as a literal, and a relational atom
@@ -451,7 +496,8 @@ fun prove_literal work context
       (edges, equalities, distinctions) target =
   let
     val {reflexive, transitive, ...} = #axioms (context : orderData.context)
-    val {reach_crossing, reach_one} = reach_from work transitive edges
+    val {reach_crossing, reach_one} =
+      reach_from work transitive [] edges
     fun weak (x, y) =
       if aconv x y then
         Option.map
@@ -489,9 +535,8 @@ and refute_equation work context
     val (extra_edges, extra_equalities, _) =
       expand work context facts
     val closed =
-      search work
-        (close work context
-          (edges @ extra_edges, extra_equalities @ equalities))
+      close work context
+        (edges @ extra_edges, extra_equalities @ equalities)
         distinctions
   in
     Option.map (fn refutation => NOT_INTRO (DISCH equation refutation)) closed

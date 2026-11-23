@@ -1934,6 +1934,37 @@ val _ =
 
 val _ =
   test
+    ("unrender checks markings for the current goal position and store",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} clasetMeta.empty
+         fun premise w = {params = [], asl = [], w = boolSyntax.mk_imp (w, w)}
+         val node =
+           clasetGoal.create
+             {goals = [premise meta, premise fixed], store = store, level = 0}
+         fun check node pos expected replay_length =
+           let
+             val result =
+               Tactical.VALID Tactic.DISCH_TAC (clasetGoal.render node pos)
+           in
+             case clasetGoal.unrender node pos result of
+                 NONE => false
+               | SOME next =>
+                   let val {asl, w, ...} = clasetGoal.goal_at next pos
+                   in
+                     aconv_list asl [expected] andalso aconv w expected
+                     andalso clasetGoal.replay_length next = replay_length
+                   end
+           end
+       in
+         check node 1 meta 1 andalso check node 2 fixed 0 andalso
+         check (clasetGoal.set_store (the_store (clasetMeta.bind
+           (meta, fixed) store)) node) 1 fixed 0
+       end)
+
+val _ =
+  test
     ("safe-step cascade reaches each ordered slot with valid evidence",
      fn () =>
        let

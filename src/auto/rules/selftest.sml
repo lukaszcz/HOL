@@ -430,6 +430,26 @@ val _ =
          unifyMeasured (fn () => ()) query net = expected
        end)
 
+val _ =
+  test
+    ("clasetNet returns exact matches before wildcard matches at every level",
+     fn () =>
+       let
+         val f = mk_var ("f", bool --> bool)
+         val patvars = tmset [x]
+         fun apply t = mk_comb (f, t)
+         val net = List.foldl
+           (fn ((pat, i), net) => insert ({pat = pat, patvars = patvars}, i) net)
+           empty [(x, 1), (apply x, 2), (apply (apply x), 3), (apply x, 4)]
+         val query = apply (apply boolSyntax.T)
+         val unification = {q = query, qvars = tmset []}
+         val expected = [3, 4, 2, 1]
+       in
+         match query net = expected andalso
+         unify unification net = expected andalso
+         unifyMeasured (fn () => ()) unification net = expected
+       end)
+
 (* Isabelle keys an abstraction as a wildcard in [Pure/net.ML] "to cover
    eta-conversion", and the engines here need the same rule: blast's
    [wkNorm] contracts [!z. p /\ z] to [$! ($/\ p)], and the stored

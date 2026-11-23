@@ -159,48 +159,51 @@ fun filter_at {pat, patvars} keep net =
     filter (stored_labels patvars pat) net
   end
 
-(* Exact-only paths can return their result without copying the tips.
-   Measured walks still charge for each candidate in the left branch. *)
+(* A query with only one successful tip list can return it directly. *)
 fun join left [] = left
   | join left right = left @ right
 
-fun follow checkpoint append normal_walk (tm, bvars) rest
-      (NODE (_, edges)) =
+fun follow checkpoint measured walk (tm, bvars) rest
+      (NODE (_, edges)) suffix =
   let
     val vbranch =
       case edge checkpoint V edges of
-          NONE => []
-        | SOME node => normal_walk rest node
+          NONE => suffix
+        | SOME node => walk rest node suffix
     fun exact label more =
       case edge checkpoint label edges of
-          NONE => []
-        | SOME node => normal_walk more node
-    val exact_branch =
-      case query_label checkpoint bvars tm of
-          NONE => []
-        | SOME Lam =>
-            let val (bvar, body) = dest_abs tm
-            in exact Lam ((body, bvar :: bvars) :: rest)
-            end
-        | SOME Cmb =>
-            let val (rator, rand) = dest_comb tm
-            in exact Cmb ((rator, bvars) :: (rand, bvars) :: rest)
-            end
-        | SOME label => exact label rest
+          NONE => vbranch
+        | SOME node =>
+            (* Pass wildcard matches down as the suffix for exact matches.
+               Measured walks still charge for the historical joins. *)
+            if measured then
+              appendMeasured checkpoint (walk more node []) vbranch
+            else walk more node vbranch
   in
-    append exact_branch vbranch
+    case query_label checkpoint bvars tm of
+        NONE => vbranch
+      | SOME Lam =>
+          let val (bvar, body) = dest_abs tm
+          in exact Lam ((body, bvar :: bvars) :: rest)
+          end
+      | SOME Cmb =>
+          let val (rator, rand) = dest_comb tm
+          in exact Cmb ((rator, bvars) :: (rand, bvars) :: rest)
+          end
+      | SOME label => exact label rest
   end
 
 fun match tm net =
   let
-    fun walk [] (NODE (tips, _)) = tips
-      | walk ((task, bvars) :: rest) node =
-          follow no_checkpoint join walk (eta_contract task, bvars) rest node
+    fun walk [] (NODE (tips, _)) suffix = join tips suffix
+      | walk ((task, bvars) :: rest) node suffix =
+          follow no_checkpoint false walk
+            (eta_contract task, bvars) rest node suffix
   in
-    walk [(tm, [])] net
+    walk [(tm, [])] net []
   end
 
-fun unify_with checkpoint append measured {q, qvars} net =
+fun unify_with checkpoint measured {q, qvars} net =
   let
     fun concat_map f items = concatMapMeasured checkpoint f items
     fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
@@ -220,45 +223,43 @@ fun unify_with checkpoint append measured {q, qvars} net =
 
     (* Skipping an application adds one pending operand after consuming
        the application itself; an abstraction leaves its body pending.
-       Visit completed subterms in edge order without building a list of
-       intermediate nodes at each application. *)
-    fun skip_unmeasured visit pending (node as NODE (_, edges)) results =
-      if pending = 0 then
-        (case visit node of [] => results | tips => tips :: results)
+       Prepend matches from completed subterms in edge order. *)
+    fun skip_unmeasured visit pending (node as NODE (_, edges)) suffix =
+      if pending = 0 then visit node suffix
       else
-        List.foldl
+        List.foldr
           (fn ((label, child), sofar) =>
             skip_unmeasured visit
               (case label of Cmb => pending + 1
                            | Lam => pending
                            | _ => pending - 1)
               child sofar)
-          results edges
+          suffix edges
 
-    fun walk [] (NODE (tips, _)) = (checkpoint (); tips)
-      | walk ((tm0, bvars) :: rest) node =
+    fun walk [] (NODE (tips, _)) suffix = (checkpoint (); join tips suffix)
+      | walk ((tm0, bvars) :: rest) node suffix =
           let
             val _ = checkpoint ()
             val tm = eta_contract tm0
           in
             if is_var tm andalso not (bound tm bvars) andalso
                HOLset.member (qvars, tm) then
-              if measured then concat_map (walk rest) (skip_one_m node)
-              else List.foldl (fn (tips, results) => join tips results) []
-                     (skip_unmeasured (walk rest) 1 node [])
+              if measured then
+                concat_map (fn child => walk rest child []) (skip_one_m node)
+              else skip_unmeasured (walk rest) 1 node suffix
             else
-              follow checkpoint append walk (tm, bvars) rest node
+              follow checkpoint measured walk (tm, bvars) rest node suffix
           end
   in
-    walk [(q, [])] net
+    walk [(q, [])] net []
   end
 
 fun unify query net =
-  unify_with no_checkpoint join false query net
+  unify_with no_checkpoint false query net
 
 fun unifyMeasured checkpoint query net =
   if Portable.pointer_eq (checkpoint, no_checkpoint) then unify query net
-  else unify_with checkpoint (appendMeasured checkpoint) true query net
+  else unify_with checkpoint true query net
 
 fun vfilter pred net =
   let

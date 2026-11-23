@@ -14,6 +14,8 @@ type exact_prefix_rebuild = clasetReplay.exact_prefix_rebuild
 type binding_mark = {terms : meta list, types : tymeta list}
 type binding_marks = binding_mark list
 type spellings = {conclusion : term list, assumptions : term list list}
+type wrapper_input =
+  {frees : term HOLset.set, types : hol_type list, needs_record : bool}
 
 datatype node =
   Node of {goals : cgoal list,
@@ -30,7 +32,7 @@ datatype node =
               the node's goals and store, and every rule query of an
               expansion asks for both, so each is computed once per
               position. *)
-           renders : (term list * term) Inttab.table ref,
+           renders : (goal * wrapper_input option) Inttab.table ref,
            spellings : spellings Inttab.table ref}
 
 fun norm_term store tm =
@@ -475,7 +477,7 @@ fun compare (left, right) =
                            canonical_rendering right)
   | order => order
 
-fun render (node as Node {renders, ...}) pos =
+fun render_entry (node as Node {renders, ...}) pos =
   case Inttab.lookup (!renders) pos of
       SOME rendered => rendered
     | NONE =>
@@ -483,11 +485,13 @@ fun render (node as Node {renders, ...}) pos =
           (* Unbound engine metavariables survive normalization as their
              marked frees.  HOL4 tactics consequently see rigid variables,
              not holes. *)
-          val rendered = render_cgoal node pos (goal_at node pos)
-          val _ = renders := Inttab.update (pos, rendered) (!renders)
+          val entry = (render_cgoal node pos (goal_at node pos), NONE)
+          val _ = renders := Inttab.update (pos, entry) (!renders)
         in
-          rendered
+          entry
         end
+
+fun render node pos = #1 (render_entry node pos)
 
 fun lookup_spellings (node as Node {spellings, ...}) pos =
   case Inttab.lookup (!spellings) pos of
@@ -529,6 +533,27 @@ fun marked_types terms =
   List.filter clasetMeta.is_tymeta
     (List.concat (map type_vars_in_term terms))
 
+(* Each alternative from a rendered tactic checks the same input frees and
+   type markers. Share that scan across alternatives at the same position. *)
+fun wrapper_input (Node {renders, ...}) pos (rendered as (asl, w), cached) =
+  case cached of
+      SOME input => input
+    | NONE =>
+        let
+          val terms = w :: asl
+          val frees = FVLset terms
+          val types = marked_types terms
+          val input =
+            {frees = frees, types = types,
+             needs_record =
+               not (null types) orelse
+               Option.isSome (HOLset.find clasetMeta.is_meta frees)}
+          val _ =
+            renders := Inttab.update (pos, (rendered, SOME input)) (!renders)
+        in
+          input
+        end
+
 fun variable_name variable = fst (dest_var variable)
 
 fun lift_with_frees _ _ [] = []
@@ -551,23 +576,30 @@ fun lift_with_frees _ _ [] = []
 
 fun lift_children node pos new_goals =
   let
-    val (asl, w) = render node pos
+    val ((asl, w), cached) = render_entry node pos
     val {params, ...} = goal_at node pos
   in
     if null new_goals then []
-    else lift_with_frees (FVLset (w :: asl)) params new_goals
+    else
+      let
+        val frees =
+          case cached of
+              SOME input => #frees input
+            | NONE => FVLset (w :: asl)
+      in
+        lift_with_frees frees params new_goals
+      end
   end
 
 fun unrender node pos (result as (new_goals, validation)) =
   let
-    val (asl, w) = render node pos
-    val input_terms = w :: asl
+    val entry as ((asl, w), _) = render_entry node pos
+    val {frees = input_frees, types = received_types, needs_record} =
+      wrapper_input node pos entry
     val output_terms =
       List.concat
         (map (fn (child_asl, child_w) => child_w :: child_asl)
           new_goals)
-    val input_frees = FVLset input_terms
-    val received_types = marked_types input_terms
     val returned_types = marked_types output_terms
     fun unknown_marker tm =
       clasetMeta.is_meta tm andalso not (HOLset.member (input_frees, tm))
@@ -595,9 +627,7 @@ fun unrender node pos (result as (new_goals, validation)) =
                 replace_goal node
                   {pos = pos, children = map #1 lifted, store = store'}
             in
-              if List.null received_types andalso
-                 not (Option.isSome
-                   (HOLset.find clasetMeta.is_meta input_frees))
+              if not needs_record
               then SOME next
               else
                 let
