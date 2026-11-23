@@ -43,4 +43,10 @@ sig
      collect entry uses direct hooks and retains its legacy traversal. *)
   val collect_with_memo : 'term operations -> 'term memo ->
     'term list -> 'term list -> 'term list
+
+  (* The membership hook applies only to the final merge and must agree
+     with same on the returned membership result. *)
+  val collect_with_merge_member : 'term operations -> 'term memo ->
+    ('term -> 'term list -> bool) ->
+    'term list -> 'term list -> 'term list
 end

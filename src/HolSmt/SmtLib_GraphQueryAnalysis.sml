@@ -701,12 +701,81 @@ struct
                  that heuristic only for this private tagged pattern.
                  Marker deduplication and argument analysis still compare
                  authentic scoped variable IDs, never these leaf names. *)
-              fun member (LetPattern {value,...}) terms =
-                    List.exists (fn term => lexical_same (value,term)) terms
-                | member term terms = List.exists
+              fun new_marker_member () =
+                let
+                  val cached = ref NONE
+                  val empty = Redblackset.empty Int.compare
+                  fun linear term terms = List.exists
                     (fn saved => (#same operations) (term,saved)) terms
+                  fun member (LetPattern {value,...}) terms =
+                        List.exists
+                          (fn term => lexical_same (value,term)) terms
+                    | member _ [] = false
+                    | member term terms =
+                      if not (can_reuse_marker_guards andalso !pure) then
+                        linear term terms
+                      else
+                        case marker_stamp () of
+                          NONE => linear term terms
+                        | SOME stamp =>
+                          let
+                            val (suffix,ids) = case !cached of
+                                SOME (saved,suffix,ids) =>
+                                  if saved=stamp then (suffix,ids)
+                                  else ([],empty)
+                              | NONE => ([],empty)
+                            val wanted = semantic_id [] term
+                            fun stable () = marker_stamp () = SOME stamp
+                            fun finish table prefix =
+                              (cached := SOME (stamp,terms,
+                                 Redblackset.addList (table,prefix));
+                               Redblackset.member (table,wanted))
+                            (* Authenticate new markers in list order.
+                               A hit in the prefix leaves its tail alone. *)
+                            fun scan prefix rest =
+                              if Portable.pointer_eq (suffix,rest) then
+                                finish ids prefix
+                              else case rest of
+                                  [] => finish empty prefix
+                                | saved :: tail =>
+                                    let val id = semantic_id [] saved in
+                                      id = wanted orelse
+                                      (if stable () then scan (id::prefix) tail
+                                       else linear term tail)
+                                    end
+                          in if stable () then scan [] terms
+                             else linear term terms end
+                in member end
+              fun new_state_index () =
+                let
+                  val states = ref (Redblackmap.mkDict
+                    (Portable.option_compare compare_key))
+                  val next = ref 0
+                in
+                  fn (terms : term list) =>
+                    let
+                      (* The head selects a bucket. Only an identical list
+                         can reuse a memo entry for the accumulator. *)
+                      val head = case terms of
+                          [] => NONE | term :: _ => SOME (key term)
+                      val bucket = Option.getOpt
+                        (Redblackmap.peek (!states,head),[])
+                    in
+                      case List.find (fn (saved,_) =>
+                          Portable.pointer_eq (terms,saved)) bucket of
+                        SOME (_,id) => id
+                      | NONE =>
+                          let val _ = spend 4
+                              val id = !next
+                              val _ = next := id + 1
+                              val _ = states := Redblackmap.insert
+                                (!states,head,(terms,id)::bucket)
+                          in id end
+                    end
+                end
               fun collect role is_collection policy initial =
                 let
+                  val member = new_marker_member ()
                   fun add (term as Term _) terms =
                         if is_collection (type_of term) andalso
                             not (member term terms)
@@ -735,17 +804,7 @@ struct
                   fun compare_state ((left,ls),(right,rs)) =
                     case compare_key (left,right) of
                       EQUAL => Int.compare (ls,rs) | order => order
-                  val states = ref ([]:(term list * int) list)
-                  val next_state = ref 0
-                  fun state_id terms =
-                    case List.find (fn (saved,_) =>
-                        Portable.pointer_eq (terms,saved)) (!states) of
-                      SOME (_,id) => id
-                    | NONE =>
-                        let val _ = spend 4 val id = !next_state
-                            val _ = next_state := id + 1
-                            val _ = states := (terms,id) :: !states
-                        in id end
+                  val state_id = new_state_index ()
                   val walk_cache = ref (Redblackmap.mkDict compare_state)
                   val mark_cache = ref (Redblackmap.mkDict compare_state)
                   val walks = ref 0
@@ -811,17 +870,7 @@ struct
                   EQUAL => (case compare_key (ln,rn) of
                     EQUAL => Int.compare (ls,rs) | order => order)
                 | order => order
-              val number_states = ref ([]:(term list * int) list)
-              val next_number_state = ref 0
-              fun number_state terms =
-                case List.find (fn (saved,_) =>
-                    Portable.pointer_eq (terms,saved)) (!number_states) of
-                  SOME (_,id) => id
-                | NONE =>
-                    let val _ = spend 4 val id = !next_number_state
-                        val _ = next_number_state := id + 1
-                        val _ = number_states := (terms,id) :: !number_states
-                    in id end
+              val number_state = new_state_index ()
               val number_cache = ref (Redblackmap.mkDict compare_number)
               val number_visits = ref 0
               fun number_memo expected current incoming compute =
@@ -842,8 +891,8 @@ struct
                 end
               (* Keep the helper's separate empty accumulator per root and
                  final outer merge; one expected-type visit is not another. *)
-              val numbers = R.collect_with_memo
-                number_ops number_memo (#1 bags) roots
+              val numbers = R.collect_with_merge_member
+                number_ops number_memo (new_marker_member ()) (#1 bags) roots
               val numbers = case seeds of NONE => numbers | SOME _ =>
                 List.foldr (fn (current,terms) =>
                   if List.exists (fn saved =>

@@ -141,12 +141,38 @@ struct
       val _ = active graph scope
       val _ = List.app (fn clause => ignore
         (P.theorem block (proof clause))) premises
-      fun occurrence term =
-        case List.find (fn literal => Term.aconv term
-            (compact_literal graph block literal)) vocabulary of
-          SOME literal => literal
-        | NONE => raise ERR "finish" "unrecorded compact literal"
-      val literals = List.map occurrence (C.literals compact)
+      val compact_name = compact_literal graph block
+      fun missing () = raise ERR "finish" "unrecorded compact literal"
+      fun recover [] = []
+        | recover [term] =
+            (case List.find (fn literal => Term.aconv term
+                (compact_name literal)) vocabulary of
+              SOME literal => [literal]
+            | NONE => missing ())
+        | recover terms =
+            let
+              (* Index the visited prefix only. Keep its first occurrence
+                 for each name and check new nodes in vocabulary order. *)
+              val remaining = ref vocabulary
+              val seen = ref (Redblackmap.mkDict Term.compare)
+              fun scan term =
+                case !remaining of
+                  [] => missing ()
+                | literal :: rest =>
+                    let
+                      val name = compact_name literal
+                      val _ = seen := Redblackmap.insertWith Lib.fst
+                        (!seen, name, literal)
+                      val _ = remaining := rest
+                    in
+                      if Term.aconv term name then literal else scan term
+                    end
+              fun occurrence term =
+                case Redblackmap.peek (!seen, term) of
+                  SOME literal => literal
+                | NONE => scan term
+            in List.map occurrence terms end
+      val literals = recover (C.literals compact)
       val edge = P.compose block (fn _ => C.theorem compact)
         (List.map proof premises)
     in Clause {block = block,graph = graph,scope = scope,literals = literals,

@@ -534,13 +534,16 @@ local
       let
         val nonunit =
           ``((p \/ q) /\ (~p \/ q)) /\ ((p \/ ~q) /\ (~p \/ ~q))``
+        val negative_units = ``((p \/ q \/ r) /\ ~p) /\ (~q /\ ~r)``
+        val positive_units = ``((~p \/ ~q \/ ~r) /\ p) /\ (q /\ r)``
         fun refute goal = measured (internal (config goal))
             (fn conf => checked (mk_neg goal) (GEN_SAT_PROVE_ONLY conf))
       in
         not (isSome (dpll.DPLL_REFUTE
           (Redblackmap.mkDict Term.var_compare) (Array.fromList []))) andalso
         refute F andalso measured (internal (config invalid)) sat_only andalso
-        refute nonunit andalso
+        refute nonunit andalso refute negative_units andalso
+        refute positive_units andalso
         measured (internal (set_term valid base_config))
           (fn conf => checked valid (GEN_SAT_PROVE_ONLY conf))
       end)

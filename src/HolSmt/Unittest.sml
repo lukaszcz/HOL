@@ -8147,13 +8147,13 @@ let
 in List.app check [true,false] end
 
 local
-fun with_graph_marker_query action =
+fun with_graph_marker_query assumptions action =
 let
   val limit = SmtReplayResourcePolicy.Uncapped
   val graph = G.new ()
   val scope = G.root_scope graph
   val sources = S.new_with_policy graph scope limit
-    {assumptions=[],goal=boolSyntax.F}
+    {assumptions=assumptions,goal=boolSyntax.F}
   val work = W.begin_with_policy graph scope sources
     {limits={input_limit=limit,output_limit=limit,template_limit=limit},
      work_limit=limit}
@@ -8172,7 +8172,7 @@ in
 
 fun smtlib_graph_raw_number_scope_retirement () =
 let
-fun check complete = with_graph_marker_query
+fun check complete = with_graph_marker_query []
   (fn {graph,scope,work,query,open_view} =>
 let
   val child = G.new_scope graph scope []
@@ -8219,7 +8219,7 @@ end)
 in List.app check [false,true] end
 
 fun smtlib_graph_marker_collection_scope_retirement () =
-  with_graph_marker_query (fn {graph,scope,work,query,open_view} =>
+  with_graph_marker_query [] (fn {graph,scope,work,query,open_view} =>
     let
       val child = G.new_scope graph scope []
       val marker = G.fresh_bound_variable graph child
@@ -8258,6 +8258,34 @@ fun smtlib_graph_marker_collection_scope_retirement () =
       | Exn.Exn error => raise error
       | Exn.Res _ => raise Fail "marker analysis accepted a retired scope"
     end)
+
+fun smtlib_graph_marker_order () =
+  let
+    val sets = [``(a:int) IN s1``, ``(a:int) IN s2``, ``(b:int) IN s1``,
+                ``(a:int) IN s3``, ``(b:int) IN s2``]
+    val first = intSyntax.mk_Num ``i:int``
+    val second = intSyntax.mk_Num ``j:int``
+    val third = intSyntax.mk_Num ``k:int``
+    fun hyp number = boolSyntax.mk_eq
+      (``(x:int)``,intSyntax.mk_injected number)
+    val numbers = List.map hyp [first,second,first,third,second]
+  in
+    with_graph_marker_query (sets @ numbers)
+      (fn {graph,work,query,open_view,...} =>
+        let
+          val result =
+            SmtLib_GraphTranslation.analyse_native_query_with_policy
+              work query open_view
+          fun check (label,actual,expected) =
+            assert (ListPair.allEq (Lib.uncurry Term.aconv)
+              (List.map (G.representative graph o #node) actual,expected),
+              label ^ " markers changed order or admitted duplicates")
+        in
+          check ("Set",#sets result,
+                 [``s3:int set``,``s2:int set``,``s1:int set``]);
+          check ("Raw number",#raw_numbers result,[third,second,first])
+        end)
+  end
 end
 end
 
@@ -40540,6 +40568,7 @@ let
       smtlib_graph_raw_number_scope_retirement),
     ("smtlib_graph_marker_collection_scope_retirement",
       smtlib_graph_marker_collection_scope_retirement),
+    ("smtlib_graph_marker_order",smtlib_graph_marker_order),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",

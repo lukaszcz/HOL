@@ -28,29 +28,44 @@ fun getBiggest acc =
                      acc
                      (boolSyntax.T, 0))
 
-(* The first unit we see, or the var that occurs most often *)
-fun find_splitting_var phi =
+local
+datatype direction = Left | Right
+datatype split = Unit of term * direction list | Choice of term
+
+(* Find the first unit, or the atom that occurs most often. The proof-only
+   search also records the unit's projection from the current conjunction. *)
+fun find_split track_path phi =
   let
     fun count (clause,acc) = fold_clause_atoms count_atom clause acc
-    fun unit clause =
-        if is_comb clause then
-          let val (operator,operand) = dest_comb clause in
-            if same_const negation operator then operand else clause
-          end
-        else clause
-    fun scan clause pending visited =
+    fun branch side path = if track_path then side :: path else path
+    fun scan clause path pending visited =
         case dest_binary_application clause of
             SOME (head,left,right) =>
               if same_const conjunction head then
-                scan left (right :: pending) visited
+                scan left (branch Left path) ((right,path) :: pending)
+                  visited
               else if same_const disjunction head then
                 case pending of
-                    next :: rest => scan next rest (clause :: visited)
-                  | [] => getBiggest (List.foldl count Termtab.empty
-                            (List.rev (clause :: visited)))
-              else clause
-          | NONE => unit clause
-  in scan phi [] [] end
+                    (next,parent) :: rest =>
+                      scan next (branch Right parent) rest (clause :: visited)
+                  | [] => Choice (getBiggest (List.foldl count Termtab.empty
+                            (List.rev (clause :: visited))))
+              else Unit (clause,path)
+          | NONE => Unit (clause,path)
+  in scan phi [] [] [] end
+
+fun unit_atom clause =
+    if is_comb clause then
+      let val (operator,operand) = dest_comb clause in
+        if same_const negation operator then operand else clause
+      end
+    else clause
+
+in
+fun find_splitting_var phi =
+    case find_split false phi of
+        Unit (clause,_) => unit_atom clause
+      | Choice atom => atom
 
 fun split_branch v value th =
   REWRITE_RULE [ASSUME (mk_eq (v,value))] th
@@ -75,35 +90,48 @@ end
 local
 datatype search_result = Refutation of thm | Assignment of thm
 
-fun search initial_th = let (* [ci] |- cnf *)
-   fun recurse th = let (* [assigns, ci] |- curr *)
-    val c = concl th (* current *)
-  in
-    if aconv c boolSyntax.T then
-      Assignment th
-    else if aconv c boolSyntax.F then
-      Refutation th
-    else let
-        val v = find_splitting_var c
-      in
-        case recurse (split_branch v boolSyntax.T th) of
+fun search prove_units initial =
+  let
+    fun project (Left,th) = CONJUNCT1 th
+      | project (Right,th) = CONJUNCT2 th
+    fun recurse th =
+      let val c = concl th in
+        if is_T c then Assignment th
+        else if is_F c then Refutation th
+        else case find_split prove_units c of
+          Unit (clause,path) =>
+            if prove_units then
+              let fun prove () = List.foldl project th (List.rev path) in
+                if is_F clause then Refutation (prove ())
+                else if is_neg clause then
+                  recurse (REWRITE_RULE [EQF_INTRO (prove ())] th)
+                else
+                  (* Delay the projection on the true-first path. A
+                     satisfying leaf needs no proof of the chosen unit. *)
+                  case recurse (split_branch clause boolSyntax.T th) of
+                      Refutation refutation =>
+                        Refutation
+                          (PROVE_HYP (EQT_INTRO (prove ())) refutation)
+                    | assignment => assignment
+              end
+            (* Model reconstruction reads assignment assumptions. *)
+            else try_both th (unit_atom clause)
+        | Choice v => try_both th v
+      end
+    and try_both th v =
+      case recurse (split_branch v boolSyntax.T th) of
           Refutation l_false =>
           (case recurse (split_branch v boolSyntax.F th) of
                Refutation r_false =>
                Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
-               (* [assignsr\v,assignsl\v,ci] |- F *)
             | x => x)
         | x => x
-      end
-  end
-in
-   recurse initial_th (* [ci] |-  F *)
-end
+  in recurse initial end
 
 in
 
 fun CoreDPLL initial =
-    case search initial of
+    case search false initial of
         Refutation th => Unsat th
       | Assignment th => mk_satmap th
 
@@ -146,13 +174,14 @@ fun DPLL_REFUTE lfn clauseth =
                 boolSyntax.T fst boolSyntax.mk_conj clauseth)
             else minisatResolve.balanced_clause_proof clauseth
     in
-      case search initial of
+      case search true initial of
         Refutation th =>
           SOME (if compact then minisatResolve.finish_compact_cnf
                   (concl initial) lfn clauseth th else th)
       | Assignment _ => NONE
     end
 
+end
 end
 
 fun mk_model_thm cnfv lfn t f =

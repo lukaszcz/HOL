@@ -592,35 +592,40 @@ in
   scan 0 Code []
 end
 
-fun source_token_streams directory =
+fun consumer_files directory =
 let
   val audit_sources =
     ["ReplayTheoremAudit.sml", "Unittest.sml", "selftest.sml"]
   fun is_consumer name =
     String.isSuffix ".sml" name andalso
     not (List.exists (fn audit_source => name = audit_source) audit_sources)
-  fun tokens name =
-    (name, sml_tokens (read_file (OS.Path.concat (directory, name))))
 in
-  List.map tokens
-    (Listsort.sort String.compare
-      (List.filter is_consumer (directory_entries directory)))
+  Listsort.sort String.compare
+    (List.filter is_consumer (directory_entries directory))
+end
+
+fun fold_qualified_references add tokens initial =
+let
+  fun scan preceded_by_dot tokens result =
+    case tokens of
+      Identifier structure_name :: Dot :: (tail as Identifier name :: _) =>
+        scan true tail
+          (if preceded_by_dot then result
+           else add (structure_name, name, result))
+    | Dot :: rest => scan true rest result
+    | _ :: rest => scan false rest result
+    | [] => result
+in
+  scan false tokens initial
 end
 
 fun has_qualified_reference theory name tokens =
 let
-  val structure_name = theory ^ "Theory"
-  fun search preceded_by_dot tokens =
-    case tokens of
-      Identifier found_structure :: Dot :: Identifier found_name :: rest =>
-        (not preceded_by_dot andalso found_structure = structure_name andalso
-         found_name = name) orelse
-        search false (Dot :: Identifier found_name :: rest)
-    | Dot :: rest => search true rest
-    | _ :: rest => search false rest
-    | [] => false
+  val qualified = theory ^ "Theory"
 in
-  search false tokens
+  fold_qualified_references (fn (structure_name, found_name, found) =>
+    found orelse (structure_name = qualified andalso found_name = name))
+    tokens false
 end
 
 fun expect_lexer_error text =
@@ -636,6 +641,8 @@ in
   not (found "fun bind r001 = r001") andalso
   not (found "case value of r001 => r001") andalso
   not (found "val theorem = Other.HolSmtTheory.r001") andalso
+  not (found "val theorem = HolSmtTheory.r001_suffix") andalso
+  found "val _ = Other.HolSmtTheory.r001; val _ = HolSmtTheory.r001" andalso
   not (found "\"HolSmtTheory.r001\"") andalso
   not (found "(* HolSmtTheory.r001 *)") andalso
   not (found "``let x = HolSmtTheory.r001 in x``") andalso
@@ -653,18 +660,45 @@ fun exported_theorems () =
 
 fun key (theory, name) = theory ^ "Theory." ^ name
 
+fun reference_index directory files =
+let
+  val structures = List.map (fn (theory, script) =>
+    (theory ^ "Theory", (theory, script))) replay_theories
+  fun references_in file =
+    let
+      val tokens = sml_tokens (read_file (OS.Path.concat (directory, file)))
+      fun add (structure_name, name, names) =
+        case List.find (fn (candidate, _) => candidate = structure_name)
+            structures of
+          SOME (_, (theory, own_script)) =>
+            if file = own_script then names
+            else HOLset.add (names, key (theory, name))
+        | NONE => names
+    in
+      (file, fold_qualified_references add tokens
+        (HOLset.empty String.compare))
+    end
+  fun add_file ((file, names), index) =
+    HOLset.foldl (fn (name, index) =>
+      Redblackmap.insertWith (fn (files, first) => first @ files)
+        (index, name, [file]))
+      index names
+in
+  List.foldr add_file (Redblackmap.mkDict String.compare)
+    (List.map references_in files)
+end
+
 fun audit () =
 let
-  val sources = source_token_streams (source_directory ())
+  val directory = source_directory ()
+  val files = consumer_files directory
+  val source_references = reference_index directory files
   val exports = exported_theorems ()
-  fun own_script theory =
-    case List.find (fn (found, _) => theory = found) replay_theories of
-      SOME (_, script) => script
-    | NONE => raise ERR "audit" ("unknown replay theory " ^ theory)
-  fun references (theory, name) =
-    List.map #1 (List.filter (fn (file, tokens) =>
-      file <> own_script theory andalso
-      has_qualified_reference theory name tokens) sources)
+  fun references (export as (theory, _)) =
+    if List.null files orelse List.exists (fn (known, _) => theory = known)
+        replay_theories then
+      Option.getOpt (Redblackmap.peek (source_references, key export), [])
+    else raise ERR "audit" ("unknown replay theory " ^ theory)
   fun exemption_for (theory, name) =
     List.find (fn {theory = allowed_theory, name = allowed_name, ...} =>
       theory = allowed_theory andalso name = allowed_name)

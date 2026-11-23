@@ -61,8 +61,8 @@ struct
         else acc)
     in visit NONE root [] end
 
-  fun collect_with_memo (operations : 'term operations) memoize
-      bag_terms roots =
+  fun collect_with_merge_member (operations : 'term operations) memoize
+      merge_member bag_terms roots =
     let
       fun member term terms =
         List.exists (fn saved => (#same operations) (term,saved)) terms
@@ -72,9 +72,14 @@ struct
         (fn term => member term bag_terms) insert
     in
       List.foldl (fn (root,terms) =>
-        List.foldl (fn (number,acc) => insert number acc) terms
+        List.foldl (fn (number,acc) =>
+          if merge_member number acc then acc else number :: acc) terms
           (collect root)) [] roots
     end
+
+  fun collect_with_memo (operations : 'term operations) memoize =
+    collect_with_merge_member operations memoize
+      (fn term => List.exists (fn saved => (#same operations) (term,saved)))
 
   fun direct _ _ _ compute = compute ()
 
