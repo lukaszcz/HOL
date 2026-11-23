@@ -234,6 +234,10 @@ New features
 
 Bugs fixed
 ----------
+-   SAT and SMT solvers that HOL runs now start with no signal blocked or
+    ignored.  They used to ignore SIGPIPE, and on some systems SIGTERM,
+    SIGINT and SIGXCPU, so signals meant to stop them could be lost.
+
 -   HolSmt translates HOL string lengths with `str.len`, preserving string
     literal content and avoiding ill-sorted `seq.len` applications.
 
