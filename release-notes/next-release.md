@@ -234,11 +234,9 @@ New features
 
 Bugs fixed
 ----------
--   Solvers started through HolSat's `SatProcess` (the SAT and SMT
-    interfaces) no longer inherit Poly/ML's signal state: they start with
-    no signal blocked and every signal at its default disposition.  They
-    used to run with SIGPIPE ignored and, where `/bin/sh` is bash, under a
-    supervising shell that blocked SIGTERM, SIGINT and SIGXCPU.
+-   SAT and SMT solvers that HOL runs now start with no signal blocked or
+    ignored.  They used to ignore SIGPIPE, and on some systems SIGTERM,
+    SIGINT and SIGXCPU, so signals meant to stop them could be lost.
 
 -   HolSmt translates HOL string lengths with `str.len`, preserving string
     literal content and avoiding ill-sorted `seq.len` applications.
