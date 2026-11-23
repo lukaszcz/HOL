@@ -11378,12 +11378,16 @@ local
       let
         val hyp_result = canonical_normalization hyp
         val hyp_normalization = #theorem hyp_result
-        fun lookup [] =
-              raise ERR "remove_hyps"
-                (unsupported_hyp_removal_diagnostic ^
-                 ": stage=hyp_removal; policy=beta-eta-canonical-lookup; " ^
-                 "extra hypothesis=" ^ Library.term_to_string hyp)
-          | lookup ((result, normalized_assumption) :: rest) =
+        fun unsupported () =
+          raise ERR "remove_hyps"
+            (unsupported_hyp_removal_diagnostic ^
+             ": stage=hyp_removal; policy=beta-eta-canonical-lookup; " ^
+             "extra hypothesis=" ^ Library.term_to_string hyp)
+        fun lookup expected =
+          case Redblackmap.peek (expected,
+              boolSyntax.rhs (Thm.concl hyp_normalization)) of
+            NONE => unsupported ()
+          | SOME (result, normalized_assumption) =>
               let
                 val used_beta = #used_beta hyp_result orelse
                   #used_beta result
@@ -11392,7 +11396,7 @@ local
               in
                 case SmtReplayCanon.transport_hypothesis
                        hyp_normalization normalized_assumption of
-                  NONE => lookup rest
+                  NONE => unsupported ()
                 | SOME th =>
                     if used_eta andalso not used_beta then
                       record "check_proof(hyp_removal:eta-only-lookup)" th
@@ -11411,13 +11415,19 @@ local
     if HOLset.isEmpty bad_hyps then thm
     else
       let
-        val normalized_expected = List.map (fn assumption =>
+        fun index_assumption (assumption, indexed) =
           let
             val result = canonical_normalization assumption
+            val normalized =
+              Thm.EQ_MP (#theorem result) (Thm.ASSUME assumption)
+            (* Keep the first source when canonical forms coincide. *)
+            fun keep_first (prior, _) = prior
           in
-            (result,
-             Thm.EQ_MP (#theorem result) (Thm.ASSUME assumption))
-          end) expected
+            Redblackmap.insertWith keep_first
+              (indexed, Thm.concl normalized, (result, normalized))
+          end
+        val normalized_expected = List.foldl index_assumption
+          (Redblackmap.mkDict Term.compare) expected
       in
         HOLset.foldl (remove_hyp normalized_expected) thm bad_hyps
       end
@@ -11668,6 +11678,8 @@ in
       handle Feedback.HOL_ERR _ => fallback input)
      handle REWRITE_BOUNDARY error => raise error)
 
+  val concat_bit_type = wordsSyntax.mk_int_word_type 1
+
   (* bv1-blast uses a bit before replay visits the concat rewrite that
      names it.  Discover those definitions first; an unusable hint changes
      no state.  Soundness still comes from final definition elimination. *)
@@ -11680,13 +11692,13 @@ in
       val _ = HOLset.isEmpty
         (HOLset.intersection (source_vars, #flexible_vars state)) orelse
         raise ERR "define_concat_bits" "source has a flexible proof variable"
-      val word1 = wordsSyntax.mk_int_word_type 1
       val seen = ref Term.empty_tmset
       fun collect term tail =
         if wordsSyntax.is_word_concat term then
           let val (left, right) = wordsSyntax.dest_word_concat term
           in collect left (collect right tail) end
-        else if Term.is_var term andalso Term.type_of term = word1 andalso
+        else if Term.is_var term andalso
+                Term.type_of term = concat_bit_type andalso
                 HOLset.member (#flexible_vars state, term) andalso
                 not (HOLset.member (!seen, term)) then
           (seen := HOLset.add (!seen, term); term :: tail)
@@ -11698,7 +11710,8 @@ in
       val definitions = Lib.mapi (fn offset => fn bit =>
         let val index = numSyntax.term_of_int (width - offset - 1)
         in boolSyntax.mk_eq (bit, wordsSyntax.mk_word_extract
-          (index, index, source, wordsSyntax.dest_word_type word1)) end) bits
+          (index, index, source,
+           wordsSyntax.dest_word_type concat_bit_type)) end) bits
       val theorem = profile "concat(definition-proof)"
         (prove definitions) equation
       val _ = Term.aconv (Thm.concl theorem) equation orelse
@@ -11711,8 +11724,12 @@ in
        resource refusal must leave its original replay path available. *)
     handle Feedback.HOL_ERR _ => state
 
-  fun discover_concat_bits proof state =
-    let
+  fun discover_concat_bits proof (state : state) =
+    (* A concat definition needs declared one-bit variables as operands. *)
+    case HOLset.find (fn variable => Term.type_of variable = concat_bit_type)
+        (#flexible_vars state) of
+      NONE => state
+    | SOME _ => let
       fun collect (node, state) =
         let
           val state = case node of

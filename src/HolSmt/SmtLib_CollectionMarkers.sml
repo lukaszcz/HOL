@@ -128,9 +128,8 @@ struct
         end)
     in walk end
 
-  fun close (operations : 'term operations)
-      (closure : 'term closure_operations) is_syntax_error inventory seeds =
-    if List.null seeds then ([],[]) else
+  fun closure_groups (operations : 'term operations)
+      (closure : 'term closure_operations) inventory =
     let
       val compare = Lib.pair_compare (#compare closure, Int.compare)
       fun insert key term groups =
@@ -145,29 +144,47 @@ struct
           (#2 (List.foldl argument (0,arguments) args),
            insert (head,List.length args) term results)
         else (arguments,results) end
-      val (arguments,results) = List.foldl applications
-        (Redblackmap.mkDict compare,Redblackmap.mkDict compare) inventory
+    in List.foldl applications
+      (Redblackmap.mkDict compare,Redblackmap.mkDict compare) inventory end
+
+  fun propagate (operations : 'term operations)
+      (closure : 'term closure_operations) is_syntax_error connect
+      (term,terms) =
+    let
+      val terms = case (#condition operations) term of
+          SOME (_,left,right) => connect [term,left,right] terms
+        | NONE => terms
+      val (head,args) = (#strip_comb operations) term
+      val terms = case (#classify operations) (term,head) of
+          Update => (case args of
+              [_,_,base] => connect [term,base] terms
+            | _ => terms)
+        | _ => terms
+    in
+      (let val bindings = (#bindings operations) term
+           val body = (#let_body closure) term
+       in List.foldl (fn ((variable,value),acc) =>
+         connect [variable,value] acc) (connect [term,body] terms)
+           bindings end
+       handle primary => if is_syntax_error primary then terms
+         else raise primary)
+    end
+
+  fun parameters_for member arguments terms =
+    Redblackmap.foldl (fn ((head,index),args,acc) =>
+      case List.find (fn arg => member arg terms) args of
+        SOME arg => (head,index,arg) :: acc | NONE => acc) [] arguments
+
+  fun close (operations : 'term operations)
+      (closure : 'term closure_operations) is_syntax_error inventory seeds =
+    if List.null seeds then ([],[]) else
+    let
+      val (arguments,results) = closure_groups operations closure inventory
       fun connect nodes terms =
         if List.exists (fn term => (#member operations) term terms) nodes then
           List.foldl (fn (term,acc) => (#add operations) term acc) terms nodes
         else terms
-      fun propagate (term,terms) =
-        let val terms = case (#condition operations) term of
-                SOME (_,left,right) => connect [term,left,right] terms
-              | NONE => terms
-            val (head,args) = (#strip_comb operations) term
-            val terms = case (#classify operations) (term,head) of
-                Update => (case args of
-                    [_,_,base] => connect [term,base] terms
-                  | _ => terms)
-              | _ => terms
-        in (let val bindings = (#bindings operations) term
-                val body = (#let_body closure) term
-            in List.foldl (fn ((variable,value),acc) =>
-              connect [variable,value] acc) (connect [term,body] terms)
-                bindings end
-            handle primary => if is_syntax_error primary then terms
-              else raise primary) end
+      val propagate = propagate operations closure is_syntax_error connect
       fun spread groups terms = Redblackmap.foldl
         (fn (_,nodes,acc) => connect nodes acc) terms groups
       fun fixed terms =
@@ -176,10 +193,66 @@ struct
         in if List.length next = List.length terms then next
            else fixed next end
       val terms = fixed seeds
-      val parameters = Redblackmap.foldl (fn ((head,index),args,acc) =>
-        case List.find (fn arg => (#member operations) arg terms) args of
-          SOME arg => (head,index,arg) :: acc | NONE => acc) [] arguments
-    in (terms,parameters) end
+    in (terms,parameters_for (#member operations) arguments terms) end
+
+  fun close_indexed (operations : 'term operations)
+      (closure : 'term closure_operations) is_syntax_error inventory seeds =
+    if List.null seeds then ([],[]) else
+    let
+      val (arguments,results) = closure_groups operations closure inventory
+      fun connect nodes edges = nodes :: edges
+      val edges = List.foldl
+        (propagate operations closure is_syntax_error connect) [] inventory
+      fun append (_,nodes,edges) = nodes :: edges
+      val edges = Redblackmap.foldl append
+        (Redblackmap.foldl append edges arguments) results
+      fun collection_edge nodes =
+        case List.filter (#is_collection_type operations) nodes of
+          nodes as _ :: _ :: _ => SOME nodes
+        | _ => NONE
+      val edges = Vector.fromList (List.mapPartial collection_edge
+        (List.rev edges))
+      val incident = Vector.foldli (fn (index,nodes,table) =>
+        List.foldl (fn (node,table) =>
+          Redblackmap.insertWith (fn (saved,_) => index :: saved)
+            (table,node,[index])) table nodes)
+        (Redblackmap.mkDict (#compare closure)) edges
+      val scheduled = Array.array (Vector.length edges,false)
+      val pending = Redblackmap.mkDict Int.compare
+      fun schedule index (node,(this,next)) =
+        List.foldl (fn (edge,(this,next)) =>
+          if Array.sub (scheduled,edge) then (this,next)
+          else
+            (Array.update (scheduled,edge,true);
+             if edge > index then (Redblackmap.insert (this,edge,()),next)
+             else (this,Redblackmap.insert (next,edge,()))))
+          (this,next) (Option.getOpt (Redblackmap.peek (incident,node),[]))
+      fun run (terms,marked,this,next) =
+        case Redblackmap.firsti this of
+          NONE =>
+            if Redblackmap.isEmpty next then (terms,marked)
+            else run (terms,marked,next,pending)
+        | SOME (edge,()) =>
+          let
+            fun add (node,(terms,marked,this,next)) =
+              if Redblackset.member (marked,node) then
+                (terms,marked,this,next)
+              else
+                let val (this,next) = schedule edge (node,(this,next))
+                in (node::terms,Redblackset.add (marked,node),this,next) end
+          in run (List.foldl add
+            (terms,marked,#1 (Redblackmap.remove (this,edge)),next)
+            (Vector.sub (edges,edge))) end
+      (* A newly marked node wakes later edges in this pass. Earlier edges
+         wait until the next pass, as in the original ordered scan. *)
+      val (this,next) = List.foldl (schedule ~1) (pending,pending) seeds
+      val (terms,marked) = run (seeds,
+        Redblackset.addList (Redblackset.empty (#compare closure),seeds),
+        this,next)
+    in
+      (terms,parameters_for (fn arg => fn marked =>
+        Redblackset.member (marked,arg)) arguments marked)
+    end
 
   fun legacy_syntax_error (Feedback.HOL_ERR _) = true
     | legacy_syntax_error _ = false

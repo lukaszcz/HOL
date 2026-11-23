@@ -69,6 +69,14 @@ sig
     (exn -> bool) -> 'term list -> 'term list ->
     'term list * ('term * int * 'term) list
 
+  (* With pure syntax operations, each propagation edge can be classified
+     once and scheduled when first reached. Seeds must be collection terms.
+     add must prepend an unmarked collection term and otherwise do nothing.
+     compare equality must agree with member on all terms. *)
+  val close_indexed : 'term operations -> 'term closure_operations ->
+    (exn -> bool) -> 'term list -> 'term list ->
+    'term list * ('term * int * 'term) list
+
   (* The legacy entry uses direct synchronous hooks, preserving its exact
      traversal, result ordering and HOL_ERR fallback behavior. The ordinary
      collect_with_memo entry also retains that same HOL_ERR policy. *)

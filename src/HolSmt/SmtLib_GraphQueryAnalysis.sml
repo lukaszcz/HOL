@@ -659,6 +659,43 @@ struct
                 ((case dest_operator (#is_cond syntax) 3 term of
                     [test,left,right] => SOME (test,left,right)
                   | _ => NONE) handle NotSyntax => NONE)
+              val marker_guard_cache = ref NONE
+              (* Only ordinary Work on a legacy graph may skip checks. The
+                 other modes charge each scope and Work observation. *)
+              val can_reuse_marker_guards =
+                W.ordinary_policy_guard_mode expected andalso
+                Option.isSome (G.unpriced_validation_revision graph root)
+              fun marker_stamp () =
+                Option.map (fn revision =>
+                  (revision,Type.type_epoch (),Term.term_epoch ()))
+                  (G.unpriced_validation_revision graph root)
+              fun guard_markers [] = ()
+                | guard_markers (terms as Term _ :: _) =
+                  if can_reuse_marker_guards andalso !pure then
+                    (valid ();
+                     case marker_stamp () of
+                       NONE => List.app guard terms
+                     | SOME stamp =>
+                         let
+                           val previous = case !marker_guard_cache of
+                               SOME (saved,list) => if saved=stamp then list
+                                 else []
+                             | NONE => []
+                           (* Growing accumulator lists share exact tails.
+                              Cache only lists of ordinary scoped terms. *)
+                           fun check [] = true
+                             | check (suffix as (term as Term _) :: rest) =
+                                 Portable.pointer_eq (previous,suffix) orelse
+                                 (guard term;check rest)
+                             | check suffix =
+                                 (List.app guard suffix;false)
+                         in
+                           if check terms andalso marker_stamp () = SOME stamp
+                           then marker_guard_cache := SOME (stamp,terms)
+                           else marker_guard_cache := NONE
+                         end)
+                  else List.app guard terms
+                | guard_markers terms = List.app guard terms
               (* Stock function-let fixup compares its artificial LHS
                  against markers by lexical variable spelling. Preserve
                  that heuristic only for this private tagged pattern.
@@ -714,17 +751,17 @@ struct
                   val walks = ref 0
                   fun memo cache walking current incoming compute =
                     let val term = resolve current
-                        val _ = List.app guard incoming
+                        val _ = guard_markers incoming
                         val index = (key term,state_id incoming)
                     in case Redblackmap.peek (!cache,index) of
-                        SOME result => (List.app guard result;result)
+                        SOME result => (guard_markers result;result)
                       | NONE =>
                           let val _ = spend 4
                               val _ = if walking then walks := !walks + 1
                                 else ()
                               val result = compute ()
                               val _ = guard term
-                              val _ = List.app guard result
+                              val _ = guard_markers result
                               val _ = cache := Redblackmap.insert
                                 (!cache,index,result)
                           in result end
@@ -789,16 +826,16 @@ struct
               val number_visits = ref 0
               fun number_memo expected current incoming compute =
                 let val term = resolve current
-                    val _ = List.app guard incoming
+                    val _ = guard_markers incoming
                     val index = (expected,key term,number_state incoming)
                 in case Redblackmap.peek (!number_cache,index) of
-                    SOME result => (List.app guard result;result)
+                    SOME result => (guard_markers result;result)
                   | NONE =>
                       let val _ = spend 4
                           val _ = number_visits := !number_visits + 1
                           val result = compute ()
                           val _ = guard term
-                          val _ = List.app guard result
+                          val _ = guard_markers result
                           val _ = number_cache := Redblackmap.insert
                             (!number_cache,index,result)
                       in result end

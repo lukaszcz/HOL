@@ -1244,6 +1244,21 @@ struct
         end) ()
       val _ = P.with_cpc_shell_scope (fn () =>
         let
+          (* These deep applications share a bucket. The newest two form
+             a chain, but the older entry also uses the newest as a child. *)
+          val root = Lib.funpow 12 copy p
+          val child = copy root
+          val older = P.intern_cpc_shell (copy child)
+          fun check message =
+            (ignore (P.intern_cpc_shell root);
+             ignore (P.intern_cpc_shell child);
+             require message
+               (Portable.pointer_eq (older, P.intern_cpc_shell (copy child))))
+          val () = P.with_cpc_shell_scope
+            (fn () => check "shell chain skipped a parent entry") ()
+        in check "shell chain skipped an older entry in its bucket" end) ()
+      val _ = P.with_cpc_shell_scope (fn () =>
+        let
           fun build () =
             let
               val leaf = Term.mk_var ("shared_duplicate_leaf", Type.bool)

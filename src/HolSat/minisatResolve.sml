@@ -51,7 +51,12 @@ fun mk_resolution_var _ sva n = trace_variable sva n
 
 type root_context =
   {conjunction : term,
-   projections : thm array}
+   projections : thm array,
+   assumption : thm Portable.HOLSusp.susp}
+
+val empty_root_context : root_context =
+    {conjunction = T, projections = Array.array (0, TRUTH),
+     assumption = Portable.HOLSusp.delay (fn () => ASSUME T)}
 
 fun balanced_array empty leaf join clauses =
     let
@@ -73,6 +78,8 @@ fun make_root_context eager clauseth =
       val conjunction = balanced_array T fst mk_conj clauseth
       val count = Array.length clauseth
       val projections = Array.array (count, TRUTH)
+      (* Sparse traces may never request a projection. *)
+      val assumption = Portable.HOLSusp.delay (fn () => ASSUME conjunction)
       (* The proof log indexes the original clauses. Follow the same splits
          as balanced_array to store their projections in that order. *)
       fun collect start count theorem =
@@ -83,16 +90,12 @@ fun make_root_context eager clauseth =
               collect (start + half) (count - half) (CONJUNCT2 theorem)
             end
       val _ = if eager andalso count <> 0
-              then collect 0 count (ASSUME conjunction) else ()
-    in {conjunction = conjunction, projections = projections} end
+              then collect 0 count (Portable.HOLSusp.force assumption)
+              else ()
+    in {conjunction = conjunction, projections = projections,
+        assumption = assumption} end
 
-in
-fun root_context clauseth = make_root_context true clauseth
-fun sparse_root_context clauseth = make_root_context false clauseth
-end
-
-local
-fun root_projection ({conjunction,projections} : root_context) index =
+fun root_projection ({projections,assumption,...} : root_context) index =
     let
       val cached = Array.sub (projections,index)
       fun project start count th =
@@ -107,8 +110,8 @@ fun root_projection ({conjunction,projections} : root_context) index =
       (* Only the sparse context leaves unrequested entries as TRUTH. *)
       if not (Portable.pointer_eq (cached,TRUTH)) then cached
       else
-        let val th =
-              project 0 (Array.length projections) (ASSUME conjunction)
+        let val th = project 0 (Array.length projections)
+                       (Portable.HOLSusp.force assumption)
         in Array.update (projections,index,th); th end
     end
 
@@ -116,6 +119,8 @@ val A = mk_var("A",bool)
 val B = mk_var("B",bool)
 val AND_INV_IMP2 = SPEC_ALL AND_INV_IMP
 in
+fun root_context clauseth = make_root_context true clauseth
+fun sparse_root_context clauseth = make_root_context false clauseth
 
 (* let
      - xi denote cnf definition variables such that pi is the rhs of the

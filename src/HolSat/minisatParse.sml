@@ -308,7 +308,7 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
         fun trace message = sat_trace (fn () => message)
         fun make_roots origins =
           if RBM.numItems lfn = 0 then
-            {conjunction = T, projections = Array.array (0,TRUTH)}
+            minisatResolve.empty_root_context
           else
             let val _ = trace "resolution roots start"
                 val count = Array.length clauseth

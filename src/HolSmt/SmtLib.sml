@@ -2061,7 +2061,7 @@ local
       fun close operations collect =
         case List.foldl (fn (term,acc) => collect term acc) [] roots of
           [] => ([],[])
-        | seeds => SmtLib_CollectionMarkers.close
+        | seeds => SmtLib_CollectionMarkers.close_indexed
             operations closure (fn Feedback.HOL_ERR _ => true | _ => false)
             (Susp.force inventory) seeds
       val sets = close set_marker_operations collect_native_set_terms
@@ -2934,9 +2934,9 @@ local
       loop 0
     end
 
-  fun fresh_smt_name reserved used =
+  fun fresh_smt_name used =
     fresh_smt_name_avoiding (fn (_, name) =>
-      is_smt_reserved reserved name orelse List.exists (Lib.equal name) used)
+      Redblackset.member (used, name))
 
   fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
 
@@ -3120,11 +3120,10 @@ local
       val raw = #Name (Term.dest_thy_const constructor)
         handle Feedback.HOL_ERR _ => Hol_pp.term_to_string constructor
     in
-      fresh_smt_name smt_reserved_term_names used
-        ("ctor_" ^ type_name ^ "_" ^ raw)
+      fresh_smt_name used ("ctor_" ^ type_name ^ "_" ^ raw)
     end
 
-  fun record_selector_names tyinfo constructor_name fields used =
+  fun record_selector_names constructor_name fields used =
     let
       fun field_name (_, {accessor, ...} : TypeBasePure.rcd_fieldinfo) =
         #Name (Term.dest_thy_const accessor)
@@ -3133,30 +3132,30 @@ local
         let
           val raw =
             case field_name (field, info) of "" => field | name => name
-          val name = fresh_smt_name smt_reserved_term_names used
+          val name = fresh_smt_name used
             ("sel_" ^ constructor_name ^ "_" ^ raw)
         in
-          (name :: used, name :: acc)
+          (Redblackset.add (used, name), name :: acc)
         end
-      val (_, names) = List.foldl one (used, []) fields
+      val (used, names) = List.foldl one (used, []) fields
     in
-      List.rev names
+      (used, List.rev names)
     end
 
   fun generated_selector_names type_name constructor_name arity used =
     let
       fun one (n, (used, acc)) =
         let
-          val name = fresh_smt_name smt_reserved_term_names used
+          val name = fresh_smt_name used
             ("sel_" ^ type_name ^ "_" ^ constructor_name ^ "_" ^
              Int.toString n)
         in
-          (name :: used, name :: acc)
+          (Redblackset.add (used, name), name :: acc)
         end
-      val (_, names) =
+      val (used, names) =
         List.foldl one (used, []) (List.tabulate (arity, fn n => n))
     in
-      List.rev names
+      (used, List.rev names)
     end
 
   fun datatype_constructor_infos_from ty type_name tyinfo =
@@ -3167,20 +3166,22 @@ local
           val constructor = TypeBasePure.cinst ty constructor
           val cname = constructor_name type_name constructor used
           val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-          val selector_names =
+          val used = Redblackset.add (used, cname)
+          val (used, selector_names) =
             if not (List.null fields) andalso List.length doms =
                List.length fields then
-              record_selector_names tyinfo cname fields (cname :: used)
+              record_selector_names cname fields used
             else
               generated_selector_names type_name cname (List.length doms)
-                (cname :: used)
+                used
           val selectors = ListPair.zipEq (selector_names, doms)
-          val used = cname :: selector_names @ used
         in
           (used, (constructor, cname, selectors) :: acc)
         end
       val (_, infos) =
-        List.foldl one (smt_reserved_term_names, [])
+        List.foldl one
+          (Redblackset.addList (Redblackset.empty String.compare,
+            smt_reserved_term_names), [])
           (TypeBasePure.constructors_of tyinfo)
     in
       List.rev infos
@@ -6724,7 +6725,19 @@ local
         let
           val finite_sets = List.mapPartial finite_set_hypothesis original_ts
           val finite_bags = List.mapPartial finite_bag_hypothesis original_ts
+          (* The selected backends and evidence are fixed for this traversal.
+             Cache only exact input subterms, including opened binder bodies. *)
+          val rewritten = SmtPointerTable.new
+            {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093}
           fun replace_finite tm =
+            case SmtPointerTable.lookup rewritten tm of
+              SOME result => result
+            | NONE =>
+                let
+                  val result = rewrite tm
+                  val _ = SmtPointerTable.insert rewritten tm result
+                in result end
+          and rewrite tm =
             case finite_set_hypothesis tm of
               SOME set =>
                 if backend = CVC5NativeSet andalso
@@ -6739,11 +6752,23 @@ local
                  | NONE => descend tm)
           and descend tm =
             if Term.is_comb tm then
-              let val (rator, rand) = Term.dest_comb tm
-              in Term.mk_comb (replace_finite rator, replace_finite rand) end
+              let
+                val (rator, rand) = Term.dest_comb tm
+                val rator' = replace_finite rator
+                val rand' = replace_finite rand
+              in
+                if Portable.pointer_eq (rator,rator') andalso
+                   Portable.pointer_eq (rand,rand') then tm
+                else Term.mk_comb (rator',rand')
+              end
             else if Term.is_abs tm then
-              let val (var, body) = Term.dest_abs tm
-              in Term.mk_abs (var, replace_finite body) end
+              let
+                val (var, body) = Term.dest_abs tm
+                val body' = replace_finite body
+              in
+                if Portable.pointer_eq (body,body') then tm
+                else Term.mk_abs (var,body')
+              end
             else tm
           val assumptions = List.filter (fn tm =>
             not (backend = CVC5NativeSet andalso

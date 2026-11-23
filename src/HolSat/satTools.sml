@@ -137,10 +137,13 @@ handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
 fun reported_numbers limit numbers =
   let
     fun in_range n = n > 0 andalso n < limit
+    fun at_least 0 _ = true
+      | at_least _ [] = false
+      | at_least n (_ :: rest) = at_least (n-1) rest
   in
     (* DIMACS headers can overstate the number of used variables. Keep the
        sparse representation for small reports and for nonstandard indices. *)
-    if length numbers >= limit div 8 andalso List.all in_range numbers then
+    if at_least (limit div 8) numbers andalso List.all in_range numbers then
       let
         val present = Word8Array.array (limit,0w0)
         val _ = List.app (fn n => Word8Array.update (present,n,0w1)) numbers
@@ -166,7 +169,7 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
           (fn (_,(_,n),rest) =>
             if reported n then rest else ~n :: rest)
           [] (snd svm)
-      in numbers @ missing end
+      in if null missing then numbers else numbers @ missing end
     fun model only_true numbers =
       map (dimacsTools.intToLiteral sva)
         (if only_true then complete numbers else numbers)

@@ -19,7 +19,10 @@ local
   val cpc_term_intern = ref
     (Array.array (term_intern_bucket_count, [] : Term.term list))
   val cpc_shell_parents = ref ([] : Term.term list Array.array list)
-  datatype intern_order = Empty | Latest of Term.term | HasShallowEntries
+  datatype intern_order =
+      Empty
+    | Latest of Term.term
+    | HasShallowEntries of Term.term list * Term.term list
   val cpc_intern_order = ref Empty
 
   fun reset_term_intern () =
@@ -116,7 +119,7 @@ local
           val entries = Array.sub (!cpc_term_intern, bucket)
           val _ =
             case !cpc_intern_order of
-              HasShallowEntries => ()
+              HasShallowEntries _ => ()
             (* Publish order first. An interrupted insert can leave an
                unpublished tag, which also has no parent in this table. *)
             | _ => cpc_intern_order := Latest candidate
@@ -247,22 +250,40 @@ local
         val same_candidate = same_intern_candidate candidate
         val bucket = term_intern_hash candidate
         val entries = Array.sub (!cpc_term_intern, bucket)
+        (* Consecutive inserted shells can each contain the preceding shell.
+           No member of this chain can itself contain the latest shell.
+           Keep searching older entries, which may predate their children. *)
+        val older =
+          case (!cpc_intern_order, entries) of
+            (HasShallowEntries (installed, tail), latest :: _) =>
+              if Portable.pointer_eq (installed, entries) andalso
+                 Term.is_comb candidate then
+                let val (operator, operand) = Term.dest_comb candidate
+                in
+                  if Portable.pointer_eq (latest, operator) orelse
+                     Portable.pointer_eq (latest, operand) then tail
+                  else entries
+                end
+              else entries
+          | _ => entries
         fun parent [] = NONE
           | parent (table :: rest) =
               (case List.find same_candidate (Array.sub (table,bucket)) of
                  SOME saved => SOME saved
                | NONE => parent rest)
       in
-        case List.find same_candidate entries of
+        case List.find same_candidate older of
           SOME saved => saved
         | NONE =>
             (case parent (!cpc_shell_parents) of
                SOME saved => saved
              | NONE =>
-                 (cpc_intern_order := HasShallowEntries;
-                  Array.update (!cpc_term_intern, bucket,
-                    candidate :: entries);
-                  candidate))
+                 let val updated = candidate :: entries in
+                   (* Mark the table shallow before publishing the entry. *)
+                   cpc_intern_order := HasShallowEntries (updated, older);
+                   Array.update (!cpc_term_intern, bucket, updated);
+                   candidate
+                 end)
       end
 
   fun intern_located ({term, provenance} : located_term) =
@@ -2609,25 +2630,27 @@ local
   fun provenance_of_raw raw =
     provenance_of_raw_in (Redblackmap.mkDict String.compare) raw
 
-  (* Read exactly one CPC occurrence before elaborating it to HOL.  The raw
-     occurrence tree retains every path to a nested conjunction and every
-     conjunction's exact operand boundaries.  Conjunction-free subtrees use
-     one atomic marker; no HOL-term equality participates in provenance
-     recovery. *)
-  fun parse_located_term dicts_ref get_token : located_term =
+  (* The raw occurrence tree retains each conjunction's operand boundaries.
+     Stream tokens from its list tails while keeping the tree for provenance. *)
+  fun elaborate_located_term dicts_ref source : located_term =
     let
       val raw = normalize_cpc_testers
         (cpc_indexed_identifier (fn name => Option.isSome
           (Redblackmap.peek (#2 (!dicts_ref), name))))
-        (read_raw_term get_token)
-      val tokens = ref (raw_tokens raw)
+        source
+      val pending = ref [raw]
+      val parents = ref []
       fun next_token () =
-        case !tokens of
-          token :: rest => (tokens := rest; token)
-        | [] => raise ERR "parse_located_term"
-            "internal CPC occurrence token stream exhausted"
+        case !pending of
+          RawAtom token :: siblings => (pending := siblings; token)
+        | RawList children :: siblings =>
+            (parents := siblings :: !parents; pending := children; "(")
+        | [] => (case !parents of
+            siblings :: rest => (parents := rest; pending := siblings; ")")
+          | [] => raise ERR "parse_located_term"
+              "internal CPC occurrence token stream exhausted")
       val parsed_term = parse_term dicts_ref next_token
-      val _ = List.null (!tokens) orelse
+      val _ = (null (!pending) andalso null (!parents)) orelse
         raise ERR "parse_located_term"
           "internal CPC occurrence parser left trailing tokens"
       (* SMT-LIB lets elaborate to kernel LET applications, while the exact
@@ -2645,6 +2668,9 @@ local
     in
       {term = term, provenance = provenance_of_raw raw}
     end
+
+  fun parse_located_term dicts_ref get_token =
+    elaborate_located_term dicts_ref (read_raw_term get_token)
 
   fun parse_recorded_term dicts_ref get_token =
     #term (parse_located_term dicts_ref get_token)
@@ -3592,12 +3618,8 @@ local
              " in cvc5 version " ^ version)
       fun parse_supported () =
       let
-      fun parse_buffered raw =
-        parse_located_term dicts_ref
-          (Library.undo_look_ahead (raw_tokens raw) (fn () =>
-            raise ERR "parse_step"
-              ("buffered conclusion ended early in CPC step " ^ id)))
-      val conclusion = Option.map parse_buffered raw_conclusion
+      val conclusion =
+        Option.map (elaborate_located_term dicts_ref) raw_conclusion
       fun attrs seen_premises seen_args premises args =
         case get_token () of
           ")" => {id = id,

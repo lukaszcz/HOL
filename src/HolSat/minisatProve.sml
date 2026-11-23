@@ -175,19 +175,20 @@ fun has_free_variable tm =
 
 fun initialise check_sat_model infile is_cnf tm =
     let
+        fun trivial ntm =
+            let val th0 = presimp_conv (dest_neg ntm)
+            in if is_F (rhs (concl th0)) then raise SAT_cex (EQF_ELIM th0)
+               else raise initexp (ntm, EQT_ELIM th0)
+            end
         fun prepare known_count tm =
-            let val (cnfv,vc,lfn,clauses) =
-                  if is_cnf then explicit_cnf known_count tm
-                  else to_cnf false tm
-                (* The ordinary explicit-CNF entry historically uses the
-                   zero-free-variable shortcut, even for T/F clauses.
-                   Counting compound atoms must not change that contract.
-                   DIMACS files already supply the count of their variables.
-                   Proof-only callers instead refute the prepared clauses. *)
-                val vc = if check_sat_model andalso is_cnf andalso
-                            not (isSome known_count) andalso
-                            not (has_free_variable tm) then 0 else vc
-            in (cnfv,vc,lfn,clauses) end
+            (* Ordinary closed CNF uses the zero-free-variable shortcut.
+               DIMACS supplies its variable count and proof-only mode
+               refutes the prepared clauses. *)
+            (if is_cnf then
+               if check_sat_model andalso not (isSome known_count) andalso
+                  not (has_free_variable tm) then trivial tm
+               else explicit_cnf known_count tm
+             else to_cnf false tm)
             handle to_cnf_unsat nottm_thm =>
               (* nottm_thm : |- ~(~tm), peel double-negation to get |- tm *)
               raise initexp (tm, CONV_RULE NOT_NOT_CONV nottm_thm)
@@ -205,14 +206,8 @@ fun initialise check_sat_model infile is_cnf tm =
                       val (cnfv,vc,lfn,clauseth) =
                           profile_stage "cnf" (prepare NONE) ntm
                   in (cnfv,vc,NONE,ntm,lfn,clauseth) end
-    in if vc=0 then
-         (* no vars: all 'presimp'-ified conjuncts were either T or F *)
-           let val th0 = presimp_conv (dest_neg ntm)
-           in if is_F (rhs (concl th0)) then raise SAT_cex (EQF_ELIM th0)
-              else raise initexp (ntm, EQT_ELIM th0)
-           end
-       else
-         (cnfv,vc,input,ntm,lfn,clauseth)
+    in if vc = 0 then trivial ntm
+       else (cnfv,vc,input,ntm,lfn,clauseth)
     end
 
 fun GEN_SAT_WITH check_sat_model conf =

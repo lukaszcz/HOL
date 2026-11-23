@@ -8146,9 +8146,8 @@ let
     in List.app refuse [0,fee-1] end
 in List.app check [true,false] end
 
-fun smtlib_graph_raw_number_scope_retirement () =
-let
-fun check complete =
+local
+fun with_graph_marker_query action =
 let
   val limit = SmtReplayResourcePolicy.Uncapped
   val graph = G.new ()
@@ -8165,6 +8164,17 @@ let
     (GP.from_portfolio_with_policy work validation)
   fun open_view caller node = ignore
     (G.record_opened_view_with_policy graph caller limit node)
+in
+  Portable.finally (fn () => (W.close work; G.close_scope graph scope))
+    action {graph=graph,scope=scope,work=work,query=query,open_view=open_view}
+end
+in
+
+fun smtlib_graph_raw_number_scope_retirement () =
+let
+fun check complete = with_graph_marker_query
+  (fn {graph,scope,work,query,open_view} =>
+let
   val child = G.new_scope graph scope []
   val live_child = G.new_scope graph scope []
   val argument = G.fresh_bound_variable graph child
@@ -8198,17 +8208,57 @@ let
             val _ = retired := true
             val _ = marked (if complete then subject else second)
           in raise Fail "indexed lookup accepted a retired scope" end)) ()
-  val _ = W.close work
   val _ = G.close_scope graph live_child
-  val _ = G.close_scope graph scope
 in
   case result of
     Exn.Exn (Feedback.HOL_ERR _) =>
       assert (!retired, "failed before the indexed lookup of a retired scope")
   | Exn.Exn error => raise error
   | Exn.Res _ => assert (false, "unexpected successful graph borrow")
-end
+end)
 in List.app check [false,true] end
+
+fun smtlib_graph_marker_collection_scope_retirement () =
+  with_graph_marker_query (fn {graph,scope,work,query,open_view} =>
+    let
+      val child = G.new_scope graph scope []
+      val marker = G.fresh_bound_variable graph child
+        (Term.mk_var ("s", ``:int set``))
+      val retired = ref false
+      val {syntax,declared_const_arity,...} =
+        SmtLib_GraphTranslation.native_query_options_with_policy
+          work query open_view
+      val {collection_symbol,set_role,bag_role,is_set_type,is_bag_type,
+           is_cond,is_let,is_uncurry,pair_constant,is_integer_coercion,
+           is_num_head,is_bag_card_head,number_type} = syntax
+      (* The first Set role callback runs between the input and output list
+         guards. A stale list must be rejected before propagation starts. *)
+      fun retire role =
+        (if !retired then () else (G.close_scope graph child; retired := true);
+         set_role role)
+      fun share node =
+        if !retired then raise Fail "stale marker reached collection closure"
+        else collection_symbol node
+      val syntax : SmtLib_GraphQueryAnalysis.native_syntax =
+        {collection_symbol=share,set_role=retire,bag_role=bag_role,
+         is_set_type=is_set_type,is_bag_type=is_bag_type,is_cond=is_cond,
+         is_let=is_let,is_uncurry=is_uncurry,pair_constant=pair_constant,
+         is_integer_coercion=is_integer_coercion,is_num_head=is_num_head,
+         is_bag_card_head=is_bag_card_head,number_type=number_type}
+      val result = Exn.capture (fn () =>
+        SmtLib_GraphQueryAnalysis.with_outbound_seeded_analysis_with_policy
+          work query {syntax=syntax,declared_const_arity=declared_const_arity,
+                      open_opaque=open_view}
+          {graph=graph,scope=scope,sets=[{node=marker,scope=child}],bags=[],
+           raw_numbers=[]} (fn _ => ())) ()
+    in
+      case result of
+        Exn.Exn (Feedback.HOL_ERR _) =>
+          assert (!retired, "marker analysis failed before scope retirement")
+      | Exn.Exn error => raise error
+      | Exn.Res _ => raise Fail "marker analysis accepted a retired scope"
+    end)
+end
 end
 
 (* cvc5's array encoding gives a marked set an Array sort, so every use of
@@ -8321,6 +8371,46 @@ in
      ("conditional consumer", conditional_consumer),
      ("shared result", shared_result), ("shared update", shared_update),
      ("context-only update", contextual_update)]
+end
+
+local
+  structure M = SmtLib_CollectionMarkers
+in
+fun smtlib_indexed_collection_closure () =
+let
+  val links = 128
+  val classifications = ref 0
+  exception NotSyntax
+  fun no_syntax _ = raise NotSyntax
+  fun is_collection node = node >= 0
+  fun member node = List.exists (fn saved => node = saved)
+  fun add node nodes =
+    if is_collection node andalso not (member node nodes) then node :: nodes
+    else nodes
+  val operations : int M.operations =
+    {strip_comb=fn node =>
+       if is_collection node then (node,[])
+       else let val code = ~node in (~((code + 1) div 2),[code div 2]) end,
+     dest_abs=no_syntax,dest_comb=no_syntax,condition=fn _ => NONE,
+     bindings=no_syntax,add=add,member=member,is_collection_type=is_collection,
+     classify=fn _ => (classifications := !classifications + 1; M.Other)}
+  val closure : int M.closure_operations =
+    {compare=Int.compare,share_symbol=fn node => node < 0,let_body=no_syntax}
+  (* Negative applications encode pairs sharing a function head. The map's
+     argument order visits each link farther from the seed first. *)
+  val inventory = List.tabulate (2 * links,fn i => ~(i + 1))
+  val syntax_error = fn NotSyntax => true | _ => false
+  val expected = M.close operations closure syntax_error inventory [0]
+  val _ = classifications := 0
+  val actual = M.close_indexed operations closure syntax_error inventory [0]
+in
+  assert (#1 expected = List.tabulate (links + 1,fn i => links - i),
+    "reversed links did not propagate to the entire collection chain");
+  assert (actual = expected,
+    "indexed propagation changed marker or representative order");
+  assert (!classifications = List.length inventory,
+    "indexed propagation classified the same inventory term more than once")
+end
 end
 
 fun smtlib_native_set_translation_success () =
@@ -29390,19 +29480,20 @@ end
 fun z3_hyp_removal_beta_lookup_success () =
 let
   val assumption = ``(\x:int. x) y = y``
+  val alternate = ``(\x:int. x) ((\x:int. x) y) = y``
   val hyp = ``(y:int) = y``
   val neg_hyp = boolSyntax.mk_neg hyp
   val contradiction = Thm.MP
     (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
   val () = Profile.reset_all ()
   val thm = Z3_ProofReplay.remove_hyps_for_test
-    ([assumption], hyp, contradiction)
+    ([assumption, alternate], hyp, contradiction)
 in
   assert (Thm.concl thm ~~ boolSyntax.F andalso
       List.length (Thm.hyp thm) = 2 andalso
       List.exists (Term.aconv neg_hyp) (Thm.hyp thm) andalso
       List.exists (Term.aconv assumption) (Thm.hyp thm),
-    "beta lookup did not remove exactly the canonical hypothesis");
+    "beta lookup did not use the first matching source assumption");
   check_oracle_tags "beta hypothesis lookup" thm;
   assert (profile_call_count
       "check_proof(hyp_removal:beta-eta-lookup)_OK" = 1 andalso
@@ -40438,6 +40529,7 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",
       smtlib_seq_set_bag_feature_inference_success),
+    ("smtlib_indexed_collection_closure", smtlib_indexed_collection_closure),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
     ("smtlib_graph_function_let_collection_success",
@@ -40446,6 +40538,8 @@ let
       smtlib_graph_original_portfolio_accounting),
     ("smtlib_graph_raw_number_scope_retirement",
       smtlib_graph_raw_number_scope_retirement),
+    ("smtlib_graph_marker_collection_scope_retirement",
+      smtlib_graph_marker_collection_scope_retirement),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",

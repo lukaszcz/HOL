@@ -763,16 +763,20 @@ local
             fun is_raw_assumption cached =
               HOLset.member
                 (Thm.hypset (#thm cached), Thm.concl (#thm cached))
-            val candidates = List.filter conclusion_matches
-              (Net.match tm (#thm_cache state))
-            val matches = List.filter context_available candidates
-            val rejected = List.filter
-              (not o context_available) candidates
-            val derived = List.filter (not o is_raw_assumption) matches
-            val context_rejections = List.length rejected
+            fun classify (cached, acc as (derived, raw, rejected)) =
+              if not (conclusion_matches cached) then acc
+              else if not (context_available cached) then
+                (derived, raw, rejected + 1)
+              else if Option.isSome derived then acc
+              else if not (is_raw_assumption cached) then
+                (SOME cached, raw, rejected)
+              else if Option.isSome raw then acc
+              else (derived, SOME cached, rejected)
+            val (derived, raw, context_rejections) = List.foldl classify
+              (NONE, NONE, 0) (Net.match tm (#thm_cache state))
+            val selected = case derived of NONE => raw | SOME _ => derived
           in
-            case List.find (fn _ => true)
-                (case derived of [] => matches | _ => derived) of
+            case selected of
               SOME cached => CacheProbeHit {
                 theorem = #thm cached,
                 context_rejections = context_rejections,
