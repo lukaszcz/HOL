@@ -8190,7 +8190,7 @@ local
                "rewrite(21a)(skeleton-first)" skeleton_congruence ()))
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
+                raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
               else NONE
       in
         case skeleton_first of
@@ -9777,7 +9777,7 @@ local
         (* E1(b): TypeBase-driven reconstruction is general for selected
            registered datatype facts and fails loudly outside those shapes. *)
         val thm = profile "th_lemma[datatype](2)"
-          (SmtDatatypeProve.datatype_prove_with_admission
+          (SmtDatatypeProve.datatype_prove_generalizing_with_admission
             (#datatype_admit state)) t
       in
         (* cache 'thm' *)

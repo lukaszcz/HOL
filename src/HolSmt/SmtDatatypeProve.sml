@@ -1265,7 +1265,10 @@ struct
             (simplify true handle Feedback.HOL_ERR _ => finish ()))
          handle Feedback.HOL_ERR _ => unsupported t)
     end
-  fun datatype_prove t =
+  fun datatype_prove t = direct_datatype_prove true t
+  (* Z3's datatype th-lemmas only: on a failure, generalize the lemma's
+     outermost compound case scrutinees. *)
+  fun datatype_prove_generalizing t =
     direct_datatype_prove true t
     handle Feedback.HOL_ERR _ =>
       (profile "datatype(generalized)" (generalized_exhaustiveness true) t
@@ -1293,6 +1296,7 @@ struct
   in
     {prove=protect datatype_prove,
      prove_without_metis=protect datatype_prove_without_metis,
+     prove_generalizing=protect datatype_prove_generalizing,
      simp=protect datatype_simp_prove,
      exhaustiveness=protect exhaustiveness_prove,
      acyclicity=protect acyclicity_prove,
@@ -1337,6 +1341,8 @@ struct
   fun datatype_prove t = datatype_prove_with_admission (default_admission ()) t
   fun datatype_prove_without_metis_with_admission admit t =
     #prove_without_metis (checked_procedures admit) t
+  fun datatype_prove_generalizing_with_admission admit t =
+    #prove_generalizing (checked_procedures admit) t
   fun datatype_simp_prove t =
     #simp (checked_procedures (default_admission ())) t
   fun exhaustiveness_prove t =

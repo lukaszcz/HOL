@@ -21843,14 +21843,21 @@ let
   val x = ``case ^scrutinee of NONE => NONE | SOME z => SOME (z + 1n)``
   val target = ``(^x = SOME (THE ^x)) \/ ~IS_SOME ^x``
   val () = Profile.reset_all ()
-  val theorem = SmtDatatypeProve.datatype_prove target
+  val theorem = SmtDatatypeProve.datatype_prove_generalizing_with_admission
+    (SmtDatatypeProve.default_admission ()) target
   val label = "datatype generalized scrutinee"
 in
   assert_no_hyps (label, theorem);
   assert_concl_alpha (label, theorem, target);
   check_oracle_tags label theorem;
   assert (profile_call_count "datatype(generalized)_OK" = 1,
-    "the generalized scrutinee route did not prove the lemma")
+    "the generalized scrutinee route did not prove the lemma");
+  (* The other entry points, cvc5's included, keep the direct search. *)
+  assert ((ignore (SmtDatatypeProve.datatype_prove target); false)
+          handle Feedback.HOL_ERR _ => true,
+    "the shared datatype prover proved the lemma without generalizing");
+  assert (profile_call_count "datatype(generalized)" = 1,
+    "the shared datatype prover tried the generalized scrutinee route")
 end
 
 (* Z3 reorders the children of a disjunction or conjunction, and writes
