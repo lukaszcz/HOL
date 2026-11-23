@@ -13,6 +13,9 @@ sig
      in its body. References remaining free may belong to a parent region. *)
   val reference : string -> doc
   val mentions_reference : doc * string -> bool
+  (* Count and visit the cached free references, each exactly once. *)
+  val reference_count : doc -> int
+  val fold_references : (string * 'a -> 'a) -> 'a -> doc -> 'a
   val let_binding : string * doc * doc -> doc
 
   (* Render the concatenated bytes to a sink, in order. Chunk boundaries

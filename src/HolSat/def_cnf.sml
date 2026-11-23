@@ -24,17 +24,6 @@ exception to_cnf_unsat of thm
 (* ------------------------------------------------------------------------- *)
 (* Split up a theorem according to conjuncts, in a general sense.            *)
 (* ------------------------------------------------------------------------- *)
-fun dest_disjunction term =
-    if is_comb term then
-      let val (operator,right) = dest_comb term in
-        if is_comb operator then
-          let val (head,left) = dest_comb operator in
-            if same_const disjunction head then SOME (left,right) else NONE
-          end
-        else NONE
-      end
-    else NONE
-
 local
 val p_tm = mk_var("p",bool)
 val q_tm = mk_var("q",bool)

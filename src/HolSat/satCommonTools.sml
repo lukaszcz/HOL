@@ -25,6 +25,22 @@ val mk_var = Term.mk_var;
 
 val land = rand o rator
 
+fun dest_binary_application tm =
+    if is_comb tm then
+      let val (operator,right) = dest_comb tm in
+        if is_comb operator then
+          let val (head,left) = dest_comb operator
+          in SOME (head,left,right) end
+        else NONE
+      end
+    else NONE
+
+fun dest_disjunction tm =
+    case dest_binary_application tm of
+        SOME (head,left,right) =>
+          if same_const disjunction head then SOME (left,right) else NONE
+      | NONE => NONE
+
 (* Visit atoms left to right, removing one outer negation per literal. *)
 fun fold_clause_atoms step clause initial =
     let

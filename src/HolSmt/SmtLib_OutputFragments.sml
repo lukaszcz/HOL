@@ -19,6 +19,12 @@ struct
   fun mentions_reference (document,name) =
     Redblackset.member (free_references document,name)
 
+  fun reference_count document =
+    Redblackset.numItems (free_references document)
+
+  fun fold_references step initial document =
+    Redblackset.foldl step initial (free_references document)
+
   fun concat [document] = document
     | concat documents =
         let val references = List.foldl

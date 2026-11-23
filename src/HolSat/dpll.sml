@@ -32,16 +32,24 @@ fun getBiggest acc =
 fun find_splitting_var phi =
   let
     fun count (clause,acc) = fold_clause_atoms count_atom clause acc
+    fun unit clause =
+        if is_comb clause then
+          let val (operator,operand) = dest_comb clause in
+            if same_const negation operator then operand else clause
+          end
+        else clause
     fun scan clause pending visited =
-        case total dest_conj clause of
-            SOME (left,right) => scan left (right :: pending) visited
-          | NONE =>
-              if is_disj clause then
+        case dest_binary_application clause of
+            SOME (head,left,right) =>
+              if same_const conjunction head then
+                scan left (right :: pending) visited
+              else if same_const disjunction head then
                 case pending of
                     next :: rest => scan next rest (clause :: visited)
                   | [] => getBiggest (List.foldl count Termtab.empty
                             (List.rev (clause :: visited)))
-              else (dest_neg clause handle HOL_ERR _ => clause)
+              else clause
+          | NONE => unit clause
   in scan phi [] [] end
 
 fun split_branch v value th =
