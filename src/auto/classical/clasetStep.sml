@@ -473,9 +473,6 @@ fun freshen_prepared node pos (canonical, types) =
      store = store2}
   end
 
-fun freshen_canonical node pos (form : clasetRules.canonical) =
-  freshen_prepared node pos (#thm form, type_variables (#thm form))
-
 (* Preparation is shared across major premises. Each application still
    gets fresh rule metavariables and starts with the parent store. *)
 fun prepare_rule is_elim theorem =
@@ -812,11 +809,11 @@ fun try_rule note_skip policy mode cs duplicated node pos
    inspects only the leading alternatives pays for those alone.  Each
    result carries the assumption it adds, for the duplicate filter in
    [forward_rule_results]. *)
-fun try_forward charge mode {source, form} immediate node pos
+fun try_forward charge mode {source, prepared} immediate positioned node pos
     (major_pos, major) =
   let
     val (asl, w) = clasetGoal.render node pos
-    val fresh = freshen_canonical node pos form
+    val fresh = freshen_prepared node pos (Portable.HOLSusp.force prepared)
     val all_premises = #premises fresh
     val _ =
       if immediate > 0 andalso immediate <= length all_premises then ()
@@ -831,8 +828,6 @@ fun try_forward charge mode {source, form} immediate node pos
       of
           NONE => raise Match
         | SOME store => store
-    val positioned = numbered asl
-
     val earlier = List.take (immediate_premises, immediate - 1)
     val residual_terms =
       List.drop (all_premises, immediate) @
@@ -913,7 +908,7 @@ fun try_forward charge mode {source, form} immediate node pos
               pending :=
                 CheckExact
                   (premise, normalized, later, positions, store,
-                   positioned, []) :: rest;
+                   Portable.HOLSusp.force positioned, []) :: rest;
               next_assignment ()
             end
         | CheckExact
@@ -984,6 +979,9 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
   let
     val assumptions = #asl (clasetGoal.goal_at node pos)
     val parent_store = clasetGoal.store node
+    (* Only the earlier immediate premises scan the rendered assumptions. *)
+    val positioned = Portable.HOLSusp.delay
+      (fn () => numbered (#1 (clasetGoal.render node pos)))
 
     val remaining =
       ref (numbered assumptions)
@@ -1004,7 +1002,7 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
                    let
                      val next =
                        (SOME
-                         (try_forward charge mode rule immediate
+                         (try_forward charge mode rule immediate positioned
                            node pos (position, major))
                         handle Match => NONE)
                    in
@@ -2018,6 +2016,8 @@ fun forward_rule_step_with charge {theorem, immediate, mode} =
     (* Canonicalizing here serves both the range check and every later
        application, so the rule is put in canonical form exactly once. *)
     val form = clasetRules.canonical_form_of clasetRules.Forward theorem
+    val prepared = Portable.HOLSusp.delay
+      (fn () => (#thm form, type_variables (#thm form)))
     val premise_count = length (#prems form)
     val count = Option.getOpt (immediate, premise_count)
     val _ =
@@ -2028,7 +2028,7 @@ fun forward_rule_step_with charge {theorem, immediate, mode} =
   in
     direct_step
       (forward_rule_results charge mode
-        {source = theorem, form = form} count)
+        {source = theorem, prepared = prepared} count)
   end
 fun forward_rule_step specification =
   forward_rule_step_with (fn () => ()) specification

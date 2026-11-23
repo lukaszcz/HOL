@@ -4856,3 +4856,39 @@ in
                                 [0, 1, 2, 3])
                     levels)
 end
+
+val _ =
+  test
+    ("invocation facts retain fixed variable order with overlapping support",
+     fn () =>
+       let
+         val premise = ``fact_fixed_p /\ fact_fixed_q``
+         val body = ``(fact_fixed_p /\ fact_loose) /\ fact_shared``
+         val theorem = Drule.ADD_ASSUM premise (Thm.REFL body)
+         val shared = ``fact_shared:bool``
+         val supported = Term.free_varsl [premise]
+         fun check_fixed goal_variables =
+           let
+             val entry = hd
+               (clasetFacts.facts
+                 (clasetFacts.create (goal_variables, boolSyntax.T) [theorem]))
+             val shared_variables = List.filter
+               (fn tm => Lib.op_mem Term.aconv tm goal_variables)
+               (Term.free_vars (concl theorem))
+             val expected = Lib.op_union Term.aconv supported shared_variables
+             val view = clasetFacts.schematic_view entry
+             val pattern = concl (#theorem view)
+             val site = concl (Thm.REFL
+               ``(fact_fixed_p /\ replacement) /\ fact_shared``)
+             val bad_site = concl (Thm.REFL
+               ``(replacement_p /\ replacement) /\ fact_shared``)
+           in
+             same_terms (clasetFacts.fixed_terms entry) expected andalso
+             Option.isSome (clasetFacts.match_view entry pattern site) andalso
+             not (Option.isSome
+               (clasetFacts.match_view entry pattern bad_site))
+           end
+       in
+         check_fixed [] andalso check_fixed [shared] andalso
+         check_fixed [shared, ``fact_fixed_p:bool``]
+       end)

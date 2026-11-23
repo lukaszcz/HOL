@@ -1522,6 +1522,35 @@ fun tactic_replay_succeeds config assumptions conclusion =
 
 val _ =
   check
+    ("sparse replay validates unused premises and retains only its support",
+     fn () =>
+       let
+         val ctxt = Context.snapshot ()
+         val unused = Term.mk_var ("unused_replay_premise", Type.bool)
+         val assumptions = [split_x_upper, unused]
+         val tactic =
+           valOf (linarithReplay.refute traceUtil.silent one_split_config
+             assumptions split_conclusion)
+         val theorem =
+           case Tactical.VALID tactic (assumptions, split_conclusion) ctxt of
+               ([], validate) => validate []
+             | _ => raise Fail "expected the certificate to close the goal"
+         fun error work =
+           (work (); NONE)
+           handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+         val expected = error (fn () => ignore (Thm.ASSUME num_one))
+         val actual =
+           error (fn () => ignore
+             (tactic ([split_x_upper, num_one], split_conclusion) ctxt))
+       in
+         (case Thm.hyp theorem of
+              [hyp] => Term.aconv hyp split_x_upper
+            | _ => false) andalso
+         Option.isSome expected andalso actual = expected
+       end)
+
+val _ =
+  check
     ("forward replay proves a num consequence with one neq split",
      fn () =>
        let

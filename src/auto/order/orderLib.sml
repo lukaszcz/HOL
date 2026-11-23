@@ -96,7 +96,7 @@ fun order_fact_views_with _ _ _ [] = []
       let
         val schematic = #theorem (clasetFacts.schematic_view entry)
         val contexts =
-          orderData.contexts searchBudget.free_charger [schematic]
+          orderData.contexts_unmetered [schematic]
         val patterns =
           relation_sites [Thm.concl schematic] @
           map #relation contexts
@@ -158,11 +158,10 @@ fun ORDER_CONV tm = EQT_INTRO (ORDER_PROVE tm)
    an assumed theorem cannot escape its fixed support types. *)
 fun make_order_reducer budget =
   let
-    val meter =
+    val contexts_of =
       case budget of
-          NONE => searchBudget.free_charger
-        | SOME owned => searchBudget.charger owned
-    val contexts_of = orderData.contexts meter
+          NONE => orderData.contexts_unmetered
+        | SOME owned => orderData.contexts (searchBudget.charger owned)
     fun prove contexts theorems tm =
       case budget of
           NONE => orderSolve.prove_using contexts theorems tm

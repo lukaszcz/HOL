@@ -47,6 +47,7 @@ sig
      with no transitivity yields no context: nothing can be chained
      for it, so a search that kept it would only cost time. *)
   val contexts : meter -> thm list -> context list
+  val contexts_unmetered : thm list -> context list
 
   (* Whether the theorems name an order predicate at all.  A decision
      procedure consulted on every atom of every goal has to answer this

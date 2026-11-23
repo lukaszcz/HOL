@@ -7,7 +7,7 @@ type fact =
   {id : int,
    original : thm,
    hypotheses : term list,
-   fixed_terms : term list,
+   fixed_terms : term list Portable.HOLSusp.susp,
    fixed_term_set : term HOLset.set Portable.HOLSusp.susp,
    fixed_types : hol_type list,
    loose_terms : term list,
@@ -21,6 +21,25 @@ type view =
   {source_id : int, source : thm, theorem : thm,
    support : term list}
 
+fun ordered_fixed_terms [] shared = shared
+  | ordered_fixed_terms hypotheses shared =
+  let val supported = Term.free_varsl hypotheses
+  in
+    if null supported then shared
+    else if null shared then supported
+    else
+      let
+        val shared_set = HOLset.fromList Term.compare shared
+        (* The supported variables are distinct. Prepend those absent
+           from shared in the same order as Lib.op_union. *)
+        fun add (variable, terms) =
+          if HOLset.member (shared_set, variable) then terms
+          else variable :: terms
+      in
+        List.foldl add shared supported
+      end
+  end
+
 fun create_with_charge _ _ [] = []
   | create_with_charge charge (assumptions, target) theorems =
   let
@@ -30,12 +49,23 @@ fun create_with_charge _ _ [] = []
       let
         val _ = charge searchBudget.Candidate
         val hypotheses = Thm.hyp original
-        val supported = Term.free_varsl hypotheses
         val genuine = Term.free_vars (Thm.concl original)
-        val shared =
-          List.filter (fn variable => HOLset.member (goal_variables, variable))
+        val (shared, unshared) =
+          List.partition
+            (fn variable => HOLset.member (goal_variables, variable))
             genuine
-        val fixed_terms = Lib.op_union Term.aconv supported shared
+        (* Matching uses the set. Only the list accessor needs the
+           historical variable order. *)
+        val fixed_terms = Portable.HOLSusp.delay
+          (fn () => ordered_fixed_terms hypotheses shared)
+        val fixed_term_set = Portable.HOLSusp.delay
+          (fn () => Term.FVL hypotheses (HOLset.fromList Term.compare shared))
+        val loose_terms =
+          if null hypotheses orelse null unshared then unshared
+          else
+            let val fixed = Portable.HOLSusp.force fixed_term_set
+            in List.filter (fn tm => not (HOLset.member (fixed, tm))) unshared
+            end
         val support_types =
           List.foldl
             (fn (term, types) =>
@@ -46,19 +76,13 @@ fun create_with_charge _ _ [] = []
             (fn (variable, types) =>
               Lib.union (Type.type_vars (Term.type_of variable)) types)
             support_types shared
-        val loose_terms =
-          List.filter
-            (fn variable =>
-              not (Lib.op_mem Term.aconv variable fixed_terms))
-            genuine
         val loose_types =
           Lib.set_diff
             (type_vars_in_term (Thm.concl original)) fixed_types
       in
         {id = id, original = original, hypotheses = hypotheses,
          fixed_terms = fixed_terms,
-         fixed_term_set = Portable.HOLSusp.delay
-           (fn () => HOLset.fromList Term.compare fixed_terms),
+         fixed_term_set = fixed_term_set,
          fixed_types = fixed_types,
          loose_terms = loose_terms, loose_types = loose_types,
          charge = charge,
@@ -75,7 +99,8 @@ fun facts environment = environment
 fun source_id ({id, ...} : fact) = id
 fun source ({original, ...} : fact) = original
 fun support ({hypotheses, ...} : fact) = hypotheses
-fun fixed_terms ({fixed_terms, ...} : fact) = fixed_terms
+fun fixed_terms ({fixed_terms, ...} : fact) =
+  Portable.HOLSusp.force fixed_terms
 fun fixed_types ({fixed_types, ...} : fact) = fixed_types
 fun has_schematic_types ({loose_types, ...} : fact) =
   not (null loose_types)

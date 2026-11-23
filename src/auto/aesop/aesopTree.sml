@@ -921,7 +921,7 @@ fun copying_sources_on_path tree parent_id relevant_assigned
           (* Canonical origins both skip copies of path goals and collapse
              multiple candidates copied from the same goal. *)
           if HOLset.member (seen, original) then result
-          else (HOLset.add (seen, original), id :: sources)
+          else (HOLset.add (seen, original), (id, original) :: sources)
         end
 
     val (_, reversed_sources) =
@@ -939,15 +939,19 @@ fun copying_sources tree parent_id assigned child_specs =
     val parent = goal tree parent_id
     val relevant_assigned =
       dependencies_intersection assigned (#deps parent)
-    val child_dependencies =
-      List.foldl
-        (fn ((_, deps, _, _), dependencies) =>
-          dependencies_union dependencies deps)
-        (empty_dependencies ()) child_specs
+    val unassigned = dependencies_difference (#deps parent) relevant_assigned
     val dropped_candidates =
-      dependencies_difference
-        (dependencies_difference (#deps parent) relevant_assigned)
-        child_dependencies
+      if dependencies_empty unassigned then unassigned
+      else
+        let
+          val child_dependencies =
+            List.foldl
+              (fn ((_, deps, _, _), dependencies) =>
+                dependencies_union dependencies deps)
+              (empty_dependencies ()) child_specs
+        in
+          dependencies_difference unassigned child_dependencies
+        end
   in
     if dependencies_empty relevant_assigned andalso
        dependencies_empty dropped_candidates then []
@@ -991,7 +995,7 @@ fun install_rapp parent_id
       else copying_sources tree parent_id assigned child_specs
     val copy_specs =
       map
-        (fn source =>
+        (fn (source, original) =>
           let
             val source_goal = goal tree source
             val cgoal = cgoal_under child_store (#cgoal source_goal)
@@ -999,8 +1003,7 @@ fun install_rapp parent_id
                parameter's type in the child store. *)
             val deps = dependencies_with child_store Lib.I Lib.I cgoal
           in
-            (cgoal, deps, SOME (original_goal tree source),
-             #forwarded source_goal)
+            (cgoal, deps, SOME original, #forwarded source_goal)
           end)
         copy_sources
     fun make_child

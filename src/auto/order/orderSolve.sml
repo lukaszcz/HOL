@@ -616,7 +616,7 @@ fun prove_using contexts theorems term =
           "no order in the assumptions decides the goal"
 
 fun prove_with theorems term =
-  prove_using (orderData.contexts searchBudget.free_charger theorems)
+  prove_using (orderData.contexts_unmetered theorems)
     theorems term
 
 datatype budget_outcome =

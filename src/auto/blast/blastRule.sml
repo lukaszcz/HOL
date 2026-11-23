@@ -919,29 +919,50 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
    pristine templates in a search cache, and give every acquisition fresh
    rule variables and fresh rule-local Skolems.  Variables and Skolems from
    the branch formula remain shared with the branch. *)
+datatype 'a skolem_names =
+    NameList of (string * 'a) list
+  | NameTable of (string, 'a) Redblackmap.dict
+
 fun copyRulesWith checkpoint eager_external_skolems
       cache vars formula fresh_skolems rules =
   let
     val variable_copies = ref ([] : (var * var) list)
-    val skolem_copies = ref ([] : (string * string) list)
-
-    fun string_member value =
-      existsMeasured checkpoint (fn other => value = other)
+    val skolem_copies = ref (NameList [])
 
     fun variable_member value =
       existsMeasured checkpoint (fn other => value = other)
-
-    fun insert_string value values =
-      if string_member value values then values else value :: values
 
     fun find_variable variable entries =
       Option.map #2
         (findMeasured checkpoint
            (fn (source, _) => source = variable) entries)
 
-    fun find_skolem name entries =
-      Option.map #2
-        (findMeasured checkpoint (fn (source, _) => source = name) entries)
+    fun lookup name names =
+      case names of
+          NameList entries =>
+            Option.map #2
+              (findMeasured checkpoint
+                 (fn (source, _) => source = name) entries)
+        | NameTable entries => Redblackmap.peek (entries, name)
+
+    (* Keep small collections cheap and keep measured lookups polling in
+       their original order. *)
+    fun insert (entry as (name, value)) names =
+      case names of
+          NameTable entries =>
+            NameTable (Redblackmap.insert (entries, name, value))
+        | NameList entries =>
+            if eager_external_skolems orelse length entries < 8 then
+              NameList (entry :: entries)
+            else
+              NameTable
+                (Redblackmap.insertList
+                   (Redblackmap.mkDict String.compare, entry :: entries))
+
+    fun external_member name names = Option.isSome (lookup name names)
+
+    fun insert_external name names =
+      if external_member name names then names else insert (name, ()) names
 
     fun add_skolems term names =
       let
@@ -951,7 +972,7 @@ fun copyRulesWith checkpoint eager_external_skolems
             Const (_, args) =>
               fold_terms args names
           | Skolem (name, arguments) =>
-              fold_vars arguments (insert_string name names)
+              fold_vars arguments (insert_external name names)
           | Var variable =>
               (case !variable of
                    NONE => names
@@ -981,7 +1002,7 @@ fun copyRulesWith checkpoint eager_external_skolems
             case !variable of
                 NONE => names
               | SOME term => add_skolems term names))
-        (add_skolems formula []) vars
+        (add_skolems formula (NameList [])) vars
 
     (* Only freshening a Skolem needs this information. In a measured
        acquisition keep the traversal at its existing checkpoints. *)
@@ -1015,16 +1036,16 @@ fun copyRulesWith checkpoint eager_external_skolems
     and copy_skolem name =
       (checkpoint ();
        if not fresh_skolems orelse
-          string_member name (Portable.HOLSusp.force external_skolems)
+          external_member name (Portable.HOLSusp.force external_skolems)
        then name
        else
-         case find_skolem name (!skolem_copies) of
+         case lookup name (!skolem_copies) of
              SOME copy => copy
            | NONE =>
                let
                  val copy = freshName cache "S"
                in
-                 skolem_copies := (name, copy) :: !skolem_copies;
+                 skolem_copies := insert (name, copy) (!skolem_copies);
                  copy
                end)
 
@@ -1067,8 +1088,8 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
       cache claset safe vars formula =
   case cachedWith measured checkpoint cache safe vars formula of
       SOME rules =>
-        copyRulesWith checkpoint measured
-          cache vars formula true rules
+        if not measured andalso null rules then []
+        else copyRulesWith checkpoint measured cache vars formula true rules
     | NONE =>
         let
           val tagged = candidatesMeasured monitor claset safe formula

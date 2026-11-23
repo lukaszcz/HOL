@@ -880,3 +880,28 @@ val _ =
          ordinary_lift andalso budgeted_lift andalso
          #candidates (searchBudget.usage funded) > 0 andalso cutoff
        end)
+
+val _ =
+  check
+    ("order contexts keep input order and the first alpha-equivalent axiom",
+     fn () =>
+       let
+         val first = ``relation$transitive (\x y:num. x <= y)``
+         val next = ``relation$transitive (R:num -> num -> bool)``
+         val duplicate = ``relation$transitive (\u v:num. u <= v)``
+         val tag = ``later_axiom:bool``
+         val facts =
+           [Thm.ASSUME first, Thm.ASSUME next,
+            Drule.ADD_ASSUM tag (Thm.ASSUME duplicate)]
+       in
+         case orderData.contexts_unmetered facts of
+             [first_context, next_context] =>
+               Term.aconv (#relation first_context) (Term.rand first) andalso
+               Term.aconv (#relation next_context) (Term.rand next) andalso
+               (case #transitive (#axioms first_context) of
+                    SOME theorem =>
+                      ListPair.allEq (uncurry Term.aconv)
+                        (Thm.hyp theorem, [first])
+                  | NONE => false)
+           | _ => false
+       end)

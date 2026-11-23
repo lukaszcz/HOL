@@ -2317,23 +2317,29 @@ local
     end
     handle HOL_ERR _ => NONE
 
-  (* The head of an operation the goal fixes is as often one of its own
-     variables as it is a constant. *)
-  fun headed_by head term =
-    is_comb term andalso
-    (let val (candidate, _) = boolSyntax.strip_comb term
-     in
-       if is_const head then is_const candidate andalso
-                             same_const head candidate
-       else aconv head candidate
-     end)
-
   fun redexes head terms =
     let
-      val found =
-        List.concat (map (find_terms (headed_by head)) terms)
-      (* Keep the last representative of each alpha-equivalence class,
-         in the same order as the corresponding positions in [found]. *)
+      val matches_head =
+        if is_const head then
+          fn candidate => is_const candidate andalso same_const head candidate
+        else aconv head
+
+      (* Reuse the operator's head for every application on its spine.
+         Visiting the argument first and prepending each match gives the
+         reverse of find_terms' result for one term. *)
+      fun visit term found =
+        case dest_term term of
+            COMB (operator, operand) =>
+              let
+                val (_, found) = visit operand found
+                val (candidate, found) = visit operator found
+              in
+                (candidate, if matches_head candidate then term :: found
+                            else found)
+              end
+          | LAMB (_, body) => (term, #2 (visit body found))
+          | _ => (term, found)
+
       fun count (term, (counts, entries)) =
         case Redblackmap.peek (counts, term) of
             SOME n => (n := !n + 1; (counts, entries))
@@ -2342,7 +2348,11 @@ local
               in (Redblackmap.insert (counts, term, n), (term, n) :: entries)
               end
       val (_, entries) =
-        List.foldr count (Redblackmap.mkDict Term.compare, []) found
+        (* Count in the same order as a right fold over find_terms'
+           concatenated results, retaining the same representatives. *)
+        List.foldr (fn (term, state) =>
+          List.foldl count state (#2 (visit term [])))
+          (Redblackmap.mkDict Term.compare, []) terms
     in
       map (fn (term, n) => (term, !n)) entries
     end

@@ -163,6 +163,32 @@ fun group_with meter atoms =
       (List.foldl add [] atoms)
   end
 
+fun group_unmetered [] = []
+  | group_unmetered ((name, first, theorem) :: atoms) =
+      let
+        fun add ((name, relation, theorem), (keys, groups)) =
+          (if Termtab.defined groups relation then keys else relation :: keys,
+           Termtab.cons_list (relation, (name, theorem)) groups)
+        fun many entries atoms =
+          let
+            val (keys, groups) = List.foldl add
+              ([first], Termtab.update (first, entries) Termtab.empty) atoms
+            (* The separate keys preserve the first spelling and input
+               order of alpha-equivalent relations. *)
+            fun collect (relation, ordered) =
+              (relation, List.rev (Termtab.lookup_list groups relation)) ::
+              ordered
+          in
+            List.foldl collect [] keys
+          end
+        fun one entries [] = [(first, List.rev entries)]
+          | one entries (atoms as (name, relation, theorem) :: rest) =
+              if aconv first relation then one ((name, theorem) :: entries) rest
+              else many entries atoms
+      in
+        one [(name, theorem)] atoms
+      end
+
 fun lookup_with meter entries name =
   Option.map snd
     (List.find (fn (n, _) => (candidate meter; n = name)) entries)
@@ -238,9 +264,14 @@ fun context_of_with meter (relation, entries) =
            | _ =>
                SOME (weak_context_with meter relation entries Conv.ALL_CONV))
 
-fun contexts meter theorems =
+fun contexts_using group meter theorems =
   List.mapPartial (context_of_with meter)
-    (group_with meter (axioms_of_with meter theorems))
+    (group (axioms_of_with meter theorems))
+
+fun contexts meter = contexts_using (group_with meter) meter
+
+val contexts_unmetered =
+  contexts_using group_unmetered searchBudget.free_charger
 
 val all_order_names = axiom_names @ order_names
 

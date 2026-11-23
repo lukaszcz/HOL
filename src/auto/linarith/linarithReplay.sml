@@ -488,19 +488,15 @@ fun normalize_final theorem =
 fun implications_of theorem =
   linarithData.instance_implications (instance_of_thm theorem)
 
-fun mkthm_with charge level assumptions justification =
+fun mkthm_with charge level assumption trace_assumptions justification =
   let
-    (* A certificate names the same assumption at many of its leaves,
-       so the list is indexed once here rather than walked per leaf. *)
-    val indexed = Vector.fromList assumptions
-    fun assumption index =
-      Vector.sub (indexed, index)
-      handle Subscript =>
-        raise ERR "mkthm"
-          ("assumption index " ^ Int.toString index ^
-           " is out of range")
     fun one why = (charge (); decode why)
-    and decode (Asm index) = assumption index
+    and decode (Asm index) =
+          (assumption index
+           handle Subscript =>
+             raise ERR "mkthm"
+               ("assumption index " ^ Int.toString index ^
+                " is out of range"))
       | decode (Nonneg atom) =
           (case linarithData.instance_for (Term.type_of atom) of
                NONE =>
@@ -552,9 +548,7 @@ fun mkthm_with charge level assumptions justification =
     if Term.aconv (Thm.concl theorem) boolSyntax.F then theorem
     else
       let
-        val _ =
-          linarithData.trace_items level 1 "Assumptions:"
-            Parse.thm_to_string assumptions
+        val _ = trace_assumptions ()
         val _ = linarithData.trace_thm level 1 "Proved:" theorem
         val message =
           "Linear arithmetic should have refuted the assumptions but " ^
@@ -566,7 +560,15 @@ fun mkthm_with charge level assumptions justification =
   end
 
 fun mkthm level assumptions justification =
-  mkthm_with (fn () => ()) level assumptions justification
+  let
+    val indexed = Vector.fromList assumptions
+    fun assumption index = Vector.sub (indexed, index)
+    fun trace_assumptions () =
+      linarithData.trace_items level 1 "Assumptions:"
+        Parse.thm_to_string assumptions
+  in
+    mkthm_with (fn () => ()) level assumption trace_assumptions justification
+  end
 
 (* Both replay paths use this operation to select neqE from the instance
    belonging to the disequality's carrier.  REL_NEQ is the only encoding
@@ -713,10 +715,34 @@ fun justification_tac_with charge justification
   if not (Term.aconv goal boolSyntax.F) then
     raise ERR "justification_tac" "goal is not false"
   else
-    Tactic.ACCEPT_TAC
-      (mkthm_with charge (traceUtil.level_of linarithData.tracer ctxt)
-        (List.map Thm.ASSUME assumptions) justification)
-      (assumptions, goal) ctxt
+    let
+      val level = traceUtil.level_of linarithData.tracer ctxt
+      (* Validate the whole context before charging replay. Use ASSUME
+         for the kernel's diagnostic if a premise is malformed. *)
+      val _ =
+        List.app (fn tm =>
+          if Term.type_of tm = Type.bool then () else ignore (Thm.ASSUME tm))
+          assumptions
+      val terms = Vector.fromList assumptions
+      val proved = Array.array (Vector.length terms, NONE)
+      fun assumption index =
+        case Array.sub (proved, index) of
+            SOME theorem => theorem
+          | NONE =>
+              let
+                val theorem = Thm.ASSUME (Vector.sub (terms, index))
+              in
+                Array.update (proved, index, SOME theorem);
+                theorem
+              end
+      fun trace_assumptions () =
+        linarithData.trace_items level 1 "Assumptions:"
+          (Parse.thm_to_string o Thm.ASSUME) assumptions
+    in
+      Tactic.ACCEPT_TAC
+        (mkthm_with charge level assumption trace_assumptions justification)
+        (assumptions, goal) ctxt
+    end
 
 fun refute_tac_with charge split_neq justifications =
   let

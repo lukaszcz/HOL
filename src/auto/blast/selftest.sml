@@ -1063,6 +1063,59 @@ val _ =
 
 val _ =
   test
+    ("cached large rules keep repeated Skolems shared and fresh",
+     fn () =>
+       let
+         val count = 16
+         val vars =
+           List.tabulate
+             (count, fn n => mk_var ("cache_y" ^ Int.toString n, bool))
+         val witnesses =
+           map (fn var => mk_var ("w_" ^ #1 (dest_var var), bool)) vars
+         val pred_type =
+           List.foldl (fn (_, ty) => bool --> (bool --> ty)) bool vars
+         val pred = mk_var ("cache_pred", pred_type)
+         fun apply args = list_mk_comb (pred, args @ args)
+         val universal = list_mk_forall (vars, apply vars)
+         val specializing =
+           GENL (pred :: witnesses)
+             (DISCH universal
+                (List.foldl (fn (w, th) => SPEC w th)
+                   (ASSUME universal) witnesses))
+         val cs =
+           clasetLib.add_sintros [("cache_large_specializing", specializing)]
+             clasetLib.empty_cs
+         val formula = mkGoal (blastRule.fromGoalTerm (apply witnesses))
+         val cache = blastRule.newCache traceUtil.silent
+         val branch = ref NONE
+         fun skolem_name (Skolem (name, [dependency])) =
+               if dependency = branch then name
+               else raise Fail "cached Skolem lost its branch dependency"
+           | skolem_name _ = raise Fail "expected a Skolem argument"
+         fun names () =
+           case blastRule.safeRules cache cs [branch] formula of
+               [{premises = [[goal]], ...}] =>
+                 map skolem_name
+                   (#2 (blastTerm.strip_comb (blastTerm.rand goal)))
+             | _ => raise Fail "expected one specializing premise"
+         val first = names ()
+         val second = names ()
+         val first_half = List.take (first, count)
+         val second_half = List.take (second, count)
+         val first_names = HOLset.fromList String.compare first_half
+         val second_names = HOLset.fromList String.compare second_half
+       in
+         first = first_half @ first_half andalso
+         second = second_half @ second_half andalso
+         HOLset.numItems first_names = count andalso
+         HOLset.numItems second_names = count andalso
+         HOLset.isEmpty
+           (HOLset.intersection (first_names, second_names)) andalso
+         blastRule.hitCount cache = 1
+       end)
+
+val _ =
+  test
     ("separate rule caches neither reuse conversions nor templates",
      fn () =>
        let
