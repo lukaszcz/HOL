@@ -148,27 +148,31 @@ fun match_view (entry : fact) pattern site =
   handle HOL_ERR _ => NONE
        | Match => NONE
 
+fun quantified_body term =
+  if boolSyntax.is_forall term then #2 (boolSyntax.strip_forall term) else term
+
 fun implication_rule_view entry =
-  if boolSyntax.is_imp_only
-       (Thm.concl (Drule.SPEC_ALL (source entry))) then
+  if boolSyntax.is_imp_only (quantified_body (Thm.concl (source entry))) then
     SOME (schematic_view entry)
   else NONE
 
-fun equational theorem =
-  let
-    val (_, conclusion) =
-      boolSyntax.strip_imp_only
-        (Thm.concl (Drule.SPEC_ALL theorem))
-  in
-    boolSyntax.is_eq conclusion
-  end
+fun equational term =
+  boolSyntax.is_eq (#2 (boolSyntax.strip_imp_only (quantified_body term)))
+
+(* Inspect the source's shape before deriving any conjunct theorems. Only
+   outer conjunctions split into views, as in Drule.CONJUNCTS. *)
+fun has_equational_conjunct term =
+  if boolSyntax.is_conj term then
+    let val (left, right) = boolSyntax.dest_conj term
+    in has_equational_conjunct left orelse has_equational_conjunct right
+    end
+  else equational term
 
 fun equational_views environment =
   List.concat
     (map
       (fn entry =>
-        if not (List.exists equational
-                  (Drule.CONJUNCTS (source entry))) then []
+        if not (has_equational_conjunct (Thm.concl (source entry))) then []
         else
           let
             val {source_id, source, support, theorem} =
@@ -178,7 +182,7 @@ fun equational_views environment =
               (fn piece =>
                 {source_id = source_id, source = source,
                  theorem = piece, support = support} : view)
-              (List.filter equational (Drule.CONJUNCTS theorem))
+              (List.filter (equational o Thm.concl) (Drule.CONJUNCTS theorem))
           end)
       environment)
 

@@ -1144,6 +1144,24 @@ val _ =
 
 val _ =
   check
+    ("alpha-equivalent atoms share one column across premises",
+     fn () =>
+       let
+         val left = ``(f : (num -> num) -> num) (\x. x)``
+         val right = ``(f : (num -> num) -> num) (\y. y)``
+         val one = numSyntax.mk_numeral Arbnum.one
+         val assumptions = [num_leq num_two left, num_leq right one]
+         val goal = (assumptions, boolSyntax.F)
+         val (remaining, validate) =
+           Tactical.VALID (linarithLib.SIMPLE_LINARITH_TAC []) goal
+             (Context.snapshot ())
+       in
+         null remaining andalso
+         Term.aconv (Thm.concl (validate [])) boolSyntax.F
+       end)
+
+val _ =
+  check
     ("row construction keeps the first coefficient on each side",
      fn () =>
        let

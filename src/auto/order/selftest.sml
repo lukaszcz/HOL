@@ -252,6 +252,37 @@ val _ =
 
 val _ =
   check
+    ("antisymmetry uses the first path in each direction",
+     fn () =>
+       let
+         val support =
+           [long_order_axiom, long_order_edge 0 1, long_order_edge 1 2,
+            long_order_edge 2 3, long_order_edge 3 0]
+         val facts = support @ [long_order_edge 0 2, long_order_edge 2 0]
+         val target =
+           boolSyntax.mk_eq
+             (List.nth (long_order_nodes, 0), List.nth (long_order_nodes, 2))
+         val theorems = map Thm.ASSUME facts
+         val ordinary = orderSolve.prove_with theorems target
+         val (remaining, validate) =
+           Tactical.VALID (ORDER_TAC []) (facts, target) (Context.snapshot ())
+         fun same_hypotheses theorem =
+           Lib.list_eq Term.aconv (Thm.hyp ordinary) (Thm.hyp theorem)
+       in
+         null remaining andalso Term.aconv (Thm.concl (validate [])) target
+         andalso Term.aconv (Thm.concl ordinary) target
+         andalso length (Thm.hyp ordinary) = length support
+         andalso List.all
+           (fn tm => List.exists (Term.aconv tm) (Thm.hyp ordinary)) support
+         andalso
+         (case orderSolve.prove_with_budget
+                 (searchBudget.unbounded ()) theorems target of
+              orderSolve.OrderProved metered => same_hypotheses metered
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("distinct sources in one graph keep their own first proof paths",
      fn () =>
        let

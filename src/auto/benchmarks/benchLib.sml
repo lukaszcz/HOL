@@ -471,7 +471,8 @@ type comparison_statement = prepared_citation * (unit -> term)
 
 (* Each ambient sweep compares the same goal against many theorems. *)
 val goal_comparison :
-    (term * (comparison_statement -> bool)) option ref = ref NONE
+    (term * Rewrite.rewrites * (comparison_statement -> bool)) option ref =
+    ref NONE
 
 fun set_definitional_context theorems =
   (goal_comparison := NONE;
@@ -747,15 +748,18 @@ fun prepare_goal_comparison goal =
 
 fun compare_with_goal goal =
   let
+    val implicit = Rewrite.implicit_rewrites ()
     fun fresh () =
       let val compare = prepare_goal_comparison goal
-      in goal_comparison := SOME (goal, compare); compare
+      in goal_comparison := SOME (goal, implicit, compare); compare
       end
   in
     case !goal_comparison of
-        SOME (previous, compare) =>
+        SOME (previous, rewrites, compare) =>
           (* The stripped reading retains the binder's variable name. *)
-          if Portable.pointer_eq (goal, previous) then compare else fresh ()
+          if Portable.pointer_eq (goal, previous) andalso
+             Portable.pointer_eq (implicit, rewrites)
+          then compare else fresh ()
       | NONE => fresh ()
   end
 
@@ -789,6 +793,39 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
   | named_theorem (IffAdd theorem) = SOME theorem
   | named_theorem (RewriteDelete _) = NONE
 
+(* Ambient method arguments recur across the corpus. Cache their
+   syntactic readings, while unfolding still uses the current rewrites. *)
+val ambient_citations :
+    (term * comparison_statement) Symtab.table ref = ref Symtab.empty
+
+fun set_ambient_citations arguments =
+  let
+    fun prepare statement =
+      let
+        val mentions = memoUtil.keyed_memo (curry Portable.pointer_eq)
+          (fn heads => mentions_definition heads statement)
+      in
+        (prepare_citation statement, fn () =>
+          if mentions (!definitional_heads) then unfold statement
+          else statement)
+      end
+    fun insert ({name, theorem} : named_thm, table) =
+      let val statement = Thm.concl theorem
+      in Symtab.update (name, (statement, prepare statement)) table
+      end
+  in
+    ambient_citations :=
+      List.foldl insert Symtab.empty (List.mapPartial named_theorem arguments)
+  end
+
+fun argument_is_goal goal ({name, theorem} : named_thm) =
+  case Symtab.lookup (!ambient_citations) name of
+      SOME (statement, citation) =>
+        if Portable.pointer_eq (Thm.concl theorem, statement)
+        then compare_with_goal goal citation
+        else theorem_is_goal goal theorem
+    | NONE => theorem_is_goal goal theorem
+
 (* A direct analogue is excluded by theorem shape as well as by its
    persistent name.  This check happens before controls are appended, so a
    recipe cannot put the measured theorem back under an invocation-private
@@ -804,13 +841,13 @@ fun registered_definition theorem =
       end)
     (DB.revlookup theorem)
 
-fun permitted_for goal (DefinitionAdd {theorem, ...}) =
-      not (theorem_is_goal goal theorem) orelse
+fun permitted_for goal (DefinitionAdd (named as {theorem, ...})) =
+      not (argument_is_goal goal named) orelse
       registered_definition theorem
   | permitted_for goal arg =
       case named_theorem arg of
           NONE => true
-        | SOME {theorem, ...} => not (theorem_is_goal goal theorem)
+        | SOME named => not (argument_is_goal goal named)
 
 fun permitted_arg ({goal, ...} : corpus_goal) = permitted_for goal
 

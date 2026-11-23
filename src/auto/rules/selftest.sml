@@ -4124,6 +4124,30 @@ val _ =
 
 val _ =
   test
+    ("fact classification splits outer conjunctions before quantifiers",
+     fn () =>
+       let
+         val x = ``citation_quantified:num``
+         val equation = Thm.GEN x (Thm.REFL x)
+         val condition = ``citation_condition:bool``
+         val conditional = Thm.GEN x (Thm.DISCH condition (Thm.REFL x))
+         val hidden = Thm.GEN x (Thm.CONJ (Thm.REFL x) (Thm.REFL x))
+         val mixed = Thm.CONJ equation (Thm.CONJ hidden conditional)
+         val environment =
+           clasetFacts.create ([condition], boolSyntax.T) [mixed, conditional]
+         val equations = clasetFacts.equational_views environment
+       in
+         map #source_id equations = [0, 0, 1] andalso
+         ListPair.allEq
+           (fn (view, expected) =>
+             Term.aconv (Thm.concl (#theorem view)) (Thm.concl expected))
+           (equations, [equation, conditional, conditional]) andalso
+         map (Option.isSome o clasetFacts.implication_rule_view)
+           (clasetFacts.facts environment) = [false, true]
+       end)
+
+val _ =
+  test
     ("invocation fact support and shared free parameters stay fixed",
      fn () =>
        let

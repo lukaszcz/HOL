@@ -707,12 +707,33 @@ fun atoms_of_decomps_with work decomps =
 fun atoms_of_decomps decomps =
   atoms_of_decomps_with (free_work traceUtil.silent) decomps
 
-fun refute_system_with work is_nonnegative items justs =
+(* The column table can also detect repeated atoms. Assign columns
+   as they first appear, with the same left-before-right order used
+   by atoms_of_decomps. *)
+fun indexed_atoms items =
   let
-    val atoms =
-      atoms_of_decomps_with work
-        (List.map (fn (item, _) => (candidate work; item)) items)
-    val index = atom_index_with work atoms
+    fun add ((atom, _), state as (i, columns, atoms)) =
+      if Termtab.defined columns atom then state
+      else (i + 1, Termtab.update (atom, i) columns, atom :: atoms)
+    fun collect ((Decomp {lhs, rhs, ...}, _), state) =
+      List.foldl add (List.foldl add state lhs) rhs
+    val (width, columns, atoms) =
+      List.foldl collect (0, Termtab.empty, []) items
+  in
+    (List.rev atoms, {width = width, column = columns})
+  end
+
+fun refute_system_with (work : work) is_nonnegative items justs =
+  let
+    val (atoms, index) =
+      if #metered work then
+        let
+          val atoms = atoms_of_decomps_with work
+            (List.map (fn (item, _) => (candidate work; item)) items)
+        in
+          (atoms, atom_index_with work atoms)
+        end
+      else indexed_atoms items
     val nonnegative =
       List.mapPartial
         (fn item =>

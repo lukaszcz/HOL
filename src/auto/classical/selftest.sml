@@ -188,6 +188,10 @@ val _ =
            clasetMeta.new_meta {allow = [], ty = bool_ty} store1
          val store3 =
            the_store (clasetMeta.bind (indirect, permitted) store2)
+         val cyclic =
+           the_store (clasetMeta.bind (indirect, blocked) store2)
+         val eigen_alias =
+           the_store (clasetMeta.bind (permitted, eigen) store2)
          val registered =
            the_store
              (clasetMeta.register_eigen generated_eigen store0)
@@ -202,11 +206,32 @@ val _ =
          andalso
          not (Option.isSome (clasetMeta.bind (blocked, eigen) store1))
          andalso
+         not (Option.isSome (clasetMeta.bind (blocked, indirect) cyclic))
+         andalso
+         not (Option.isSome (clasetMeta.bind (blocked, permitted) eigen_alias))
+         andalso
          Option.isSome (clasetMeta.bind (blocked, fixed) store0)
          andalso
          Option.isSome (clasetMeta.bind (permitted, eigen) store1)
          andalso
          not (Option.isSome (clasetMeta.bind (permitted, eigen) store3))
+       end)
+
+val _ =
+  test
+    ("eigen lookup follows type bindings within a matching name",
+     fn () =>
+       let
+         val (ty, store) = clasetMeta.new_tymeta clasetMeta.empty
+         val name = "eigen_type_binding"
+         val eigen = Term.mk_var (name, ty)
+         val concrete = Term.mk_var (name, bool_ty)
+         val registered = the_store (clasetMeta.register_eigen eigen store)
+         val bound = the_store (clasetMeta.bind_ty (ty, bool_ty) registered)
+       in
+         not (clasetMeta.is_eigen registered concrete) andalso
+         clasetMeta.is_eigen bound concrete andalso
+         not (clasetMeta.is_eigen bound boolSyntax.T)
        end)
 
 val _ =

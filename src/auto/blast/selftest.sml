@@ -2140,6 +2140,8 @@ val _ =
             conversion = fn () => conversions := !conversions + 1}
          val ordinary =
            blastRule.safeRules ordinary_cache cs [] formula
+         val ordinary_hit =
+           blastRule.safeRules ordinary_cache cs [] (mkGoal (rand formula))
          val measured =
            blastRule.safeRulesMeasured monitor measured_cache cs [] formula
          val measured_hit =
@@ -2147,10 +2149,12 @@ val _ =
 
        in
          same_rule_lists_alpha (ordinary, measured) andalso
+         same_rule_lists_alpha (ordinary, ordinary_hit) andalso
          same_rule_lists_alpha (measured, measured_hit) andalso
          !polls > 0 andalso !candidates = 1 andalso !conversions = 1 andalso
          blastRule.conversionCount ordinary_cache =
            blastRule.conversionCount measured_cache andalso
+         blastRule.hitCount ordinary_cache = 1 andalso
          blastRule.hitCount measured_cache = 1
        end)
 

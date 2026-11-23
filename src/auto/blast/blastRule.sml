@@ -691,10 +691,11 @@ fun cachedWith measured checkpoint (Cache {entries, hits, ...})
           (checkpoint ();
            left = right andalso same (lefts, rights))
       | same _ = false
+    val equal = if measured then aconvMeasured checkpoint else aconv
     fun matches entry =
       #safe entry = safe andalso
       same (#vars entry, vars) andalso
-      aconvMeasured checkpoint (#formula entry, formula)
+      equal (#formula entry, formula)
     val found =
       if measured then
         find_cached (findMeasured checkpoint matches) (!entries)

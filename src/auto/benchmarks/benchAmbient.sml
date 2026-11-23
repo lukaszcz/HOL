@@ -347,6 +347,8 @@ val arguments =
   map ambient_argument (ambient_definitions @ ambient_lemmas) @
   declared_rules
 
+val _ = benchLib.set_ambient_citations arguments
+
 (* Where Isabelle declares each result and rule the ambient set
    transplants: the line whose attribute puts it in the default simpset
    or claset, which is also the line from which it is in scope.  A

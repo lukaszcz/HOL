@@ -355,12 +355,6 @@ fun reach_from work transitive distinctions edges =
                   (if !attempts > 0 then (attempts := !attempts - 1; true)
                    else same_cycle source target)
             end
-    fun reach_crossing (x, y) =
-      if may_cross (x, y) then
-        Option.mapPartial
-          (fn up => Option.map (fn down => (up, down)) (reach y x))
-          (reach x y)
-      else NONE
     fun reach_one source target =
       case (#max_nodes work, step) of
           (SOME _, SOME _) =>
@@ -382,6 +376,20 @@ fun reach_from work transitive distinctions edges =
                 then SOME (#path edge) else NONE)
               edges
         | (NONE, _) => reach source target
+    (* With at most one crossing, each source has just one destination.
+       A full traversal pays off only when multiple distinctions can
+       reuse its reachability table. *)
+    val reach_crossing_from =
+      case distinctions of
+          _ :: _ :: _ => reach
+        | _ => reach_one
+    fun reach_crossing (x, y) =
+      if may_cross (x, y) then
+        Option.mapPartial
+          (fn up =>
+            Option.map (fn down => (up, down)) (reach_crossing_from y x))
+          (reach_crossing_from x y)
+      else NONE
   in
     {reach_crossing = reach_crossing, reach_one = reach_one}
   end

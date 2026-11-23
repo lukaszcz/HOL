@@ -477,34 +477,22 @@ fun metas_of store tm =
 
 fun same_var left right = aconv left right
 
-fun listed_as_eigen store variable =
+fun is_eigen store variable =
   if not (is_var variable) then false
   else
-    let
-      val name = #1 (dest_var variable)
-      val normalized = inst_types store variable
-    in
-      case Redblackmap.peek (#eigens store, name) of
-          NONE => false
-        | SOME entries =>
+    case Redblackmap.peek (#eigens store, #1 (dest_var variable)) of
+        NONE => false
+      | SOME entries =>
+          let val normalized = inst_types store variable
+          in
             List.exists
               (same_var normalized o inst_types store) entries
-    end
-
-fun is_eigen store variable =
-  is_var variable andalso listed_as_eigen store variable
+          end
 
 fun eigen_allowed store allow variable =
-  not (listed_as_eigen store variable) orelse
+  not (is_eigen store variable) orelse
   List.exists (same_var (inst_types store variable))
     (map (inst_types store) allow)
-
-fun residue_owned store residue =
-  List.all (fn variable =>
-    not (is_meta variable) orelse owned_meta store variable)
-    (free_vars residue) andalso
-  List.all (fn ty => not (is_tymeta ty) orelse owned_tymeta store ty)
-    (type_vars_in_term residue)
 
 fun binding_respects_allow store (name, residue) =
   let
@@ -559,14 +547,19 @@ fun bind (m, tm) store =
       else
         let
           val residue = norm store tm
-          val occurs = List.exists
-            (fn other => meta_name other = SOME name)
-            (metas_of store residue)
+          val variables = free_vars residue
+          fun valid_variable variable =
+            case meta_name variable of
+                NONE => true
+              | SOME other => other <> name andalso owned_meta store variable
           val same_type =
             norm_ty store (type_of m) = norm_ty store (type_of residue)
         in
-          if occurs orelse not same_type orelse
-             not (residue_owned store residue)
+          if not (List.all valid_variable variables) orelse
+             not same_type orelse
+             not (List.all
+               (fn ty => not (is_tymeta ty) orelse owned_tymeta store ty)
+               (type_vars_in_term residue))
           then NONE
           else
             let
@@ -583,7 +576,7 @@ fun bind (m, tm) store =
                    List.foldl
                      (fn (variable, known) =>
                        Redblackset.add (known, #1 (dest_var variable)))
-                     (#occurring store) (free_vars residue)}
+                     (#occurring store) variables}
               (* Adding a binding whose normalized residue contains no
                  eigenvariable cannot invalidate the eigen scopes of any
                  existing binding.  A later binding which does introduce an
@@ -591,9 +584,10 @@ fun bind (m, tm) store =
                  so this fast path preserves the store invariant while
                  avoiding a quadratic rescan for rigid propositional
                  structure. *)
+              (* The occurs check excludes the new binding's redex
+                 from this already normalized residue. *)
               val introduces_eigen =
-                List.exists (listed_as_eigen candidate)
-                  (free_vars (norm candidate residue))
+                List.exists (is_eigen store) variables
               val permitted =
                 not introduces_eigen orelse
                 List.all (binding_respects_allow candidate)

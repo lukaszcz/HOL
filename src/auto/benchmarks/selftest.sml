@@ -1606,6 +1606,46 @@ val _ =
          (benchLib.theorem_is_goal wrapped_goal
             parityTranslationTheory.source_lexord_def))
 
+val _ =
+  check
+    ("same goal comparison follows implicit rewrite changes",
+     fn () =>
+       without_definitions
+         (fn () =>
+           let
+             val wrapped = ``source_lexord R (xs:'a list) ys``
+             val unwrapped = ``LLEX R (xs:'a list) ys``
+             val goal = boolSyntax.mk_conj (wrapped, boolSyntax.T)
+             val theorem = Thm.ASSUME unwrapped
+             val saved = Rewrite.implicit_rewrites ()
+             fun compares () = benchLib.theorem_is_goal goal theorem
+             fun check_reading () =
+               (benchLib.set_definitional_context
+                  [parityTranslationTheory.source_lexord_def];
+                Rewrite.set_implicit_rewrites Rewrite.empty_rewrites;
+                not (compares ()) andalso
+                (Rewrite.set_implicit_rewrites Rewrite.bool_rewrites;
+                 compares () andalso
+                 (Rewrite.set_implicit_rewrites Rewrite.empty_rewrites;
+                  not (compares ()))))
+             val result = check_reading () handle exn =>
+               (Rewrite.set_implicit_rewrites saved; raise exn)
+           in
+             Rewrite.set_implicit_rewrites saved; result
+           end))
+
+val _ =
+  check
+    ("ambient citation names can also carry a different theorem",
+     fn () =>
+       let
+         val name = "parityTranslation$source_map_add_None"
+         val theorem = boolTheory.CONJ_COMM
+         val argument = benchLib.RewriteAdd {name = name, theorem = theorem}
+       in
+         not (benchLib.permitted_for (Thm.concl theorem) argument)
+       end)
+
 (* A [define_new_type_bijections] theorem is registered as a definition
    and is equational, so it reaches the ambient rewrite set; reading it
    as an unfolding would make [source_literal_implode_valid] and the

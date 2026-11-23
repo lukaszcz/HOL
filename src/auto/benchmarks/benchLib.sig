@@ -183,6 +183,8 @@ sig
      caller deriving a recipe can drop such an argument rather than
      build one that will be rejected. *)
   val permitted_for : term -> method_arg -> bool
+  (* Reuse citation readings for the corpus's recurring ambient arguments. *)
+  val set_ambient_citations : method_arg list -> unit
   val argument_name : method_arg -> string
 
   val validate_raw_goal : corpus_goal -> unit
