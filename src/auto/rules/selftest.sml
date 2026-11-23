@@ -380,6 +380,45 @@ fun one pat patvars = insert ({pat = pat, patvars = patvars}, 1) empty
 
 val _ =
   test
+    ("clasetNet all-free queries preserve hits and checkpoint counts",
+     fn () =>
+       let
+         val patterns =
+           [``\z:bool. z /\ T``, ``\z:bool. T /\ T``,
+            ``\z:bool. (\u:bool. u /\ T) (z /\ T)``,
+            ``\z:bool. (\u:bool. T /\ T) (z /\ T)``,
+            ``(T, \z:bool. z /\ T)``, ``(T, \z:bool. T /\ T)``]
+         val net =
+           List.foldl
+             (fn ((i, pat), net) =>
+               insert ({pat = pat, patvars = Term.empty_tmset}, i) net)
+             small_net (Lib.enumerate 10 patterns)
+         val no_checkpoint = listUtil.no_checkpoint
+         fun check (q, hit, miss) =
+           let
+             val old_query = {q = q, qvars = Term.FVL [q] Term.empty_tmset}
+             val old_polls = ref 0
+             val new_polls = ref 0
+             fun poll count () = count := !count + 1
+             val ordinary = unify old_query net
+             val old_measured = unifyMeasured (poll old_polls) old_query net
+             val new_measured = unifyFreesMeasured (poll new_polls) q net
+           in
+             mem hit ordinary andalso not (mem miss ordinary) andalso
+             unifyFreesMeasured no_checkpoint q net = ordinary andalso
+             old_measured = ordinary andalso new_measured = ordinary andalso
+             !old_polls > 0 andalso !old_polls = !new_polls
+           end
+       in
+         List.all check
+           [(``\z:bool. z /\ p``, 10, 11),
+            (``\z:bool. (\z:bool. z /\ p) (z /\ q)``, 12, 13),
+            (``(z, \z:bool. z /\ p)``, 14, 15),
+            (``\z:bool. (f:bool -> bool) z``, 11, ~1)]
+       end)
+
+val _ =
+  test
     ("clasetNet retrieves an abstraction key and follows Cmb rators",
      fn () =>
      mem 1
@@ -2822,6 +2861,56 @@ val _ =
          length (Lib.mk_set indices) = length indices andalso
          !polls > 0 andalso same_candidates tagged measured andalso
          count (clash_query ``ClasetWide15 n = ClasetWide15 m`` []) = 0
+       end)
+
+val _ =
+  test
+    ("classical lookup shares ordering and collects metas only for clashes",
+     fn () =>
+       let
+         val x = ``x:claset_hook_wide``
+         val y = ``y:claset_hook_wide``
+         val equality = mk_eq (x, y)
+         val plain = ``p:bool``
+         val unindexed_type = ``(x:num -> num) = y``
+         val globals = safe0_part seed_claset
+         val without_distinct = safep_part seed_claset
+         val assumptions = [[plain, unindexed_type],
+           [``ClasetWide0 = ClasetWide15 n``, equality], [plain]]
+         val conclusion = [plain, plain]
+         val forms = {conclusion = conclusion, assumptions = assumptions}
+         val inspected = ref []
+         fun qvars q =
+           if aconv q equality then HOLset.fromList Term.compare [x, y]
+           else Term.empty_tmset
+         fun actual unify part =
+           classical_candidates
+             {unify = unify, derive = listUtil.no_checkpoint,
+              query_metas = fn q => (inspected := q :: !inspected; qvars q),
+              flexible_type = K true} part forms
+         fun expected intros elims part =
+           clasetRules.candidate_order
+             (List.concat (map (intros part) conclusion) @
+              List.concat (map (List.concat o map (elims part)) assumptions))
+         val matched = actual false globals
+         val unified = actual true globals
+         val eager_inspections = ref 0
+         fun unify_elims part q =
+           (eager_inspections := !eager_inspections + 1;
+            unify_elim_candidates_with unmetered part q
+              {q = q, qvars = qvars q, flexible_type = K true})
+         val no_distinct = actual true without_distinct
+       in
+         same_candidates matched
+           (expected match_intro_candidates match_elim_candidates globals)
+         andalso
+         same_candidates unified
+           (expected unify_intro_candidates unify_elims globals)
+         andalso
+         same_candidates no_distinct
+           (expected unify_intro_candidates unify_elims without_distinct)
+         andalso !eager_inspections = 10 andalso
+         (case !inspected of [q] => aconv q equality | _ => false)
        end)
 
 val _ =

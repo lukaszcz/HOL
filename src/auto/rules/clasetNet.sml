@@ -203,7 +203,7 @@ fun match tm net =
     walk [(tm, [])] net []
   end
 
-fun unify_with checkpoint measured {q, qvars} net =
+fun unify_with checkpoint measured schematic q net =
   let
     fun concat_map f items = concatMapMeasured checkpoint f items
     fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
@@ -242,8 +242,7 @@ fun unify_with checkpoint measured {q, qvars} net =
             val _ = checkpoint ()
             val tm = eta_contract tm0
           in
-            if is_var tm andalso not (bound tm bvars) andalso
-               HOLset.member (qvars, tm) then
+            if is_var tm andalso not (bound tm bvars) andalso schematic tm then
               if measured then
                 concat_map (fn child => walk rest child []) (skip_one_m node)
               else skip_unmeasured (walk rest) 1 node suffix
@@ -254,12 +253,18 @@ fun unify_with checkpoint measured {q, qvars} net =
     walk [(q, [])] net []
   end
 
-fun unify query net =
-  unify_with no_checkpoint false query net
+fun unify {q, qvars} net =
+  unify_with no_checkpoint false (fn v => HOLset.member (qvars, v)) q net
 
-fun unifyMeasured checkpoint query net =
+fun unifyMeasured checkpoint (query as {q, qvars}) net =
   if Portable.pointer_eq (checkpoint, no_checkpoint) then unify query net
-  else unify_with checkpoint true query net
+  else unify_with checkpoint true (fn v => HOLset.member (qvars, v)) q net
+
+(* Eta contraction adds no free variables and the walk already excludes
+   opened binders before testing whether a variable is schematic. *)
+fun unifyFreesMeasured checkpoint q net =
+  unify_with checkpoint
+    (not (Portable.pointer_eq (checkpoint, no_checkpoint))) (K true) q net
 
 fun vfilter pred net =
   let

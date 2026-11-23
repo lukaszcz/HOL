@@ -1093,7 +1093,10 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
     | NONE =>
         let
           val tagged = candidatesMeasured monitor claset safe formula
-          val _ = appMeasured checkpoint (fn _ => candidate ()) tagged
+          val _ =
+            if measured then
+              appMeasured checkpoint (fn _ => candidate ()) tagged
+            else ()
           fun convert (_, (is_elim, theorem)) =
             let
               val _ = checkpoint ()

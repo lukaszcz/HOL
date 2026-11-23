@@ -231,6 +231,27 @@ val _ =
          false)
         handle Feedback.HOL_ERR _ => true))
 
+val _ =
+  check
+    ("the graph cap counts nodes introduced by the negated goal",
+     fn () =>
+       let
+         val strict = Term.mk_comb
+           (Term.prim_mk_const {Thy = "relation", Name = "STRORD"},
+            long_order_relation)
+         val node = hd long_order_nodes
+         val impossible = Term.list_mk_comb (strict, [node, node])
+         val facts = map Thm.ASSUME [long_order_axiom, impossible]
+         val target = long_order_edge 1 2
+         fun prove_at limit =
+           Portable.with_flag (orderSolve.node_limit, limit)
+             (fn () => orderSolve.prove_with facts target) ()
+         val clipped = (ignore (prove_at 2); false)
+           handle Feedback.HOL_ERR _ => true
+       in
+         clipped andalso Term.aconv (Thm.concl (prove_at 3)) target
+       end)
+
 fun long_budget limits = searchBudget.create limits
 
 val _ =

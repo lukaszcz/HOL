@@ -123,6 +123,14 @@ sig
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
   val unify_elim_candidates_measured :
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
+  (* Order the candidates jointly across the conclusion and assumption
+     spellings. Constructor pairs still charge [derive] on cache misses
+     in unification mode. *)
+  val classical_candidates :
+    {unify : bool, derive : unit -> unit,
+     query_metas : term -> term HOLset.set, flexible_type : hol_type -> bool} ->
+    claset_part ->
+    {conclusion : term list, assumptions : term list list} -> (tag * brl) list
 
   (* Aesop retrieval is unification-based and retains each declaration's
      complete rulespec.  Target candidates comprise Intro rules;

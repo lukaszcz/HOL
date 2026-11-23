@@ -61,13 +61,43 @@ val safe_solver =
    and simplification does not prove one in Isabelle either.  The
    subgoaler runs the traversal's own recursion first and looks only at
    what that leaves. *)
+
+(* Conditions arrive as an existential closure of the rule premises.
+   A simpset can move that closure into the conjunction. Pull it back
+   out before matching so the same assumptions still name the witnesses. *)
+val pull_existentials =
+  Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV
+    (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL o Conv.GSYM)
+      [boolTheory.LEFT_EXISTS_AND_THM, boolTheory.RIGHT_EXISTS_AND_THM])))
+
+fun has_witness_quantifier root =
+  let
+    fun next [] eta_short =
+          (* The conversion may recognize an eta-short predicate
+             application. Preserve the original whole-term guard once. *)
+          eta_short andalso
+          Lib.can (HolKernel.find_term boolSyntax.is_exists) root
+      | next (term :: rest) eta_short = reachable term rest eta_short
+    and reachable term rest eta_short =
+      if not (Term.is_comb term) then next rest eta_short
+      else
+        let val (operator, operand) = Term.dest_comb term
+        in
+          if Term.same_const operator boolSyntax.existential then
+            Term.is_abs operand orelse next rest true
+          else if Term.is_comb operator andalso
+                  Term.same_const (Term.rator operator)
+                    boolSyntax.conjunction then
+            reachable (Term.rand operator) (operand :: rest) eta_short
+          else
+            next rest eta_short
+        end
+  in
+    reachable root [] false
+  end
+
 fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
   let
-    fun budget_total work =
-      SOME (work ())
-      handle Portable.Interrupt => raise Portable.Interrupt
-           | e as searchBudget.LimitReached _ => raise e
-           | _ => NONE
     (* The conditions are matched one at a time against the context, each
        under what the earlier matches have already named: the rewrite's
        premises share the variables the traversal left open, which is how
@@ -96,105 +126,90 @@ fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
       in
         search conditions []
       end
-    (* The closure arrives as one existential over the premises'
-       conjunction, but the traversal simplifies a condition before this
-       pass is offered it, and a simpset that miniscopes -- [ex_simps],
-       ambient in Isabelle and declared here -- leaves the quantifier over
-       the one conjunct its variable occurs in.  The witnesses are the
-       same and the assumptions that name them are the same; only where
-       the quantifier sits has moved, so the condition is read with the
-       existentials pulled back out.  A conjunction is all there is to
-       undo: [QUANTIFY_CONDITIONS] closes over the premises' conjunction,
-       and these two laws are the readings of it the declaration can
-       reshape. *)
-    val pull_laws =
-      map (Conv.HO_REWR_CONV o Drule.SPEC_ALL o Conv.GSYM)
-        [boolTheory.LEFT_EXISTS_AND_THM, boolTheory.RIGHT_EXISTS_AND_THM]
-    val pull_existentials =
-      Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV pull_laws))
-    val has_existential = Lib.can (HolKernel.find_term boolSyntax.is_exists)
+    fun prove_witness context_thms term =
+      let
+        val pulled_thm = pull_existentials term
+        val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
+        val (vars, body) = boolSyntax.strip_exists pulled
+        val _ =
+          if null vars then
+            raise ERR "witness_proof" "no contextual witness"
+          else ()
+        val fixed =
+          HOLset.difference
+            (Term.FVL [pulled] Term.empty_tmset,
+             HOLset.fromList Term.compare vars)
+        val fixed_types = Term.type_vars_in_term pulled
+        val assumptions = map Thm.concl context_thms
+        fun attempt conditions =
+          witnesses assumptions fixed fixed_types conditions
+        (* Prefer one context theorem for the whole condition.
+           Otherwise reconstruct its conjuncts from their own
+           supporting theorems. *)
+        val matched =
+          case attempt [body] of
+              NONE => attempt (boolSyntax.strip_conj body)
+            | found => found
+        val instance =
+          case matched of
+              SOME instance => instance
+            | NONE => raise ERR "witness_proof" "no contextual witness"
+        fun find_context proposition =
+          let
+            fun scan [] = NONE
+              | scan (theorem :: rest) =
+                  (charge searchBudget.Candidate;
+                   if Term.aconv (Thm.concl theorem) proposition then
+                     SOME theorem
+                   else scan rest)
+          in scan context_thms end
+        fun contextual proposition =
+          case find_context proposition of
+              SOME theorem => theorem
+            | NONE =>
+                raise ERR "witness_proof"
+                  "matched condition has no context theorem"
+        val _ = charge searchBudget.Normalization
+        val body' = Term.subst instance body
+        val body_thm =
+          case find_context body' of
+              SOME theorem => theorem
+            | NONE =>
+                (case map (contextual o Term.subst instance)
+                        (boolSyntax.strip_conj body) of
+                     [] =>
+                       raise ERR "witness_proof"
+                         "empty contextual condition"
+                   | theorem :: rest =>
+                       List.foldl
+                         (fn (next, combined) =>
+                           Thm.CONJ combined next)
+                         theorem rest)
+        fun introduce quantified [] theorem = theorem
+          | introduce quantified (witness :: rest) theorem =
+              let
+                val (variable, inner) =
+                  boolSyntax.dest_exists quantified
+                val inner' =
+                  Term.subst
+                    [{redex = variable, residue = witness}] inner
+              in
+                Thm.EXISTS (quantified, witness)
+                  (introduce inner' rest theorem)
+              end
+        val _ = charge searchBudget.Application
+        val witnesses = map (Term.subst instance) vars
+        val introduced = introduce pulled witnesses body_thm
+      in
+        Thm.EQ_MP (Thm.SYM pulled_thm) introduced
+      end
     fun witness_proof context_thms term =
-      budget_total
-        (fn () =>
-           let
-             val _ = charge searchBudget.Normalization
-             val pulled_thm =
-               if has_existential term then pull_existentials term
-               else Thm.REFL term
-             val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
-             val (vars, body) = boolSyntax.strip_exists pulled
-             val _ =
-               if null vars then
-                 raise ERR "witness_proof" "no contextual witness"
-               else ()
-             val fixed =
-               HOLset.difference
-                 (Term.FVL [pulled] Term.empty_tmset,
-                  HOLset.fromList Term.compare vars)
-             val fixed_types = Term.type_vars_in_term pulled
-             val assumptions = map Thm.concl context_thms
-             fun attempt conditions =
-               witnesses assumptions fixed fixed_types conditions
-             (* Prefer one context theorem for the whole condition.
-                Otherwise reconstruct its conjuncts from their own
-                supporting theorems. *)
-             val matched =
-               case attempt [body] of
-                   NONE => attempt (boolSyntax.strip_conj body)
-                 | found => found
-             val instance =
-               case matched of
-                   SOME instance => instance
-                 | NONE => raise ERR "witness_proof" "no contextual witness"
-             fun find_context proposition =
-               let
-                 fun scan [] = NONE
-                   | scan (theorem :: rest) =
-                       (charge searchBudget.Candidate;
-                        if Term.aconv (Thm.concl theorem) proposition then
-                          SOME theorem
-                        else scan rest)
-               in scan context_thms end
-             fun contextual proposition =
-               case find_context proposition of
-                   SOME theorem => theorem
-                 | NONE =>
-                     raise ERR "witness_proof"
-                       "matched condition has no context theorem"
-             val _ = charge searchBudget.Normalization
-             val body' = Term.subst instance body
-             val body_thm =
-               case find_context body' of
-                   SOME theorem => theorem
-                 | NONE =>
-                     (case map (contextual o Term.subst instance)
-                             (boolSyntax.strip_conj body) of
-                          [] =>
-                            raise ERR "witness_proof"
-                              "empty contextual condition"
-                        | theorem :: rest =>
-                            List.foldl
-                              (fn (next, combined) =>
-                                Thm.CONJ combined next)
-                              theorem rest)
-             fun introduce quantified [] theorem = theorem
-               | introduce quantified (witness :: rest) theorem =
-                   let
-                     val (variable, inner) =
-                       boolSyntax.dest_exists quantified
-                     val inner' =
-                       Term.subst
-                         [{redex = variable, residue = witness}] inner
-                   in
-                     Thm.EXISTS (quantified, witness)
-                       (introduce inner' rest theorem)
-                   end
-             val _ = charge searchBudget.Application
-             val witnesses = map (Term.subst instance) vars
-             val introduced = introduce pulled witnesses body_thm
-           in
-             Thm.EQ_MP (Thm.SYM pulled_thm) introduced
-           end)
+      (charge searchBudget.Normalization;
+       if has_witness_quantifier term then SOME (prove_witness context_thms term)
+       else NONE)
+      handle Portable.Interrupt => raise Portable.Interrupt
+           | e as searchBudget.LimitReached _ => raise e
+           | _ => NONE
   in
     fn ({recurse, context_thms, ...} : Traverse.simp_prover_ctxt) =>
       fn term =>

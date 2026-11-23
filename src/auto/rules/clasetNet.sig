@@ -17,6 +17,8 @@ sig
   val unifyMeasured :
     (unit -> unit) ->
     {q : term, qvars : term HOLset.set} -> 'a net -> 'a list
+  (* Treat every free variable of the query as schematic. *)
+  val unifyFreesMeasured : (unit -> unit) -> term -> 'a net -> 'a list
   val vfilter : ('a -> bool) -> 'a net -> 'a net
   val listItems : 'a net -> 'a list
 end

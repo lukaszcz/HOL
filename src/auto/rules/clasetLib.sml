@@ -377,7 +377,7 @@ fun distinct_pair {checkpoint, derive}
 
 (* A query at a type variable enumerates every datatype only when that
    variable is schematic ([flexible_type]); a rigid one matches none. *)
-fun distinct_candidates (meter as {checkpoint, ...}) distinct
+fun distinct_candidates_lazy (meter as {checkpoint, ...}) distinct
       {q, qvars, flexible_type} =
   case Lib.total boolSyntax.dest_eq q of
       NONE => []
@@ -385,31 +385,6 @@ fun distinct_candidates (meter as {checkpoint, ...}) distinct
       if aconv left right then []
       else
         let
-          fun candidates (_, entry as {source, ...} : distinct_entry) =
-            let
-              val constructors = #constructors source
-              val n = Vector.length constructors
-              fun positions tm =
-                let val head = fst (strip_comb tm)
-                in
-                  if is_var head andalso HOLset.member (qvars, head) then
-                    List.tabulate (n, Lib.I)
-                  else if is_const head then
-                    Vector.foldri
-                      (fn (k, c, rest) =>
-                         (checkpoint ();
-                          if same_const c head then k :: rest else rest))
-                      [] constructors
-                  else []
-                end
-              val ls = positions left
-              val rs = positions right
-            in
-              List.concat (map (fn i => List.mapPartial
-                (fn j => (checkpoint ();
-                  if i = j then NONE
-                  else SOME (distinct_pair meter entry (i, j)))) rs) ls)
-            end
           val ty = type_of left
           val entries =
             if Type.is_vartype ty then
@@ -423,9 +398,48 @@ fun distinct_candidates (meter as {checkpoint, ...}) distinct
                     NONE => []
                   | SOME entry => [(key, entry)]
               end
+          fun collect [] = []
+            | collect entries =
+              let
+                val left_head = fst (strip_comb left)
+                val right_head = fst (strip_comb right)
+                val metas =
+                  if is_var left_head orelse is_var right_head then qvars ()
+                  else Term.empty_tmset
+                fun candidates (_, entry as {source, ...} : distinct_entry) =
+                  let
+                    val constructors = #constructors source
+                    val n = Vector.length constructors
+                    fun positions head =
+                      if is_var head andalso HOLset.member (metas, head) then
+                        List.tabulate (n, Lib.I)
+                      else if is_const head then
+                        Vector.foldri
+                          (fn (k, c, rest) =>
+                             (checkpoint ();
+                              if same_const c head then k :: rest else rest))
+                          [] constructors
+                      else []
+                    val ls = positions left_head
+                    val rs = positions right_head
+                    fun pairs i =
+                      List.mapPartial
+                        (fn j => (checkpoint ();
+                          if i = j then NONE
+                          else SOME (distinct_pair meter entry (i, j)))) rs
+                  in
+                    List.concat (map pairs ls)
+                  end
+              in
+                List.concat (map candidates entries)
+              end
         in
-          List.concat (map candidates entries)
+          collect entries
         end
+
+fun distinct_candidates meter distinct {q, qvars, flexible_type} =
+  distinct_candidates_lazy meter distinct
+    {q = q, qvars = K qvars, flexible_type = flexible_type}
 
 fun distinct_brl ({tag = {weight, index}, rule, ...} : aentry) =
   ({weight = weight, index = 2 * index + 1},
@@ -603,8 +617,7 @@ fun match_elim_candidates (((_, enet), distinct) : claset_part) tm =
       {q = tm, qvars = Term.empty_tmset, flexible_type = K true}))
 
 fun unify_candidates checkpoint net tm =
-  clasetNet.unifyMeasured checkpoint
-    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset} net
+  clasetNet.unifyFreesMeasured checkpoint tm net
 
 fun unify_intro_candidates_measured checkpoint
       (((inet, _), _) : claset_part) tm =
@@ -637,6 +650,35 @@ fun unify_intro_candidates part =
 
 fun unify_elim_candidates part =
   unify_elim_candidates_measured listUtil.no_checkpoint part
+
+fun classical_candidates {unify, derive, query_metas, flexible_type}
+      (((inet, enet), distinct) : claset_part) {conclusion, assumptions} =
+  let
+    val checkpoint = listUtil.no_checkpoint
+    val lookup =
+      if unify then unify_candidates checkpoint
+      else fn net => fn q => clasetNet.match q net
+    val has_distinct = not (Redblackmap.isEmpty distinct)
+    val meter = {checkpoint = checkpoint,
+                 derive = if unify then derive else checkpoint}
+    val metas = if unify then query_metas else K Term.empty_tmset
+    val flexible_type = if unify then flexible_type else K true
+    fun lookup_elim q =
+      let val static = lookup enet q
+      in
+        if not has_distinct then static
+        else
+          static @ map distinct_brl
+            (distinct_candidates_lazy meter distinct
+              {q = q, qvars = fn () => metas q, flexible_type = flexible_type})
+      end
+    val intros = List.concat (map (lookup inet) conclusion)
+    val elims = List.concat (map (List.concat o map lookup_elim) assumptions)
+  in
+    (* Each tag identifies one indexed rule, even if several spellings
+       retrieve it. A single sort gives the same rule order. *)
+    candidate_order (intros @ elims)
+  end
 
 fun unsafe_percent ({prio, ...} : rulespec) =
   Option.getOpt (prio, 50)

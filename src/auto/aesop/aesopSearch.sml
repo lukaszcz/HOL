@@ -234,13 +234,14 @@ fun same_goal_context
    clasetGoal.equal
      (aesopTree.child_node previous,
       aesopTree.child_node goal)) andalso
-  ListPair.allEq (fn (left, right) => Term.aconv left right)
-    (#forwarded previous, #forwarded goal)
+  (Portable.pointer_eq (#forwarded previous, #forwarded goal) orelse
+   ListPair.allEq (fn (left, right) => Term.aconv left right)
+     (#forwarded previous, #forwarded goal))
 
 type safe_scan =
   {goal : aesopTree.goal,
    node : clasetGoal.node,
-   resume_key : (int * (string * aesopRule.rphase * bool) list) option,
+   resume_key : (int * aesopRule.rule list) option,
    remaining_rules : aesopRule.rule list ref,
    current :
      (aesopRule.rule *
@@ -254,10 +255,15 @@ type safe_scan_cache =
 fun empty_safe_scan_cache () : safe_scan_cache =
   {scans = ref [], active = ref false}
 
-fun safe_rule_signature rules =
-  map
-    (fn ({name, phase, once, ...} : aesopRule.rule) =>
-      (name, phase, once)) rules
+fun same_safe_rules (previous, rules) =
+  let
+    fun same (left : aesopRule.rule, right : aesopRule.rule) =
+      #name left = #name right andalso #phase left = #phase right andalso
+      #once left = #once right
+  in
+    Portable.pointer_eq (previous, rules) orelse
+    ListPair.allEq same (previous, rules)
+  end
 
 fun new_safe_scan goal rules resume_key : safe_scan =
   {goal = goal, node = aesopTree.child_node goal,
@@ -282,19 +288,22 @@ fun safe_phase ctxt level budget (cache : safe_scan_cache)
           NONE => new_safe_scan goal rules NONE
         | SOME _ =>
             let
-              val resume_key =
-                SOME (aesopRule.registry_generation (),
-                      safe_rule_signature rules)
+              val generation = aesopRule.registry_generation ()
               fun matches
-                    ({goal = previous, resume_key = previous_key, ...} :
-                     safe_scan) =
-                same_goal_context previous goal andalso
-                previous_key = resume_key
+                    ({goal = previous,
+                      resume_key = SOME (previous_generation, previous_rules),
+                      ...} : safe_scan) =
+                    previous_generation = generation andalso
+                    same_goal_context previous goal andalso
+                    same_safe_rules (previous_rules, rules)
+                | matches _ = false
             in
               case List.find matches (!(#scans cache)) of
                   SOME saved => saved
                 | NONE =>
-                    let val fresh = new_safe_scan goal rules resume_key
+                    let
+                      val fresh =
+                        new_safe_scan goal rules (SOME (generation, rules))
                     in
                       #scans cache :=
                         fresh ::

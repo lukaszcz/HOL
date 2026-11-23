@@ -393,44 +393,28 @@ fun dedup_tagged [] = []
         entry :: dedup_tagged (drop_same rest)
       end
 
-fun candidates derive store mode part
-      ({conclusion, assumptions} : clasetGoal.spellings) =
-  let
-    val (intro_lookup, elim_lookup) =
-      case mode of
-          clasetUnify.Match =>
-            (clasetLib.match_intro_candidates,
-             clasetLib.match_elim_candidates)
-        | clasetUnify.Unify =>
-            (clasetLib.unify_intro_candidates,
-             fn part => fn q =>
-               clasetLib.unify_elim_candidates_with
-                 {checkpoint = listUtil.no_checkpoint, derive = derive}
-                 part q {q = q, qvars = HOLset.fromList Term.compare
-                   (clasetMeta.metas_of store q),
-                   flexible_type = clasetMeta.is_tymeta})
-    (* The index is keyed on the rules as stated, and [x IN P] and [P x] are
-       one proposition indexed two ways: a rule stated about [IN] sits under
-       that constant, where an applied goal atom never reaches it, and a rule
-       stated applied sits under its own head, where a membership goal atom
-       never reaches it.  So each lookup is made in both spellings as well as
-       as posed; the unifier decides what actually matches, and
-       [candidate_order] sorts the answers together.  A rule that mixes the
-       two spellings in one conclusion is still reached only as it is
-       written.
+(* The index is keyed on the rules as stated, and [x IN P] and [P x] are
+   one proposition indexed two ways: a rule stated about [IN] sits under
+   that constant, where an applied goal atom never reaches it, and a rule
+   stated applied sits under its own head, where a membership goal atom
+   never reaches it.  So each lookup is made in both spellings as well as
+   as posed; the unifier decides what actually matches, and
+   [candidate_order] sorts the answers together.  A rule that mixes the
+   two spellings in one conclusion is still reached only as it is
+   written.
 
-       The crossing answers only where the spelling is forced, an
-       application of a variable, so over a compound set -- [x IN f p]
-       against [f p x] -- it leaves both forms alone and neither of them
-       reaches the other.  [crossed_conv] and [applied_conv] are the two
-       total spellings; asking for both is what makes "both spellings" true
-       there.  [clasetGoal.lookup_spellings] supplies the forms. *)
-    fun lookup which forms = List.concat (map (which part) forms)
-    val intros = lookup intro_lookup conclusion
-    val elims = List.concat (map (lookup elim_lookup) assumptions)
-  in
-    dedup_tagged (clasetRules.candidate_order (intros @ elims))
-  end
+   The crossing answers only where the spelling is forced, an
+   application of a variable, so over a compound set -- [x IN f p]
+   against [f p x] -- it leaves both forms alone and neither of them
+   reaches the other.  [crossed_conv] and [applied_conv] are the two
+   total spellings; asking for both is what makes "both spellings" true
+   there.  [clasetGoal.lookup_spellings] supplies the forms. *)
+fun candidates derive store mode part forms =
+  dedup_tagged
+    (clasetLib.classical_candidates
+      {unify = mode = clasetUnify.Unify, derive = derive,
+       query_metas = HOLset.fromList Term.compare o clasetMeta.metas_of store,
+       flexible_type = clasetMeta.is_tymeta} part forms)
 
 fun type_variables th =
   HOLset.listItems
@@ -1101,7 +1085,7 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
   end
 
 (* [derive] runs before each lazy constructor pair a Unify lookup derives
-   afresh; see [clasetLib.unify_elim_candidates_with]. *)
+   afresh; see [clasetLib.classical_candidates]. *)
 fun rule_candidates derive mode part (node, pos) =
   candidates derive (clasetGoal.store node) mode part
     (clasetGoal.lookup_spellings node pos)

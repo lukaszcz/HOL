@@ -716,6 +716,75 @@ val _ =
 
 val _ =
   check
+    ("conditional witness matching follows nested conjunctions",
+     fn () =>
+       let
+         val condition =
+           ``((?n:num. witness_p n) /\ witness_q) /\ witness_r``
+         val assumption =
+           ``(witness_p (3:num) /\ witness_q) /\ witness_r``
+         val result =
+           clasimpLib.witness_subgoaler
+             {stack = [], context_thms = [Thm.ASSUME assumption],
+              recurse = Thm.REFL} condition
+       in
+         Term.aconv (Thm.concl result)
+           (boolSyntax.mk_eq (condition, boolSyntax.T))
+       end)
+
+val _ =
+  check
+    ("eta-short applications alone do not trigger witness matching",
+     fn () =>
+       let
+         val condition =
+           ``($? (witness_p : num -> bool)) /\ ($? (witness_q : num -> bool))``
+         val context =
+           {stack = [], recurse = Thm.REFL,
+            context_thms =
+              [Thm.ASSUME ``witness_p (3:num) /\ witness_q (4:num)``]}
+         val budget = searchBudget.unbounded ()
+         val result =
+           clasimpLib.witness_subgoaler_budgeted budget context condition
+         val usage = searchBudget.usage budget
+       in
+         not (Lib.can (HolKernel.find_term boolSyntax.is_exists) condition)
+         andalso Term.aconv (Thm.concl result)
+           (boolSyntax.mk_eq (condition, condition))
+         andalso #normalization usage = 1 andalso #candidates usage = 0
+       end)
+
+val _ =
+  check
+    ("opaque conditional witnesses retain the normalization charge",
+     fn () =>
+       let
+         val condition = ``witness_q \/ ((?n:num. witness_p n) /\ witness_r)``
+         val context = {stack = [], context_thms = [], recurse = Thm.REFL}
+         val used = searchBudget.unbounded ()
+         val zero =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+         val result =
+           clasimpLib.witness_subgoaler_budgeted used context condition
+         val usage = searchBudget.usage used
+       in
+         Term.aconv (Thm.concl result)
+           (boolSyntax.mk_eq (condition, condition)) andalso
+         #normalization usage = 1 andalso #candidates usage = 0 andalso
+         #applications usage = 0 andalso
+         ((ignore
+             (clasimpLib.witness_subgoaler_budgeted zero context condition);
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Normalization, usage) =>
+                   #normalization usage = 0
+               | _ => false)
+       end)
+
+val _ =
+  check
     ("witness matching charges candidates inside one condition",
      fn () =>
        let

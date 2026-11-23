@@ -1000,10 +1000,12 @@ fun select_analogues goal statements =
       statements
   end
 
+fun current_simpset_statements () =
+  ambient_simpset_statements
+    (clasimpLib.clasimp_ss (), !definitional_heads)
+
 fun simpset_analogues goal =
-  select_analogues goal
-    (ambient_simpset_statements
-      (clasimpLib.clasimp_ss (), !definitional_heads))
+  select_analogues goal (current_simpset_statements ())
 
 fun named_rewrite theorem =
   map
@@ -1102,14 +1104,7 @@ fun prepare_goal recipe
           (clasetLib.the_claset (), !definitional_heads))
     val candidates =
       ambient @ List.concat (map named_rewrite (simpset_analogues goal))
-    fun add_exclusion (candidate : exclusion, exclusions) =
-      if List.exists (equal (#name candidate) o #name) exclusions then
-        exclusions
-      else
-        exclusions @ [candidate]
-    (* Every exclusion is derived: the fold starts from nothing, so an
-       entry cannot seed the list with a name of its own choosing. *)
-    val exclusions = List.foldl add_exclusion [] candidates
+    val exclusions = listUtil.distinct_by String.compare #name candidates
   in
     {id = id, goal = goal, source_method = source_method,
      recipe = recipe, excl = exclusions,
@@ -1892,19 +1887,24 @@ fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
     val base_names = map #name excl
     fun supplied_is_analogue ({theorem, ...} : exclusion) =
       theorem_is_goal goal theorem
-    fun rewrite_is_unexcluded theorem =
-      case DB.revlookup theorem of
-          [] => false
-        | locations =>
-            List.exists
-              (fn location =>
-                not (List.exists (equal (location_name location)) base_names))
-              locations
+    fun has_remaining_rewrite () =
+      let
+        val statements = current_simpset_statements ()
+        val compare = compare_with_goal goal
+        fun unexcluded (theorem, statement) =
+          compare statement andalso
+          List.exists
+            (fn location =>
+              not (List.exists (equal (location_name location)) base_names))
+            (DB.revlookup theorem)
+      in
+        List.exists unexcluded statements
+      end
   in
     List.all supplied_is_analogue excl andalso
     not (has_remaining_claset_analogue claset goal excl)
     andalso
-    not (List.exists rewrite_is_unexcluded (simpset_analogues goal))
+    not (has_remaining_rewrite ())
   end
 
 fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =

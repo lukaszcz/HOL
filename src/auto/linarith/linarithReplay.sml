@@ -151,13 +151,10 @@ fun lifts visited theorem =
       (linarithData.derived_injections ())
   end
 
-fun same_conclusion theorem1 theorem2 =
-  Term.aconv (Thm.concl theorem1) (Thm.concl theorem2)
-
-(* Breadth-first, because try_add_pairs takes the first pair that adds
-   and so depends on this order: the theorem itself, then its lifts,
-   then theirs.  Each queued theorem also carries the carriers already
-   visited on its path.  An injection cycle may return to an earlier
+(* List lifts breadth-first, because replay takes the first pair that
+   adds: first the direct lifts, then their lifts. Each queued theorem
+   also carries the carriers visited on its path. An injection cycle
+   may return to an earlier
    carrier with a newly nested conclusion, so conclusion equality alone
    cannot close it.  The carrier-simple paths retain conversions between
    sibling carriers through their common source and are bounded by the
@@ -166,18 +163,26 @@ fun same_conclusion theorem1 theorem2 =
    The queue is kept as a front list and a reversed back list, and the
    result is accumulated reversed, so neither the enqueueing nor the
    appending walks what it has already built. *)
-fun conversion_closure theorem =
+fun conversion_lifts theorem =
   let
-    fun explore ([], []) found = List.rev found
-      | explore ([], back) found = explore (List.rev back, []) found
-      | explore ((current, visited) :: front, back) found =
-          if List.exists (same_conclusion current) found then
-            explore (front, back) found
-          else
-            explore (front, List.revAppend (lifts visited current, back))
-              (current :: found)
+    fun explore ([], []) _ found = List.rev found
+      | explore ([], back) seen found =
+          explore (List.rev back, []) seen found
+      | explore ((current, visited) :: front, back) seen found =
+          let val conclusion = Thm.concl current
+          in
+            if Termtab.defined seen conclusion then
+              explore (front, back) seen found
+            else
+              explore (front, List.revAppend (lifts visited current, back))
+                (Termtab.insert_set conclusion seen) (current :: found)
+          end
+    val conclusion = Thm.concl theorem
   in
-    explore ([(theorem, [relation_carrier (Thm.concl theorem)])], []) []
+    case lifts [relation_carrier conclusion] theorem of
+        [] => []
+      | direct =>
+          explore (direct, []) (Termtab.insert_set conclusion Termtab.empty) []
   end
 
 (* The relation's operator constant, read off the first subterm of the
@@ -234,20 +239,19 @@ fun add_direct_raw instance theorem1 theorem2 =
 fun add_direct theorem1 theorem2 =
   let
     val instance = instance_of_thm theorem1
-    val equality1 =
-      boolSyntax.is_eq (relation_body (Thm.concl theorem1))
-    val equality2 =
-      boolSyntax.is_eq (relation_body (Thm.concl theorem2))
+    fun is_equality theorem =
+      boolSyntax.is_eq (relation_body (Thm.concl theorem))
   in
     case add_direct_raw instance theorem1 theorem2 of
         SOME theorem => SOME theorem
       | NONE =>
-          if equality1 andalso equality2 then
-            SOME (add_equalities instance theorem1 theorem2)
-          else
-            add_direct_raw instance
-              (equality_as_le instance theorem1)
-              (equality_as_le instance theorem2)
+          (case (is_equality theorem1, is_equality theorem2) of
+               (true, true) => SOME (add_equalities instance theorem1 theorem2)
+             | (false, false) => NONE
+             | _ =>
+                 add_direct_raw instance
+                   (equality_as_le instance theorem1)
+                   (equality_as_le instance theorem2))
   end
   handle HOL_ERR _ => NONE
 
@@ -269,11 +273,18 @@ fun add_thms level theorem1 theorem2 =
   case add_direct theorem1 theorem2 of
       SOME theorem => theorem
     | NONE =>
-        (case try_add_pairs
-                (conversion_closure theorem1)
-                (conversion_closure theorem2) of
-             SOME theorem => theorem
-           | NONE => add_failure level theorem1 theorem2)
+        let
+          val left = conversion_lifts theorem1
+          val right = conversion_lifts theorem2
+        in
+          (* The original pair has already failed. *)
+          case try_add theorem1 right of
+              SOME theorem => theorem
+            | NONE =>
+                (case try_add_pairs left (theorem2 :: right) of
+                     SOME theorem => theorem
+                   | NONE => add_failure level theorem1 theorem2)
+        end
 
 (* The multiplier is a Fourier--Motzkin coefficient -- a product of lcms
    -- so it is unbounded, and n - 1 additions is too many.  Double

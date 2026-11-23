@@ -108,19 +108,20 @@ fun expand work (context : orderData.context) facts =
     (List.rev edges, List.rev equalities, List.rev distinctions)
   end
 
-fun within_node_limit maximum edges =
+fun bounded_nodes maximum initial edges =
   let
     fun add tm (state as (count, seen)) =
       if HOLset.member (seen, tm) then state
       else (count + 1, HOLset.add (seen, tm))
     fun scan (state as (count, _)) edges =
-      count <= maximum andalso
-      (case edges of
-           [] => true
-         | (e : edge) :: rest =>
-             scan (add (#target e) (add (#source e) state)) rest)
+      if count > maximum then NONE
+      else
+        case edges of
+            [] => SOME state
+          | (e : edge) :: rest =>
+              scan (add (#target e) (add (#source e) state)) rest
   in
-    scan (0, HOLset.empty Term.compare) edges
+    scan initial edges
   end
 
 datatype reachability =
@@ -487,12 +488,6 @@ fun close work (context : orderData.context) (edges, equalities) distinctions =
     search work one distinctions
   end
 
-fun bounded_graph (work : work) (parts as (edges, _, _)) =
-  case #max_nodes work of
-      SOME maximum =>
-        if within_node_limit maximum edges then SOME parts else NONE
-    | NONE => SOME parts
-
 fun refute_graph work context (edges, equalities, distinctions) =
   close work context (edges, equalities) distinctions
 
@@ -555,18 +550,25 @@ and refute_equation work context
    goal that is already a negation is discharged rather than doubly
    negated, so [~R x y] is a goal this decides and not an atom it fails
    to read. *)
-fun attempt work context theorems term =
+fun attempt (work : work) context theorems term =
   let
     val _ = normalization work
     val equation = orderData.reduce context term
     val target = rhs (concl equation)
     val read = orderData.facts_of (#meter work) context
     val supplied = List.concat (List.map read theorems)
+    val parts as (edges, equalities, distinctions) =
+      expand work context supplied
+    val initial_nodes = (0, HOLset.empty Term.compare)
+    val nodes =
+      case #max_nodes work of
+          SOME maximum => bounded_nodes maximum initial_nodes edges
+        | NONE => SOME initial_nodes
     fun carry theorem = EQ_MP (SYM equation) theorem
   in
-    case bounded_graph work (expand work context supplied) of
+    case nodes of
         NONE => NONE
-      | SOME parts =>
+      | SOME nodes =>
           (case Option.mapPartial (prove_literal work context parts)
                   (orderData.literal_of_term context target) of
                SOME theorem => SOME (carry theorem)
@@ -582,11 +584,9 @@ fun attempt work context theorems term =
                      case #max_nodes work of
                          (* Keep the order of charges in the metered path. *)
                          NONE =>
-                           bounded_graph work
-                             (expand work context (negated @ supplied))
-                       | SOME _ =>
+                           SOME (expand work context (negated @ supplied))
+                       | SOME maximum =>
                            let
-                             val (edges, equalities, distinctions) = parts
                              val (extra_edges, extra_equalities,
                                   extra_distinctions) =
                                expand work context negated
@@ -595,8 +595,8 @@ fun attempt work context theorems term =
                                 extra_equalities @ equalities,
                                 extra_distinctions @ distinctions)
                            in
-                             if null extra_edges then SOME extended
-                             else bounded_graph work extended
+                             Option.map (fn _ => extended)
+                               (bounded_nodes maximum nodes extra_edges)
                            end
                  in
                    Option.map (carry o restore)
