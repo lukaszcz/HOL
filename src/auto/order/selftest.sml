@@ -134,6 +134,31 @@ val _ =
 
 val _ =
   check
+    ("an undecided strict order goal leaves its weak chain unproved",
+     fn () =>
+       let
+         val strict =
+           Term.mk_comb
+             (Term.prim_mk_const {Thy = "relation", Name = "STRORD"},
+              long_order_relation)
+         val facts = List.take (long_order_facts, 41)
+         val first = hd long_order_nodes
+         fun refused last =
+           let
+             val target = Term.list_mk_comb
+               (strict, [first, List.nth (long_order_nodes, last)])
+           in
+             (ignore (orderSolve.prove_with facts target); false)
+             handle Feedback.HOL_ERR _ => true
+           end
+         val (short_refused, short_work) = count_primitives refused 1
+         val (long_refused, long_work) = count_primitives refused 40
+       in
+         short_refused andalso long_refused andalso long_work <= short_work
+       end)
+
+val _ =
+  check
     ("repeated distinction checks use the first equality in either direction",
      fn () =>
        let

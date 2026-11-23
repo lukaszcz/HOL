@@ -1548,11 +1548,51 @@ val _ =
                 (benchLib.set_definitional_context
                    [parityTranslationTheory.source_lexord_def];
                  has_exclusion () andalso
+                 (benchLib.set_definitional_context
+                    [Thm.REFL ``source_lexord R (xs:'a list) ys``];
+                  not (has_exclusion ())) andalso
+                 (benchLib.set_definitional_context
+                    [parityTranslationTheory.source_lexord_def];
+                  has_exclusion ()) andalso
                  not (clasetLib.with_claset clasetLib.empty_cs
                    has_exclusion ()) andalso
                  has_exclusion ()))
            in
              clasetLib.with_claset claset check_sources ()
+           end))
+
+val _ =
+  check
+    ("ambient citation expansions follow implicit rewrite changes",
+     fn () =>
+       without_definitions
+         (fn () =>
+           let
+             val wrapped = ``source_lexord R (xs:'a list) ys``
+             val goal = ``LLEX R (xs:'a list) ys``
+             val citation = boolSyntax.mk_cond (boolSyntax.T, wrapped, p)
+             val name = "unit$conditional_ambient"
+             val claset = clasetLib.add_rule analogue_spec
+               (name, Thm.ASSUME citation) clasetLib.empty_cs
+             val entry : benchLib.corpus_goal =
+               {id = "unit-conditional-ambient", goal = goal,
+                source_method = "simp", recipe = #recipe solved_goal,
+                excl = [], provenance = provenance, representative = true}
+             val saved = Rewrite.implicit_rewrites ()
+             fun has_exclusion rewrites =
+               (Rewrite.set_implicit_rewrites rewrites;
+                List.exists (equal name o #name) (#excl (prepared entry)))
+             fun check_rewrites () =
+               (benchLib.set_definitional_context
+                  [parityTranslationTheory.source_lexord_def];
+                not (has_exclusion Rewrite.empty_rewrites) andalso
+                has_exclusion Rewrite.bool_rewrites andalso
+                not (has_exclusion Rewrite.empty_rewrites))
+             val result =
+               clasetLib.with_claset claset check_rewrites ()
+               handle exn => (Rewrite.set_implicit_rewrites saved; raise exn)
+           in
+             Rewrite.set_implicit_rewrites saved; result
            end))
 
 val _ =

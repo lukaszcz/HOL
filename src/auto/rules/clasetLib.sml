@@ -1423,13 +1423,12 @@ type marker_info =
   {name : string, spec : rulespec option, payload : marker_payload}
 
 type marker_registration =
-  {name : string, spec : rulespec option,
-   dest : thm -> marker_payload option}
+  {spec : rulespec option, dest : thm -> marker_payload option}
 
-fun theorem_marker name spec dest : marker_registration =
-  {name=name, spec=spec, dest=Option.map Theorem o dest}
+fun theorem_marker name spec dest : string * marker_registration =
+  (name, {spec = spec, dest = Option.map Theorem o dest})
 
-val marker_registry =
+val marker_registry = Symtab.make
   [theorem_marker "SIntro" (SOME sintro_spec) destSIntro,
    theorem_marker "Intro" (SOME intro_spec) destIntro,
    theorem_marker "SElim" (SOME selim_spec) destSElim,
@@ -1441,15 +1440,29 @@ val marker_registry =
    theorem_marker "Norm" (SOME norm_spec) destNorm,
    theorem_marker "Forward" (SOME forward_spec) destForward,
    theorem_marker "SForward" (SOME sforward_spec) destSForward,
-   {name="Del", spec=NONE, dest=Option.map DeleteName o destDel}]
+   ("Del", {spec = NONE, dest = Option.map DeleteName o destDel})]
 
 fun marker_of theorem =
-  Lib.get_first
-    (fn {name,spec,dest} =>
-      Option.map
-        (fn payload => {name=name, spec=spec, payload=payload})
-        (dest theorem))
-    marker_registry
+  let val conclusion = concl theorem
+  in
+    if not (is_comb conclusion) then NONE
+    else
+      let val head = rator conclusion
+      in
+        if not (is_const head) then NONE
+        else
+          case dest_thy_const head of
+              {Thy = "clasetMarker", Name = name, ...} =>
+                (case Symtab.lookup marker_registry name of
+                     NONE => NONE
+                   | SOME {spec, dest} =>
+                       Option.map
+                         (fn payload =>
+                           {name = name, spec = spec, payload = payload})
+                         (dest theorem))
+            | _ => NONE
+      end
+  end
 
 val marker_prefix = "__claset_marker_"
 

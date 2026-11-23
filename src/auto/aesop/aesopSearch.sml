@@ -121,9 +121,11 @@ fun admissible_forward goal rule
           else SOME (SOME added)
 
 fun copies_in tree ids =
-  length
-    (List.filter
-      (fn id => Option.isSome (#copy_of (aesopTree.goal tree id))) ids)
+  List.foldl
+    (fn (id, count) =>
+      if Option.isSome (#copy_of (aesopTree.goal tree id)) then count + 1
+      else count)
+    0 ids
 
 fun trace_install level data result =
   (traceUtil.trace level 2
@@ -540,19 +542,20 @@ fun proved_ancestor tree (goal : aesopTree.goal) =
 
 fun frontier_goal tree (goal : aesopTree.goal) =
   #safe_done goal andalso
-  null (aesopTree.child_rapps tree (#id goal)) andalso
-  not (proved_ancestor tree goal) andalso
+  not (aesopTree.has_child_rapps tree (#id goal)) andalso
   (case #norm goal of
        aesopTree.NormProved _ => false
-     | _ => true)
+     | _ => not (proved_ancestor tree goal))
 
 fun safe_frontier tree =
-  map
+  List.mapPartial
     (fn goal =>
-      (#id goal,
-       aesopTree.cgoal_under (aesopTree.active_store goal)
-         (aesopTree.active_cgoal goal)))
-    (List.filter (frontier_goal tree) (aesopTree.goals tree))
+      if frontier_goal tree goal then
+        SOME (#id goal,
+              aesopTree.cgoal_under (aesopTree.active_store goal)
+                (aesopTree.active_cgoal goal))
+      else NONE)
+    (aesopTree.goals tree)
 
 fun unsafe_percent ({phase = aesopRule.RUnsafe percent, ...} :
                     aesopRule.rule) =

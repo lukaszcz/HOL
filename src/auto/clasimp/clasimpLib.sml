@@ -205,7 +205,8 @@ fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
       end
     fun witness_proof context_thms term =
       (charge searchBudget.Normalization;
-       if has_witness_quantifier term then SOME (prove_witness context_thms term)
+       if has_witness_quantifier term then
+         SOME (prove_witness context_thms term)
        else NONE)
       handle Portable.Interrupt => raise Portable.Interrupt
            | e as searchBudget.LimitReached _ => raise e

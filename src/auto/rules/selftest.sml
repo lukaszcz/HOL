@@ -3501,6 +3501,24 @@ val _ =
 
 val _ =
   test
+    ("Del dispatch accepts a concrete type and rejects a non-variable",
+     fn () =>
+       let
+         val name = "claset-marker-typed"
+         val base = add_sintros [(name, boolTheory.AND_INTRO_THM)] empty_cs
+         fun wrap term =
+           Drule.EQT_ELIM (Drule.ISPEC term clasetMarkerTheory.Del_def)
+         val marked = wrap (mk_var (name, bool))
+         val malformed = wrap boolSyntax.T
+         val (cs, rest) = process_claset_tags [malformed, marked] base
+       in
+         not (has_named_rule name cs) andalso
+         ListPair.allEq (fn (left, right) => same_thm left right)
+           (rest, [malformed])
+       end)
+
+val _ =
+  test
     ("claset markers receive contiguous lowest-unused names",
      fn () =>
        let

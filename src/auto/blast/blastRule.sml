@@ -1110,19 +1110,27 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
             in
               result
             end
-          fun weight_at_most_one ({weight, ...} : clasetRules.tag, _) =
-            weight <= 1
-          val (early, late) =
-            partitionMeasured checkpoint weight_at_most_one tagged
-          val early_rules = mapPartialMeasured checkpoint convert early
-          val late_rules = mapPartialMeasured checkpoint convert late
           val rules =
-            if safe then
-              appendMeasured checkpoint early_rules
-                (appendMeasured checkpoint
-                   (pseudoRulesMeasured checkpoint cache vars formula)
-                   late_rules)
-            else appendMeasured checkpoint early_rules late_rules
+            (* Candidates are sorted by weight. Unsafe rules have no
+               pseudo-rules to insert between weight classes. *)
+            if not measured andalso not safe then
+              List.mapPartial convert tagged
+            else
+              let
+                fun weight_at_most_one ({weight, ...} : clasetRules.tag, _) =
+                  weight <= 1
+                val (early, late) =
+                  partitionMeasured checkpoint weight_at_most_one tagged
+                val early_rules = mapPartialMeasured checkpoint convert early
+                val late_rules = mapPartialMeasured checkpoint convert late
+              in
+                if safe then
+                  appendMeasured checkpoint early_rules
+                    (appendMeasured checkpoint
+                       (pseudoRulesMeasured checkpoint cache vars formula)
+                       late_rules)
+                else appendMeasured checkpoint early_rules late_rules
+              end
           val _ = checkpoint ()
           val templates =
             copyRulesWith checkpoint measured

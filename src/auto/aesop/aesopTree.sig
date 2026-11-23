@@ -70,6 +70,7 @@ sig
   val rapp_count : tree -> int
 
   val child_rapps : tree -> gid -> rid list
+  val has_child_rapps : tree -> gid -> bool
   val independently_proved : tree -> goal -> bool
   val active_cgoal : goal -> cgoal
   val active_store : goal -> store

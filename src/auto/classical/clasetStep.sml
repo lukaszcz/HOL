@@ -88,6 +88,19 @@ fun numbered values =
     recurse 1 values
   end
 
+(* Scan failed occurrences in one pull and suspend only after a result. *)
+fun map_numbered_results try values =
+  let
+    fun next pos [] = seq.empty
+      | next pos (value :: rest) =
+          case try (pos, value) of
+              NONE => next (pos + 1) rest
+            | SOME result =>
+                seq.cons result (seq.delay (fn () => next (pos + 1) rest))
+  in
+    seq.delay (fn () => next 1 values)
+  end
+
 datatype direct =
   Direct of
     {kind : step_kind,
@@ -1002,11 +1015,10 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
       {terms : (term * term) list,
        types : (hol_type * hol_type) list}
 
-    fun effect_of direct : effect =
+    fun effect_of store
+        ({terms = created_terms, types = created_types} :
+           clasetUnify.rule_metas) : effect =
       let
-        val store = direct_store direct
-        val {terms = created_terms, types = created_types} =
-          direct_created direct
         val {terms, types} = clasetMeta.bindings store
         fun original_term (meta, _) =
           not (List.exists (clasetMeta.same_meta meta) created_terms)
@@ -1038,13 +1050,11 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
           Type.compare (left_value, right_value) = EQUAL)
         (#types left, #types right)
 
-    (* Existing assumptions are available in the arriving store.
-       Sibling results may be deduplicated only if their effects on
-       pre-existing metas agree; compare their conclusions in the common
-       parent store.  Share these normal forms on demand so an empty
-       sibling scan performs no normalization.  Hold a produced candidate
-       across a cutoff. *)
-    val seen = ref ([] : (term Portable.HOLSusp.susp * effect) list)
+    (* Compare conclusions in the parent store. Only matching conclusions
+       require comparing effects on pre-existing metas. Hold a produced
+       candidate across a cutoff. *)
+    val seen = ref
+      ([] : (term Portable.HOLSusp.susp * effect Portable.HOLSusp.susp) list)
     val candidate_pending = ref (NONE : (term * direct) option)
 
     fun already_assumed _ _ [] = false
@@ -1063,18 +1073,22 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
             (charge ();
              candidate_pending := NONE;
              let
-               val effect = effect_of direct
+               val store = direct_store direct
              in
-               if already_assumed (direct_store direct) added assumptions
+               if already_assumed store added assumptions
                then distinct ()
                else
                  let
+                   val created = direct_created direct
+                   val effect = Portable.HOLSusp.delay
+                     (fn () => effect_of store created)
                    val normalized = Portable.HOLSusp.delay
                      (fn () => normalize_term parent_store added)
                    fun duplicate (previous, prior_effect) =
                      aconv (Portable.HOLSusp.force normalized)
                        (Portable.HOLSusp.force previous) andalso
-                     same_effect effect prior_effect
+                     same_effect (Portable.HOLSusp.force effect)
+                       (Portable.HOLSusp.force prior_effect)
                  in
                    if List.exists duplicate (!seen) then distinct ()
                    else (seen := (normalized, effect) :: !seen; SOME direct)
@@ -1720,13 +1734,13 @@ fun unifying_assumption_in
       (asm_pos, nth1 asl asm_pos)
 
 fun unifying_assumption_results (node, pos) =
-  list_seq
+  seq.delay
     (fn () =>
       let
         val prepared = prepare_unifying_assumption node pos
       in
-        List.mapPartial (unifying_assumption_candidate prepared)
-          (numbered (#asl prepared))
+        map_numbered_results (unifying_assumption_candidate prepared)
+          (#asl prepared)
       end)
 
 fun unifying_assumption_results_at asm_pos (node, pos) =
@@ -1852,33 +1866,35 @@ fun unifying_contradiction_results_at positions (node, pos) =
         | SOME direct => [direct])
 
 fun unifying_contradiction_results (node, pos) =
-  list_seq
+  seq.delay
     (fn () =>
       let
         val prepared = prepare_unifying_contradiction node pos
         val {asl, w, params, store = initial_store} = prepared
-        val positioned = numbered asl
 
         fun major_alternatives (major_pos, major) =
           case prepare_contradiction_major
             {w = w, params = params, store = initial_store} major of
-                NONE => []
+                NONE => NONE
               | SOME {positive, created, store = major_store} =>
                   let
                     val normalized_positive =
                       normalize_term major_store positive
-                    val exact =
-                      List.find (fn (candidate_pos, candidate) =>
-                        candidate_pos <> major_pos andalso
-                        aconv normalized_positive
-                          (normalize_term major_store candidate))
-                        positioned
+                    (* An exact match takes precedence over all unifying
+                       matches, including those at earlier positions. *)
+                    fun find_exact _ [] = NONE
+                      | find_exact candidate_pos (candidate :: rest) =
+                          if candidate_pos <> major_pos andalso
+                             aconv normalized_positive
+                               (normalize_term major_store candidate)
+                          then SOME (candidate_pos, candidate)
+                          else find_exact (candidate_pos + 1) rest
                     val stores =
-                      case exact of
+                      case find_exact 1 asl of
                           SOME (positive_pos, candidate) =>
-                            [(positive_pos, candidate, major_store)]
+                            seq.result (positive_pos, candidate, major_store)
                         | NONE =>
-                            List.mapPartial
+                            map_numbered_results
                               (fn (positive_pos, candidate) =>
                                 if positive_pos = major_pos then NONE
                                 else
@@ -1887,7 +1903,7 @@ fun unifying_contradiction_results (node, pos) =
                                       (positive_pos, candidate, store))
                                     (clasetUnify.unify major_store
                                       unify_config (positive, candidate)))
-                              positioned
+                              asl
 
                     fun make (positive_pos, candidate, store) =
                       contradiction_direct
@@ -1896,10 +1912,10 @@ fun unifying_contradiction_results (node, pos) =
                          candidate = candidate, created = created}
                         (major_pos, positive_pos) store
                   in
-                    map make stores
+                    SOME (seq.map make stores)
                   end
       in
-        List.concat (map major_alternatives positioned)
+        seq.flatten (map_numbered_results major_alternatives asl)
       end)
 
 (* Only safe0 carries the lazy constructor pairs, so only its lookup

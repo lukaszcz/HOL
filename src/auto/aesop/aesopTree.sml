@@ -270,6 +270,8 @@ fun reverse_child_rapps (Tree {index, ...}) parent =
 
 fun child_rapps tree parent = List.rev (reverse_child_rapps tree parent)
 
+fun has_child_rapps tree parent = not (null (reverse_child_rapps tree parent))
+
 fun rapp_goals (Tree {index, ...}) parent =
   index_lookup (#goal_children index) parent
 

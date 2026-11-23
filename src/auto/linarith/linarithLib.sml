@@ -1454,8 +1454,15 @@ fun admissible theorem =
 fun envelope_of_facts facts =
   let
     val literals = List.concat (map CONJUNCTS facts)
+    val assumed = map (Thm.ASSUME o Thm.concl) literals
+    (* RCACHE remembers recent hypothesis summaries by context identity.
+       Reuse the combined list across questions under the same context. *)
+    val extend =
+      if null assumed then I
+      else memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
+        (fn context => context @ assumed)
   in
-    (literals, map (Thm.ASSUME o Thm.concl) literals)
+    (literals, extend)
   end
 
 (* The global [arith] set's envelope, keyed on the facts themselves,
@@ -1495,13 +1502,11 @@ fun fixed_envelope facts =
             in cell := SOME envelope; envelope end
   end
 
-(* with_envelope envelope prove runs prove on the assumed identities of
-   the envelope's facts, which gives them assumption-shaped cache
-   identities.  Their original proofs remove those identities from the
-   conversion result, which is the half of the envelope that is per
-   result rather than per fact list, and so is the half that stays here. *)
-fun with_envelope (source_facts, assumed) prove =
-  Lib.rev_itlist PROVE_HYP source_facts (prove assumed)
+(* Pass prove the function that appends the envelope's assumed facts
+   to its context. Discharge those assumptions from the result with
+   the original facts. *)
+fun with_envelope (source_facts, extend) prove =
+  Lib.rev_itlist PROVE_HYP source_facts (prove extend)
 
 (* cache_check is the same test the cached procedure opens with, so a
    term it rejects is declined before the source is read at all.  Asking
@@ -1511,7 +1516,7 @@ fun cached_with_source source context tm =
   if not (cache_check tm) then decline ""
   else
     with_envelope (source ())
-      (fn assumed => cached_prove (context @ assumed) tm)
+      (fn extend => cached_prove (extend context) tm)
 
 (* The ladder of decide, climbed with a cache question per rung: a
    conversion must answer T or F, so a term the first rung leaves
@@ -1586,18 +1591,19 @@ fun memo_budgeted_with_arith ctxt budget =
             if current_generation = !generation then ()
             else (Cache.clear_cache table;
                   generation := current_generation)
-          fun prove assumed =
+          fun prove extend =
             let
               val _ = deferred := NONE
               val _ =
                 searchBudget.charge budget searchBudget.Candidate
+              val combined = extend context
               val _ =
                 List.app
                   (fn _ =>
                     searchBudget.charge budget searchBudget.Candidate)
-                  (context @ assumed)
+                  combined
               val equation =
-                cached (context @ assumed) tm
+                cached combined tm
                 handle error =>
                   (case !deferred of
                        SOME original =>

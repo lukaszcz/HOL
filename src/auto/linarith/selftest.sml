@@ -4451,6 +4451,29 @@ val _ =
 
 val _ =
   check
+    ("a fixed-fact solver follows changes to its caller's context",
+     fn () =>
+       let
+         val solver = linarithLib.linarith_solver_with_facts [boolTheory.TRUTH]
+         val target = ``(fixed_context_x:num) <= fixed_context_y``
+         val context = [Thm.ASSUME target]
+         val other = [Thm.ASSUME ``(fixed_context_x:num) <= fixed_context_z``]
+         fun supported () =
+           let
+             val theorem = #solve solver
+               {stack = [], context_thms = context, recurse = Conv.NO_CONV}
+               target
+           in
+             Term.aconv (Thm.concl theorem) target andalso
+             Lib.list_eq Term.aconv (Thm.hyp theorem) [target]
+           end
+       in
+         supported () andalso not (solver_proves solver other target)
+         andalso supported ()
+       end)
+
+val _ =
+  check
     ("the context-free LINARITH_ext_ss and solver read the table per run",
      fn () =>
        let

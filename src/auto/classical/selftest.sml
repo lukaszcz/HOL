@@ -7799,6 +7799,37 @@ val _ =
 
 val _ =
   test
+    ("unifying assumption resumes in occurrence order",
+     fn () =>
+       let
+         val p = Term.mk_var ("assumption_order_p", Type.bool)
+         val q = Term.mk_var ("assumption_order_q", Type.bool)
+         val asl = [p, q, p]
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool} clasetMeta.empty
+         val node = clasetGoal.create
+           {goals = [{params = [], asl = asl, w = meta}],
+            store = store, level = 0}
+         val results = clasetStep.blast_assumption_step (node, 1)
+         fun check (position, expected) (result as (record, next)) =
+           case clasetStep.kind_of record of
+               clasetStep.Assumption selected =>
+                 let val instance = clasetMeta.norm (clasetGoal.store next) meta
+                 in selected = position andalso Term.aconv instance expected
+                    andalso valid_open_replay (asl, instance) result
+                 end
+             | _ => false
+       in
+         case seq.cases results of
+             SOME (first, rest) =>
+               check (1, p) first andalso
+               ListPair.allEq (fn (expected, result) => check expected result)
+                 ([(2, q), (3, p)], drain_exact rest)
+           | NONE => false
+       end)
+
+val _ =
+  test
     ("unifying contradiction prefers the first exact assumption",
      fn () =>
        let
@@ -7824,7 +7855,34 @@ val _ =
            end
        in
          positive_positions [meta, negative, p, p] = [3] andalso
-         positive_positions [meta, negative] = [1]
+         positive_positions [meta, negative, meta] = [1, 3]
+       end)
+
+val _ =
+  test
+    ("unifying contradiction resumes in negative occurrence order",
+     fn () =>
+       let
+         val p = Term.mk_var ("contradiction_order_p", Type.bool)
+         val q = Term.mk_var ("contradiction_order_q", Type.bool)
+         val r = Term.mk_var ("contradiction_order_r", Type.bool)
+         val goal = ([p, boolSyntax.mk_neg q, q, boolSyntax.mk_neg p, q], r)
+         val node = clasetGoal.from_goal goal
+         val results = clasetStep.blast_contradiction_step (node, 1)
+         fun check (negative, positive) (result as (record, _)) =
+           case clasetStep.kind_of record of
+               clasetStep.Contradiction (major, minor) =>
+                 major = negative andalso minor = positive andalso
+                 valid_open_replay goal result
+             | _ => false
+       in
+         case seq.cases results of
+             SOME (first, rest) =>
+               check (2, 3) first andalso
+               (case drain_exact rest of
+                    [second] => check (4, 1) second
+                  | _ => false)
+           | NONE => false
        end)
 
 (* Search work is reported to the shared meter, not just to the per-search

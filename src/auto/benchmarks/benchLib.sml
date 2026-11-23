@@ -467,7 +467,7 @@ type prepared_citation =
   {statement : term, head : term option,
    contentless : bool susp, whole : stripped_reading susp,
    readings : (premise_groups * citation_reading) seq.seq}
-type comparison_statement = prepared_citation * (unit -> term)
+type comparison_statement = prepared_citation * (unit -> prepared_citation)
 
 (* Each ambient sweep compares the same goal against many theorems. *)
 val goal_comparison :
@@ -500,9 +500,9 @@ fun mentions_constant_names heads term =
    unbounded rewrite could. *)
 val unfolding_passes = 5
 
-fun unfold term =
+fun unfold_with make_conversion rewrites term =
   let
-    val conversion = (!definitional_conversion) (Rewrite.implicit_rewrites ())
+    val conversion = make_conversion rewrites
     fun pass current 0 = current
       | pass current fuel =
           let
@@ -515,6 +515,9 @@ fun unfold term =
     pass term unfolding_passes
   end
   handle HOL_ERR _ => term
+
+fun unfold term =
+  unfold_with (!definitional_conversion) (Rewrite.implicit_rewrites ()) term
 
 fun unfolded term =
   if List.null (!definitional_context) orelse
@@ -639,6 +642,31 @@ fun prepare_citation statement : prepared_citation =
      readings = seq.delay (fn () => read [] statement seq.empty)}
   end
 
+fun expanded_citation (citation : prepared_citation) term =
+  if Portable.pointer_eq (term, #statement citation) then citation
+  else prepare_citation term
+
+(* Corpus goals repeatedly inspect the same ambient citations. Reuse
+   their unfolded readings while the definition and rewrite sources
+   which produced them are current. *)
+fun memoized_citation statement : comparison_statement =
+  let
+    val citation = prepare_citation statement
+    val mentions = memoUtil.keyed_memo (curry Portable.pointer_eq)
+      (fn heads => mentions_constant_names heads statement)
+    fun same (previous, old_rewrites) (current, new_rewrites) =
+      Portable.pointer_eq (previous, current) andalso
+      Portable.pointer_eq (old_rewrites, new_rewrites)
+    val expand = memoUtil.keyed_memo same
+      (fn (conversion, rewrites) =>
+        expanded_citation citation (unfold_with conversion rewrites statement))
+  in
+    (citation, fn () =>
+      if mentions (!definitional_heads) then
+        expand (!definitional_conversion, Rewrite.implicit_rewrites ())
+      else citation)
+  end
+
 fun prepare_statement_comparison goal =
   let
     open Portable.HOLSusp
@@ -731,11 +759,12 @@ fun prepare_goal_comparison goal =
           else (Term.aconv term goal, prepare_statement_comparison term)
         end)
   in
-    fn (citation, expand_statement) =>
+    fn (citation, expand_citation) =>
       ordinary citation orelse
       (not (List.null (!definitional_context)) andalso
        let
-         val unfolded_statement = expand_statement ()
+         val unfolded_citation = expand_citation ()
+         val unfolded_statement = #statement unfolded_citation
          val statement = #statement citation
          val (same_goal, compare) = force expanded
          val original = Portable.pointer_eq (unfolded_statement, statement)
@@ -743,11 +772,8 @@ fun prepare_goal_comparison goal =
          not (same_goal andalso
               (original orelse Term.aconv unfolded_statement statement))
          andalso
-         (if original then
-            not (force (#contentless citation)) andalso compare citation
-          else
-            not (contentless unfolded_statement) andalso
-            compare (prepare_citation unfolded_statement))
+         not (force (#contentless unfolded_citation)) andalso
+         compare unfolded_citation
        end)
   end
 
@@ -769,9 +795,10 @@ fun compare_with_goal goal =
   end
 
 fun theorem_statement theorem : comparison_statement =
-  let val statement = Thm.concl theorem
+  let val citation = prepare_citation (Thm.concl theorem)
   in
-    (prepare_citation statement, fn () => unfolded statement)
+    (citation,
+     fn () => expanded_citation citation (unfolded (#statement citation)))
   end
 
 fun theorem_is_goal goal theorem =
@@ -805,18 +832,9 @@ val ambient_citations :
 
 fun set_ambient_citations arguments =
   let
-    fun prepare statement =
-      let
-        val mentions = memoUtil.keyed_memo (curry Portable.pointer_eq)
-          (fn heads => mentions_constant_names heads statement)
-      in
-        (prepare_citation statement, fn () =>
-          if mentions (!definitional_heads) then unfold statement
-          else statement)
-      end
     fun insert ({name, theorem} : named_thm, table) =
       let val statement = Thm.concl theorem
-      in Symtab.update (name, (statement, prepare statement)) table
+      in Symtab.update (name, (statement, memoized_citation statement)) table
       end
   in
     ambient_citations :=
@@ -940,54 +958,40 @@ fun validate_raw_goals family goals =
          String.concatWith "; " circular)
   end
 
-(* A stable ambient snapshot repeats the same statements across goals.
-   Definition presence depends on the installed definitions, while the
-   unfolding itself still uses the current implicit rewrites. *)
-fun ambient_statement heads theorem : comparison_statement =
-  let
-    val statement = Thm.concl theorem
-    val mentions =
-      Portable.HOLSusp.delay (fn () => mentions_constant_names heads statement)
-  in
-    (prepare_citation statement, fn () =>
-      if Portable.HOLSusp.force mentions then unfold statement else statement)
-  end
-
-fun same_ambient_source (previous, definitions) (current, next) =
-  Portable.pointer_eq (previous, current) andalso
-  Portable.pointer_eq (definitions, next)
+fun ambient_statement theorem = memoized_citation (Thm.concl theorem)
 
 val ambient_claset_cache :
-    ((clasetLib.claset * string HOLset.set) *
-     (exclusion * comparison_statement) list) option ref = ref NONE
+    (clasetLib.claset * (exclusion * comparison_statement) list) option ref =
+  ref NONE
 
-fun cached_ambient_claset source =
+fun cached_ambient_claset claset =
   case !ambient_claset_cache of
       SOME (previous, statements) =>
-        if same_ambient_source previous source then SOME statements else NONE
+        if Portable.pointer_eq (previous, claset) then SOME statements
+        else NONE
     | NONE => NONE
 
-fun ambient_claset_statements (source as (claset, heads)) =
-  case cached_ambient_claset source of
+fun ambient_claset_statements claset =
+  case cached_ambient_claset claset of
       SOME statements => statements
     | NONE =>
         let
           val statements =
             map (fn (_, (name, theorem)) =>
               ({name = name, theorem = theorem},
-               ambient_statement heads theorem))
+               ambient_statement theorem))
               (clasetLib.rules_of claset)
         in
-          ambient_claset_cache := SOME (source, statements);
+          ambient_claset_cache := SOME (claset, statements);
           statements
         end
 
 val ambient_simpset_statements =
-  memoUtil.keyed_memo same_ambient_source
-    (fn (simpset, heads) =>
+  memoUtil.keyed_memo (curry Portable.pointer_eq)
+    (fn simpset =>
       List.concat
         (map
-          (map (fn theorem => (theorem, ambient_statement heads theorem)) o
+          (map (fn theorem => (theorem, ambient_statement theorem)) o
            simpLib.frag_rewrites)
           (simpLib.ssfrags_of simpset)))
 
@@ -1001,8 +1005,7 @@ fun select_analogues goal statements =
   end
 
 fun current_simpset_statements () =
-  ambient_simpset_statements
-    (clasimpLib.clasimp_ss (), !definitional_heads)
+  ambient_simpset_statements (clasimpLib.clasimp_ss ())
 
 fun simpset_analogues goal =
   select_analogues goal (current_simpset_statements ())
@@ -1033,8 +1036,7 @@ val benchmark_safe_solver =
 fun clean_simpset ctxt goal =
   let
     val simpset = clasimpLib.clasimp_ss_of ctxt
-    val statements =
-      ref (ambient_simpset_statements (simpset, !definitional_heads))
+    val statements = ref (ambient_simpset_statements simpset)
     val compare = compare_with_goal goal
     (* The cache and the filter walk the same fragment history. Confirm
        each theorem's identity before reusing its prepared statement. *)
@@ -1100,8 +1102,7 @@ fun prepare_goal recipe
        representative = representative}
     val ambient =
       select_analogues goal
-        (ambient_claset_statements
-          (clasetLib.the_claset (), !definitional_heads))
+        (ambient_claset_statements (clasetLib.the_claset ()))
     val candidates =
       ambient @ List.concat (map named_rewrite (simpset_analogues goal))
     val exclusions = listUtil.distinct_by String.compare #name candidates
@@ -1870,7 +1871,7 @@ fun has_remaining_claset_analogue claset goal excl =
   let
     val (retained, compare) = remaining_claset_comparison goal excl
   in
-    case cached_ambient_claset (claset, !definitional_heads) of
+    case cached_ambient_claset claset of
         SOME statements =>
           List.exists (fn ({name, ...}, statement) =>
             retained name andalso compare statement) statements
@@ -1921,7 +1922,7 @@ fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
       List.mapPartial
         (fn ({name, ...}, statement) =>
           if retained name andalso compare statement then SOME name else NONE)
-        (ambient_claset_statements (claset, !definitional_heads))
+        (ambient_claset_statements claset)
     fun rewrite_names theorem =
       case DB.revlookup theorem of
           [] => ["<unnamed>"]

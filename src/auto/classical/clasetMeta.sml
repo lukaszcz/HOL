@@ -463,9 +463,8 @@ fun insert_meta store (m, metas) =
   | NONE => metas
 
 fun collect_metas store tm =
-  Redblackmap.listItems (List.foldl (insert_meta store)
+  Redblackmap.listItems' (List.foldl (insert_meta store)
     (Redblackmap.mkDict string_compare) (free_vars tm))
-  |> map #2
 
 fun metas_of_normalized store tm =
   if Redblackmap.numItems (#metas store) = 0 then []
@@ -491,8 +490,8 @@ fun is_eigen store variable =
 
 fun eigen_allowed store allow variable =
   not (is_eigen store variable) orelse
-  List.exists (same_var (inst_types store variable))
-    (map (inst_types store) allow)
+  let val normalized = inst_types store variable
+  in List.exists (same_var normalized o inst_types store) allow end
 
 fun binding_respects_allow store (name, residue) =
   let

@@ -465,7 +465,8 @@ fun equality_lookup (work : work) equalities =
         end
     | _ => stated work equalities
 
-fun close work (context : orderData.context) (edges, equalities) distinctions =
+fun close _ _ _ [] = NONE
+  | close work (context : orderData.context) (edges, equalities) distinctions =
   let
     val {reach_crossing, ...} =
       reach_from work (#transitive (#axioms context)) distinctions edges
@@ -505,46 +506,53 @@ fun prove_literal work context
     fun weak (x, y) =
       if aconv x y then
         Option.map
-          (fn r => MATCH_MP (MATCH_MP order_weak_of_equal r) (REFL x))
+          (fn r => Proved (MATCH_MP (MATCH_MP order_weak_of_equal r) (REFL x)))
           reflexive
-      else Option.map path_theorem (reach_one x y)
+      else reach_one x y
   in
     case target of
-        orderData.Weak pair => weak pair
+        orderData.Weak pair => Option.map path_theorem (weak pair)
       | orderData.Equal pair => crossing work context reach_crossing pair
       | orderData.Strict (x, y) =>
           (case weak (x, y) of
                NONE => NONE
-             | SOME step =>
+             | SOME path =>
                  (case refute_equation work context
                          (edges, equalities, distinctions) (x, y) of
                       NONE => NONE
                     | SOME apart =>
-                        (application work;
-                         SOME (MATCH_MP (MATCH_MP order_strict_intro step)
-                                 apart))))
+                        let val step = path_theorem path
+                        in
+                          application work;
+                          SOME (MATCH_MP
+                            (MATCH_MP order_strict_intro step) apart)
+                        end))
       | orderData.Distinct pair =>
           refute_equation work context
             (edges, equalities, distinctions) pair
   end
 
-(* [x <> y] is proved the way any negation is: the equation is assumed
-   and the graph it joins is refuted. *)
+(* [x <> y] is proved by adding the equation and refuting the graph.
+   Adding it does not create a distinction, so ordinary calls can skip
+   the expansion when there are none. *)
 and refute_equation work context
       (edges, equalities, distinctions) (x, y) =
-  let
-    val equation = mk_eq (x, y)
-    val assumed = ASSUME equation
-    val facts = [{literal = orderData.Equal (x, y), theorem = assumed}]
-    val (extra_edges, extra_equalities, _) =
-      expand work context facts
-    val closed =
-      close work context
-        (edges @ extra_edges, extra_equalities @ equalities)
-        distinctions
-  in
-    Option.map (fn refutation => NOT_INTRO (DISCH equation refutation)) closed
-  end
+  if null distinctions andalso Option.isSome (#max_nodes work) then NONE
+  else
+    let
+      val equation = mk_eq (x, y)
+      val assumed = ASSUME equation
+      val facts = [{literal = orderData.Equal (x, y), theorem = assumed}]
+      val (extra_edges, extra_equalities, _) =
+        expand work context facts
+      val closed =
+        close work context
+          (edges @ extra_edges, extra_equalities @ equalities)
+          distinctions
+    in
+      Option.map (fn refutation => NOT_INTRO (DISCH equation refutation))
+        closed
+    end
 
 (* The goal is proved outright where it can be and refuted otherwise.  A
    goal that is already a negation is discharged rather than doubly
