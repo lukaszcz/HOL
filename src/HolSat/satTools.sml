@@ -158,9 +158,9 @@ fun invokeSat_result model =
   invoke_sat (fn only_true => fn markers => fn output =>
     model only_true (parseSat markers output))
 
-fun invokeSat sat_solver tm vc nr svm sva infile =
+fun invokeSat_model sat_solver svm sva infile =
   let
-    fun complete numbers =
+    fun complete svm numbers =
       let
         (* Keep the reported numbers verbatim for literal conversion.
            Only an exact DIMACS number excludes a variable from completion. *)
@@ -170,10 +170,14 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
             if reported n then rest else ~n :: rest)
           [] (snd svm)
       in if null missing then numbers else numbers @ missing end
-    fun model only_true numbers =
+    fun model _ numbers =
       map (dimacsTools.intToLiteral sva)
-        (if only_true then complete numbers else numbers)
+        (case svm of NONE => numbers | SOME vars => complete vars numbers)
   in invokeSat_result model sat_solver infile end
+
+fun invokeSat sat_solver tm vc nr svm sva infile =
+  invokeSat_model sat_solver
+    (if getSolverTrue sat_solver then SOME svm else NONE) sva infile
 
 (* Keep parsing and variable-number validation for proof-only SAT answers.
    Missing variables for only_true solvers come from the valid DIMACS map;

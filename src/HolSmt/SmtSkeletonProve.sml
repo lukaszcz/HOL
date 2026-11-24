@@ -2109,16 +2109,17 @@ struct
         (work := !work + 1;
          if !work <= limit then ()
          else raise ERR "clause_frontier_prove" "Boolean frontier too large")
-      fun clauses term =
-        (tick ();
-         if boolSyntax.is_disj term then
-           let val (left, right) = boolSyntax.dest_disj term
-           in clauses left @ clauses right end
-         else [term])
+      fun clauses [] reversed = List.rev reversed
+        | clauses (term :: pending) reversed =
+            (tick ();
+             if boolSyntax.is_disj term then
+               let val (left, right) = boolSyntax.dest_disj term
+               in clauses (left :: right :: pending) reversed end
+             else clauses pending (term :: reversed))
       fun base term =
         if boolSyntax.is_neg term then base (boolSyntax.dest_neg term)
         else term
-      val literals = clauses target
+      val literals = clauses [target] []
       val candidates = List.filter
         (fn term => case skeleton_children term of
            SOME (_ :: _) => true | _ => false) (List.map base literals)
@@ -2253,14 +2254,20 @@ struct
           val _ = Library.check_oracle_tags "SmtSkeletonProve"
             "clause-frontier" exact
         in exact end
-      fun try [] = raise ERR "clause_frontier_prove"
-            "no tautological Boolean frontier"
-        | try (candidate :: rest) = attempt candidate
-            handle Feedback.HOL_ERR _ => try rest
+      (* Keep ordering failures outside the per-attempt HOL_ERR handler;
+         the indexed caller may need to restart with the semantic order. *)
+      val all_candidates = HOLset.addList (empty_terms, candidates)
+      fun try exposed next =
+        attempt exposed handle Feedback.HOL_ERR _ => next ()
+      fun try_candidates _ [] = try all_candidates (fn () =>
+            raise ERR "clause_frontier_prove"
+              "no tautological Boolean frontier")
+        | try_candidates seen (candidate :: rest) =
+            if HOLset.member (seen, candidate) then try_candidates seen rest
+            else try (HOLset.add (empty_terms, candidate)) (fn () =>
+              try_candidates (HOLset.add (seen, candidate)) rest)
     in
-      try (empty_terms ::
-        List.map (fn term => HOLset.add (empty_terms, term)) candidates @
-        [HOLset.addList (empty_terms, candidates)])
+      try empty_terms (fn () => try_candidates empty_terms candidates)
     end
 
   in

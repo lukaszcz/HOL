@@ -7097,20 +7097,25 @@ local
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
-  (* Arities of the free occurrences of f in tm: how many arguments each
-     is applied to, 0 for a bare one. *)
-  fun occurrence_arities f tm =
+  (* A bare occurrence of f fixes the minimum at zero. An abstraction
+     that binds f shadows it in the body but not in application arguments. *)
+  fun minimum_occurrence_arity f limit tm =
   let
-    val (head, args) = boolSyntax.strip_comb tm
-    val here =
-      if Term.term_eq head f then [List.length args]
-      else if Term.is_abs head then
-        let val (bv, body) = Term.dest_abs head
-        in if Term.term_eq bv f then [] else occurrence_arities f body end
-      else []
-  in
-    List.foldl (fn (arg, acc) => occurrence_arities f arg @ acc) here args
-  end
+    fun scan 0 _ = 0
+      | scan bound tm =
+          let
+            val (head, args) = boolSyntax.strip_comb tm
+            val here =
+              if Term.term_eq head f then Int.min (bound, List.length args)
+              else if Term.is_abs head then
+                let val (bv, body) = Term.dest_abs head
+                in if Term.term_eq bv f then bound else scan bound body end
+              else bound
+          in scan_args here args end
+    and scan_args 0 _ = 0
+      | scan_args bound [] = bound
+      | scan_args bound (arg :: rest) = scan_args (scan bound arg) rest
+  in scan limit tm end
 
   (* Relativizes the num arguments of a bound function variable f: of its
      first k argument types, k the fewest arguments any occurrence of f
@@ -7130,8 +7135,7 @@ local
     val (arg_tys, rng) = boolSyntax.strip_fun (Term.type_of f)
     val _ = List.exists is_num arg_tys orelse
       raise ERR "num_args_to_int_once_conv" "no num argument"
-    val k = List.foldl Int.min (List.length arg_tys)
-      (occurrence_arities f body)
+    val k = minimum_occurrence_arity f (List.length arg_tys) body
     val (lifted, rest) = Lib.split_after k arg_tys
     val _ = List.exists is_num lifted orelse
       raise ERR "num_args_to_int_once_conv" "no applied num argument"

@@ -3310,10 +3310,10 @@ local
   fun set_latest_proof_step id rule status local_info =
     (latest_proof_step := SOME
       (proof_step_state id rule status local_info);
-     if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-        (!replay_completed_steps < 20 orelse
+     if (!replay_completed_steps < 20 orelse
          !replay_completed_steps >= 350 andalso
-         !replay_completed_steps < 700) then
+         !replay_completed_steps < 700) andalso
+        OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
        (Feedback.HOL_MESG
          ("Z3 replay step: id=" ^ Int.toString id ^
           " rule=" ^ rule ^ " status=" ^ status ^
@@ -4091,8 +4091,8 @@ local
       (fn target =>
         let
           fun trace_stage stage =
-            if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-               !replay_completed_steps < 20 then
+            if !replay_completed_steps < 20 andalso
+               OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
               (Feedback.HOL_MESG ("Z3 def-axiom: " ^ stage);
                TextIO.flushOut TextIO.stdOut)
             else ()
@@ -4274,8 +4274,8 @@ local
       fun same left right = Portable.pointer_eq (left,right) orelse
         order (left,right)=EQUAL
       fun trace_guard stage =
-        if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-           !replay_completed_steps >= 550 then
+        if !replay_completed_steps >= 550 andalso
+           OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
           (Feedback.HOL_MESG ("Z3 guarded axiom: " ^ stage);
            TextIO.flushOut TextIO.stdOut)
         else ()
@@ -8501,8 +8501,8 @@ local
   (case rewrite_pure_boolean_schema state target of
      SOME theorem => (state,theorem)
    | NONE => let
-    val trace = OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-      !replay_completed_steps < 100
+    val trace = !replay_completed_steps < 100 andalso
+      OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1"
     val _ = if trace then
       (Feedback.HOL_MESG "Z3 rewrite: begin";
        TextIO.flushOut TextIO.stdOut) else ()
@@ -9904,25 +9904,27 @@ local
         else "compound"
       end
     fun trace_fp stage =
-      if (OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full" orelse
-          OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-          !replay_completed_steps < 700) then
-        (Feedback.HOL_MESG
-          ("Z3 FP lemma: " ^ stage ^ " nodes=" ^
-           Int.toString (SmtResource.dag_nodes_up_to 1025 t') ^
-           " completed=" ^ Int.toString (!replay_completed_steps) ^
-           (case Lib.total boolSyntax.dest_eq t of
-              SOME (left, right) =>
-                " heads=" ^ traced_head left ^ "," ^ traced_head right
-            | NONE => " head=" ^ traced_head t) ^
-           (if stage = "begin" andalso
-               OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full" andalso
-               Option.isSome (SmtReplayImport.bounded_raw_size 3000 t') then
-              " target=" ^ SmtResource.bounded_text 2500
-                (Library.term_to_string t')
-            else ""));
-         TextIO.flushOut TextIO.stdOut)
-      else ()
+      let
+        val mode = OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE"
+      in
+        if mode = SOME "full" orelse mode = SOME "1" andalso
+            !replay_completed_steps < 700 then
+          (Feedback.HOL_MESG
+            ("Z3 FP lemma: " ^ stage ^ " nodes=" ^
+             Int.toString (SmtResource.dag_nodes_up_to 1025 t') ^
+             " completed=" ^ Int.toString (!replay_completed_steps) ^
+             (case Lib.total boolSyntax.dest_eq t of
+                SOME (left, right) =>
+                  " heads=" ^ traced_head left ^ "," ^ traced_head right
+              | NONE => " head=" ^ traced_head t) ^
+             (if stage = "begin" andalso mode = SOME "full" andalso
+                 Option.isSome (SmtReplayImport.bounded_raw_size 3000 t') then
+                " target=" ^ SmtResource.bounded_text 2500
+                  (Library.term_to_string t')
+              else ""));
+           TextIO.flushOut TextIO.stdOut)
+        else ()
+      end
     fun symbolic_fp target =
       SmtFpProve.fp_prove_with_decompositions_and_arith
         arith_prove [] target
@@ -10856,11 +10858,11 @@ local
                   val _ = replay_completed_steps :=
                     !replay_completed_steps + 1
                   val _ =
-                    if (OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
-                        SOME "1" orelse
-                        OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
-                        SOME "full") andalso
-                       !replay_completed_steps mod 100 = 0 then
+                    if !replay_completed_steps mod 100 = 0 andalso
+                       (case OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" of
+                          SOME "1" => true
+                        | SOME "full" => true
+                        | _ => false) then
                       (Feedback.HOL_MESG
                         ("Z3 replay progress: completed=" ^
                          Int.toString (!replay_completed_steps) ^

@@ -438,6 +438,13 @@ struct
               (p,Term.mk_var ("frontier_unrelated",Type.bool))))));
           false) handle Feedback.HOL_ERR _ => true)
         "composite frontier confused different disjunctions"
+      val a = Term.mk_var ("frontier_repeated_a",Type.bool)
+      val b = Term.mk_var ("frontier_repeated_b",Type.bool)
+      val repeated = List.foldl (fn (_, prefix) =>
+        boolSyntax.mk_disj (prefix,boolSyntax.mk_conj (a,b))) boolSyntax.F
+        (List.tabulate (40,fn i => i))
+      (* The repeated gate cannot prove the clause. The later gate can. *)
+      val _ = prove (boolSyntax.mk_disj (repeated,second))
     in () end
 
   (* Public callers can share a SAT context with generated Boolean laws.

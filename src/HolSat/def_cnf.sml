@@ -276,36 +276,55 @@ fun make_localdefs cnfv =
             else ();
             result
           end
-        and define tm (n,defs,lfn) =
-          if is_neg tm then
-              let val (n1,v1,defs1,lfn1) = walk (rand tm) (n,defs,lfn)
-              in intern tm (mk_neg v1) (n1,defs1,lfn1) end
-          else if is_conj tm orelse is_disj tm orelse
-                  is_imp tm orelse is_eq tm then
-              let val (n1,v1,defs1,lfn1) = walk (land tm) (n,defs,lfn)
-                  val (n2,v2,defs2,lfn2) = walk (rand tm) (n1,defs1,lfn1)
-                  val tm' = mk_comb (mk_comb (rator (rator tm),v1),v2)
-              in intern tm tm' (n2,defs2,lfn2) end
-          else if is_cond tm then
-              let val (opr,args) = strip_comb tm
-                  val (n1,v1,defs1,lfn1) =
-                      walk (List.nth(args,0)) (n,defs,lfn)
-                  val (n2,v2,defs2,lfn2) =
-                      walk (List.nth(args,1)) (n1,defs1,lfn1)
-                  val (n3,v3,defs3,lfn3) =
-                      walk (List.nth(args,2)) (n2,defs2,lfn2)
-                  val tm' = mk_comb(mk_comb(mk_comb(opr,v1),v2),v3)
-              in case RBM.peek (defs3,tm') of
-                     SOME v =>
-                       (if Portable.pointer_eq (defs2,defs3) then
-                          observe_source lfn3 tm v
-                        else (newest := empty; older := empty;
-                              memo := NONE;
-                              rollbacks := !rollbacks + 1);
-                        (n3,v,defs2,lfn3))
-                   | NONE => extend tm tm' (n3,defs3,lfn3)
+        and define tm state =
+          let
+            fun atom () = intern tm tm state
+            fun binary operator left right =
+                let val (n1,v1,defs1,lfn1) = walk left state
+                    val (n2,v2,defs2,lfn2) = walk right (n1,defs1,lfn1)
+                    val body = mk_comb (mk_comb (operator,v1),v2)
+                in intern tm body (n2,defs2,lfn2) end
+            fun ternary operator condition yes no =
+                let val (n1,v1,defs1,lfn1) = walk condition state
+                    val (n2,v2,defs2,lfn2) = walk yes (n1,defs1,lfn1)
+                    val (n3,v3,defs3,lfn3) = walk no (n2,defs2,lfn2)
+                    val body = mk_comb (mk_comb (mk_comb (operator,v1),v2),v3)
+                in case RBM.peek (defs3,body) of
+                       SOME v =>
+                         (if Portable.pointer_eq (defs2,defs3) then
+                            observe_source lfn3 tm v
+                          else (newest := empty; older := empty;
+                                memo := NONE;
+                                rollbacks := !rollbacks + 1);
+                          (n3,v,defs2,lfn3))
+                     | NONE => extend tm body (n3,defs3,lfn3)
+                end
+          in
+            if is_comb tm then
+              let val (operator,right) = dest_comb tm
+              in
+                if same_const negation operator then
+                  let val (n1,v1,defs1,lfn1) = walk right state
+                  in intern tm (mk_neg v1) (n1,defs1,lfn1) end
+                else if is_comb operator then
+                  let val (head,left) = dest_comb operator
+                  in
+                    if same_const conjunction head orelse
+                       same_const disjunction head orelse
+                       same_const implication head orelse
+                       same_const equality head then binary head left right
+                    else if is_comb head then
+                      let val (conditional_head,condition) = dest_comb head
+                      in if same_const conditional conditional_head then
+                           ternary conditional_head condition left right
+                         else atom ()
+                      end
+                    else atom ()
+                  end
+                else atom ()
               end
-          else intern tm tm (n,defs,lfn)
+            else atom ()
+          end
     in walk end
 end
 

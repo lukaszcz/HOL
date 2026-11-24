@@ -244,6 +244,30 @@ local
               handle HOL_ERR error => Feedback.message_of error =
                 "lookup_sat_numError: 20\n")) ()
       end)
+  val _ = control "DIMACS input preserves signed and completed models"
+    (fn () =>
+      let
+        val input = OS.FileSys.tmpName ()
+        val name = "dimacs-model"
+        val output = input ^ "." ^ name
+        fun check only_true answer expected =
+          let
+            fun run _ (_,outfile) = (put outfile answer; ":")
+            val backend = make_solver only_true name run NONE
+            val conf = set_flag_is_proved false
+              (set_solver backend (set_infile input base_config))
+          in (GEN_SAT conf; false)
+             handle SAT_cex th => null (hyp th) andalso concl th ~~ expected
+          end
+      in dimacsTools.with_cleanup
+           (fn () => dimacsTools.clean_files [input,output])
+           (fn () =>
+             (put input "p cnf 3 3\n-2 0\n3 0\n-1 0\n";
+              check false "SAT 3 -2 -1 0"
+                ``(v3 /\ ~v2 /\ ~v1) ==> ~(~v2 /\ v3 /\ ~v1)`` andalso
+              check true "SAT 3 0"
+                ``(v3 /\ ~v1 /\ ~v2) ==> ~(~v2 /\ v3 /\ ~v1)``)) ()
+      end)
   val _ = control "Proof-only DIMACS checks the input used for replay"
     (fn () =>
       let
@@ -882,6 +906,13 @@ local
             val conf = set_infile input (internal base_config)
             val _ = checked (mk_neg problem) (GEN_SAT_PROVE_ONLY conf)
               orelse raise Fail "DIMACS endpoint"
+            val _ = with_trace [2,20,0,4,21,0,5,22,1,0] (fn trace_conf =>
+              let val proof = valOf (get_proof trace_conf)
+                  val (th,stats) = satTools.with_solver_statistics (fn () =>
+                    GEN_SAT (set_proof proof conf))
+              in checked (mk_neg problem) th andalso #internal_calls stats = 0
+                 andalso #external_calls stats = 0 end)
+              orelse raise Fail "DIMACS certificate endpoint"
             val _ = put "p cnf 11 1\n11 0\n"
           in sat_only conf end) ()
         val _ = OS.FileSys.remove input

@@ -435,6 +435,12 @@ fun num_args_relativization_success () =
     check ("bare occurrence num argument no-op",
       ``!s :num -> bool. 2 IN s``,
       ``!s :num -> bool. 2 IN s``);
+    check ("mixed applied and bare num argument no-op",
+      ``!f :num -> bool. f 1 /\ (f 2 /\ H f)``,
+      ``!f :num -> bool. f 1 /\ (f 2 /\ H f)``);
+    check ("shadowed bare num argument relativization",
+      ``!f :num -> bool. f 1 /\ (!f :num -> bool. H f)``,
+      ``!f :int -> bool. f 1 /\ (!f :num -> bool. H f)``);
     (* A lifted argument that is a num binder becomes its int binder,
        not ABS of it. *)
     check_conv SmtLib.NUM_TO_INT_CONV ("lifted num binder argument",

@@ -74,16 +74,15 @@ local
         in if isSome cnfv then List.mapPartial project model else model end
 in
 fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
-                  svm sva in_name fallback =
+                  check_sat_model svm sva in_name fallback =
     let val nr = Array.length clauseth
         val _ = sat_trace (fn () =>
                     "solver start clauses=" ^ int_to_string nr)
         val answer = profile_stage "solver" (fn name =>
-            case svm of
-                NONE => Option.map (fn () => NONE)
-                          (invokeSat_status solver sva name)
-              | SOME model_map => Option.map SOME
-                  (invokeSat solver T (SOME vc) (SOME nr) model_map sva name))
+            if check_sat_model then
+              Option.map SOME (invokeSat_model solver svm sva name)
+            else Option.map (fn () => NONE)
+                   (invokeSat_status solver sva name))
             in_name
         val _ = sat_trace (fn () => "solver done")
         val _ = sat_trace (fn () => case answer of
@@ -162,7 +161,7 @@ fun has_free_variable tm =
         and memo_scan pending = scan (recent_terms ()) ~1 pending
     in scan (fn _ => false) 128 [tm] end
 
-fun initialise check_sat_model infile is_cnf tm =
+fun initialise check_sat_model complete_model infile is_cnf tm =
     let
         fun trivial ntm =
             let val th0 = presimp_conv (dest_neg ntm)
@@ -185,12 +184,12 @@ fun initialise check_sat_model infile is_cnf tm =
             case infile of
                 SOME fname =>
                   let val (tm,count,sva,svm) =
-                          if check_sat_model then
+                          if complete_model then
                             let val (tm,svm,sva) = genReadDimacs fname
                             in (tm,SVM.numItems (snd svm),sva,SOME svm) end
                           else
-                            (* Proof replay and status validation use only
-                               the reverse map indexed by DIMACS number. *)
+                            (* Signed models, status checks and proof replay
+                               only look up terms by DIMACS number. *)
                             let val (tm,count,sva) = readDimacsWithCount fname
                             in (tm,count,sva,NONE) end
                       val ntm = mk_neg tm
@@ -208,6 +207,8 @@ fun initialise check_sat_model infile is_cnf tm =
 
 fun GEN_SAT_WITH check_sat_model conf =
     let val (tm,solver,infile,proof,is_cnf,is_proved) = dest_config conf
+        val complete_model = check_sat_model andalso not (isSome proof)
+                             andalso getSolverTrue solver
         (* ZChaff's fixed-name output is eligible for cleanup only if it
            did not exist before this invocation's callbacks/solver/replay.
            isLink checks the directory entry, including dangling symlinks.
@@ -241,7 +242,7 @@ fun GEN_SAT_WITH check_sat_model conf =
       (let
         val (cnfv,vc,input,ntm,lfn,clauseth) =
             profile_stage "initialise"
-              (initialise check_sat_model infile is_cnf) tm
+              (initialise check_sat_model complete_model infile is_cnf) tm
         fun fallback () =
           satTools.observed_internal_solver (fn () =>
             if check_sat_model then
@@ -264,7 +265,7 @@ fun GEN_SAT_WITH check_sat_model conf =
               then replay_proof sat_trace is_proved sva nr in_name solver vc
                                 clauseth lfn ntm proof fallback
               else invoke_solver sat_trace solver lfn ntm clauseth cnfv vc
-                     is_proved svm sva in_name fallback))
+                     is_proved check_sat_model svm sva in_name fallback))
         fun solve_internal () =
           (report_cnf ();
            if nr > !sat_limit then
@@ -283,7 +284,7 @@ fun GEN_SAT_WITH check_sat_model conf =
                        (fn () => cleanup_solver_files trace_files solver
                                                       tmpname in_name)
                        solve (in_name,sva,
-                              if check_sat_model then SOME svm else NONE)
+                              if complete_model then SOME svm else NONE)
                   end
           else with_cleanup (fn () => clean_files trace_files)
                             solve_internal ()
