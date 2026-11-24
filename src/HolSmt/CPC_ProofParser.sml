@@ -4234,6 +4234,19 @@ in
      "step-pop"]
 
 local
+  val legacy_reserved_symbols =
+    let
+      val (all_tydict, all_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+      val (sorts, terms) = with_cpc_literals
+        (all_tydict, Library.union_dict all_tmdict
+          SmtLib_Theories.CVC5_Seq.tmdict)
+      fun add_key (key, _, set) = HOLset.add (set, key)
+      val syntax = HOLset.addList (HOLset.empty String.compare,
+        cpc_command_syntax_names)
+    in
+      Redblackmap.foldl add_key (Redblackmap.foldl add_key syntax sorts) terms
+    end
+
   (* These lookup tables are only needed while elaborating a proof. The
      command spine already retains its terms and occurrence provenance. *)
   fun clear_parse_tables () =
@@ -4264,21 +4277,12 @@ local
       val _ = reset_term_intern ()
       (* The standalone skolem test helper also looks up this metadata. *)
       val _ = cpc_forall_blocks := Redblackmap.mkDict Term.compare
-      fun keys dictionary = Redblackmap.foldl
-        (fn (key, _, set) => HOLset.add (set, key))
+      val _ = cpc_reserved_symbols := legacy_reserved_symbols
+      fun source_keys dictionary = Redblackmap.foldl
+        (fn (key, _, set) =>
+          if set_member legacy_reserved_symbols key then set
+          else HOLset.add (set, key))
         (HOLset.empty String.compare) dictionary
-      val (all_tydict, all_tmdict) =
-        SmtLib_Logics.parsedicts_of_logic "ALL"
-      val baseline_dicts = with_cpc_literals
-        (all_tydict, Library.union_dict all_tmdict
-          SmtLib_Theories.CVC5_Seq.tmdict)
-      val baseline = HOLset.union
-        (keys (#1 baseline_dicts), keys (#2 baseline_dicts))
-      val _ = cpc_reserved_symbols := HOLset.addList
-        (baseline, cpc_command_syntax_names)
-      fun source_keys dictionary = HOLset.filter
-        (fn key => not (set_member (!cpc_reserved_symbols) key))
-        (keys dictionary)
       val _ = cpc_source_sort_symbols := source_keys (#1 dicts)
       val _ = cpc_source_term_symbols := source_keys (#2 dicts)
       val known_ids = ref (HOLset.empty String.compare)
@@ -5227,16 +5231,21 @@ end
      until its specialized graph adapters and certificate gates pass. *)
   type graph_located_term = SmtLib_GraphFrontend.term
   type graph_step = proof_rule SmtLib_GraphFrontend.step
-  fun graph_policy_description version =
-    let
-      val baseline = with_cpc_literals
-        (SmtLib_Logics.parsedicts_of_logic "ALL")
-      val reserved_names = Redblackmap.foldl
-        (fn (key, _, keys) => key :: keys)
-        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          cpc_command_syntax_names (#1 baseline)) (#2 baseline)
-    in {solver="cvc5",version=version,policy=F.CPC,
-      reserved_names=reserved_names} end
+
+  local
+    val reserved_names =
+      let
+        val (sorts, terms) = with_cpc_literals
+          (SmtLib_Logics.parsedicts_of_logic "ALL")
+        fun prepend_key (key, _, keys) = key :: keys
+        val syntax_and_sorts =
+          Redblackmap.foldl prepend_key cpc_command_syntax_names sorts
+      in Redblackmap.foldl prepend_key syntax_and_sorts terms end
+  in
+    fun graph_policy_description version =
+      {solver="cvc5",version=version,policy=F.CPC,
+       reserved_names=reserved_names}
+  end
 
   fun graph_term_reader_with_version options version instream =
     let

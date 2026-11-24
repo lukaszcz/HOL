@@ -11104,6 +11104,24 @@ let
       (``SmtTriB (x:int)``, ``x:int``),
       (``SmtTriC (p:bool)``, boolSyntax.mk_arb intSyntax.int_ty)])
   val selector_text = smtlib_text ([], boolSyntax.mk_eq (selector_tm, ``0i``))
+  val two_true_branches = smtlib_text ([],
+    ``(case (light:smt_light) of
+         SmtRed => T
+       | SmtAmber => T
+       | SmtGreen => F) = p``)
+  val shadowed_selector_text =
+    let
+      val ty = ``:smt_rec``
+      val constructor = List.hd (SmtLib.datatype_constructors_for_test ty)
+      val record = ``r:smt_rec``
+      val template =
+        SmtLib.datatype_selector_term_for_test ty constructor 0 record
+      val (case_const, _) = boolSyntax.strip_comb template
+      val count = Term.mk_var ("field", intSyntax.int_ty)
+      val flag = Term.mk_var ("field", Type.bool)
+      val branch = Term.mk_abs (count, Term.mk_abs (flag, count))
+      val selector = Term.list_mk_comb (case_const, [record, branch])
+    in smtlib_text ([], boolSyntax.mk_eq (selector, ``0i``)) end
   val record_access_text = preprocessed_text
     ``(r:smt_rec).smt_count = 0i``
   val record_update_text = preprocessed_text
@@ -11125,6 +11143,12 @@ in
     "(sel_Smt_tri_ctor_Smt_tri_SmtTriB_0 v0)";
   assert_lacks "selector-shaped case" selector_text
     "(_ is ctor_Smt_tri_SmtTriB)";
+  assert_has "case with two true branches" two_true_branches
+    "(ite ((_ is ctor_Smt_light_SmtRed)";
+  assert_has "case with two true branches" two_true_branches
+    "(ite ((_ is ctor_Smt_light_SmtAmber)";
+  assert_has "selector with shadowed binder name" shadowed_selector_text
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v0)";
   assert_has "record access" record_access_text
     "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v0)";
   assert_has "record update" record_update_text

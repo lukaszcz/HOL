@@ -61292,6 +61292,34 @@ in
                SOME "different borrowed query store") refusals andalso
              (#term_count ops) terms = 0 andalso
              null (S.assumption_nodes sources)) end))
+      val _ = test "Equal bound dictionaries reuse the lexical entry path"
+        (fn () => owned (fn _ => fn context =>
+          let
+            val store = make context "store_child_region_"
+            val ops = #operations store
+            val current = #goal context
+            val first = (#genvar context) Type.bool
+            val second = (#genvar context) Type.bool
+            val add = #bound_insert ops
+            val empty = #empty_bounds store
+            val bounds = add (add (empty,first,"first"),second,"second")
+            val reordered = add (add (empty,second,"second"),first,"first")
+            val renamed = add (reordered,second,"renamed")
+            val path = [(#key context) current]
+            val parent = (#region_at store) (0,path,bounds)
+            val same = (#child_region store) (parent,bounds,reordered)
+            val child = valOf ((#child_region store) (parent,bounds,renamed))
+            val explicit = (#region_at store) (0,path,renamed)
+            val unrelated = (#region store) (0,renamed)
+            val (terms,_) = (#bind_document store)
+              (#empty_terms store,child,current,F.text "true")
+          in require "child region lost its environment or lexical path"
+            (not (Option.isSome same) andalso
+             Option.isSome ((#find_document store) (terms,explicit,current))
+             andalso not (Option.isSome ((#find_document store)
+               (terms,unrelated,current))) andalso
+             not (Option.isSome ((#find_document store)
+               (terms,parent,current)))) end))
       val _ = test "Warmed and empty store operations expire before lookup"
         (fn () =>
           let val escaped = ref ([]:(unit -> unit) list)
@@ -61329,6 +61357,8 @@ in
                      (terms,key,([],"Bool"))),
                    fn () => ignore ((#region store)
                      (0,#empty_bounds store)),
+                   fn () => ignore ((#child_region store)
+                     (region,bounds,bounds)),
                    fn () => ignore ((#find_document store)
                      (terms,region,current)),
                    fn () => ignore ((#bind_document store)
@@ -61340,7 +61370,7 @@ in
                 end)
               val refusals = List.map error (!escaped)
           in require "store used a warmed or empty path after borrow expiry"
-            (length refusals = 18 andalso List.all (fn actual =>
+            (length refusals = 19 andalso List.all (fn actual =>
               actual = SOME "borrowed graph analysis expired") refusals)
           end)
       val _ = test "Store preserves injected native Primary and child cleanup"
@@ -76995,7 +77025,7 @@ local
     "(asserted (or p q)) (asserted (or p q)) false)))"
   val unmatched="((proof (unit-resolution (asserted alias) " ^
     "(asserted (not p)) false)))"
-  fun native (e:env) text=
+  fun native_with_bindings bindings (e:env) text=
     let val opts:F.policy_options={graph= #graph e,scope= #scope e,
           logic="ALL",sources=bindings,
           sorts=Redblackmap.mkDict String.compare,binder_lists=[],
@@ -77016,6 +77046,7 @@ local
         val proof=Native.finish_with_policy(#work e)owner
         val _=checked e proof
     in proof end
+  val native=native_with_bindings bindings
   fun final assumptions text=
     fixture assumptions goal(fn e=>using e text(fn _=>())
       (fn _=>fn _=>fn prepared=>
@@ -77083,6 +77114,20 @@ in
           in require "compound tail was reclassified as non-unit OR"
             (Term.aconv(Thm.concl proof)(Thm.concl reference)andalso
              same_hyp(Thm.hyp proof)(Thm.hyp reference))end)
+      val _=test "Wide native raw clause retains every distinct hypothesis"
+        (fn()=>let
+            val names=List.tabulate(28,fn i=>"raw409_wide_" ^ Int.toString i)
+            val literals=List.map(fn name=>Term.mk_var(name,Type.bool))names
+            val assumptions=boolSyntax.list_mk_disj literals ::
+              List.map boolSyntax.mk_neg literals
+            val units=String.concat(List.map
+              (fn name=>" (asserted (not " ^ name ^ "))")names)
+            val text="((proof (unit-resolution (asserted (or " ^
+              String.concatWith " " names ^ "))" ^ units ^ " false)))"
+            val proof=fixture assumptions goal(fn e=>
+              native_with_bindings (ListPair.zip(names,literals)) e text)
+          in require "wide native raw clause lost a hypothesis"
+            (same_hyp (Thm.hyp proof) assumptions)end)
       val _=test "Recorded mode keeps the same hidden-head boundary"
         (fn()=>fixture[alias,np,nq]goal(fn e=>parsed e ordinary
           (fn held=>fn data=>fn assertions=>

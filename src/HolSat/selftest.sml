@@ -256,9 +256,16 @@ local
       in dimacsTools.with_cleanup
            (fn () => dimacsTools.clean_files [input, output])
            (fn () =>
-             (put input "p cnf 1 2\n1 0\n-1 0\n";
-              let val th = GEN_SAT_PROVE_ONLY conf
-              in null (hyp th) andalso concl th ~~ ``~(v1 /\ ~v1)`` end)) ()
+             (put input "p cnf 65536 2\n61439 0\n-61439 0\n";
+              let val (problem,count,sva) =
+                    dimacsTools.readDimacsWithCount input
+                  val th = GEN_SAT_PROVE_ONLY conf
+              in count = 1 andalso Array.length sva = 65537 andalso
+                 Array.sub (sva,1) ~~ T andalso
+                 Array.sub (sva,61439) ~~ ``v61439:bool`` andalso
+                 null (hyp th) andalso concl th ~~ mk_neg problem andalso
+                 concl th ~~ ``~(v61439 /\ ~v61439)``
+              end)) ()
       end)
   val _ = control "SAT result/failure paths remove owned solver files"
     (fn () =>
@@ -552,6 +559,21 @@ local
          checked valid (GEN_SAT_PROVE_ONLY conf) andalso
          !dimacsTools.tmp_name = previous
       end)
+  val _ = control "DPLL negative units preserve the model and refutation"
+    (fn () =>
+      let
+        val variable = ``p:bool``
+        val contradiction = ``~p /\ p``
+        val model = case dpll.CoreDPLL (ASSUME (mk_neg variable)) of
+            dpll.Sat assignment => assignment variable ~~ F
+          | dpll.Unsat _ => false
+        val refutation = case dpll.CoreDPLL (ASSUME contradiction) of
+            dpll.Unsat th =>
+              (case hyp th of [source] => source ~~ contradiction
+                            | _ => false) andalso
+              checked (mk_neg contradiction) (NOT_INTRO (DISCH_ALL th))
+          | dpll.Sat _ => false
+      in model andalso refutation end)
   val _ = control "DPLL chooses the first unit before counting literals"
     (fn () => List.all (fn formula =>
       dpll.find_splitting_var formula ~~ ``r:bool``)

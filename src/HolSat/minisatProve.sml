@@ -74,15 +74,17 @@ local
         in if isSome cnfv then List.mapPartial project model else model end
 in
 fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
-                  check_sat_model svm sva in_name fallback =
+                  svm sva in_name fallback =
     let val nr = Array.length clauseth
         val _ = sat_trace (fn () =>
                     "solver start clauses=" ^ int_to_string nr)
         val answer = profile_stage "solver" (fn name =>
-            if is_proved andalso not check_sat_model then
-              Option.map (fn () => NONE) (invokeSat_status solver sva name)
-            else Option.map SOME
-              (invokeSat solver T (SOME vc) (SOME nr) svm sva name)) in_name
+            case svm of
+                NONE => Option.map (fn () => NONE)
+                          (invokeSat_status solver sva name)
+              | SOME model_map => Option.map SOME
+                  (invokeSat solver T (SOME vc) (SOME nr) model_map sva name))
+            in_name
         val _ = sat_trace (fn () => "solver done")
         val _ = sat_trace (fn () => case answer of
                                SOME _ => "solver result SAT"
@@ -182,9 +184,16 @@ fun initialise check_sat_model infile is_cnf tm =
         val (cnfv,vc,input,ntm,lfn,clauseth) =
             case infile of
                 SOME fname =>
-                  let val (tm,svm,sva) = genReadDimacs fname
+                  let val (tm,count,sva,svm) =
+                          if check_sat_model then
+                            let val (tm,svm,sva) = genReadDimacs fname
+                            in (tm,SVM.numItems (snd svm),sva,SOME svm) end
+                          else
+                            (* Proof replay and status validation use only
+                               the reverse map indexed by DIMACS number. *)
+                            let val (tm,count,sva) = readDimacsWithCount fname
+                            in (tm,count,sva,NONE) end
                       val ntm = mk_neg tm
-                      val count = SVM.numItems (snd svm)
                       val (cnfv,vc,lfn,clauseth) =
                           profile_stage "cnf" (prepare (SOME count)) ntm
                   in (cnfv,vc,SOME (fname,sva,svm),ntm,lfn,clauseth) end
@@ -255,7 +264,7 @@ fun GEN_SAT_WITH check_sat_model conf =
               then replay_proof sat_trace is_proved sva nr in_name solver vc
                                 clauseth lfn ntm proof fallback
               else invoke_solver sat_trace solver lfn ntm clauseth cnfv vc
-                     is_proved check_sat_model svm sva in_name fallback))
+                     is_proved svm sva in_name fallback))
         fun solve_internal () =
           (report_cnf ();
            if nr > !sat_limit then
@@ -273,7 +282,8 @@ fun GEN_SAT_WITH check_sat_model conf =
                   in with_cleanup
                        (fn () => cleanup_solver_files trace_files solver
                                                       tmpname in_name)
-                       solve (in_name,sva,svm)
+                       solve (in_name,sva,
+                              if check_sat_model then SOME svm else NONE)
                   end
           else with_cleanup (fn () => clean_files trace_files)
                             solve_internal ()

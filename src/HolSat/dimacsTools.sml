@@ -425,6 +425,8 @@ fun stripPreamble get src =
            | _ => NONE)
       | _ => NONE
 
+exception readDimacsError
+
 local
 fun insert_dimacs_var (c,svm) sva v i =
     let
@@ -435,56 +437,58 @@ fun insert_dimacs_var (c,svm) sva v i =
                 failwith ("update_mapsError: " ^ term_to_string v ^ "::" ^
                           int_to_string i ^ "\n")
     in (next,svm') end
+fun get_int_clause remember sva state get src =
+    let fun loop src (acc,state) =
+            case getInt get src of
+                SOME(i, src) => if i = 0 then SOME((acc,state), src)
+                                else
+                                    let val ai = Int.abs i
+                                        val state' =
+                                            if is_T (Array.sub(sva,ai)) then
+                                              remember sva
+                                                (intToPrefixedLiteral ai)
+                                                ai state
+                                            else state
+                                    in loop src ((i::acc),state') end
+              | NONE         => if List.null acc then NONE
+                                else SOME((acc,state), src)
+    in  loop src ([],state)
+    end
+
+fun count_int_clause sva count =
+    get_int_clause (fn sva => fn v => fn i => fn count =>
+      (Array.update (sva,i,v); count+1)) sva count
+
 in
 
 fun update_maps svm sva s i =
     if is_T (Array.sub (sva,i)) then insert_dimacs_var svm sva s i else svm
 
-
-fun getIntClause sva svm get src =
-    let fun loop src (acc,svm) =
-            case getInt get src of
-                SOME(i, src) => if i = 0 then SOME((acc,svm), src)
-                                else
-                                    let val ai = Int.abs i
-                                        val svm' =
-                                            if is_T (Array.sub(sva,ai)) then
-                                              insert_dimacs_var svm sva
-                                                (intToPrefixedLiteral ai) ai
-                                            else svm
-                                    in loop src ((i::acc),svm') end
-              | NONE         => if List.null acc then NONE
-                                else SOME((acc,svm), src)
-    in  loop src ([],svm)
-    end
-
-end
+fun getIntClause sva svm =
+    get_int_clause (fn sva => fn v => fn i => fn svm =>
+      insert_dimacs_var svm sva v i) sva svm
 
 (* This implementation is inspired by (and hopefully faithful to)
 ** dimacsToTerm.
 *)
 
 local
-fun get_terms build sva svm get src =
-    let fun loop src (acc,svm,sva) =
-            let val res = getIntClause sva svm get src
+fun get_terms read_clause build sva state get src =
+    let fun loop src (acc,state) =
+            let val res = read_clause sva state get src
             in case res of
-                SOME((ns,svm'), src) => loop src (build ns::acc,svm',sva)
-              | NONE          => SOME((acc,svm,sva), src)
+                SOME((ns,state'), src) => loop src (build ns::acc,state')
+              | NONE          => SOME((acc,state,sva), src)
             end
-    in case getIntClause sva svm get src of
-           SOME((ns,svm'), src) => loop src ([build ns],svm',sva)
+    in case read_clause sva state get src of
+           SOME((ns,state'), src) => loop src ([build ns],state')
          | NONE          => NONE
     end;
 
-in
-fun getTerms sva = get_terms (buildMappedClause sva) sva
-
-fun readTerms get src =
+fun read_terms read_clause state get src =
     case stripPreamble get src of
         SOME (src,var_count) =>
-                  let val svm = (0,  SVM.mkDict rbmcomp) (* sat_var_map *)
-                      val sva = Array.array(var_count+1,T) (* sat_var_arr *)
+                  let val sva = Array.array(var_count+1,T) (* sat_var_arr *)
                       (* Repeated negative literals can share a term, too.
                          Keep the extra space bounded for sparse headers. *)
                       val capacity = Int.min (Array.length sva, 4096)
@@ -503,25 +507,36 @@ fun readTerms get src =
                                 in Array.update (terms,i,term); term end
                               else cached
                             end
-                  in get_terms (build_clause literal) sva svm get src end
+                  in get_terms read_clause (build_clause literal)
+                       sva state get src
+                  end
       | NONE     => NONE
-end
-end
 
-exception readDimacsError;
-
-fun genReadDimacs filename =
+fun read_dimacs scan filename =
  let val fullfilename = Path.mkAbsolute{path = filename,
                                         relativeTo = FileSys.getDir()}
      val ins          = TextIO.openIn fullfilename
  in  with_cleanup (fn () => TextIO.closeIn ins)
        (fn () =>
-         case TextIO.scanStream readTerms ins of
-             SOME (cs,svm,sva) => (list_mk_conj (List.rev cs),svm,sva)
+         case TextIO.scanStream scan ins of
+             SOME (cs,state,sva) => (list_mk_conj (List.rev cs),state,sva)
            | NONE => raise readDimacsError) ()
  end;
 
-fun readDimacs filename = #1 (genReadDimacs filename)
+in
+fun getTerms sva = get_terms getIntClause (buildMappedClause sva) sva
+
+fun readTerms get src =
+    read_terms getIntClause (0,SVM.mkDict rbmcomp) get src
+
+val genReadDimacs = read_dimacs readTerms
+
+val readDimacsWithCount = read_dimacs (read_terms count_int_clause 0)
+
+fun readDimacs filename = #1 (readDimacsWithCount filename)
+end
+end
+end
 
 end
 end

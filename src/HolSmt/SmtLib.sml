@@ -3856,11 +3856,21 @@ local
       List.rev term_records @ List.rev builtin_records @ advanced_records
     end
 
+  fun datatype_constructors_with_origin origin ty =
+    case TypeBase.fetch ty of
+      SOME tyinfo =>
+        List.map (TypeBasePure.cinst ty)
+          (TypeBasePure.constructors_of tyinfo)
+    | NONE => raise ERR origin "missing TypeBase entry"
+
+  val datatype_constructors =
+    datatype_constructors_with_origin "datatype_constructors"
+  val datatype_template_constructors =
+    datatype_constructors_with_origin "datatype_constructor_infos"
+
   fun datatype_tester_term ty constructor arg =
     let
-      val type_name = type_name_stem ty
-      val infos = datatype_constructor_infos ty type_name
-      fun clause (constructor', _, _) =
+      fun clause constructor' =
         let
           val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
           val vars = List.map Term.genvar doms
@@ -3872,22 +3882,21 @@ local
           (pat, result)
         end
     in
-      TypeBase.mk_case (arg, List.map clause infos)
+      TypeBase.mk_case
+        (arg, List.map clause (datatype_template_constructors ty))
     end
 
   fun datatype_selector_term ty constructor selector_index arg =
     let
-      val type_name = type_name_stem ty
-      val infos = datatype_constructor_infos ty type_name
+      fun domains tm = Lib.fst (boolSyntax.strip_fun (Term.type_of tm))
+      val constructors = datatype_template_constructors ty
       val selector_ty =
-        case List.find (fn (constructor', _, _) =>
-            Term.same_const constructor constructor') infos of
-          SOME (_, _, selectors) => Lib.snd (List.nth (selectors, selector_index))
+        case List.find (Term.same_const constructor) constructors of
+          SOME constructor' => List.nth (domains constructor', selector_index)
         | NONE => raise ERR "datatype_selector_term" "missing constructor"
-      fun clause (constructor', _, _) =
+      fun clause constructor' =
         let
-          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
-          val vars = List.map Term.genvar doms
+          val vars = List.map Term.genvar (domains constructor')
           val pat = Term.list_mk_comb (constructor', vars)
           val result =
             if Term.same_const constructor constructor' then
@@ -3898,7 +3907,7 @@ local
           (pat, result)
         end
     in
-      TypeBase.mk_case (arg, List.map clause infos)
+      TypeBase.mk_case (arg, List.map clause constructors)
     end
 
   datatype parser_datatype_case =
@@ -3906,46 +3915,55 @@ local
                          scrutinee : Term.term}
     | ParserTester of {constructor : Term.term, scrutinee : Term.term}
 
-  fun datatype_constructors ty =
-    case TypeBase.fetch ty of
-      SOME tyinfo =>
-        List.map (TypeBasePure.cinst ty)
-          (TypeBasePure.constructors_of tyinfo)
-    | NONE => raise ERR "datatype_constructors" "missing TypeBase entry"
-
   (* These are exactly the HOL terms installed in the parser dictionary for
      SMT datatype selectors and testers.  Recognizing them centrally makes
      them fixed points of both preprocessing and outbound translation. *)
   fun parser_datatype_case tm =
     let
-      val (_, scrutinee, _) = TypeBase.dest_case tm
+      val (_, scrutinee, clauses) = TypeBase.dest_case tm
       val ty = Term.type_of scrutinee
-      val constructors = datatype_constructors ty
-      fun selector_for constructor =
+      (* A selector returns a variable in one branch and ARB elsewhere.
+         A tester returns T in one branch and F elsewhere. *)
+      fun unique_branch matches =
         let
-          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-          fun matches selector_index =
-            Term.aconv tm
-              (datatype_selector_term ty constructor selector_index
-                scrutinee)
+          fun scan found [] = found
+            | scan found ((clause as (_, rhs)) :: rest) =
+                if matches rhs then
+                  case found of
+                    SOME _ => NONE
+                  | NONE => scan (SOME clause) rest
+                else scan found rest
+        in scan NONE clauses end
+      fun selector_for (pattern, rhs) =
+        let
+          val (constructor, fields) = boolSyntax.strip_comb pattern
+          fun find _ [] = NONE
+            | find index (field :: rest) =
+                if Term.aconv rhs field andalso Term.aconv tm
+                     (datatype_selector_term ty constructor index
+                       scrutinee) then
+                  SOME (ParserSelector {constructor = constructor,
+                    selector_index = index, scrutinee = scrutinee})
+                else find (index + 1) rest
+        in find 0 fields end
+      fun tester_for (pattern, _) =
+        let val (constructor, _) = boolSyntax.strip_comb pattern
         in
-          case List.find matches
-              (List.tabulate (List.length doms, fn n => n)) of
-            SOME selector_index =>
-              SOME (ParserSelector {constructor = constructor,
-                selector_index = selector_index, scrutinee = scrutinee})
-          | NONE => NONE
-        end
-      fun tester_for constructor =
-        if Term.aconv tm (datatype_tester_term ty constructor scrutinee) then
-          SOME (ParserTester {constructor = constructor,
+          (* A literal case has a variable pattern. *)
+          if Term.is_const constructor andalso
+             Term.aconv tm (datatype_tester_term ty constructor scrutinee)
+          then SOME (ParserTester {constructor = constructor,
             scrutinee = scrutinee})
-        else
-          NONE
+          else NONE
+        end
+      fun check matches validate =
+        case unique_branch matches of
+          SOME clause => validate clause
+        | NONE => NONE
     in
-      case Lib.get_first selector_for constructors of
+      case check Term.is_var selector_for of
         SOME result => SOME result
-      | NONE => Lib.get_first tester_for constructors
+      | NONE => check (Term.aconv boolSyntax.T) tester_for
     end
     handle Feedback.HOL_ERR _ => NONE
 

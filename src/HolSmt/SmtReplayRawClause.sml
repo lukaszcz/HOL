@@ -17,6 +17,11 @@ struct
      literal:{node:'node,atom:'node,negative:bool} -> 'tree,
      disjunction:{node:'node,left:'tree,right:'tree} -> 'tree,
      copy:unit -> unit,write:unit -> unit}
+  type 'tree expression_row = 'tree * IntInf.int
+  datatype ('tree,'key) expression_cache =
+      Small of 'tree expression_row list
+    | Indexed of ('key,'tree expression_row list) Redblackmap.dict *
+        'tree expression_row
   fun discover
       ({tick,header,error,boolean,constructor,constant,operands,
         node_key,compare_node,compare_key,compare_ordinal,root,view,
@@ -50,10 +55,49 @@ struct
         if constant boolSyntax.T node then intern RawTrue
         else if constant boolSyntax.F node then intern RawFalse
         else named node
-      val _=write()val expressions=ref([]:('tree * IntInf.int)list)
+      (* Root keys select buckets only. Distinct occurrences of the same
+         root can have different clause trees, so require pointer identity
+         for every hit. Small caches and hits on the most recently inserted
+         row avoid key lookup. *)
+      val _ = write ()
+      val expressions = ref (Small [])
+      fun compare_roots (left,right) = (tick ();compare_key (left,right))
+      fun bucket table key =
+        (tick ();Option.getOpt (Redblackmap.peek (table,key),[]))
+      fun root_key tree = node_key (root tree)
+      fun insert table (row as (tree,_)) =
+        let
+          val key = root_key tree
+          val rows = bucket table key
+        in copy ();write ();Redblackmap.insert (table,key,row :: rows) end
+      fun same tree (saved,_) = (tick ();Portable.pointer_eq (saved,tree))
+      fun lookup table tree =
+        List.find (same tree) (bucket table (root_key tree))
+      fun seek tree = case !expressions of
+          Indexed (table,recent) =>
+            if same tree recent then SOME recent else lookup table tree
+        | Small [] => NONE
+        | Small (rows as newest :: _) =>
+            let
+              fun scan _ [] = NONE
+                | scan 0 _ =
+                    let
+                      val _ = write ()
+                      val table = List.foldr
+                        (fn (row,table) => insert table row)
+                        (Redblackmap.mkDict compare_roots) rows
+                      val _ = write ()
+                      val _ = expressions := Indexed (table,newest)
+                    in lookup table tree end
+                | scan left (row :: rest) =
+                    if same tree row then SOME row else scan (left-1) rest
+            in scan 48 rows end
+      fun save row = case !expressions of
+          Small rows => expressions := Small (row :: rows)
+        | Indexed (table,_) =>
+            expressions := Indexed (insert table row,row)
       fun expression tree=
-        (tick();case List.find(fn(saved,_)=>
-           (tick();Portable.pointer_eq(saved,tree)))(!expressions)of
+        (tick();case seek tree of
          SOME(_,id)=>id|NONE=>
          let val id=case view tree of C.ClauseFalse node=>
                if constant boolSyntax.F node then intern RawFalse
@@ -66,7 +110,7 @@ struct
                  let val a=expression left val b=expression right
                  in copy();intern(RawOr(a,b))end
              val _=copy()val _=copy()val _=write()
-             val _=expressions:=(tree,id):: !expressions
+             val _=save (tree,id)
          in id end)
       fun compare_dictionary(a,b)=(tick();compare_ordinal(a,b))
       val _=write()val _=write()

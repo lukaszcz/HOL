@@ -94,6 +94,8 @@ fun search prove_units initial =
   let
     fun project (Left,th) = CONJUNCT1 th
       | project (Right,th) = CONJUNCT2 th
+    fun combine v l_false r_false =
+      Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
     fun recurse th =
       let val c = concl th in
         if is_T c then Assignment th
@@ -114,17 +116,25 @@ fun search prove_units initial =
                           (PROVE_HYP (EQT_INTRO (prove ())) refutation)
                     | assignment => assignment
               end
-            (* Model reconstruction reads assignment assumptions. *)
-            else try_both th (unit_atom clause)
+            (* A negative unit forces the false branch. Keep its assignment
+               assumption for model reconstruction. *)
+            else if is_neg clause then try_false_unit th (dest_neg clause)
+            else try_both th clause
         | Choice v => try_both th v
       end
     and try_both th v =
       case recurse (split_branch v boolSyntax.T th) of
           Refutation l_false =>
           (case recurse (split_branch v boolSyntax.F th) of
-               Refutation r_false =>
-               Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
+               Refutation r_false => combine v l_false r_false
             | x => x)
+        | x => x
+    and try_false_unit th v =
+      case recurse (split_branch v boolSyntax.F th) of
+          Refutation r_false =>
+          (case recurse (split_branch v boolSyntax.T th) of
+               Refutation l_false => combine v l_false r_false
+             | x => x)
         | x => x
   in recurse initial end
 
