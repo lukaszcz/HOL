@@ -475,8 +475,7 @@ local
   fun cpc_simple_symbol text =
     String.size text > 0 andalso
     cpc_id_initial (String.sub (text, 0)) andalso
-    List.all (fn c => cpc_id_initial c orelse Char.isDigit c)
-      (String.explode text)
+    CharVector.all (fn c => cpc_id_initial c orelse Char.isDigit c) text
 
   (* CPC command and premise IDs use the @-prefixed identifier production,
      not the wider atom production and never the String-token production.
@@ -2644,14 +2643,15 @@ local
   fun provenance_of_raw raw =
     provenance_of_raw_in (Redblackmap.mkDict String.compare) raw
 
-  (* The raw occurrence tree retains each conjunction's operand boundaries.
-     Stream tokens from its list tails while keeping the tree for provenance. *)
-  fun elaborate_located_term dicts_ref source : located_term =
+  fun normalize_located_term dicts_ref source =
+    normalize_cpc_testers
+      (cpc_indexed_identifier (fn name => Option.isSome
+        (Redblackmap.peek (#2 (!dicts_ref), name))))
+      source
+
+  (* Stream tokens from the normalized tree's list tails. *)
+  fun elaborate_normalized_term dicts_ref raw =
     let
-      val raw = normalize_cpc_testers
-        (cpc_indexed_identifier (fn name => Option.isSome
-          (Redblackmap.peek (#2 (!dicts_ref), name))))
-        source
       val (next_token, finished) = raw_token_stream raw
         (fn () => raise ERR "parse_located_term"
           "internal CPC occurrence token stream exhausted")
@@ -2660,17 +2660,24 @@ local
         raise ERR "parse_located_term"
           "internal CPC occurrence parser left trailing tokens"
       (* SMT-LIB lets elaborate to kernel LET applications, while the exact
-         lexical provenance above already describes their simultaneous,
+         lexical provenance describes their simultaneous,
          capture-avoiding substitution.  Reduce precisely those occurrences
          before pairing the HOL term with that substituted occurrence tree.
          The conversion is proof-producing; aliases consequently store the
          same normalized term/provenance pair as direct commands. *)
-      val term =
-        if raw_contains_let raw then
-          boolSyntax.rhs (Thm.concl
-            (Conv.DEPTH_CONV pairLib.let_CONV parsed_term))
-          handle Conv.UNCHANGED => parsed_term
-        else parsed_term
+    in
+      if raw_contains_let raw then
+        boolSyntax.rhs (Thm.concl
+          (Conv.DEPTH_CONV pairLib.let_CONV parsed_term))
+        handle Conv.UNCHANGED => parsed_term
+      else parsed_term
+    end
+
+  (* The raw occurrence tree retains each conjunction's operand boundaries. *)
+  fun elaborate_located_term dicts_ref source : located_term =
+    let
+      val raw = normalize_located_term dicts_ref source
+      val term = elaborate_normalized_term dicts_ref raw
     in
       {term = term, provenance = provenance_of_raw raw}
     end
@@ -2679,7 +2686,8 @@ local
     elaborate_located_term dicts_ref (read_raw_term get_token)
 
   fun parse_recorded_term dicts_ref get_token =
-    #term (parse_located_term dicts_ref get_token)
+    elaborate_normalized_term dicts_ref
+      (normalize_located_term dicts_ref (read_raw_term get_token))
 
   fun unavailable_term reason term : located_term =
     {term = term, provenance = UnavailableProvenance reason}
@@ -4075,9 +4083,7 @@ local
   fun parse_commands dicts_ref version known_ids scope_snapshots
       seen_steps record_unsupported get_token stop acc =
     let
-      fun add_id id =
-        (ensure_fresh_id "parse_commands" id known_ids;
-         known_ids := HOLset.add (!known_ids, id))
+      fun add_id id = known_ids := HOLset.add (!known_ids, id)
       fun recurse acc =
         parse_commands dicts_ref version known_ids scope_snapshots
           seen_steps record_unsupported get_token stop acc
@@ -4099,6 +4105,7 @@ local
           previous :: rest =>
             (known_ids := previous;
              scope_snapshots := rest;
+             ensure_fresh_id "parse_commands" id known_ids;
              add_id id)
         | [] => raise ERR "parse_commands"
             ("step-pop without matching assume-push in CPC step " ^ id)

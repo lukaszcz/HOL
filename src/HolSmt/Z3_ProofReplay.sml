@@ -6971,7 +6971,7 @@ local
   fun asserted_macro_theorems assertions =
     let
       fun macro_parts assertion =
-        let
+        if not (boolSyntax.is_forall assertion) then NONE else let
           val (vars, body) = boolSyntax.strip_forall assertion
           val (lhs, rhs) = boolSyntax.dest_eq body
           val (head, args) = boolSyntax.strip_comb lhs
@@ -6980,7 +6980,6 @@ local
             (Term.is_const tm andalso Term.is_const head andalso
              Term.same_const tm head)
           val eligible =
-            not (List.null vars) andalso
             List.length args = List.length vars andalso
             List.all (fn arg => Lib.op_mem Term.aconv arg vars) args andalso
             List.length (Lib.op_mk_set Term.aconv args) =
@@ -7594,58 +7593,102 @@ local
             end
         fun permutation lefts rights =
           let
-            val used = Array.array (List.length rights, false)
-            val rights_array = Array.fromList rights
-            val indices =
-              List.tabulate (Array.length rights_array, fn j => j)
+            val count = Vector.length rights
+            val used = Array.array (count, false)
+            val short = count <= 16
+            val indices = Susp.delay (fn () => List.tabulate (count, Lib.I))
             fun free j = not (Array.sub (used, j))
+            fun select result =
+              (Option.app (fn j => Array.update (used, j, true)) result;
+               result)
+            fun scan agrees = List.find (fn j => free j andalso
+              agrees (Vector.sub (rights, j))) (Susp.force indices)
+            (* Build queues in occurrence order. Same-position matches can
+               consume an index away from the front of a shape queue. *)
+            fun indexed compare key_of =
+              let
+                fun add (j, term, map) =
+                  if not (free j) then map else
+                    let val key = key_of term in
+                      case Redblackmap.peek (map, key) of
+                        SOME queue => (queue := j :: !queue; map)
+                      | NONE => Redblackmap.insert (map, key, ref [j])
+                    end
+                val map = Vector.foldri add (Redblackmap.mkDict compare) rights
+                fun take queue =
+                  case !queue of
+                    [] => NONE
+                  | j :: rest =>
+                      (queue := rest; if free j then SOME j else take queue)
+              in
+                fn key => Option.mapPartial take (Redblackmap.peek (map, key))
+              end
             (* Identical children pair first, so that siblings of one shape
                are not paired across a reordering. *)
-            fun same (_, left) =
-              case List.find (fn j => free j andalso
-                     Term.aconv left (Array.sub (rights_array, j))) indices of
-                SOME j => (Array.update (used, j, true); SOME j)
-              | NONE => NONE
-            val identical = List.map same (Portable.enumerate 0 lefts)
+            fun exact_scan () = List.map (select o scan o Term.aconv) lefts
+            fun exact_index compare key_of =
+              let val take = indexed compare key_of in
+                List.map (select o take o key_of) lefts
+              end
+            fun exact_compounds () =
+              let
+                exception IndexUnavailable
+                val limit = SmtResource.max_skeleton_replay_dag_nodes
+                (* Compare shared applications by their canonical child IDs. *)
+                val intern = SmtResource.new_bounded_term_index_with_types
+                  {admit_binder = fn tm => Option.isSome
+                     (SmtReplayImport.bounded_raw_size limit tm),
+                   intern_type = NONE} limit
+                fun key_of term = case intern term of
+                    SOME key => key
+                  | NONE => raise IndexUnavailable
+              in
+                exact_index Int.compare key_of
+                handle IndexUnavailable =>
+                  (Array.modify (Lib.K false) used; exact_scan ())
+              end
+            val identical = if short then exact_scan ()
+              else if List.exists Term.is_comb lefts orelse
+                      Vector.exists Term.is_comb rights then exact_compounds ()
+              else exact_index Term.compare Lib.I
             (* Then children of one shape, the same position first. *)
+            val shape_index =
+              Susp.delay (fn () => indexed String.compare shape)
+            fun same_shape key term = shape term = key
             fun similar ((i, left), SOME j) = SOME j
               | similar ((i, left), NONE) =
-              let
-                val key = shape left
-                fun ok j = free j andalso
-                  shape (Array.sub (rights_array, j)) = key
-                val found =
-                  if i < Array.length rights_array andalso ok i then SOME i
-                  else List.find ok indices
-              in
-                Option.app (fn j => Array.update (used, j, true)) found;
-                found
-              end
-            val shaped = ListPair.map similar
+                  let val key = shape left in
+                    select (if free i andalso
+                        same_shape key (Vector.sub (rights, i)) then SOME i
+                      else if short then scan (same_shape key)
+                      else Susp.force shape_index key)
+                  end
+            val shaped = ListPair.mapEq similar
               (Portable.enumerate 0 lefts, identical)
             (* The rest in order: a rewritten atom can change its head. *)
-            fun rest (SOME j) = j
-              | rest NONE =
-              case List.find free indices of
-                SOME j => (Array.update (used, j, true); j)
-              | NONE => raise ERR "skeleton_congruence"
+            val next = ref 0
+            fun next_free j =
+              if j = count then raise ERR "skeleton_congruence"
                   "spine children do not pair"
+              else if free j then (next := j + 1; j)
+              else next_free (j + 1)
+            fun rest (SOME j) = j
+              | rest NONE = next_free (!next)
           in
             List.map rest shaped
           end
         fun nary strip mk_op is_op dest (state, left, right) =
           let
             val lefts = strip left
-            val rights = strip right
+            val rights = Vector.fromList (strip right)
             val n = List.length lefts
-            val _ = n >= 2 andalso n = List.length rights orelse
+            val _ = n >= 2 andalso n = Vector.length rights orelse
               raise ERR "skeleton_congruence" "spine lengths differ"
             val pairs = permutation lefts rights
             val vars = List.map (fn _ => Term.genvar Type.bool) lefts
             val right_vars = Array.array (n, Term.genvar Type.bool)
-            val _ = List.app (fn (i, j) =>
-                Array.update (right_vars, j, List.nth (vars, i)))
-              (Portable.enumerate 0 pairs)
+            val _ = ListPair.appEq
+              (fn (v, j) => Array.update (right_vars, j, v)) (vars, pairs)
             fun pattern leaves tm =
               if is_op tm then
                 let val (a, b) = dest tm in mk_op (pattern leaves a,
@@ -7664,12 +7707,12 @@ local
             val left_theorem = Thm.INST
               (ListPair.map (fn (v, l) => {redex = v, residue = l})
                  (vars, lefts)) shape_theorem
-            val (state', child_theorems) = List.foldl
-              (fn ((i, j), (state, theorems)) =>
+            val (state', child_theorems) = ListPair.foldlEq
+              (fn (left_child, j, (state, theorems)) =>
                 let val (state', theorem) = child (state, left, right)
-                      (List.nth (lefts, i), List.nth (rights, j))
+                      (left_child, Vector.sub (rights, j))
                 in (state', theorem :: theorems) end)
-              (state, []) (Portable.enumerate 0 pairs)
+              (state, []) (lefts, pairs)
             val substitution = ListPair.map
               (fn (v, theorem) => {redex = v, residue = theorem})
               (vars, List.rev child_theorems)

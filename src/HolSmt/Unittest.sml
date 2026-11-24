@@ -2575,8 +2575,10 @@ let
   val partial = List.foldl (fn (arg, term) => Term.mk_comb (term, arg))
     f (List.take (args, width - 1))
   val stripped = ref 0
+  val typed = ref 0
   val ops : Term.term SmtLib_RawNumAnalysis.operations =
-    {same = fn (left, right) => Term.aconv left right, type_of = Term.type_of,
+    {same = fn (left, right) => Term.aconv left right,
+     type_of = fn term => (typed := !typed + 1; Term.type_of term),
      is_abstraction = Term.is_abs, dest_abs = Term.dest_abs,
      is_combination = Term.is_comb, dest_comb = Term.dest_comb,
      strip_comb = fn term =>
@@ -2594,6 +2596,26 @@ let
   val other_num = intSyntax.mk_Num (Term.mk_var ("j", intSyntax.int_ty))
   val equal = boolSyntax.mk_eq (num, lookup)
   val roots = [equal, intSyntax.mk_injected other_num, equal]
+  val coerced = boolSyntax.mk_eq
+    (intSyntax.mk_injected lookup, intSyntax.zero_tm)
+  val consumed = Term.mk_comb (consumer, lookup)
+  fun diamond 0 term = term
+    | diamond depth term = diamond (depth - 1) (boolSyntax.mk_conj (term,term))
+  val shared = diamond 9 (boolSyntax.mk_conj (coerced, consumed))
+  val y = Term.mk_var ("y", n)
+  val abstraction = Term.mk_abs (y, Term.mk_comb (bag, y))
+  val consume_bag = Term.mk_var ("consume_bag", Type.--> (unary_type,Type.bool))
+  val shared_roots = [shared, Term.mk_comb (consume_bag, abstraction),
+                      intSyntax.mk_injected num, shared]
+  val shared_bags = abstraction :: bags
+  val _ = typed := 0
+  val direct = SmtLib_RawNumAnalysis.collect ops shared_bags shared_roots
+  val direct_visits = !typed
+  val _ = typed := 0
+  val memoized =
+    SmtLib_RawNumAnalysis.collect_terms ops shared_bags shared_roots
+  val memoized_visits = !typed
+  val same_markers = ListPair.allEq (fn (left, right) => Term.aconv left right)
 in
   assert (null result, "curried applications must not be marked bag lookups");
   assert (!stripped <= 4 * width,
@@ -2607,7 +2629,13 @@ in
   assert
     (ListPair.allEq (fn (left, right) => Term.aconv left right)
        (analyse roots, SmtLib_RawNumAnalysis.collect ops bags roots),
-     "indexed raw-num analysis changed merge order or duplicate suppression")
+     "indexed raw-num analysis changed merge order or duplicate suppression");
+  assert
+    (same_markers (direct, [num, lookup]) andalso
+     same_markers (memoized, direct),
+     "shared raw-num analysis changed numeric context or marker order");
+  assert (memoized_visits < direct_visits div 8,
+    "raw-num analysis revisited shared application occurrences")
 end
 
 fun num_transfer_literal_normalization_success () =
@@ -22175,6 +22203,13 @@ let
     end
   val left_conj = boolSyntax.mk_conj (word_atom x, seq_atom)
   val right_conj = boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+  val wide_guards = List.tabulate (12, fn i =>
+    Term.mk_var ("skeleton_guard_" ^ Int.toString i, Type.bool))
+  val repeated_guards = wide_guards @ List.take (wide_guards, 5)
+  val wide_left = boolSyntax.list_mk_conj
+    (word_atom x :: seq_atom :: repeated_guards)
+  val wide_right = boolSyntax.list_mk_conj
+    (List.revAppend (repeated_guards, [boolSyntax.T, boolSyntax.T]))
   val false_word_atom = boolSyntax.mk_neg (word_atom x)
   val false_seq_atom = boolSyntax.mk_neg seq_atom
   val forall_left = boolSyntax.mk_forall
@@ -22190,6 +22225,8 @@ in
     (boolSyntax.mk_neg left_conj, boolSyntax.mk_neg right_conj);
   check "rewrite skeleton conjunction" 1
     (left_conj, right_conj);
+  check "rewrite skeleton reordered wide conjunction" 1
+    (wide_left, wide_right);
   check "rewrite skeleton disjunction" 1
     (boolSyntax.mk_disj (false_word_atom, false_seq_atom),
      boolSyntax.mk_disj (boolSyntax.F, boolSyntax.F));

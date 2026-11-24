@@ -129,23 +129,25 @@ val print_all_term = HOLFlags.with_bflags[(show_types,true)]print_term;
 *)
 
 exception literalToIntError;
-fun literalToInt svm sva t =
- let val (sign,v) =
-      if is_neg t
-       then
-        let val t1 = dest_neg t
-        in if type_of t1 = bool
-            then (true, t1)
-            else (print "``"; print_all_term t; print "``";
-                  print " is not a literal"; raise literalToIntError)
-        end
-       else if type_of t = bool then (false, t)
-       else (print "``"; print_all_term t; print "``\n";
-             print " is not a clause or literal\n"; raise literalToIntError)
-     val (v_num,svm') = lookup_sat_var svm sva v
- in
-  ((sign, v_num),svm')
- end;
+local
+fun number_literal svm sva literal negative atom =
+    if type_of atom = bool then
+      let val (number,svm') = lookup_sat_var svm sva atom
+      in ((negative,number),svm') end
+    else
+      (print "``"; print_all_term literal;
+       print (if negative then "`` is not a literal"
+              else "``\n is not a clause or literal\n");
+       raise literalToIntError)
+in
+fun literalToInt svm sva literal =
+    if is_comb literal then
+      let val (operator,operand) = dest_comb literal in
+        if same_const negation operator then
+          number_literal svm sva literal true operand
+        else number_literal svm sva literal false literal
+      end
+    else number_literal svm sva literal false literal
 
 (*
 ** Convert an integer (a possibly negated var number) to a literal,
@@ -266,13 +268,17 @@ fun number_clause sva clause svm =
                 let val (head,left) = dest_comb operator in
                   if same_const disjunction head then
                     walk right (left :: pending) numbered svm
-                  else add literal pending numbered svm
+                  else add literal false literal pending numbered svm
                 end
-              else add literal pending numbered svm
+              else if same_const negation operator then
+                add literal true right pending numbered svm
+              else add literal false literal pending numbered svm
             end
-          else add literal pending numbered svm
-      and add literal pending numbered svm =
-          let val (number,svm') = literalToInt svm sva literal in
+          else add literal false literal pending numbered svm
+      and add literal negative atom pending numbered svm =
+          let
+            val (number,svm') = number_literal svm sva literal negative atom
+          in
             case pending of
                 [] => (number :: numbered,svm')
               | next :: rest => walk next rest (number :: numbered) svm'
@@ -538,5 +544,6 @@ end
 end
 end
 
+end
 end
 end

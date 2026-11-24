@@ -744,9 +744,6 @@ local
     handle Redblackmap.NotFound =>
       raise ERR what ("CPC premise step '" ^ id ^ "' was not found")
 
-  fun lookup_rule state id =
-    #rule_name (find_step "lookup_rule" state id)
-
   fun cached_thm_with_fastpath fastpath state tm =
     if not theorem_cache_enabled then
       (profile_event "CPC(cache:probe_disabled)";
@@ -4637,11 +4634,9 @@ local
     | _ => raise ERR name "unsupported CPC RARE rewrite argument shape"
     end
 
-  fun replay_rare_rewrite_with_provenance name
-      (located_args : located_term list) =
+  fun rare_rewrite_provenance name (located_args : located_term list)
+      theorem =
     let
-      val args = List.map (fn located => #term located) located_args
-      val theorem = replay_rare_rewrite name args
       fun semantic_provenance () =
         conjunction_free_semantic_provenance
           ("CPC RARE rewrite " ^ name ^
@@ -4651,8 +4646,8 @@ local
         if Term.aconv (#term located) (Thm.concl theorem) then
           #provenance located
         else semantic_provenance ()
-      val provenance =
-        case (name, located_args) of
+    in
+      case (name, located_args) of
           ("bool-double-not-elim", [located]) =>
             let val operand = #provenance located in
               EqualityProvenance
@@ -4679,8 +4674,6 @@ local
             end
         | (_, [located]) => exact_argument_or_semantic located
         | _ => semantic_provenance ()
-    in
-      (theorem, provenance)
     end
 
   fun replay_aci_norm_admitted admit args =
@@ -19668,7 +19661,6 @@ local
       val _ = case !operation_observation of NONE => ()
         | SOME fields => #premises fields := !(#premises fields) +
             IntInf.fromInt (List.length premise_steps)
-      val premise_rules = List.map (lookup_rule state) premises
       fun opaque theorem =
         let
           val term = Thm.concl theorem
@@ -20014,13 +20006,11 @@ local
                   arithmetic_operand left andalso arithmetic_operand right
                 end
                 handle Feedback.HOL_ERR _ => false
-              val evaluate_chain =
-                List.exists (fn name => name = "evaluate") premise_rules
-              val expression_chain =
-                List.all arithmetic_expression_equality prems
             in
             if not (Option.isSome conclusion) andalso
-                (evaluate_chain orelse expression_chain) andalso
+                (List.exists (fn premise => #rule_name premise = "evaluate")
+                   premise_steps orelse
+                 List.all arithmetic_expression_equality prems) andalso
                 List.exists has_total prems then
               arithmetic_trans ()
             else raise ERR "trans"
@@ -21630,11 +21620,9 @@ local
                  val theorem = replay_rare_rewrite (#name rule) args
                in
                  if use_compact_provenance (Thm.concl theorem) then
-                   let
-                     val (_, provenance) =
-                       replay_rare_rewrite_with_provenance
-                         (#name rule) located_args
-                   in exact_result provenance theorem end
+                   exact_result
+                     (rare_rewrite_provenance (#name rule) located_args
+                        theorem) theorem
                  else
                    raw_unavailable_result
                      "rewrite provenance exceeds the compact metadata budget"

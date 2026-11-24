@@ -32,6 +32,11 @@ sig
   val collect_by : 'term operations -> ('term * 'term -> order) ->
     'term list -> 'term list -> 'term list
 
+  (* Native traversal with the same marker order as collect_by. The syntax
+     callbacks must expose the Term view, including opened binder bodies. *)
+  val collect_terms : Term.term operations -> Term.term list ->
+    Term.term list -> Term.term list
+
   (* Each visit supplies its exact expected type (including NONE), current
      term, immutable incoming per-root list and synchronous computation.
      A graph caller keys successful full output lists on expected type,

@@ -6391,7 +6391,7 @@ local
   (* Whether 'child' is '\v1 ... vn. tm v1 ... vn' for some n > 0.  Only
      eta_expand_ranked_constant gives a term such a child. *)
   fun is_eta_expansion_of tm child =
-    let
+    Term.is_abs child andalso let
       val (vars, body) = Term.strip_abs child
       fun peel t [] = Term.identical t tm
         | peel t (v :: vs) =
@@ -6747,8 +6747,8 @@ local
     val marked_bags = Redblackset.addList (empty_marked_terms, bag_terms)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
-    val raw_num_terms = SmtLib_RawNumAnalysis.collect_by
-      raw_num_operations Term.compare bag_terms roots
+    val raw_num_terms =
+      SmtLib_RawNumAnalysis.collect_terms raw_num_operations bag_terms roots
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
@@ -8549,8 +8549,7 @@ in
       val roots = goal :: assumptions
       val {bags, ...} = collect_query_collection_markers roots
     in
-      SmtLib_RawNumAnalysis.collect_by raw_num_operations Term.compare
-        bags roots
+      SmtLib_RawNumAnalysis.collect_terms raw_num_operations bags roots
     end
 
   fun outbound_pair_constant (left, right) =

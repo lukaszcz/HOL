@@ -203,7 +203,7 @@ fun propvar cnfv i = mk_var(cnfv^(int_to_string i),bool)
 local
 datatype source_probe = Unprobed | SkipMemo | Bucket of int
 in
-fun localdefs cnfv tm state =
+fun make_localdefs cnfv =
     let val rollbacks = ref 0
         val empty = (T,T)
         val newest = ref empty
@@ -306,7 +306,7 @@ fun localdefs cnfv tm state =
                    | NONE => extend tm tm' (n3,defs3,lfn3)
               end
           else intern tm tm (n,defs,lfn)
-    in walk tm state end
+    in walk end
 end
 
 (* ------------------------------------------------------------------------- *)
@@ -426,6 +426,8 @@ fun to_cnf is_cnf tm =
                 [],tops,RBM.mkDict Term.var_compare) end else
             let
                 val cnfv = (!cnfv_ref)
+                (* The definition tables and source memo cover all clauses. *)
+                val localdefs = make_localdefs cnfv
                 val (n,tops,defs,lfn) =
                     itlist (fn (ic,th) =>
                             fn (m,tops,defs,lfn) =>
@@ -439,7 +441,7 @@ fun to_cnf is_cnf tm =
                                   let val (n,v,defs',lfn') =
                                           if ic then
                                             transvar_clause cnfv (m,t,defs,lfn)
-                                          else localdefs cnfv t (m,defs,lfn)
+                                          else localdefs t (m,defs,lfn)
                                   in (n,(v,th)::tops,defs',lfn') end
                                end) ths
                            (~1,[],RBM.mkDict Term.compare,
