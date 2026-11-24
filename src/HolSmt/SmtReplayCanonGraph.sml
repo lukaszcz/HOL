@@ -1482,6 +1482,37 @@ struct
        option,
      closed : P.closed_fact option,conversion : P.closed_conversion option,
      continuation : int option}
+  (* Endpoints narrow the search. Distinct recipes with the same endpoints
+     still require exact object identity. Read the fields without invoking
+     policy guards, which belong to the executable assembly paths. *)
+  fun recipe_key (PolicyGraphConversion _) = NONE
+    | recipe_key (PolicySequenceGraphConversion _) = NONE
+    | recipe_key (RealizedGraphConversion {legacy,...}) = recipe_key legacy
+    | recipe_key current = SOME (G.node_id (graph_equality current))
+
+  fun recipe_memo observe =
+    let
+      val memo = ref (Redblackmap.mkDict
+        (fn (a,b) => (observe ();Int.compare (a,b))))
+      fun cached current [] = NONE
+        | cached current ((old,value)::rest) =
+            (observe ();if Portable.pointer_eq (current,old) then SOME value
+             else cached current rest)
+      fun apply current fresh = (observe ();case recipe_key current of
+          NONE => fresh current
+        | SOME key =>
+            let val entries = Option.getOpt (Redblackmap.peek (!memo,key),[])
+            in case cached current entries of
+                SOME value => value
+              | NONE =>
+                  let val value = fresh current
+                      val _ = observe ()
+                      val _ = memo := Redblackmap.update (!memo,key,fn saved =>
+                        (current,value) :: Option.getOpt (saved,[]))
+                  in value end
+            end)
+    in apply end
+
   fun graph_recipe_steps graph scope {observe} conversion =
     let val next = ref 0 val rows = ref ([] : recipe_step list)
         fun fresh () = (observe ();let val id = !next
@@ -1492,19 +1523,11 @@ struct
            Option.app (visible graph scope) (#equality row);
            rows := row :: !rows;
            #id row)
-        val objects = ref ([] : (graph_conversion * int) list)
+        val objects = recipe_memo observe
         (* Opening a realized slot and naming its equality are distinct
            executable grammars, even for the same exact recipe object. *)
-        val direct_objects = ref ([] : (graph_conversion * int) list)
-        fun cached current [] = NONE
-          | cached current ((old,id)::rest) =
-              (observe ();if Portable.pointer_eq (current,old) then SOME id
-               else cached current rest)
-        fun collect current =
-          (observe ();case cached current (!objects) of SOME id => id | NONE =>
-            let val id = collect_fresh current val _ = observe ()
-                val _ = objects := (current,id) :: !objects
-            in id end)
+        val direct_objects = recipe_memo observe
+        fun collect current = objects current collect_fresh
         and collect_fresh (GraphConversion {source =
           root_source,equality,steps,...}) =
               let val memo = ref (Redblackmap.mkDict Int.compare)
@@ -1554,20 +1577,14 @@ struct
               {source,result,equality,first,second,first_slot,second_slot,
                ...}) =
               let
-                fun direct converted slot =
-                  (observe ();case cached converted (!direct_objects) of
-                     SOME id => id
-                   | NONE =>
-                     let val a = graph_source converted
-                         val b = graph_result converted
-                         val id = save {id = fresh (),kind = LegacyStep,
-                           source = a,current = a,result = b,children = NONE,
-                           prefix = NONE,equality = NONE,closed = NONE,
-                           conversion = SOME slot,continuation = NONE}
-                         val _ = observe ()
-                         val _ = direct_objects :=
-                           (converted,id) :: !direct_objects
-                     in id end)
+                fun direct converted slot = direct_objects converted
+                  (fn current =>
+                    let val a = graph_source current
+                        val b = graph_result current
+                    in save {id = fresh (),kind = LegacyStep,
+                      source = a,current = a,result = b,children = NONE,
+                      prefix = NONE,equality = NONE,closed = NONE,
+                      conversion = SOME slot,continuation = NONE} end)
                 val a = direct first first_slot
                 val b = direct second second_slot
               in save {id = fresh (),kind = SequenceRecipe,source = source,
@@ -1592,38 +1609,13 @@ struct
                 closed = NONE,conversion = NONE,continuation = NONE} end
         val _ = G.validate_scope graph scope
         val root = collect conversion
+        (* Each fresh ID is saved immediately. Consumers index by position. *)
     in {root = root,steps = List.rev (!rows)} end
-
-  (* Endpoints narrow the search. Distinct recipes with the same endpoints
-     still require exact object identity. Read the fields without invoking
-     policy guards, which belong to the executable assembly paths. *)
-  fun recipe_key (PolicyGraphConversion _) = NONE
-    | recipe_key (PolicySequenceGraphConversion _) = NONE
-    | recipe_key (RealizedGraphConversion {legacy,...}) = recipe_key legacy
-    | recipe_key current = SOME (G.node_id (graph_equality current))
-
-  fun recipe_memo () =
-    let
-      val memo = ref (Redblackmap.mkDict Int.compare)
-      fun apply current fresh = case recipe_key current of
-          NONE => fresh current
-        | SOME key =>
-            let val entries = Option.getOpt (Redblackmap.peek (!memo,key),[])
-            in case List.find
-                (fn (old,_) => Portable.pointer_eq (current,old)) entries of
-                SOME (_,value) => value
-              | NONE =>
-                  let val value = fresh current
-                      val _ = memo := Redblackmap.update (!memo,key,fn saved =>
-                        (current,value) :: Option.getOpt (saved,[]))
-                  in value end
-            end
-    in apply end
 
   fun graph_assemble graph block (conversion as GraphConversion _) =
         legacy_assemble graph block conversion
     | graph_assemble graph block conversion =
-    let val memo = recipe_memo ()
+    let val memo = recipe_memo (fn () => ())
         fun trans a b = P.compose block
               (fn [a,b] => SmtReplayRuleObservation.TRANS a b
                 | _ => raise Fail "recipe TRANS premises") [a,b]
@@ -1701,7 +1693,7 @@ struct
         assemble_finite_named graph block converted
     | graph_assemble_named graph block converted =
     let
-      val memo = recipe_memo ()
+      val memo = recipe_memo (fn () => ())
       fun inspect current = memo current inspect_fresh
       and inspect_fresh (GraphConversion _) = ()
         | inspect_fresh (ApplicationGraphConversion {left,right,...}) =
@@ -1783,25 +1775,23 @@ struct
          raise ERR "graph_assemble_for" "different original graph")
       val _ = validate_conversion_with_policy expected conversion
       val scope = P.scope block
+      fun spend amount = SmtReplayInvocationWork.spend expected amount
       val {root,steps} = graph_recipe_steps graph scope
-        {observe = fn () => SmtReplayInvocationWork.spend expected 1}
-          conversion
-      val _ = SmtReplayInvocationWork.spend expected 1
-      val memo = ref ([] : (int * P.edge) list)
+        {observe = fn () => spend 1} conversion
+      (* Recipe IDs start at zero and rows are returned in ID order.
+         Count with a debit per cell before allocating the indexed tables. *)
+      val count = List.foldl (fn (_,n) => (spend 1;n+1)) 0 steps
+      val _ = spend count
+      val rows = Vector.fromList steps
+      val _ = spend count
+      val memo = Array.array (count,NONE : P.edge option)
       fun primitive recipe edges = P.execute_primitive expected
         (P.prepare_primitive expected block recipe edges)
       fun reflexive node = primitive (P.ReflexiveName node) []
       fun trans a b = primitive P.Transitivity [a,b]
       fun symmetry edge = primitive P.Symmetry [edge]
       fun equality_mp equation proof = primitive P.EqualityMP [equation,proof]
-      fun lookup id [] = NONE
-        | lookup id ((old,edge)::rest) =
-            (SmtReplayInvocationWork.spend expected 1;
-             if old = id then SOME edge else lookup id rest)
-      fun step id [] = raise ERR "graph_assemble_for" "missing recipe ID"
-        | step id ((row:recipe_step)::rest) =
-            (SmtReplayInvocationWork.spend expected 1;
-             if #id row = id then row else step id rest)
+      fun step id = (spend 1;Vector.sub (rows,id))
       fun constructor node = case G.view graph node of
           G.Constant _ => P.definition block node
         | G.Application (operator,operand) =>
@@ -1821,12 +1811,12 @@ struct
               (primitive (P.ApplyNamedArgument right) [inner])
         in equality_mp (symmetry outer) proof end
       fun opened id =
-        let val edge = assemble id val row = step id steps
+        let val edge = assemble id val row = step id
         in case #equality row of NONE => edge
           | SOME equality => equality_mp (constructor equality) edge end
-      and assemble id = case lookup id (!memo) of SOME edge => edge
+      and assemble id = case (spend 1;Array.sub (memo,id)) of SOME edge => edge
         | NONE =>
-          let val row = step id steps
+          let val row = step id
               val source = #source row val current = #current row
               val initial = case #prefix row of SOME prefix => opened prefix
                 | NONE => (case #children row of NONE => reflexive source
@@ -1855,8 +1845,8 @@ struct
                      else assemble next)
               val result = case #equality row of NONE => equation
                 | SOME equality => named equality equation
-              val _ = SmtReplayInvocationWork.spend expected 3
-              val _ = memo := (id,result) :: !memo
+              val _ = spend 2
+              val _ = Array.update (memo,id,SOME result)
           in result end
     in assemble root end
 

@@ -133,9 +133,6 @@ struct
       fun plus a b = IntInf.min (ceiling+1,a+b)
       fun times a b = IntInf.min (ceiling+1,a*b)
       fun charge () = W.spend work 1
-      fun lookup key [] = NONE
-        | lookup key ((old,value)::rest) =
-            (charge ();if old = key then SOME value else lookup key rest)
       val _ = charge ()
       val held = ref ([] : held list)
       val _ = charge ()
@@ -183,8 +180,6 @@ struct
          inc = plus 1 (plus (#inc a) (#inc b)),
          ann = plus ty (plus (#ann a) (#ann b)),ty = ty,shape = shape}
       fun named node = atom (annotation node)
-      val _ = charge ()
-      val projection_memo = ref ([] : (G.node * IntInf.int) list)
       val _ = charge ()
       val projection_work = ref (0 : IntInf.int)
       (* This receipt comes ONLY from a completed genuine no-op scan.
@@ -247,38 +242,35 @@ struct
       (* Only roots MINTED HERE have this single graph/scope/node key.
          Reuse their exact child objects, not validation success. Incoming
          projection paths and opaque backing receipts remain independent. *)
-      val _ = charge ()
-      val root_children = ref ([] : (G.node * G.closure_child) list)
-      fun root_child node = case lookup node (!root_children) of
-          SOME child => (child,false)
-        | NONE =>
-            let val _ = charge ()
-                val child = G.closure_root graph scope node
-                val _ = charge ()
-                val _ = root_children := (node,child) :: !root_children
-            in (child,true) end
+      val _ = W.spend work 2
+      val residue_memo = ref (Redblackmap.mkDict
+        (fn (a,b) => (charge ();Int.compare (a,b))))
       fun residue node =
         let val _ = charge ()
-            val (child,new_root) = root_child node
-            val _ = ignore (G.closure_child_node graph scope child)
+            val id = G.node_id node
+            val saved = Redblackmap.peek (!residue_memo,id)
+            val child = case saved of SOME (child,_) => child
+              | NONE => (charge ();G.closure_root graph scope node)
+            val _ = if G.closure_child_node graph scope child = node then ()
+              else raise ERR "prepare" "projection root differs"
             (* An incoming opaque receipt is never dropped by a memo hit.
                It may have a different actual backing/ready path. *)
             val admitted = case G.view graph node of
                 G.OpaqueRetained =>
-                  (if new_root then retain_child child else ();
+                  (if Option.isSome saved then () else retain_child child;
                    SOME (opaque_projection 0 node))
               | _ => NONE
-            val work = case lookup node (!projection_memo) of
-                SOME amount => amount
+            val amount = case saved of
+                SOME (_,amount) => amount
               | NONE =>
                   let val _ = charge ()
                       val amount = case admitted of SOME amount => amount
                         | NONE => projection 0 child
-                      val _ = charge ()
-                      val _ = projection_memo :=
-                        (node,amount) :: !projection_memo
+                      val _ = W.spend work 4
+                      val _ = residue_memo := Redblackmap.insert
+                        (!residue_memo,id,(child,amount))
                   in amount end
-            val _ = projection_work := plus (!projection_work) work
+            val _ = projection_work := plus (!projection_work) amount
         in atom (annotation node) end
       (* A retained comparison hole is NOT an unfolded term-size claim.
          Its identity comes only from P's held node/placeholder substitution
@@ -437,7 +429,11 @@ struct
                  descend a;descend b)
         in quote tally [common] common;descend t end
       val _ = projections false tree
-      val _ = charge () val assembly_memo = ref ([] : (int * size) list)
+      (* graph_recipe_steps returns dense IDs in ascending order. *)
+      val _ = W.spend work step_count
+      val rows = Vector.fromList steps
+      val _ = W.spend work step_count
+      val assembly_memo = Array.array (step_count,NONE : size option)
       fun constructor node =
         case G.view graph node of G.Constant _ => named node
         | G.Application (a,b) =>
@@ -448,9 +444,7 @@ struct
                 val _ = compact (equal (named node) result)
             in result end
         | _ => (ignore (reflexive node);named node)
-      fun step_for id [] = raise ERR "prepare" "missing retained recipe ID"
-        | step_for id ((step : C.recipe_step)::rest) =
-            (charge ();if #id step = id then step else step_for id rest)
+      fun step_for id = (charge ();Vector.sub (rows,id))
       (* Exactly the actual per-frame naming wrapper. Child opened receipts
          then use this same equality's constructor before public EQ_MP. *)
       fun name_equality equality =
@@ -470,14 +464,14 @@ struct
             val _ = compact (equal (named equality) expanded)
             val _ = compact (equal expanded (named equality))
         in compact (named equality) end
-      fun assemble id = case lookup id (!assembly_memo) of
+      fun assemble id = case (charge ();Array.sub (assembly_memo,id)) of
           SOME value => value
         | NONE =>
-          let val step = step_for id steps
+          let val step = step_for id
               val source = #source step val current = #current step
               fun opened child_id =
                 let val proof = assemble child_id
-                    val child = step_for child_id steps
+                    val child = step_for child_id
                 in case #equality child of NONE => proof
                   | SOME equality =>
                     let val expanded = constructor equality
@@ -513,11 +507,11 @@ struct
                         val _ = compact expansion
                     in ignore (compact (equal (named source)
                       (named (case #continuation step of
-                         SOME next => #source (step_for next steps)
+                         SOME next => #source (step_for next)
                        | NONE => #result step)))) end
                 | (NONE,SOME _) => ignore (compact (equal (named source)
                     (named (case #continuation step of
-                       SOME next => #source (step_for next steps)
+                       SOME next => #source (step_for next)
                      | NONE => #result step))))
                 | (NONE,NONE) => ()
                 | _ => raise ERR "prepare" "two local witness slots"
@@ -529,8 +523,8 @@ struct
                      compact (equal (named source) (named (#result step))))
               val value = case #equality step of NONE => equation
                 | SOME equality => name_equality equality
-              val _ = charge ()
-              val _ = assembly_memo := (id,value) :: !assembly_memo
+              val _ = W.spend work 2
+              val _ = Array.update (assembly_memo,id,SOME value)
           in value end
       val _ = assemble recipe_root
       val target_actual = actual target

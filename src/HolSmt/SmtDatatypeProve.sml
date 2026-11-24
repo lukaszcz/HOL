@@ -1199,7 +1199,7 @@ struct
     end
 
   fun datatype_fragment_admits t =
-    List.exists (datatype_owned_type o Term.type_of) (subterms t)
+    Library.exists_shared_subterm (datatype_owned_type o Term.type_of) t
 
   fun require_datatype_fragment t =
     if datatype_fragment_admits t then ()
@@ -1213,7 +1213,10 @@ struct
     let
       fun allowed tm =
         if Term.is_comb tm then
-          Term.is_const (#1 (boolSyntax.strip_comb tm))
+          (* The traversal will also check any application in operator
+             position, so this test need not strip the whole spine. *)
+          let val operator = Term.rator tm
+          in Term.is_comb operator orelse Term.is_const operator end
         else if not (Term.is_const tm) then true
         else
           let
@@ -1226,7 +1229,7 @@ struct
             (has_constructors range andalso
              List.exists (Term.same_const tm) (constructors_of range))
           end
-    in List.all allowed (subterms t) end
+    in not (Library.exists_shared_subterm (not o allowed) t) end
 
   (* A lemma about a compound case scrutinee, such as
      [x = SOME (THE x) \/ ~IS_SOME x] or record eta for a large conditional

@@ -32,8 +32,8 @@ local
 datatype direction = Left | Right
 datatype split = Unit of term * direction list | Choice of term
 
-(* Find the first unit, or the atom that occurs most often. The proof-only
-   search also records the unit's projection from the current conjunction. *)
+(* Find the first unit, or the atom that occurs most often. Record the
+   unit's projection from the current conjunction when requested. *)
 fun find_split track_path phi =
   let
     fun count (clause,acc) = fold_clause_atoms count_atom clause acc
@@ -90,6 +90,11 @@ end
 local
 datatype search_result = Refutation of thm | Assignment of thm
 
+(* Rewriting with an assumed Boolean equality such as T = T can loop.
+   These pure rewrites simplify constants without an assignment. *)
+val simplify_constants =
+    PURE_REWRITE_RULE [AND_CLAUSES, OR_CLAUSES, NOT_CLAUSES]
+
 fun search prove_units initial =
   let
     fun project (Left,th) = CONJUNCT1 th
@@ -97,30 +102,45 @@ fun search prove_units initial =
     fun combine v l_false r_false =
       Refutation (DISJ_CASES (SPEC v BOOL_CASES_AX) l_false r_false)
     fun recurse th =
-      let val c = concl th in
+      let
+        val c = concl th
+        fun prove_unit path = List.foldl project th (List.rev path)
+        fun deferred_unit () =
+          case find_split true c of
+              Unit (_,path) => prove_unit path
+            | Choice _ => raise Fail "DPLL unit projection"
+        (* Keep the chosen equality as a hypothesis on the model path.
+           If that branch refutes, the unit proves the equality and there
+           is no need to rewrite the CNF with the opposite assignment. *)
+        fun force_unit atom value prove_equality =
+          case recurse (split_branch atom value th) of
+              Refutation refutation =>
+                Refutation (PROVE_HYP (prove_equality ()) refutation)
+            | assignment => assignment
+      in
         if is_T c then Assignment th
         else if is_F c then Refutation th
         else case find_split prove_units c of
           Unit (clause,path) =>
-            if prove_units then
-              let fun prove () = List.foldl project th (List.rev path) in
+              let fun prove () = if prove_units then prove_unit path
+                                 else deferred_unit ()
+              in
                 if is_F clause then Refutation (prove ())
+                else if is_T clause then recurse (simplify_constants th)
                 else if is_neg clause then
-                  recurse (REWRITE_RULE [EQF_INTRO (prove ())] th)
+                  let val atom = dest_neg clause in
+                    if is_T atom orelse is_F atom then
+                      recurse (simplify_constants th)
+                    else if prove_units then
+                      recurse (REWRITE_RULE [EQF_INTRO (prove ())] th)
+                    else force_unit atom boolSyntax.F (EQF_INTRO o prove)
+                  end
                 else
-                  (* Delay the projection on the true-first path. A
-                     satisfying leaf needs no proof of the chosen unit. *)
-                  case recurse (split_branch clause boolSyntax.T th) of
-                      Refutation refutation =>
-                        Refutation
-                          (PROVE_HYP (EQT_INTRO (prove ())) refutation)
-                    | assignment => assignment
+                  force_unit clause boolSyntax.T (EQT_INTRO o prove)
               end
-            (* A negative unit forces the false branch. Keep its assignment
-               assumption for model reconstruction. *)
-            else if is_neg clause then try_false_unit th (dest_neg clause)
-            else try_both th clause
-        | Choice v => try_both th v
+        | Choice v =>
+            if is_T v orelse is_F v then recurse (simplify_constants th)
+            else try_both th v
       end
     and try_both th v =
       case recurse (split_branch v boolSyntax.T th) of
@@ -128,13 +148,6 @@ fun search prove_units initial =
           (case recurse (split_branch v boolSyntax.F th) of
                Refutation r_false => combine v l_false r_false
             | x => x)
-        | x => x
-    and try_false_unit th v =
-      case recurse (split_branch v boolSyntax.F th) of
-          Refutation r_false =>
-          (case recurse (split_branch v boolSyntax.T th) of
-               Refutation l_false => combine v l_false r_false
-             | x => x)
         | x => x
   in recurse initial end
 

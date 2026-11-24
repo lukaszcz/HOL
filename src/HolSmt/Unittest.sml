@@ -31137,6 +31137,25 @@ fun datatype_tester_application_fixpoint_success () =
       SmtDatatypeProve.exhaustiveness_prove fixpoint_goal
   end
 
+fun datatype_shared_subterms_success () =
+  let
+    fun share 0 term = term
+      | share depth term =
+          share (depth - 1) (boolSyntax.mk_conj (term, term))
+    val boolean_only = share 30 boolSyntax.T
+    val under_binder = ``!(d:smt_light). d = d``
+    val with_datatype = boolSyntax.mk_conj (under_binder, boolean_only)
+    val unchanged = SmtLib.DATATYPE_TO_SMT_CONV boolean_only
+  in
+    assert (not (SmtDatatypeProve.datatype_fragment_admits boolean_only),
+      "shared Boolean goal was admitted as a datatype fragment");
+    assert (SmtDatatypeProve.datatype_fragment_admits with_datatype,
+      "datatype under a binder was missed in a goal with shared subterms");
+    assert (Term.aconv (Thm.concl unchanged)
+        (boolSyntax.mk_eq (boolean_only, boolean_only)),
+      "datatype normalization changed a shared Boolean goal")
+  end
+
 fun datatype_recursive_split_budget_success () =
   let
     val recursive_atom = ``smt_left_from_int (i:int)``
@@ -41493,6 +41512,7 @@ let
       datatype_prove_ladder_rungs_success),
     ("datatype_tester_application_fixpoint_success",
       datatype_tester_application_fixpoint_success),
+    ("datatype_shared_subterms_success", datatype_shared_subterms_success),
     ("datatype_recursive_split_budget_success",
       datatype_recursive_split_budget_success),
     ("datatype_exhaustiveness_split_cap_success",

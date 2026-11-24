@@ -1475,7 +1475,7 @@ struct
       (fn (_, subterm) => if predicate subterm then SOME () else NONE) tm)
 
   local
-  fun exists_subterm_with_sharing test_app test_atom tm =
+  fun exists_subterm_with_sharing test_app test_abs test_atom tm =
     let
       fun compound term = Term.is_comb term orelse Term.is_abs term
       val recent = ref boolSyntax.T
@@ -1492,7 +1492,7 @@ struct
                   else walk fork (rator :: rand :: rest) finish
                end)
             else if Term.is_abs term then
-              walk fork (#2 (Term.dest_abs term) :: rest) finish
+              test_abs term orelse walk fork (Term.body term :: rest) finish
             else test_atom term orelse walk fork rest finish
       and follow fork term rator rand rest finish =
         if Term.is_comb rator then
@@ -1547,6 +1547,10 @@ struct
       quick 32768 [tm] handle PauseQuick pending => race pending
     end
   in
+  (* Predicates must give the same answer wherever a subterm is visited. *)
+  fun exists_shared_subterm predicate =
+    exists_subterm_with_sharing predicate predicate predicate
+
   (* Rewrites contributed by the rows of a goal-directed fact table whose
      head constant occurs in the goal. Identify constants by theory and name,
      as in 'same_const', and avoid repeating detected shared branches. *)
@@ -1560,7 +1564,8 @@ struct
            in names := HOLset.add (!names, (Thy, Name)) end
          else ();
          false)
-      val _ = exists_subterm_with_sharing (fn _ => false) collect tm
+      val _ = exists_subterm_with_sharing (fn _ => false) (fn _ => false)
+        collect tm
       fun occurs head =
         case Lib.total Term.dest_thy_const head of
           SOME {Thy, Name, ...} => HOLset.member (!names, (Thy, Name))
@@ -1574,7 +1579,7 @@ struct
   fun has_quantifier tm =
     exists_subterm_with_sharing
       (fn term => boolSyntax.is_forall term orelse boolSyntax.is_exists term)
-      (fn _ => false) tm
+      (fn _ => false) (fn _ => false) tm
   end
 
   (***************************************************************************)

@@ -574,6 +574,42 @@ local
               checked (mk_neg contradiction) (NOT_INTRO (DISCH_ALL th))
           | dpll.Sat _ => false
       in model andalso refutation end)
+  val _ = control "DPLL forced units preserve compound models and hypotheses"
+    (fn () =>
+      let
+        val atom = ``p:bool = q``
+        fun model unit value = case dpll.CoreDPLL (ASSUME unit) of
+            dpll.Sat assignment => assignment atom ~~ value
+          | dpll.Unsat _ => false
+        val marker = ``marker:bool``
+        fun refute source =
+          case dpll.CoreDPLL (ADD_ASSUM marker (ASSUME source)) of
+              dpll.Unsat th =>
+                concl th ~~ F andalso length (hyp th) = 2 andalso
+                List.exists (aconv marker) (hyp th) andalso
+                List.exists (aconv source) (hyp th)
+            | dpll.Sat _ => false
+      in model atom T andalso model (mk_neg atom) F andalso
+         refute ``(p \/ q) /\ F`` andalso refute ``p /\ ~p`` andalso
+         refute ``(p = q) /\ ~(p = q)``
+      end)
+  val _ = control "DPLL simplifies constant units and selected atoms"
+    (fn () =>
+      let
+        val variable = ``p:bool``
+        fun model source expected =
+          case dpll.CoreDPLL (ASSUME source) of
+              dpll.Sat assignment => assignment variable ~~ expected
+            | dpll.Unsat _ => false
+        val unsat = ``T /\ ~T``
+        val (_,_,lfn,clauses) = def_cnf.explicit_cnf NONE (mk_neg unsat)
+      in model ``T /\ T /\ T`` T andalso
+         model ``~F /\ ~p`` F andalso model ``T \/ T`` T andalso
+         (case dpll.DPLL_REFUTE lfn clauses of
+              SOME th => concl th ~~ F andalso
+                (case hyp th of [source] => source ~~ unsat | _ => false)
+            | NONE => false)
+      end)
   val _ = control "DPLL chooses the first unit before counting literals"
     (fn () => List.all (fn formula =>
       dpll.find_splitting_var formula ~~ ``r:bool``)

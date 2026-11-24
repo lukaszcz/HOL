@@ -19259,20 +19259,29 @@ in
       val a = identity_result e node 1000 val b = identity_result e node 1001
       val ra = Core.realization_for (#work e) a
       val rb = Core.realization_for (#work e) b
-      val program = W.with_step (#work e) (fn () =>
-        let fun leaf receipt = C.graph_realized_leaf (#work e)
-              {realization = receipt,observe = fn () => W.spend (#work e) 1}
-        in C.graph_sequence (#graph e) (#root e)
-          {first = leaf ra,second = leaf rb,
-           observe = fn () => W.spend (#work e) 1} end)
-      val descriptor = C.graph_recipe_steps (#graph e) (#root e)
-        {observe = fn () => ()} program
+      fun describe conversion = C.graph_recipe_steps (#graph e) (#root e)
+        {observe = fn () => ()} conversion
+      val (program,direct,shared) = W.with_step (#work e) (fn () =>
+        let val work = #work e
+            fun observe () = W.spend work 1
+            fun leaf receipt = C.graph_realized_leaf work
+              {realization = receipt,observe = observe}
+            val first = leaf ra val second = leaf rb
+        in (C.graph_sequence (#graph e) (#root e)
+              {first = first,second = second,observe = observe},
+            C.graph_realized_sequence work
+              {first = first,second = second,observe = observe},
+            C.graph_realized_sequence work
+              {first = first,second = first,observe = observe}) end)
+      val descriptor = describe program
       val slots = C.graph_conversions program
       val proof = Core.execute (#work e) (Core.prepare (#work e)
         {conversion = program,ordinal = 1002,check_type = fn _ => ()})
     in ensure "semantic-node equality erased an identity phase witness"
       (not (Portable.pointer_eq (ra,rb)) andalso length slots = 2 andalso
        length (#steps descriptor) = 3 andalso
+       length (#steps (describe direct)) = 3 andalso
+       length (#steps (describe shared)) = 2 andalso
        C.graph_source program = node andalso C.graph_result program = node
        andalso null (Thm.hyp (Core.theorem_for (#work e) proof))) end
 

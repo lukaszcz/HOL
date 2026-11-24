@@ -8265,22 +8265,36 @@ local
             raise ERR "DATATYPE_TO_SMT_CONV"
               "normalization theorem made no progress"
         in rhs end
+      fun reflexive term NONE = Thm.REFL term
+        | reflexive _ (SOME theorem) = theorem
+      (* NONE means no rewrite was applied anywhere in this subtree.
+         A theorem can still be alpha-unchanged after multiple rewrites. *)
       fun normalize ancestors input =
         let
           val children =
             if Term.is_comb input then
               let
                 val (rator, rand) = Term.dest_comb input
+                val left = normalize ancestors rator
+                (* An unchanged operator has already checked its operand. *)
+                val right =
+                  if not (Option.isSome left) andalso Term.is_comb rator
+                     andalso Portable.pointer_eq (Term.rand rator, rand)
+                  then NONE
+                  else normalize ancestors rand
               in
-                Thm.MK_COMB
-                  (normalize ancestors rator, normalize ancestors rand)
+                case (left, right) of
+                  (NONE, NONE) => NONE
+                | _ => SOME (Thm.MK_COMB
+                    (reflexive rator left, reflexive rand right))
               end
             else if Term.is_abs input then
               let val (variable, body) = Term.dest_abs input
-              in Thm.ABS variable (normalize ancestors body) end
-            else
-              Thm.REFL input
-          val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+              in Option.map (Thm.ABS variable) (normalize ancestors body) end
+            else NONE
+          val current = case children of
+              NONE => input
+            | SOME theorem => boolSyntax.rhs (Thm.concl theorem)
           val root =
             (let
                val step = first_datatype_normalization_rung
@@ -8290,14 +8304,23 @@ local
                  raise ERR "DATATYPE_TO_SMT_CONV"
                    "normalization revisited an earlier alpha-equivalent term"
              in
-               Thm.TRANS step (normalize (current :: ancestors) rhs)
+               case normalize (current :: ancestors) rhs of
+                 NONE => SOME step
+               | SOME next => SOME (Thm.TRANS step next)
              end
-             handle Conv.UNCHANGED => Thm.REFL current)
+             handle Conv.UNCHANGED => NONE)
         in
-          if changed children then Thm.TRANS children root else root
+          case children of
+            NONE => root
+          | SOME theorem =>
+              if changed theorem then
+                (case root of
+                   NONE => children
+                 | SOME next => SOME (Thm.TRANS theorem next))
+              else SOME (reflexive current root)
         end
     in
-      normalize [] tm
+      reflexive tm (normalize [] tm)
     end
 
   fun num_free_concl_vars (asms, concl) =

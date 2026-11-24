@@ -346,17 +346,19 @@ local
     val index = ref 0
     val line = ref 1
     val column = ref 1
-    val token_bytes = ref 0
-
-    fun begin_token bytes = token_bytes := bytes
-    fun add_token_char c chars =
-      let
-        val bytes = !token_bytes + 1
-        val _ = token_bytes := bytes
-        val _ = case token_byte_gate of SOME gate => gate bytes | NONE => ()
-      in
-        c :: chars
-      end
+    val (begin_token, add_token_char) =
+      case token_byte_gate of
+        NONE => (fn _ => (), fn c => fn chars => c :: chars)
+      | SOME gate =>
+          let
+            val token_bytes = ref 0
+            fun begin bytes = token_bytes := bytes
+            fun add c chars =
+              let val bytes = !token_bytes + 1
+              in token_bytes := bytes; gate bytes; c :: chars end
+          in
+            (begin, add)
+          end
 
     fun pos () = {line = !line, column = !column, offset = !index}
 
