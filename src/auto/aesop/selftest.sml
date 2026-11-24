@@ -167,6 +167,48 @@ val _ =
 
 val _ =
   check
+    ("aesop hypothesis retrieval preserves rule order and metered visits",
+     fn () =>
+       let
+         val claset = Option.valOf
+           (clasetLib.claset_of_theory {thyname = "min"})
+         val x = ``x:aesop_clash_enum``
+         val y = ``y:aesop_clash_enum``
+         val narrow = boolSyntax.mk_eq (``AesopClashE0``, x)
+         val broad = boolSyntax.mk_eq (x, y)
+         val unique = [narrow, broad]
+         val all = List.concat (List.tabulate (4, fn _ => unique))
+         fun names rules = map (#name : aesopRule.rule -> string) rules
+         fun retrieve budget assumptions =
+           let
+             val {norm, safe, unsafe} =
+               aesopRule.claset_rules_with budget
+                 {ctxt = Context.snapshot (),
+                  claset = claset, mode = clasetUnify.Unify,
+                  conclusion = boolSyntax.T, assumptions = assumptions,
+                  qvars = HOLset.fromList Term.compare [x, y],
+                  simpset = simpLib.empty_ss, simp_controls = []}
+           in
+             (names norm, names (aesopRule.safe_rules safe), names unsafe)
+           end
+         fun measured assumptions =
+           let
+             val budget = searchBudget.unbounded ()
+             val rules = retrieve (SOME budget) assumptions
+           in
+             (rules, #candidates (searchBudget.usage budget))
+           end
+         val _ = retrieve NONE unique
+         val (expected, pair_visits) = measured unique
+         val (repeated, visits) = measured all
+       in
+         pair_visits > 0 andalso visits = 4 * pair_visits andalso
+         expected = repeated andalso
+         retrieve NONE all = expected
+       end)
+
+val _ =
+  check
     ("AESOP refutes narrow and wide constructor clashes without hints",
      fn () => List.all (fn equality =>
        let

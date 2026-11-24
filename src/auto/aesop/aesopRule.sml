@@ -437,9 +437,28 @@ fun candidate_declarations budget claset conclusion assumptions qvars =
       clasetLib.aesop_hyp_rules_measured checkpoint claset
         {q = assumption, qvars = qvars,
          flexible_type = clasetMeta.is_tymeta}
+    (* A short list is cheaper to query directly. On longer lists, index
+       only successful queries so assuming unrelated facts stays cheap.
+       Charged queries visit every occurrence. *)
+    val hypotheses =
+      case (budget, assumptions) of
+          (NONE, _ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: _) =>
+            let
+              val seen = ref (HOLset.empty Term.compare)
+              fun lookup assumption =
+                if HOLset.member (!seen, assumption) then NONE
+                else
+                  case hypothesis assumption of
+                      [] => NONE
+                    | candidates =>
+                        (seen := HOLset.add (!seen, assumption);
+                         SOME candidates)
+            in
+              List.mapPartial lookup assumptions
+            end
+        | _ => map hypothesis assumptions
   in
-    unique_declarations
-      (target @ List.concat (map hypothesis assumptions))
+    unique_declarations (target @ List.concat hypotheses)
   end
 
 fun ordinary_kind clasetRules.Intro = true

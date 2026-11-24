@@ -921,6 +921,48 @@ val _ =
 
 val _ =
   check
+    ("ORDER_ss uses the current graph cap and each context's own facts",
+     fn () =>
+       let
+         val {dprocs, ...} = simpLib.dest_ssfrag ORDER_ss
+         val {addcontext, apply, initial, ...} =
+           Traverse.dest_reducer (hd dprocs)
+         val axiom =
+           Term.mk_comb
+             (Term.prim_mk_const {Thy = "relation", Name = "transitive"},
+              long_order_relation)
+         val premises = [axiom, long_order_edge 0 1, long_order_edge 1 2]
+         val parent = addcontext (initial, map Thm.ASSUME premises)
+         val extra = long_order_edge 2 3
+         val child = addcontext (parent, [Thm.ASSUME extra])
+         fun prove context cap target =
+           Portable.with_flag (orderSolve.node_limit, cap)
+             (fn () =>
+               apply
+                 {solver = K Thm.REFL, conv = K Thm.REFL, context = context,
+                  stack = [], relation = (boolSyntax.equality, Thm.REFL)}
+                 target) ()
+         fun clipped context cap target =
+           (ignore (prove context cap target); false)
+           handle Feedback.HOL_ERR _ => true
+         fun supported facts theorem =
+           let val hyps = Thm.hyp theorem
+           in
+             length hyps = length facts andalso
+             List.all (fn fact => List.exists (Term.aconv fact) hyps) facts
+           end
+         val short = long_order_edge 0 2
+         val long = long_order_edge 0 3
+       in
+         supported premises (prove parent 3 short) andalso
+         clipped parent 2 short andalso
+         supported (extra :: premises) (prove child 4 long) andalso
+         clipped parent 4 long andalso
+         supported premises (prove parent 4 short)
+       end)
+
+val _ =
+  check
     ("budgeted ORDER reducer charges its nested graph search",
      fn () =>
        let

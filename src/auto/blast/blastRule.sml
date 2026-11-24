@@ -1140,10 +1140,11 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
           rules
         end
 
+(* Candidate lookup recognizes the shared no-op as the unmetered query. *)
 fun acquire cache claset safe vars formula =
   acquireWith
     {candidate = fn () => (), conversion = fn () => (),
-     checkpoint = fn () => ()}
+     checkpoint = listUtil.no_checkpoint}
     false cache claset safe vars formula
 
 fun safeRules cache claset vars formula =

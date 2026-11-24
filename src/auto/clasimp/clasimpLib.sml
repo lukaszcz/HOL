@@ -979,7 +979,8 @@ fun supplied_view_associations entries = List.mapPartial
 type source_set = simpLib.rewrite_source HOLset.set
 type source_index = (simpLib.rewrite_source,lhs_view_entry) Binarymap.dict
 type dependency_index = (KernelSig.kernelid,source_set) Binarymap.dict
-type rewrite_pattern_index = (simpLib.rewrite_source * hol_type) Net.net
+type converse_rewriter = simpLib.rewrite_source * conv Susp.susp option
+type rewrite_pattern_index = (converse_rewriter * hol_type) Net.net
 datatype lhs_view_table = LHSViewTable of
   {simpset : simpLib.simpset, base : view_base,
    sources : simpLib.rewrite_source list, entries : lhs_view_entry list,
@@ -1000,15 +1001,25 @@ fun lhs_view_table_stats (LHSViewTable data) =
 val view_generation = ref 0
 val source_compare = simpLib.rewrite_source_compare
 val no_sources = HOLset.empty source_compare
+val no_converse_rewriters : converse_rewriter HOLset.set =
+  HOLset.empty (fn ((left, _), (right, _)) => source_compare (left, right))
+
 (* Net.match conservatively indexes the same first-order patterns as
-   REWR_CONV. Keep the type for the converse walk's compatibility check. *)
+   REWR_CONV. Keep the type for the converse walk's compatibility check
+   and share the matcher for each origin. Force it only after charging. *)
 fun rewrite_pattern_index sources = List.foldl
   (fn (source,index) =>
     let
       val theorem = Drule.SPEC_ALL (#2 (simpLib.source_rewrite source))
       val left = boolSyntax.lhs
         (#2 (boolSyntax.strip_imp_only (concl theorem)))
-    in Net.insert (left,(source,type_of left)) index end) Net.empty sources
+      val rewrite =
+        if HOLset.isEmpty (hypset theorem) andalso
+           boolSyntax.is_eq (concl theorem) then
+          SOME (Susp.delay (fn () => Conv.REWR_CONV theorem))
+        else NONE
+    in Net.insert (left,((source,rewrite),type_of left)) index end)
+  Net.empty sources
 
 fun table_indices entries =
   let
@@ -1318,22 +1329,7 @@ fun replay_normalization charge units =
   let fun loop 0 = () | loop n = (charge (); loop (n-1))
   in loop units end
 
-(* Share matcher preparation across supplied rules in one binding.
-   Force each matcher only after the caller's normalization charge. *)
-fun prepare_converse_rewriters () =
-  let
-    fun prepare raw =
-      let val theorem = Drule.SPEC_ALL raw
-      in
-        if null (hyp theorem) andalso boolSyntax.is_eq (concl theorem) then
-          SOME (Susp.delay (fn () => Conv.REWR_CONV theorem))
-        else NONE
-      end
-  in
-    memoUtil.keyed_memo (Lib.curry Portable.pointer_eq) prepare
-  end
-
-fun converse_sources caller_charge patterns prepare sources =
+fun converse_sources caller_charge patterns sources =
   let
     val callback_failure = ref (NONE : exn option)
     fun charge () = caller_charge ()
@@ -1351,15 +1347,16 @@ fun converse_sources caller_charge patterns prepare sources =
            SOME found => found
          | NONE =>
              let
-               fun add ((source,pattern_type),found) =
+               fun add ((rewriter,pattern_type),found) =
                  let
                    val _ = charge ()
                  in
                    if Lib.can (Type.match_type pattern_type)
-                        (type_of tm) then HOLset.add (found,source)
+                        (type_of tm) then HOLset.add (found,rewriter)
                    else found
                  end
-               val own = List.foldl add no_sources (Net.match tm patterns)
+               val own =
+                 List.foldl add no_converse_rewriters (Net.match tm patterns)
                val found = if is_comb tm then
                    HOLset.union (own,HOLset.union
                      (#2 (candidates (rator tm)),#2 (candidates (rand tm))))
@@ -1369,29 +1366,29 @@ fun converse_sources caller_charge patterns prepare sources =
                val result = (own,found)
                val _ = subtrees := Binarymap.insert (!subtrees,tm,result)
              in result end)
-    fun once origin rewrite tm =
+    fun once rewriter rewrite tm =
       let val (own,below) = candidates tm
       in
-        if not (HOLset.member (below,origin)) then raise Conv.UNCHANGED
-        else if HOLset.member (own,origin) then Conv.TRY_CONV
+        if not (HOLset.member (below,rewriter)) then raise Conv.UNCHANGED
+        else if HOLset.member (own,rewriter) then Conv.TRY_CONV
           (Conv.ORELSEC
             (fn target => (charge (); rewrite target),
-             Conv.SUB_CONV (once origin rewrite))) tm
-        else Conv.SUB_CONV (once origin rewrite) tm
+             Conv.SUB_CONV (once rewriter rewrite))) tm
+        else Conv.SUB_CONV (once rewriter rewrite) tm
       end
     fun converse source found =
       let
         val supplied = Drule.SPEC_ALL (#2 (simpLib.source_rewrite source))
         val (left,right) = boolSyntax.dest_eq
           (#2 (boolSyntax.strip_imp_only (concl supplied)))
-        fun consider (origin,found) =
-          case prepare (#2 (simpLib.source_rewrite origin)) of
+        fun consider (rewriter as (origin,prepared),found) =
+          case prepared of
               NONE => found
-            | SOME prepared =>
+            | SOME matcher =>
                 let
                   val _ = charge ()
-                  val rewrite = Susp.force prepared
-                  val result = Conv.QCONV (once origin rewrite) right
+                  val rewrite = Susp.force matcher
+                  val result = Conv.QCONV (once rewriter rewrite) right
                   val _ = check_callback ()
                 in
                   if aconv (boolSyntax.rhs (concl result)) left then
@@ -1487,7 +1484,6 @@ fun make_supplied_converse_cache () =
         val derived = ref 0
         val memoized = ref 0
         fun charge () = (caller_charge (); charged := !charged + 1)
-        val prepare = prepare_converse_rewriters ()
         fun detect (data : converse_inventory) (theorem,sources) =
           let
             fun matches (entry : supplied_view_memo) =
@@ -1507,7 +1503,7 @@ fun make_supplied_converse_cache () =
                   let
                     val start = !charged
                     val suspended = HOLset.listItems (converse_sources charge
-                      (#patterns data) prepare sources)
+                      (#patterns data) sources)
                     val entry =
                       {generation= #generation data,theorem=theorem,
                        positions=initial_positions,
@@ -1626,7 +1622,6 @@ fun make_supplied_view_cache_core () =
         val charged = ref (case prior of NONE => 0
           | SOME (SuppliedConverseBinding data) => #normalization data)
         fun charge () = (caller_charge (); charged := !charged + 1)
-        val prepare = prepare_converse_rewriters ()
         fun detect (theorem,sources) =
           let
             val matches = matching (#generation table) initial_positions
@@ -1644,7 +1639,7 @@ fun make_supplied_view_cache_core () =
                       if null sources then []
                       else HOLset.listItems
                         (converse_sources charge
-                          (Susp.force (#rewrite_patterns table)) prepare
+                          (Susp.force (#rewrite_patterns table))
                           sources)
                     val entry =
                       {generation= #generation table,theorem=theorem,

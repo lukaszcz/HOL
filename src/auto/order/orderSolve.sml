@@ -578,24 +578,36 @@ and refute_equation work context
         closed
     end
 
+fun prepare (work : work) context theorems =
+  let
+    val read = orderData.facts_of (#meter work) context
+    val supplied = List.concat (List.map read theorems)
+    val parts = expand work context supplied
+    (* Only metered refutation expands the supplied facts again. *)
+    val retained = if Option.isSome (#max_nodes work) then [] else supplied
+  in
+    {read = read, supplied = retained, parts = parts}
+  end
+
+fun count_nodes limit (edges, _, _) =
+  let val initial = (0, HOLset.empty Term.compare)
+  in
+    case limit of
+        SOME maximum => bounded_nodes maximum initial edges
+      | NONE => SOME initial
+  end
+
 (* The goal is proved outright where it can be and refuted otherwise.  A
    goal that is already a negation is discharged rather than doubly
    negated, so [~R x y] is a goal this decides and not an atom it fails
    to read. *)
-fun attempt (work : work) context theorems term =
+fun attempt (work : work) context base term =
   let
     val _ = normalization work
     val equation = orderData.reduce context term
     val target = rhs (concl equation)
-    val read = orderData.facts_of (#meter work) context
-    val supplied = List.concat (List.map read theorems)
-    val parts as (edges, equalities, distinctions) =
-      expand work context supplied
-    val initial_nodes = (0, HOLset.empty Term.compare)
-    val nodes =
-      case #max_nodes work of
-          SOME maximum => bounded_nodes maximum initial_nodes edges
-        | NONE => SOME initial_nodes
+    val ({read, supplied, parts}, nodes) = base ()
+    val (edges, equalities, distinctions) = parts
     fun carry theorem = EQ_MP (SYM equation) theorem
   in
     case nodes of
@@ -638,14 +650,53 @@ fun attempt (work : work) context theorems term =
   end
 
 fun prove_using_with work contexts theorems term =
-  search work (fn context => attempt work context theorems term) contexts
+  let
+    fun one context =
+      attempt work context
+        (fn () =>
+          let val prepared = prepare work context theorems
+          in (prepared, count_nodes (#max_nodes work) (#parts prepared)) end)
+        term
+  in
+    search work one contexts
+  end
 
-fun prove_using contexts theorems term =
-  case prove_using_with (capped_work ()) contexts theorems term of
+fun require_proof result =
+  case result of
       SOME theorem => theorem
     | NONE =>
         raise mk_HOL_ERR "orderSolve" "prove_using"
           "no order in the assumptions decides the goal"
+
+fun prove_using contexts theorems term =
+  require_proof (prove_using_with (capped_work ()) contexts theorems term)
+
+fun prepare_using contexts theorems =
+  let
+    (* Each relation has its own fact reader and graph. The target and
+       any facts it adds are specific to the query. *)
+    fun cache context =
+      let
+        val prepared = Portable.HOLSusp.delay
+          (fn () => prepare (capped_work ()) context theorems)
+        fun count limit =
+          count_nodes limit (#parts (Portable.HOLSusp.force prepared))
+        val nodes = memoUtil.keyed_memo (fn a => fn b => a = b) count
+        fun base limit = (Portable.HOLSusp.force prepared, nodes limit)
+      in
+        (context, base)
+      end
+    val cached = List.map cache contexts
+  in
+    fn term =>
+      let
+        val work = capped_work ()
+        fun one (context, base) =
+          attempt work context (fn () => base (#max_nodes work)) term
+      in
+        require_proof (search work one cached)
+      end
+  end
 
 fun prove_with theorems term =
   prove_using (orderData.contexts_unmetered theorems)

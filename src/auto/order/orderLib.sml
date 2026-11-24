@@ -175,7 +175,7 @@ fun make_order_reducer budget =
       case budget of
           NONE => orderData.contexts_unmetered
         | SOME owned => orderData.contexts (searchBudget.charger owned)
-    fun prove contexts theorems tm =
+    fun prove_once contexts theorems tm =
       case budget of
           NONE => orderSolve.prove_using contexts theorems tm
         | SOME owned =>
@@ -183,9 +183,22 @@ fun make_order_reducer budget =
                     owned contexts theorems tm of
                  SOME theorem => theorem
                | NONE => raise ERR "ORDER_DP" "no order proof")
+    (* Each simplifier context can answer several direct atom queries.
+       Prepare lazily since many contexts never reach an order atom. *)
+    fun prover contexts theorems =
+      case budget of
+          NONE =>
+            let
+              val prepared = Portable.HOLSusp.delay
+                (fn () => orderSolve.prepare_using contexts theorems)
+            in
+              fn tm => Portable.HOLSusp.force prepared tm
+            end
+        | SOME _ => prove_once contexts theorems
     exception CTXT of
       {theorems : thm list,
        contexts : orderData.context list,
+       prove : term -> thm,
        concrete_sites : term list Portable.HOLSusp.susp,
        sites :
          (term * (thm list * orderData.context list)) list ref}
@@ -206,6 +219,7 @@ fun make_order_reducer budget =
            passes, and rewriting each of those with the order
            definitions to find nothing is the cost this avoids. *)
         CTXT {theorems = theorems, contexts = contexts,
+              prove = prover contexts theorems,
               concrete_sites =
                 Portable.HOLSusp.delay (fn () =>
                   concrete_relation_sites theorems),
@@ -213,7 +227,7 @@ fun make_order_reducer budget =
       end
     fun apply args tm =
       let
-        val {theorems, contexts, concrete_sites, sites} =
+        val {theorems, contexts, prove, concrete_sites, sites} =
           get_context (#context args)
         fun concrete () = Portable.HOLSusp.force concrete_sites
         fun not_literal () =
@@ -268,7 +282,7 @@ fun make_order_reducer budget =
       in
         if null contexts then not_literal ()
         else if List.exists (fn c => orderData.is_literal c tm) contexts then
-          EQT_INTRO (prove contexts theorems tm)
+          EQT_INTRO (prove tm)
         else
           let val atom_sites = relation_sites [tm]
           in
@@ -278,7 +292,7 @@ fun make_order_reducer budget =
               let val (views, derived) = at_atom atom_sites
               in
                 if List.exists (fn c => orderData.is_literal c tm) derived
-                then EQT_INTRO (prove derived views tm)
+                then EQT_INTRO (prove_once derived views tm)
                 else not_literal ()
               end
             else not_literal ()
@@ -290,7 +304,7 @@ fun make_order_reducer budget =
        addcontext = addcontext,
        apply = apply,
        initial =
-         CTXT {theorems = [], contexts = [],
+         CTXT {theorems = [], contexts = [], prove = prover [] [],
                concrete_sites = Portable.HOLSusp.delay (fn () => []),
                sites = ref []}}
   end

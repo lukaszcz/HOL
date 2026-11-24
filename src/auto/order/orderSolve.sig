@@ -14,6 +14,9 @@ sig
      repeatedly consulted decision procedure holds on to. *)
   val prove_using : orderData.context list -> thm list -> term -> thm
   val prove_with : thm list -> term -> thm
+  (* Reuse the supplied graph for repeated goals in the same context.
+     Each query uses the current node_limit. *)
+  val prepare_using : orderData.context list -> thm list -> term -> thm
 
   datatype budget_outcome =
       OrderProved of thm
