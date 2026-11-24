@@ -40396,6 +40396,36 @@ in
   ()
 end
 
+(* A warning about an uninterpreted constant prints the constant, which
+   costs more than translating it.  A silenced warning prints nothing. *)
+fun silenced_translation_warning_prints_nothing () =
+let
+  val int_max = Term.prim_mk_const {Thy = "integer", Name = "int_max"}
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val goal = ([], boolSyntax.mk_eq (Term.list_mk_comb (int_max, [x, y]), x))
+  val printed = ref 0
+  val printer = Parse.get_term_printer ()
+  fun counting t = (printed := !printed + 1; printer t)
+  fun translations_printed translate =
+    (printed := 0;
+     ignore (HOLFlags.with_flags [(Library.trace_flag, 1)]
+       (Portable.with_flag (Feedback.WARNING_outstream, fn _ => ())
+         translate) ());
+     !printed)
+  fun translate () = SmtLib.goal_to_SmtLib_translation NONE goal
+  val _ = Parse.set_term_printer counting
+  val (shown, silenced) =
+    Portable.finally (fn () => ignore (Parse.set_term_printer printer))
+      (fn () => (translations_printed translate,
+                 translations_printed (Feedback.quiet_warnings translate)))
+      ()
+in
+  assert (shown > 0, "a shown warning names the uninterpreted constant");
+  assert (silenced = 0, "a silenced warning printed " ^
+    Int.toString silenced ^ " term(s)")
+end
+
 local
   structure F = SmtLib_OutputFragments
   structure S = SmtLib_OutputSchedule
@@ -41778,7 +41808,9 @@ let
     ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run),
     ("source_condition_builder_contract",
       SmtReplaySourceConditionTests.run),
-    ("sparse_output_schedule", sparse_output_schedule)
+    ("sparse_output_schedule", sparse_output_schedule),
+    ("silenced_translation_warning_prints_nothing",
+      silenced_translation_warning_prints_nothing)
   ]
   val selected =
     case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of
