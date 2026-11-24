@@ -22,6 +22,7 @@ sig
      empty_bounds:bounds,empty_terms:terms,
      region:int * bounds -> region,
      region_at:int * (int * int) list * bounds -> region,
+     child_region:region * bounds * bounds -> region option,
      find_document:terms * region * carrier ->
        SmtLib_OutputFragments.doc option,
      bind_document:terms * region * carrier * SmtLib_OutputFragments.doc ->
@@ -55,11 +56,14 @@ sig
      not identify free and Bound variables by their spelling.
 
      Root occurrence numbers distinguish assertions. Region environments
-     retain every ordered bound ID/name pair. region_at additionally takes
+     retain every bound ID/name pair in dictionary order. region_at takes
      the lexical entry path of enclosing carrier keys, innermost first;
      repeated bindings can have identical environments at distinct entries.
-     region is region_at with an empty path. Close each binder/LET body
-     region at its lexical boundary; LET RHS uses the incoming region.
+     region is region_at with an empty path. child_region takes the parent
+     region, its current bounds, and the child bounds. It inherits the root
+     and path and returns NONE when the child's environment agrees.
+     Close each binder/LET body region at its lexical boundary; LET RHS
+     uses the incoming region.
      Export symbols while the borrow is live. A retained graph_node is
      metadata only and still requires the parser's normal authentication
      and checked definition/original-source transport. *)

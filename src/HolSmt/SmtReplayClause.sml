@@ -295,6 +295,35 @@ struct
      {graph=graph,scope=scope,frame=frame,root=root,tree=tree,
       expanded=expanded,literals=literals,roots=roots,names=names})
 
+  (* The caller has checked graph ownership before recording a node.
+     Keep the ordered payload, including any initial duplicate entries.
+     Small inventories use the original list scan. *)
+  fun node_inventory tick (nodes : G.node list ref) =
+    let
+      val index = ref NONE
+      fun compare pair = (tick ();Int.compare pair)
+      fun insert (node,table) =
+        (tick ();Redblackset.add (table,G.node_id node))
+      fun indexed table node =
+        (tick ();
+         if Redblackset.member (table,G.node_id node) then ()
+         else
+           let val next = insert (node,table)
+           in index := SOME next;nodes := node :: !nodes end)
+      fun remember node =
+        let
+          fun scan _ [] = nodes := node :: !nodes
+            | scan 0 _ =
+                let val table = List.foldl insert (Redblackset.empty compare)
+                      (!nodes)
+                in index := SOME table;indexed table node end
+            | scan left (saved::rest) =
+                (tick ();if saved = node then () else scan (left-1) rest)
+        in case !index of SOME table => indexed table node
+           | NONE => scan 16 (!nodes)
+        end
+    in remember end
+
   (* Factory owns one action. An alias remains one literal in tree;
      expanded is separate actual target-only constructor evidence. *)
   fun po_discover_role unit_atom expand_target expected frame
@@ -320,21 +349,20 @@ struct
             then ()else raise ERR "policy_occurrences"
               "actual Source frame or epochs changed"end
         fun tick()=(valid();W.spend_policy expected 1)
+        val remember_node=node_inventory tick nodes
+        val remember_definition=node_inventory tick definitions
         fun own current=
           (tick();G.validate_scope graph(G.node_scope graph current);
            if G.scope_visible graph scope(G.node_scope graph current)then ()
            else raise ERR "policy_occurrences" "clause node escapes frame";
-           if List.exists(fn saved=>(tick();saved=current))(!nodes)then ()
-           else nodes:=current:: !nodes)
+           remember_node current)
         fun node current=
           (own current;
            if Type.compare(G.type_of graph current,Type.bool)=EQUAL then ()
            else raise ERR "policy_occurrences" "non-Boolean clause node")
         fun need_constructor current=
           let val _=own current
-              val _=if List.exists(fn saved=>(tick();saved=current))
-                  (!definitions)then ()else
-                    definitions:=current:: !definitions
+              val _=remember_definition current
           in case G.view graph current of
               G.Application(operator,_)=>need_constructor operator
             | G.Constant _=>()
@@ -551,21 +579,20 @@ struct
             val names=ref(List.concat(List.map
               (fn saved=> #names(po_data expected saved))tokens))
             val held_nodes=ref([]:G.node list)
+            val remember_held=node_inventory tick held_nodes
+            val remember_name=node_inventory tick names
+            val remember_root=node_inventory tick roots
             fun own node=
               (tick();G.validate_scope graph(G.node_scope graph node);
                if G.scope_visible graph scope(G.node_scope graph node)then ()
                else fail "fallback node escapes actual frame";
-               if List.exists(fn held=>(tick();held=node))(!held_nodes)
-                 then ()else held_nodes:=node:: !held_nodes;
-               if List.exists(fn held=>(tick();held=node))(!names)then ()
-               else names:=node:: !names)
+               remember_held node;remember_name node)
             fun boolean node=
               (own node;if Type.compare(G.type_of graph node,Type.bool)=EQUAL
                 then ()else fail "non-Boolean dictionary key")
             fun constructor node=
               (own node;
-               if List.exists(fn held=>(tick();held=node))(!roots)then ()
-               else roots:=node:: !roots;
+               remember_root node;
                case G.view graph node of G.Constant _=>()
                  | G.Application(operator,operand)=>
                      (own operand;constructor operator)

@@ -823,7 +823,8 @@ struct
      never proof evidence or a replay key. *)
   fun bounded_graph_digest limit root =
     let
-      val ids = ref ([] : (Term.term * int) list)
+      val ids = SmtPointerTable.new
+        {hint = pointer_bucket, initial = 31, ceiling = 4093}
       val next_id = ref 0
       val entries = ref ([] : string list)
       fun label term =
@@ -836,10 +837,8 @@ struct
         else if Term.is_comb term then "apply"
         else "term"
       fun visit term =
-        case List.find
-            (fn (seen_term, _) => Portable.pointer_eq (term, seen_term))
-            (!ids) of
-          SOME (_, id) => id
+        case SmtPointerTable.lookup ids term of
+          SOME id => id
         | NONE =>
             let
               val id = !next_id
@@ -847,7 +846,7 @@ struct
               val _ = id < limit orelse
                 raise ERR "bounded_graph_digest"
                   "diagnostic graph exceeds its bound"
-              val _ = ids := (term, id) :: !ids
+              val _ = SmtPointerTable.insert ids term id
               val child_ids = List.map visit (term_children term)
               val entry = Int.toString id ^ ":" ^ label term ^ "(" ^
                 String.concatWith "," (List.map Int.toString child_ids) ^ ");"

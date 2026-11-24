@@ -204,6 +204,26 @@ end
 *)
 
 exception satCheckError;
+
+local
+(* Use the same template substitution as SUBST_CONV, with an ordered set
+   to keep the last equality for duplicate atoms in large models. *)
+fun substitute_model equalities t =
+    let
+      fun placeholder th = let val atom = lhs (concl th)
+                           in atom |-> genvar (type_of atom) end
+      val placeholders = map placeholder equalities
+      val replacements =
+          ListPair.map (fn ({residue,...},th) => residue |-> th)
+            (placeholders,equalities)
+      fun retain (entry as {redex,...},(seen,unique)) =
+          if HOLset.member (seen,redex) then (seen,unique)
+          else (HOLset.add (seen,redex),entry :: unique)
+      val (_,unique) = List.foldl retain (Term.empty_tmset,[])
+                         (List.rev placeholders)
+    in SUBST replacements (mk_eq (t,Term.subst unique t)) (REFL t) end
+
+in
 fun satCheck model t =
    let
       val mtm  = list_mk_conj model (*  (l1 /\ ... /\ ln) *)
@@ -213,9 +233,8 @@ fun satCheck model t =
                              then MP (SPEC (dest_neg(concl th))EQF_Imp1) th
                              else MP (SPEC(concl th)EQT_Imp1) th)
                   (CONJUNCTS th1) (* [ l1 /\ ... /\ ln |- l1 = T, ... ] *)
-      val subl = map (fn th => lhs(concl th) |-> th) thl
-                 (*[l1 |-> l1 /\ ... /\ ln |- l1 = T,...]*)
-      val th2 = SUBST_CONV subl t t (* l1 /\ ... /\ ln |- t = t[l1/T,...] *)
+      val th2 = substitute_model thl t
+                (* l1 /\ ... /\ ln |- t = t[l1/T,...] *)
       val th3 = CONV_RULE (RHS_CONV computeLib.EVAL_CONV) th2
                 (* l1 /\ ... /\ ln |- t = T *)
       val th4 = EQT_ELIM th3 (* l1 /\ ... /\ ln |- t *)
@@ -231,5 +250,6 @@ fun satCheck model t =
         | otherwise => if dimacsTools.is_terminal otherwise
                        then raise otherwise else raise satCheckError;
 
+end
 end
 end

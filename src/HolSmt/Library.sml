@@ -1475,7 +1475,7 @@ struct
       (fn (_, subterm) => if predicate subterm then SOME () else NONE) tm)
 
   local
-  fun exists_subterm_with_sharing test_app test_atom tm =
+  fun exists_subterm_with_sharing descend_abs test_app test_abs test_atom tm =
     let
       fun compound term = Term.is_comb term orelse Term.is_abs term
       val recent = ref boolSyntax.T
@@ -1492,7 +1492,8 @@ struct
                   else walk fork (rator :: rand :: rest) finish
                end)
             else if Term.is_abs term then
-              walk fork (#2 (Term.dest_abs term) :: rest) finish
+              test_abs term orelse walk fork
+                (if descend_abs then Term.body term :: rest else rest) finish
             else test_atom term orelse walk fork rest finish
       and follow fork term rator rand rest finish =
         if Term.is_comb rator then
@@ -1547,6 +1548,10 @@ struct
       quick 32768 [tm] handle PauseQuick pending => race pending
     end
   in
+  (* Predicates must give the same answer wherever a subterm is visited. *)
+  fun exists_shared_subterm predicate =
+    exists_subterm_with_sharing true predicate predicate predicate
+
   (* Rewrites contributed by the rows of a goal-directed fact table whose
      head constant occurs in the goal. Identify constants by theory and name,
      as in 'same_const', and avoid repeating detected shared branches. *)
@@ -1560,7 +1565,8 @@ struct
            in names := HOLset.add (!names, (Thy, Name)) end
          else ();
          false)
-      val _ = exists_subterm_with_sharing (fn _ => false) collect tm
+      val _ = exists_subterm_with_sharing true (fn _ => false)
+        (fn _ => false) collect tm
       fun occurs head =
         case Lib.total Term.dest_thy_const head of
           SOME {Thy, Name, ...} => HOLset.member (!names, (Thy, Name))
@@ -1572,9 +1578,22 @@ struct
     end
 
   fun has_quantifier tm =
-    exists_subterm_with_sharing
+    exists_subterm_with_sharing true
       (fn term => boolSyntax.is_forall term orelse boolSyntax.is_exists term)
-      (fn _ => false) tm
+      (fn _ => false) (fn _ => false) tm
+
+  (* Inspect abstraction types without scanning their bodies. *)
+  fun term_contains_real_ty tm =
+    let
+      fun contains_real ty =
+        case Lib.total Type.dom_rng ty of
+          NONE => ty = realSyntax.real_ty
+        | SOME (dom,rng) =>
+            contains_real dom orelse
+            (not (Portable.pointer_eq (dom,rng)) andalso contains_real rng)
+      fun real_type term = contains_real (Term.type_of term)
+    in exists_subterm_with_sharing false (fn _ => false) real_type real_type tm
+    end
   end
 
   (***************************************************************************)
@@ -1610,14 +1629,15 @@ struct
        end)
       handle Feedback.HOL_ERR _ => false
     fun check t =
-      is_nl_mult realSyntax.dest_mult t orelse
-      is_nl_mult intSyntax.dest_mult t orelse
-      is_nl_mult numSyntax.dest_mult t orelse
-      is_nl_power realSyntax.dest_pow t orelse
-      is_nl_power intSyntax.dest_exp t orelse
-      is_nl_power numSyntax.dest_exp t
+      Term.is_comb t andalso
+      (is_nl_mult realSyntax.dest_mult t orelse
+       is_nl_mult intSyntax.dest_mult t orelse
+       is_nl_mult numSyntax.dest_mult t orelse
+       is_nl_power realSyntax.dest_pow t orelse
+       is_nl_power intSyntax.dest_exp t orelse
+       is_nl_power numSyntax.dest_exp t)
   in
-    exists_subterm check tm
+    exists_shared_subterm check tm
   end
 
   (* e.g., "(A --> B) --> C --> D" acc  ==>  [A, B, C, D] @ acc *)
@@ -1625,14 +1645,6 @@ struct
     let val (dom, rng) = Type.dom_rng ty
     in strip_fun_tys dom (strip_fun_tys rng acc) end
     handle Feedback.HOL_ERR _ => ty :: acc
-
-  (* approximate: does term contain real type? *)
-  fun term_contains_real_ty tm =
-    let val (rator, rand) = Term.dest_comb tm
-    in term_contains_real_ty rator orelse term_contains_real_ty rand end
-    handle Feedback.HOL_ERR _ =>
-      List.exists (Lib.equal realSyntax.real_ty)
-        (strip_fun_tys (Term.type_of tm) [])
 
   val csdp_missing_diagnostic =
     "nonlinear real arithmetic replay requires the CSDP semidefinite solver " ^
@@ -1721,7 +1733,9 @@ struct
     end
 
 
-  val contains_conditional = exists_subterm (Lib.can boolSyntax.dest_cond)
+  val contains_conditional =
+    exists_shared_subterm
+      (fn tm => Term.is_comb tm andalso Lib.can boolSyntax.dest_cond tm)
 
   (* SOS procedures accept polynomial arithmetic.  A totalized division or
      remainder encoding can contain syntactic products, but those products do
@@ -1762,7 +1776,12 @@ struct
         | NONE =>
             let val (head, arguments) = boolSyntax.strip_comb term in
               is_nonpolynomial_application head arguments orelse
-              List.exists search arguments
+              (case arguments of
+                 [left, right] =>
+                   search left orelse
+                   (not (Portable.pointer_eq (left, right)) andalso
+                    search right)
+               | _ => List.exists search arguments)
             end
     in search tm end
 

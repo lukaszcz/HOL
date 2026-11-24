@@ -256,9 +256,16 @@ local
       in dimacsTools.with_cleanup
            (fn () => dimacsTools.clean_files [input, output])
            (fn () =>
-             (put input "p cnf 1 2\n1 0\n-1 0\n";
-              let val th = GEN_SAT_PROVE_ONLY conf
-              in null (hyp th) andalso concl th ~~ ``~(v1 /\ ~v1)`` end)) ()
+             (put input "p cnf 65536 2\n61439 0\n-61439 0\n";
+              let val (problem,count,sva) =
+                    dimacsTools.readDimacsWithCount input
+                  val th = GEN_SAT_PROVE_ONLY conf
+              in count = 1 andalso Array.length sva = 65537 andalso
+                 Array.sub (sva,1) ~~ T andalso
+                 Array.sub (sva,61439) ~~ ``v61439:bool`` andalso
+                 null (hyp th) andalso concl th ~~ mk_neg problem andalso
+                 concl th ~~ ``~(v61439 /\ ~v61439)``
+              end)) ()
       end)
   val _ = control "SAT result/failure paths remove owned solver files"
     (fn () =>
@@ -280,6 +287,22 @@ local
         (fn Exn.Exn (SAT_cex _) => true | _ => false) andalso
       callback_case NONE "SAT -1 -2 0\n" NONE NONE GEN_SAT
         (fn Exn.Exn satTools.satCheckError => true | _ => false))
+
+  val _ = control "SAT model checking keeps the last equality for an atom"
+    (fn () =>
+      let
+        val first = ``(f : (bool -> bool) -> bool) (\x. x)``
+        val second = ``(f : (bool -> bool) -> bool) (\y. y)``
+        val negative = mk_neg second
+        fun checks model goal =
+            let val th = satTools.satCheck model goal
+            in null (hyp th) andalso
+               concl th ~~ mk_imp (list_mk_conj model,goal)
+            end
+      in checks [first, second] first andalso
+         checks [first, negative] (mk_neg first) andalso
+         checks [negative, first] second
+      end)
 
   val _ = control "SAT observation scopes retire on failure and reject reentry"
     (fn () =>
@@ -551,6 +574,57 @@ local
       in checked valid (GEN_SAT conf) andalso
          checked valid (GEN_SAT_PROVE_ONLY conf) andalso
          !dimacsTools.tmp_name = previous
+      end)
+  val _ = control "DPLL negative units preserve the model and refutation"
+    (fn () =>
+      let
+        val variable = ``p:bool``
+        val contradiction = ``~p /\ p``
+        val model = case dpll.CoreDPLL (ASSUME (mk_neg variable)) of
+            dpll.Sat assignment => assignment variable ~~ F
+          | dpll.Unsat _ => false
+        val refutation = case dpll.CoreDPLL (ASSUME contradiction) of
+            dpll.Unsat th =>
+              (case hyp th of [source] => source ~~ contradiction
+                            | _ => false) andalso
+              checked (mk_neg contradiction) (NOT_INTRO (DISCH_ALL th))
+          | dpll.Sat _ => false
+      in model andalso refutation end)
+  val _ = control "DPLL forced units preserve compound models and hypotheses"
+    (fn () =>
+      let
+        val atom = ``p:bool = q``
+        fun model unit value = case dpll.CoreDPLL (ASSUME unit) of
+            dpll.Sat assignment => assignment atom ~~ value
+          | dpll.Unsat _ => false
+        val marker = ``marker:bool``
+        fun refute source =
+          case dpll.CoreDPLL (ADD_ASSUM marker (ASSUME source)) of
+              dpll.Unsat th =>
+                concl th ~~ F andalso length (hyp th) = 2 andalso
+                List.exists (aconv marker) (hyp th) andalso
+                List.exists (aconv source) (hyp th)
+            | dpll.Sat _ => false
+      in model atom T andalso model (mk_neg atom) F andalso
+         refute ``(p \/ q) /\ F`` andalso refute ``p /\ ~p`` andalso
+         refute ``(p = q) /\ ~(p = q)``
+      end)
+  val _ = control "DPLL simplifies constant units and selected atoms"
+    (fn () =>
+      let
+        val variable = ``p:bool``
+        fun model source expected =
+          case dpll.CoreDPLL (ASSUME source) of
+              dpll.Sat assignment => assignment variable ~~ expected
+            | dpll.Unsat _ => false
+        val unsat = ``T /\ ~T``
+        val (_,_,lfn,clauses) = def_cnf.explicit_cnf NONE (mk_neg unsat)
+      in model ``T /\ T /\ T`` T andalso
+         model ``~F /\ ~p`` F andalso model ``T \/ T`` T andalso
+         (case dpll.DPLL_REFUTE lfn clauses of
+              SOME th => concl th ~~ F andalso
+                (case hyp th of [source] => source ~~ unsat | _ => false)
+            | NONE => false)
       end)
   val _ = control "DPLL chooses the first unit before counting literals"
     (fn () => List.all (fn formula =>

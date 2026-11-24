@@ -35,6 +35,7 @@ struct
      empty_bounds:bounds,empty_terms:terms,
      region:int * bounds -> region,
      region_at:int * (int * int) list * bounds -> region,
+     child_region:region * bounds * bounds -> region option,
      find_document:terms * region * carrier -> F.doc option,
      bind_document:terms * region * carrier * F.doc -> terms * F.doc,
      wrap_document:terms * region * F.doc -> F.doc,
@@ -181,11 +182,26 @@ struct
           else (Terms {owner=owner,symbols=symbols,sorts=sorts,order=order,
             helpers=name::helpers,encodings=encodings,
             documents=documents},true) end
+      (* This snapshot is an equality key. The Term.compare order used
+         for emitted dependency arguments is independent of its order. *)
+      fun environment bounds = Redblackmap.foldr
+        (fn (identity,{syntax,name,...}:binding,rest) =>
+          (guard syntax;(identity,name)::rest))
+        [] (check_bounds bounds)
       fun region_at (root,path,bounds) = Region
-        {owner=owner,root=root,path=path,environment=List.map
-          (fn {identity,name,...}:binding => (identity,name))
-          (ordered_bounds bounds)}
+        {owner=owner,root=root,path=path,environment=environment bounds}
       fun region (root,bounds) = region_at (root,[],bounds)
+      fun child_region (parent as Region {root,path,environment=saved,...},
+          parent_bounds,bounds) =
+        let val _ = check_region parent
+            val current = environment bounds
+            val _ = Redblackmap.app
+              (fn (_,{syntax,...}:binding) => guard syntax)
+              (check_bounds parent_bounds)
+        in if current = saved then NONE
+           else SOME (Region
+             {owner=owner,root=root,path=path,environment=current})
+        end
       fun find_document (terms,region,current) =
         let val Terms {documents,...} = check_terms terms
             val _ = check_region region
@@ -241,7 +257,8 @@ struct
          sorts=Redblackmap.mkDict compare_key,order=[],helpers=[],encodings=[],
          documents=D.create {compare_region=compare_region,
            compare_key=compare_position,prefix=prefix}},
-       region=region,region_at=region_at,find_document=find_document,
+       region=region,region_at=region_at,child_region=child_region,
+       find_document=find_document,
        bind_document=bind_document,wrap_document=wrap_document,symbols=symbols,
        encodings=encodings}
     end

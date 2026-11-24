@@ -2551,9 +2551,8 @@ local
 
   val has_quantifier = Library.has_quantifier
 
-  fun builtin_encoding tm =
+  fun builtin_encoding_at tm (rator, rands) =
     let
-      val (rator, rands) = boolSyntax.strip_comb tm
       fun try_whole () =
         if not (Lib.can Type.dom_rng (Term.type_of tm)) then
           (case first_success (fn parsefn => parsefn (tm, []))
@@ -2567,30 +2566,10 @@ local
       case first_success (fn parsefn => parsefn (rator, rands))
           (Net.match rator builtin_symbols) of
         SOME (symbol, _) => SOME (symbol, List.length rands)
-      | NONE => try_whole ()
+      | NONE => if List.null rands then NONE else try_whole ()
     end
 
-  fun encoded_symbol_records terms =
-    let
-      val empty = Redblackset.empty (Lib.pair_compare (Term.compare,
-        Lib.pair_compare (String.compare, Int.compare)))
-      fun add (tm, state as (seen, records)) =
-        case builtin_encoding tm of
-          SOME (encoding as (symbol, arity)) =>
-            let
-              val head = Lib.fst (boolSyntax.strip_comb tm)
-              val key = (head, encoding)
-            in
-              if Redblackset.member (seen, key) then state
-              else (Redblackset.add (seen, key),
-                EncodedSymbol {hol_term = head, smt_symbol = symbol,
-                  arity = arity} :: records)
-            end
-        | NONE => state
-      fun add_root (tm, state) = List.foldl add state (subterms tm)
-    in
-      Lib.snd (List.foldl add_root (empty, []) terms)
-    end
+  fun builtin_encoding tm = builtin_encoding_at tm (boolSyntax.strip_comb tm)
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
@@ -3800,13 +3779,65 @@ local
       [regex_record, ho_core_record]
     end
 
-  fun advanced_encoding_records regime terms features =
+  (* Metadata needs first occurrences in raw preorder. A repeated subtree
+     contributes no new symbol or string presence in this emission context. *)
+  fun record_encodings terms =
     let
-      val has_strings = native_string_presence terms
-    in
-      advanced_encoding_records_with_presence regime
-        {has_hol_strings = has_strings} features
-    end
+      val recent = ref boolSyntax.T
+      val previous = ref boolSyntax.T
+      val symbols = ref (Redblackset.empty (Lib.pair_compare (Term.compare,
+        Lib.pair_compare (String.compare, Int.compare))))
+      val records = ref []
+      val strings = ref false
+      fun observe tm =
+        let
+          val spine as (head,_) = boolSyntax.strip_comb tm
+          val _ = case builtin_encoding_at tm spine of
+              NONE => ()
+            | SOME (encoding as (symbol,arity)) =>
+                let val key = (head,encoding)
+                in
+                  if Redblackset.member (!symbols,key) then ()
+                  else
+                    (symbols := Redblackset.add (!symbols,key);
+                     records := EncodedSymbol {hol_term=head,smt_symbol=symbol,
+                       arity=arity} :: !records)
+                end
+        in
+          (* The operator type contains the application's result type,
+             and descending through operators visits every constant head. *)
+          if not (!strings orelse Term.is_comb tm) andalso
+             (type_contains_string (Term.type_of tm) orelse is_string_const tm)
+          then strings := true
+          else ()
+        end
+      fun compound tm = Term.is_comb tm orelse Term.is_abs tm
+      fun branching (rator,rand) =
+        compound rand andalso Term.is_comb rator andalso
+        let val (head,left) = Term.dest_comb rator
+        in compound left orelse compound head end
+      (* Publish after visiting children so a sibling can hit. *)
+      fun remember tm visit =
+        if Portable.pointer_eq (tm,!recent) orelse
+           Portable.pointer_eq (tm,!previous) then ()
+        else (visit (); previous := !recent; recent := tm)
+      fun walk root tm =
+        if Term.is_comb tm then
+          let
+            val (rator,rand) = Term.dest_comb tm
+            fun visit () =
+              (observe tm; walk false rator; walk false rand)
+          in
+            if root orelse branching (rator,rand) then remember tm visit
+            else visit ()
+          end
+        else if Term.is_abs tm then
+          let fun visit () =
+            (observe tm; walk false (Lib.snd (Term.dest_abs tm)))
+          in if root then remember tm visit else visit () end
+        else observe tm
+      val _ = List.app (walk true) terms
+    in (!records,!strings) end
 
   (* Only final emitted datatype blocks authorize grouped type records. *)
   fun type_declaration_records tydict datatype_records =
@@ -3859,18 +3890,29 @@ local
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict operations regime (key, name) :: acc)
         [] tmdict
-      val builtin_records = encoded_symbol_records terms
-      val advanced_records = advanced_encoding_records regime terms features
+      val (builtin_records,has_hol_strings) = record_encodings terms
+      val advanced_records = advanced_encoding_records_with_presence regime
+        {has_hol_strings = has_hol_strings} features
     in
       regime_record :: logic_record :: type_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
     end
 
+  fun datatype_constructors_with_origin origin ty =
+    case TypeBase.fetch ty of
+      SOME tyinfo =>
+        List.map (TypeBasePure.cinst ty)
+          (TypeBasePure.constructors_of tyinfo)
+    | NONE => raise ERR origin "missing TypeBase entry"
+
+  val datatype_constructors =
+    datatype_constructors_with_origin "datatype_constructors"
+  val datatype_template_constructors =
+    datatype_constructors_with_origin "datatype_constructor_infos"
+
   fun datatype_tester_term ty constructor arg =
     let
-      val type_name = type_name_stem ty
-      val infos = datatype_constructor_infos ty type_name
-      fun clause (constructor', _, _) =
+      fun clause constructor' =
         let
           val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
           val vars = List.map Term.genvar doms
@@ -3882,22 +3924,21 @@ local
           (pat, result)
         end
     in
-      TypeBase.mk_case (arg, List.map clause infos)
+      TypeBase.mk_case
+        (arg, List.map clause (datatype_template_constructors ty))
     end
 
   fun datatype_selector_term ty constructor selector_index arg =
     let
-      val type_name = type_name_stem ty
-      val infos = datatype_constructor_infos ty type_name
+      fun domains tm = Lib.fst (boolSyntax.strip_fun (Term.type_of tm))
+      val constructors = datatype_template_constructors ty
       val selector_ty =
-        case List.find (fn (constructor', _, _) =>
-            Term.same_const constructor constructor') infos of
-          SOME (_, _, selectors) => Lib.snd (List.nth (selectors, selector_index))
+        case List.find (Term.same_const constructor) constructors of
+          SOME constructor' => List.nth (domains constructor', selector_index)
         | NONE => raise ERR "datatype_selector_term" "missing constructor"
-      fun clause (constructor', _, _) =
+      fun clause constructor' =
         let
-          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
-          val vars = List.map Term.genvar doms
+          val vars = List.map Term.genvar (domains constructor')
           val pat = Term.list_mk_comb (constructor', vars)
           val result =
             if Term.same_const constructor constructor' then
@@ -3908,7 +3949,7 @@ local
           (pat, result)
         end
     in
-      TypeBase.mk_case (arg, List.map clause infos)
+      TypeBase.mk_case (arg, List.map clause constructors)
     end
 
   datatype parser_datatype_case =
@@ -3916,46 +3957,55 @@ local
                          scrutinee : Term.term}
     | ParserTester of {constructor : Term.term, scrutinee : Term.term}
 
-  fun datatype_constructors ty =
-    case TypeBase.fetch ty of
-      SOME tyinfo =>
-        List.map (TypeBasePure.cinst ty)
-          (TypeBasePure.constructors_of tyinfo)
-    | NONE => raise ERR "datatype_constructors" "missing TypeBase entry"
-
   (* These are exactly the HOL terms installed in the parser dictionary for
      SMT datatype selectors and testers.  Recognizing them centrally makes
      them fixed points of both preprocessing and outbound translation. *)
   fun parser_datatype_case tm =
     let
-      val (_, scrutinee, _) = TypeBase.dest_case tm
+      val (_, scrutinee, clauses) = TypeBase.dest_case tm
       val ty = Term.type_of scrutinee
-      val constructors = datatype_constructors ty
-      fun selector_for constructor =
+      (* A selector returns a variable in one branch and ARB elsewhere.
+         A tester returns T in one branch and F elsewhere. *)
+      fun unique_branch matches =
         let
-          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-          fun matches selector_index =
-            Term.aconv tm
-              (datatype_selector_term ty constructor selector_index
-                scrutinee)
+          fun scan found [] = found
+            | scan found ((clause as (_, rhs)) :: rest) =
+                if matches rhs then
+                  case found of
+                    SOME _ => NONE
+                  | NONE => scan (SOME clause) rest
+                else scan found rest
+        in scan NONE clauses end
+      fun selector_for (pattern, rhs) =
+        let
+          val (constructor, fields) = boolSyntax.strip_comb pattern
+          fun find _ [] = NONE
+            | find index (field :: rest) =
+                if Term.aconv rhs field andalso Term.aconv tm
+                     (datatype_selector_term ty constructor index
+                       scrutinee) then
+                  SOME (ParserSelector {constructor = constructor,
+                    selector_index = index, scrutinee = scrutinee})
+                else find (index + 1) rest
+        in find 0 fields end
+      fun tester_for (pattern, _) =
+        let val (constructor, _) = boolSyntax.strip_comb pattern
         in
-          case List.find matches
-              (List.tabulate (List.length doms, fn n => n)) of
-            SOME selector_index =>
-              SOME (ParserSelector {constructor = constructor,
-                selector_index = selector_index, scrutinee = scrutinee})
-          | NONE => NONE
-        end
-      fun tester_for constructor =
-        if Term.aconv tm (datatype_tester_term ty constructor scrutinee) then
-          SOME (ParserTester {constructor = constructor,
+          (* A literal case has a variable pattern. *)
+          if Term.is_const constructor andalso
+             Term.aconv tm (datatype_tester_term ty constructor scrutinee)
+          then SOME (ParserTester {constructor = constructor,
             scrutinee = scrutinee})
-        else
-          NONE
+          else NONE
+        end
+      fun check matches validate =
+        case unique_branch matches of
+          SOME clause => validate clause
+        | NONE => NONE
     in
-      case Lib.get_first selector_for constructors of
+      case check Term.is_var selector_for of
         SOME result => SOME result
-      | NONE => Lib.get_first tester_for constructors
+      | NONE => check (Term.aconv boolSyntax.T) tester_for
     end
     handle Feedback.HOL_ERR _ => NONE
 
@@ -6383,7 +6433,7 @@ local
   (* Whether 'child' is '\v1 ... vn. tm v1 ... vn' for some n > 0.  Only
      eta_expand_ranked_constant gives a term such a child. *)
   fun is_eta_expansion_of tm child =
-    let
+    Term.is_abs child andalso let
       val (vars, body) = Term.strip_abs child
       fun peel t [] = Term.identical t tm
         | peel t (v :: vs) =
@@ -6739,8 +6789,8 @@ local
     val marked_bags = Redblackset.addList (empty_marked_terms, bag_terms)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
-    val raw_num_terms = SmtLib_RawNumAnalysis.collect_by
-      raw_num_operations Term.compare bag_terms roots
+    val raw_num_terms =
+      SmtLib_RawNumAnalysis.collect_terms raw_num_operations bag_terms roots
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
@@ -6764,9 +6814,11 @@ local
         (fn term => Redblackset.member (marked, term)) subterms
     val computed_set_applications = computed_applications marked_sets
     val computed_bag_applications = computed_applications marked_bags
-    fun has_mixed_collection_argument collection_terms =
-      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_by
-        collection_operations Term.compare Lib.I collection_terms subterms
+    fun has_mixed_collection_argument marked =
+      not (Redblackset.isEmpty marked) andalso
+      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
+        collection_operations Term.compare Lib.I
+        (fn term => Redblackset.member (marked, term)) subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application marked =
       not (Redblackset.isEmpty marked) andalso
@@ -6780,8 +6832,8 @@ local
          computed_bag=not (List.null computed_bag_applications),
          bound_set=fn () => bound_collection_application marked_sets,
          bound_bag=fn () => bound_collection_application marked_bags,
-         mixed_set=fn () => has_mixed_collection_argument set_terms,
-         mixed_bag=fn () => has_mixed_collection_argument bag_terms}
+         mixed_set=fn () => has_mixed_collection_argument marked_sets,
+         mixed_bag=fn () => has_mixed_collection_argument marked_bags}
     (* dropping, cvc5 drops each assumption with a card its array encoding
        of the collection lacks, which the selection refuses the goal for *)
     fun has_application head tm = Lib.can (HolKernel.find_term (fn sub =>
@@ -8300,22 +8352,36 @@ local
             raise ERR "DATATYPE_TO_SMT_CONV"
               "normalization theorem made no progress"
         in rhs end
+      fun reflexive term NONE = Thm.REFL term
+        | reflexive _ (SOME theorem) = theorem
+      (* NONE means no rewrite was applied anywhere in this subtree.
+         A theorem can still be alpha-unchanged after multiple rewrites. *)
       fun normalize ancestors input =
         let
           val children =
             if Term.is_comb input then
               let
                 val (rator, rand) = Term.dest_comb input
+                val left = normalize ancestors rator
+                (* An unchanged operator has already checked its operand. *)
+                val right =
+                  if not (Option.isSome left) andalso Term.is_comb rator
+                     andalso Portable.pointer_eq (Term.rand rator, rand)
+                  then NONE
+                  else normalize ancestors rand
               in
-                Thm.MK_COMB
-                  (normalize ancestors rator, normalize ancestors rand)
+                case (left, right) of
+                  (NONE, NONE) => NONE
+                | _ => SOME (Thm.MK_COMB
+                    (reflexive rator left, reflexive rand right))
               end
             else if Term.is_abs input then
               let val (variable, body) = Term.dest_abs input
-              in Thm.ABS variable (normalize ancestors body) end
-            else
-              Thm.REFL input
-          val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+              in Option.map (Thm.ABS variable) (normalize ancestors body) end
+            else NONE
+          val current = case children of
+              NONE => input
+            | SOME theorem => boolSyntax.rhs (Thm.concl theorem)
           val root =
             (let
                val step = first_datatype_normalization_rung
@@ -8325,14 +8391,23 @@ local
                  raise ERR "DATATYPE_TO_SMT_CONV"
                    "normalization revisited an earlier alpha-equivalent term"
              in
-               Thm.TRANS step (normalize (current :: ancestors) rhs)
+               case normalize (current :: ancestors) rhs of
+                 NONE => SOME step
+               | SOME next => SOME (Thm.TRANS step next)
              end
-             handle Conv.UNCHANGED => Thm.REFL current)
+             handle Conv.UNCHANGED => NONE)
         in
-          if changed children then Thm.TRANS children root else root
+          case children of
+            NONE => root
+          | SOME theorem =>
+              if changed theorem then
+                (case root of
+                   NONE => children
+                 | SOME next => SOME (Thm.TRANS theorem next))
+              else SOME (reflexive current root)
         end
     in
-      normalize [] tm
+      reflexive tm (normalize [] tm)
     end
 
   fun num_free_concl_vars (asms, concl) =
@@ -8571,8 +8646,7 @@ in
       val roots = goal :: assumptions
       val {bags, ...} = collect_query_collection_markers roots
     in
-      SmtLib_RawNumAnalysis.collect_by raw_num_operations Term.compare
-        bags roots
+      SmtLib_RawNumAnalysis.collect_terms raw_num_operations bags roots
     end
 
   fun outbound_pair_constant (left, right) =

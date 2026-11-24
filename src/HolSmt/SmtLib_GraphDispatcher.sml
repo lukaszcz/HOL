@@ -19,10 +19,6 @@ struct
       val output : F.doc SmtLib.outbound_output_operations =
         {text=F.text,concat=F.concat,join=F.join}
       fun guard current = ignore ((#key context) current)
-      fun environment bounds = List.map
-        (fn (variable,name) => ((#semantic_key context) variable,name))
-        ((#bound_items access) bounds)
-
       fun emit_root (acc,(occurrence,syntax)) =
         let
           fun translate path region (acc as (_,terms),(bounds,current)) =
@@ -33,19 +29,21 @@ struct
                   let
                     (* Ordinary children reuse the immutable lexical bounds. *)
                     fun child (acc,(child_bounds,child)) =
-                      if Portable.pointer_eq (bounds,child_bounds) orelse
-                          environment child_bounds = environment bounds then
+                      if Portable.pointer_eq (bounds,child_bounds) then
                         translate path region (acc,(child_bounds,child))
                       else
-                        let
-                          val local_region = (#region_at store)
-                            (occurrence,path,child_bounds)
-                          val (acc as (_,terms),(declarations,body)) =
-                            translate path local_region
-                              (acc,(child_bounds,child))
-                          val closed = (#wrap_document store)
-                            (terms,local_region,body)
-                        in (acc,(declarations,closed)) end
+                        case (#child_region store)
+                            (region,bounds,child_bounds) of
+                          NONE =>
+                            translate path region (acc,(child_bounds,child))
+                        | SOME local_region =>
+                            let
+                              val (acc as (_,terms),(declarations,body)) =
+                                translate path local_region
+                                  (acc,(child_bounds,child))
+                              val closed = (#wrap_document store)
+                                (terms,local_region,body)
+                            in (acc,(declarations,closed)) end
                     fun body (acc,(body_bounds,body)) =
                       let
                         val body_path = (#key context) current :: path

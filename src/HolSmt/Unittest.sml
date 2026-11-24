@@ -2575,8 +2575,10 @@ let
   val partial = List.foldl (fn (arg, term) => Term.mk_comb (term, arg))
     f (List.take (args, width - 1))
   val stripped = ref 0
+  val typed = ref 0
   val ops : Term.term SmtLib_RawNumAnalysis.operations =
-    {same = fn (left, right) => Term.aconv left right, type_of = Term.type_of,
+    {same = fn (left, right) => Term.aconv left right,
+     type_of = fn term => (typed := !typed + 1; Term.type_of term),
      is_abstraction = Term.is_abs, dest_abs = Term.dest_abs,
      is_combination = Term.is_comb, dest_comb = Term.dest_comb,
      strip_comb = fn term =>
@@ -2594,6 +2596,26 @@ let
   val other_num = intSyntax.mk_Num (Term.mk_var ("j", intSyntax.int_ty))
   val equal = boolSyntax.mk_eq (num, lookup)
   val roots = [equal, intSyntax.mk_injected other_num, equal]
+  val coerced = boolSyntax.mk_eq
+    (intSyntax.mk_injected lookup, intSyntax.zero_tm)
+  val consumed = Term.mk_comb (consumer, lookup)
+  fun diamond 0 term = term
+    | diamond depth term = diamond (depth - 1) (boolSyntax.mk_conj (term,term))
+  val shared = diamond 9 (boolSyntax.mk_conj (coerced, consumed))
+  val y = Term.mk_var ("y", n)
+  val abstraction = Term.mk_abs (y, Term.mk_comb (bag, y))
+  val consume_bag = Term.mk_var ("consume_bag", Type.--> (unary_type,Type.bool))
+  val shared_roots = [shared, Term.mk_comb (consume_bag, abstraction),
+                      intSyntax.mk_injected num, shared]
+  val shared_bags = abstraction :: bags
+  val _ = typed := 0
+  val direct = SmtLib_RawNumAnalysis.collect ops shared_bags shared_roots
+  val direct_visits = !typed
+  val _ = typed := 0
+  val memoized =
+    SmtLib_RawNumAnalysis.collect_terms ops shared_bags shared_roots
+  val memoized_visits = !typed
+  val same_markers = ListPair.allEq (fn (left, right) => Term.aconv left right)
 in
   assert (null result, "curried applications must not be marked bag lookups");
   assert (!stripped <= 4 * width,
@@ -2607,7 +2629,13 @@ in
   assert
     (ListPair.allEq (fn (left, right) => Term.aconv left right)
        (analyse roots, SmtLib_RawNumAnalysis.collect ops bags roots),
-     "indexed raw-num analysis changed merge order or duplicate suppression")
+     "indexed raw-num analysis changed merge order or duplicate suppression");
+  assert
+    (same_markers (direct, [num, lookup]) andalso
+     same_markers (memoized, direct),
+     "shared raw-num analysis changed numeric context or marker order");
+  assert (memoized_visits < direct_visits div 8,
+    "raw-num analysis revisited shared application occurrences")
 end
 
 fun num_transfer_literal_normalization_success () =
@@ -7291,11 +7319,41 @@ let
       | SmtLib.EncodedSymbol {smt_symbol = "=", ...} => true
       | _ => false) records
   val _ = SmtLib.parser_dicts_for_translation translation
+  fun leaf () =
+    boolSyntax.mk_conj (``(s:smtstr) = t``, ``(x:int) < y``)
+  fun wrap (left,right) = boolSyntax.mk_conj
+    (boolSyntax.mk_neg left, boolSyntax.mk_disj (right,boolSyntax.T))
+  fun encoding_records term =
+    let
+      val (translation, _) = SmtLib.goal_to_SmtLib_translation NONE
+        ([],term)
+      fun encoding (SmtLib.EncodedSymbol _) = true
+        | encoding (SmtLib.HOLTheoryEncoding _) = true
+        | encoding _ = false
+    in List.filter encoding (SmtLib.translation_records translation) end
+  fun same_record
+        (SmtLib.EncodedSymbol left, SmtLib.EncodedSymbol right) =
+        #smt_symbol left = #smt_symbol right andalso
+        #arity left = #arity right andalso
+        Term.aconv (#hol_term left) (#hol_term right)
+    | same_record
+        (SmtLib.HOLTheoryEncoding left, SmtLib.HOLTheoryEncoding right) =
+        left = right
+    | same_record _ = false
+  val shared_leaf = leaf ()
+  val shared_records = encoding_records (wrap (shared_leaf,shared_leaf))
+  val separate_records = encoding_records (wrap (leaf (),leaf ()))
+  val has_strings = List.exists
+    (fn SmtLib.HOLTheoryEncoding {smt_theory="UnicodeStrings",...} => true
+      | _ => false) shared_records
 in
   assert (has_logic, "translation records did not include selected logic");
   assert (has_type_decl, "translation records did not include type declaration");
   assert (has_term_decl, "translation records did not include array term declaration");
-  assert (has_encoded_symbol, "translation records did not include encoded symbol")
+  assert (has_encoded_symbol, "translation records did not include encoded symbol");
+  assert (has_strings, "shared records did not include the String encoding");
+  assert (ListPair.allEq same_record (shared_records,separate_records),
+    "sharing changed the ordered encoding records")
 end
 
 fun z3_quantified_check_sat_policy_success () =
@@ -11152,6 +11210,24 @@ let
       (``SmtTriB (x:int)``, ``x:int``),
       (``SmtTriC (p:bool)``, boolSyntax.mk_arb intSyntax.int_ty)])
   val selector_text = smtlib_text ([], boolSyntax.mk_eq (selector_tm, ``0i``))
+  val two_true_branches = smtlib_text ([],
+    ``(case (light:smt_light) of
+         SmtRed => T
+       | SmtAmber => T
+       | SmtGreen => F) = p``)
+  val shadowed_selector_text =
+    let
+      val ty = ``:smt_rec``
+      val constructor = List.hd (SmtLib.datatype_constructors_for_test ty)
+      val record = ``r:smt_rec``
+      val template =
+        SmtLib.datatype_selector_term_for_test ty constructor 0 record
+      val (case_const, _) = boolSyntax.strip_comb template
+      val count = Term.mk_var ("field", intSyntax.int_ty)
+      val flag = Term.mk_var ("field", Type.bool)
+      val branch = Term.mk_abs (count, Term.mk_abs (flag, count))
+      val selector = Term.list_mk_comb (case_const, [record, branch])
+    in smtlib_text ([], boolSyntax.mk_eq (selector, ``0i``)) end
   val record_access_text = preprocessed_text
     ``(r:smt_rec).smt_count = 0i``
   val record_update_text = preprocessed_text
@@ -11173,6 +11249,12 @@ in
     "(sel_Smt_tri_ctor_Smt_tri_SmtTriB_0 v0)";
   assert_lacks "selector-shaped case" selector_text
     "(_ is ctor_Smt_tri_SmtTriB)";
+  assert_has "case with two true branches" two_true_branches
+    "(ite ((_ is ctor_Smt_light_SmtRed)";
+  assert_has "case with two true branches" two_true_branches
+    "(ite ((_ is ctor_Smt_light_SmtAmber)";
+  assert_has "selector with shadowed binder name" shadowed_selector_text
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v0)";
   assert_has "record access" record_access_text
     "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v0)";
   assert_has "record update" record_update_text
@@ -22199,6 +22281,13 @@ let
     end
   val left_conj = boolSyntax.mk_conj (word_atom x, seq_atom)
   val right_conj = boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+  val wide_guards = List.tabulate (12, fn i =>
+    Term.mk_var ("skeleton_guard_" ^ Int.toString i, Type.bool))
+  val repeated_guards = wide_guards @ List.take (wide_guards, 5)
+  val wide_left = boolSyntax.list_mk_conj
+    (word_atom x :: seq_atom :: repeated_guards)
+  val wide_right = boolSyntax.list_mk_conj
+    (List.revAppend (repeated_guards, [boolSyntax.T, boolSyntax.T]))
   val false_word_atom = boolSyntax.mk_neg (word_atom x)
   val false_seq_atom = boolSyntax.mk_neg seq_atom
   val forall_left = boolSyntax.mk_forall
@@ -22214,6 +22303,8 @@ in
     (boolSyntax.mk_neg left_conj, boolSyntax.mk_neg right_conj);
   check "rewrite skeleton conjunction" 1
     (left_conj, right_conj);
+  check "rewrite skeleton reordered wide conjunction" 1
+    (wide_left, wide_right);
   check "rewrite skeleton disjunction" 1
     (boolSyntax.mk_disj (false_word_atom, false_seq_atom),
      boolSyntax.mk_disj (boolSyntax.F, boolSyntax.F));
@@ -29776,6 +29867,42 @@ in
   List.app check cases
 end
 
+fun shared_arithmetic_detection_success () =
+let
+  fun shared _ 0 term = term
+    | shared plus depth term = shared plus (depth - 1) (plus (term, term))
+  val linear = shared intSyntax.mk_plus 40 ``(x:int) + y``
+  val nonlinear = intSyntax.mk_plus (linear, ``(x:int) * y``)
+  val conditional = intSyntax.mk_plus
+    (linear, ``if p then x else y:int``)
+  val polynomial = shared realSyntax.mk_plus 40 ``((x:real) / 2) pow 2``
+  val division = realSyntax.mk_plus (polynomial, ``(x:real) / y``)
+  val shared_type = shared (fn (dom,rng) => dom --> rng) 40 intSyntax.int_ty
+  val shared_type_variable = Term.mk_var ("shared_type",shared_type)
+  val integer_function = ``f:int -> int``
+  fun chain 0 term = term
+    | chain depth term =
+        chain (depth - 1) (Term.mk_comb (integer_function, term))
+in
+  assert (not (Library.is_nonlinear linear) andalso
+    Library.is_nonlinear nonlinear, "shared DAG nonlinear detection failed");
+  assert (not (Library.contains_conditional linear) andalso
+    Library.contains_conditional conditional,
+    "shared DAG conditional detection failed");
+  assert (not (Library.contains_nonpolynomial_arithmetic polynomial) andalso
+    Library.contains_nonpolynomial_arithmetic division,
+    "shared DAG nonpolynomial detection failed");
+  assert (not (Library.term_contains_real_ty linear) andalso
+    not (Library.term_contains_real_ty shared_type_variable) andalso
+    not (Library.term_contains_real_ty (chain 4096 ``x:int``)) andalso
+    Library.term_contains_real_ty (boolSyntax.mk_conj
+      (intSyntax.mk_leq (linear, ``y:int``), ``(x:real) < y``)),
+    "arithmetic real type detection failed");
+  assert (Library.term_contains_real_ty ``\x:real. T`` andalso
+    not (Library.term_contains_real_ty ``\x:int. (0:real) < y``),
+    "arithmetic abstraction type detection failed")
+end
+
 fun z3_difference_directed_rewrite_canon_success () =
 let
   fun canonical_target target = boolSyntax.rhs (Thm.concl
@@ -30033,7 +30160,12 @@ let
     ("real symbolic exponent", ``(x:real) pow (2 * n)``, true),
     ("num symbolic exponent", ``(x:num) ** (2 * n)``, true),
     ("real literal base symbolic exponent", ``(2:real) pow n``, true),
-    ("real numeral exponent", ``(x:real) pow 2``, false)
+    ("real numeral exponent", ``(x:real) pow 2``, false),
+    ("real partially applied power", Term.mk_comb (realSyntax.exp_tm,
+      ``x:real``), true),
+    ("real numeral denominator", ``(x:real) / 2``, false),
+    ("real partially applied division", Term.mk_comb (realSyntax.div_tm,
+      ``x:real``), true)
   ]
   fun check (name, term, expected) =
     assert (Library.contains_nonpolynomial_arithmetic term = expected,
@@ -31159,6 +31291,25 @@ fun datatype_tester_application_fixpoint_success () =
       SmtDatatypeProve.exhaustiveness_prove shallow_goal;
     assert_datatype_prover "datatype tester application fixpoint"
       SmtDatatypeProve.exhaustiveness_prove fixpoint_goal
+  end
+
+fun datatype_shared_subterms_success () =
+  let
+    fun share 0 term = term
+      | share depth term =
+          share (depth - 1) (boolSyntax.mk_conj (term, term))
+    val boolean_only = share 30 boolSyntax.T
+    val under_binder = ``!(d:smt_light). d = d``
+    val with_datatype = boolSyntax.mk_conj (under_binder, boolean_only)
+    val unchanged = SmtLib.DATATYPE_TO_SMT_CONV boolean_only
+  in
+    assert (not (SmtDatatypeProve.datatype_fragment_admits boolean_only),
+      "shared Boolean goal was admitted as a datatype fragment");
+    assert (SmtDatatypeProve.datatype_fragment_admits with_datatype,
+      "datatype under a binder was missed in a goal with shared subterms");
+    assert (Term.aconv (Thm.concl unchanged)
+        (boolSyntax.mk_eq (boolean_only, boolean_only)),
+      "datatype normalization changed a shared Boolean goal")
   end
 
 fun datatype_recursive_split_budget_success () =
@@ -41453,6 +41604,8 @@ let
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
       nonlinear_power_detection_success),
+    ("shared_arithmetic_detection_success",
+      shared_arithmetic_detection_success),
     ("symbolic_power_nonpolynomial_detection_success",
       symbolic_power_nonpolynomial_detection_success),
     ("nonlinear_tight_integer_bounds_success",
@@ -41519,6 +41672,7 @@ let
       datatype_prove_ladder_rungs_success),
     ("datatype_tester_application_fixpoint_success",
       datatype_tester_application_fixpoint_success),
+    ("datatype_shared_subterms_success", datatype_shared_subterms_success),
     ("datatype_recursive_split_budget_success",
       datatype_recursive_split_budget_success),
     ("datatype_exhaustiveness_split_cap_success",

@@ -475,8 +475,7 @@ local
   fun cpc_simple_symbol text =
     String.size text > 0 andalso
     cpc_id_initial (String.sub (text, 0)) andalso
-    List.all (fn c => cpc_id_initial c orelse Char.isDigit c)
-      (String.explode text)
+    CharVector.all (fn c => cpc_id_initial c orelse Char.isDigit c) text
 
   (* CPC command and premise IDs use the @-prefixed identifier production,
      not the wider atom production and never the String-token production.
@@ -2644,14 +2643,15 @@ local
   fun provenance_of_raw raw =
     provenance_of_raw_in (Redblackmap.mkDict String.compare) raw
 
-  (* The raw occurrence tree retains each conjunction's operand boundaries.
-     Stream tokens from its list tails while keeping the tree for provenance. *)
-  fun elaborate_located_term dicts_ref source : located_term =
+  fun normalize_located_term dicts_ref source =
+    normalize_cpc_testers
+      (cpc_indexed_identifier (fn name => Option.isSome
+        (Redblackmap.peek (#2 (!dicts_ref), name))))
+      source
+
+  (* Stream tokens from the normalized tree's list tails. *)
+  fun elaborate_normalized_term dicts_ref raw =
     let
-      val raw = normalize_cpc_testers
-        (cpc_indexed_identifier (fn name => Option.isSome
-          (Redblackmap.peek (#2 (!dicts_ref), name))))
-        source
       val (next_token, finished) = raw_token_stream raw
         (fn () => raise ERR "parse_located_term"
           "internal CPC occurrence token stream exhausted")
@@ -2660,17 +2660,24 @@ local
         raise ERR "parse_located_term"
           "internal CPC occurrence parser left trailing tokens"
       (* SMT-LIB lets elaborate to kernel LET applications, while the exact
-         lexical provenance above already describes their simultaneous,
+         lexical provenance describes their simultaneous,
          capture-avoiding substitution.  Reduce precisely those occurrences
          before pairing the HOL term with that substituted occurrence tree.
          The conversion is proof-producing; aliases consequently store the
          same normalized term/provenance pair as direct commands. *)
-      val term =
-        if raw_contains_let raw then
-          boolSyntax.rhs (Thm.concl
-            (Conv.DEPTH_CONV pairLib.let_CONV parsed_term))
-          handle Conv.UNCHANGED => parsed_term
-        else parsed_term
+    in
+      if raw_contains_let raw then
+        boolSyntax.rhs (Thm.concl
+          (Conv.DEPTH_CONV pairLib.let_CONV parsed_term))
+        handle Conv.UNCHANGED => parsed_term
+      else parsed_term
+    end
+
+  (* The raw occurrence tree retains each conjunction's operand boundaries. *)
+  fun elaborate_located_term dicts_ref source : located_term =
+    let
+      val raw = normalize_located_term dicts_ref source
+      val term = elaborate_normalized_term dicts_ref raw
     in
       {term = term, provenance = provenance_of_raw raw}
     end
@@ -2679,7 +2686,8 @@ local
     elaborate_located_term dicts_ref (read_raw_term get_token)
 
   fun parse_recorded_term dicts_ref get_token =
-    #term (parse_located_term dicts_ref get_token)
+    elaborate_normalized_term dicts_ref
+      (normalize_located_term dicts_ref (read_raw_term get_token))
 
   fun unavailable_term reason term : located_term =
     {term = term, provenance = UnavailableProvenance reason}
@@ -4075,9 +4083,7 @@ local
   fun parse_commands dicts_ref version known_ids scope_snapshots
       seen_steps record_unsupported get_token stop acc =
     let
-      fun add_id id =
-        (ensure_fresh_id "parse_commands" id known_ids;
-         known_ids := HOLset.add (!known_ids, id))
+      fun add_id id = known_ids := HOLset.add (!known_ids, id)
       fun recurse acc =
         parse_commands dicts_ref version known_ids scope_snapshots
           seen_steps record_unsupported get_token stop acc
@@ -4099,6 +4105,7 @@ local
           previous :: rest =>
             (known_ids := previous;
              scope_snapshots := rest;
+             ensure_fresh_id "parse_commands" id known_ids;
              add_id id)
         | [] => raise ERR "parse_commands"
             ("step-pop without matching assume-push in CPC step " ^ id)
@@ -4232,6 +4239,19 @@ in
      "step-pop"]
 
 local
+  val legacy_reserved_symbols =
+    let
+      val (all_tydict, all_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+      val (sorts, terms) = with_cpc_literals
+        (all_tydict, Library.union_dict all_tmdict
+          SmtLib_Theories.CVC5_Seq.tmdict)
+      fun add_key (key, _, set) = HOLset.add (set, key)
+      val syntax = HOLset.addList (HOLset.empty String.compare,
+        cpc_command_syntax_names)
+    in
+      Redblackmap.foldl add_key (Redblackmap.foldl add_key syntax sorts) terms
+    end
+
   (* These lookup tables are only needed while elaborating a proof. The
      command spine already retains its terms and occurrence provenance. *)
   fun clear_parse_tables () =
@@ -4262,21 +4282,12 @@ local
       val _ = reset_term_intern ()
       (* The standalone skolem test helper also looks up this metadata. *)
       val _ = cpc_forall_blocks := Redblackmap.mkDict Term.compare
-      fun keys dictionary = Redblackmap.foldl
-        (fn (key, _, set) => HOLset.add (set, key))
+      val _ = cpc_reserved_symbols := legacy_reserved_symbols
+      fun source_keys dictionary = Redblackmap.foldl
+        (fn (key, _, set) =>
+          if set_member legacy_reserved_symbols key then set
+          else HOLset.add (set, key))
         (HOLset.empty String.compare) dictionary
-      val (all_tydict, all_tmdict) =
-        SmtLib_Logics.parsedicts_of_logic "ALL"
-      val baseline_dicts = with_cpc_literals
-        (all_tydict, Library.union_dict all_tmdict
-          SmtLib_Theories.CVC5_Seq.tmdict)
-      val baseline = HOLset.union
-        (keys (#1 baseline_dicts), keys (#2 baseline_dicts))
-      val _ = cpc_reserved_symbols := HOLset.addList
-        (baseline, cpc_command_syntax_names)
-      fun source_keys dictionary = HOLset.filter
-        (fn key => not (set_member (!cpc_reserved_symbols) key))
-        (keys dictionary)
       val _ = cpc_source_sort_symbols := source_keys (#1 dicts)
       val _ = cpc_source_term_symbols := source_keys (#2 dicts)
       val known_ids = ref (HOLset.empty String.compare)
@@ -5225,16 +5236,21 @@ end
      until its specialized graph adapters and certificate gates pass. *)
   type graph_located_term = SmtLib_GraphFrontend.term
   type graph_step = proof_rule SmtLib_GraphFrontend.step
-  fun graph_policy_description version =
-    let
-      val baseline = with_cpc_literals
-        (SmtLib_Logics.parsedicts_of_logic "ALL")
-      val reserved_names = Redblackmap.foldl
-        (fn (key, _, keys) => key :: keys)
-        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          cpc_command_syntax_names (#1 baseline)) (#2 baseline)
-    in {solver="cvc5",version=version,policy=F.CPC,
-      reserved_names=reserved_names} end
+
+  local
+    val reserved_names =
+      let
+        val (sorts, terms) = with_cpc_literals
+          (SmtLib_Logics.parsedicts_of_logic "ALL")
+        fun prepend_key (key, _, keys) = key :: keys
+        val syntax_and_sorts =
+          Redblackmap.foldl prepend_key cpc_command_syntax_names sorts
+      in Redblackmap.foldl prepend_key syntax_and_sorts terms end
+  in
+    fun graph_policy_description version =
+      {solver="cvc5",version=version,policy=F.CPC,
+       reserved_names=reserved_names}
+  end
 
   fun graph_term_reader_with_version options version instream =
     let
