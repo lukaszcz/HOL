@@ -944,55 +944,53 @@ local
     !cpc_fp_private_unbound_markers_ref
 
   (* Only syntactic FP metadata is retained here, never replay results or
-     theorem authority. The weak key must be the command spine itself, not
-     a fresh ref wrapping it: the latter could die while the proof is live.
-     Poly/ML's Weak API types weak targets as refs. At this boundary only,
-     view the heap object as an opaque ref; never dereference or assign it.
-     No registry value or closure keeps a strong pointer to the commands.
-     Empty spines are shared immediates, so use the proof record for those.
-     Like the replay's existing Poly/ML sharing operations, this needs a
-     runtime adapter on other ML systems; there is no portable Weak API. *)
+     theorem authority. An entry keeps the parsed proof record to recognise
+     it: a record rebuilt over the same command spine (shared, not copied)
+     is the same proof, and so is the record itself when the spine is
+     empty, since empty spines are shared immediates. Only the newest
+     cpc_fp_private_proof_limit proofs are kept, so retained proofs do not
+     accumulate across calls. *)
   type cpc_fp_private_proof_entry = {
-    key : unit ref option ref,
+    proof : proof,
     bindings : cpc_fp_private_binding list,
     unbound : (Term.term * string) list,
     identities : (Term.term * (unit -> unit)) HOLset.set
   }
 
+  val cpc_fp_private_proof_limit = 8
+
   val cpc_fp_private_proofs =
     ref ([] : cpc_fp_private_proof_entry list)
 
-  fun cpc_fp_private_proof_key (proof : proof) : unit ref =
-    if List.null (#commands proof) then RunCall.unsafeCast proof
-    else RunCall.unsafeCast (#commands proof)
-
-  fun prune_cpc_fp_private_proofs () =
-    cpc_fp_private_proofs := List.filter
-      (fn {key, ...} : cpc_fp_private_proof_entry => Option.isSome (!key))
-      (!cpc_fp_private_proofs)
+  fun same_cpc_fp_private_proof (saved : proof) (proof : proof) =
+    if List.null (#commands proof) then Portable.pointer_eq (saved, proof)
+    else Portable.pointer_eq (#commands saved, #commands proof)
 
   fun retain_cpc_fp_private_proof proof =
-    let
-      val _ = prune_cpc_fp_private_proofs ()
-    in
-      if List.null (!cpc_fp_private_bindings_ref) andalso
-         List.null (!cpc_fp_private_unbound_markers_ref) then ()
-      else cpc_fp_private_proofs := {
-        key = Weak.weak (SOME (cpc_fp_private_proof_key proof)),
-        bindings = !cpc_fp_private_bindings_ref,
-        unbound = !cpc_fp_private_unbound_markers_ref,
-        identities = !cpc_fp_private_identity_index
-      } :: !cpc_fp_private_proofs
-    end
+    if List.null (!cpc_fp_private_bindings_ref) andalso
+       List.null (!cpc_fp_private_unbound_markers_ref) then ()
+    else
+      let
+        val others = List.filter
+          (fn {proof = saved, ...} : cpc_fp_private_proof_entry =>
+             not (same_cpc_fp_private_proof saved proof))
+          (!cpc_fp_private_proofs)
+        val kept =
+          if length others < cpc_fp_private_proof_limit then others
+          else List.take (others, cpc_fp_private_proof_limit - 1)
+      in
+        cpc_fp_private_proofs := {
+          proof = proof,
+          bindings = !cpc_fp_private_bindings_ref,
+          unbound = !cpc_fp_private_unbound_markers_ref,
+          identities = !cpc_fp_private_identity_index
+        } :: kept
+      end
 
   fun with_cpc_fp_private_proof proof action input =
     let
-      val _ = prune_cpc_fp_private_proofs ()
-      val key = cpc_fp_private_proof_key proof
-      fun matches ({key = weak, ...} : cpc_fp_private_proof_entry) =
-        case !weak of
-          SOME saved => Portable.pointer_eq (saved, key)
-        | NONE => false
+      fun matches ({proof = saved, ...} : cpc_fp_private_proof_entry) =
+        same_cpc_fp_private_proof saved proof
       val saved_bindings = !cpc_fp_private_bindings_ref
       val saved_buckets = !cpc_fp_private_buckets
       val saved_unbound = !cpc_fp_private_unbound_markers_ref
