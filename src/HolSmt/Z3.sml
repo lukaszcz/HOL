@@ -433,6 +433,7 @@ structure Z3 = struct
           val (translation, strings) =
             goal_to_SmtLib_with_get_proof_translation_for_version
               (configured_version ()) goal
+          val goal = SmtLib.sent_goal translation goal
         in
           (((original_goal, goal, validation), translation), strings)
         end))
@@ -553,6 +554,7 @@ structure Z3 = struct
           val (translation, strings) =
             goal_to_SmtLib_with_get_proof_translation_for_version
               (configured_version ()) goal
+          val goal = SmtLib.sent_goal translation goal
         in
           (((original_goal, goal, validation), translation), strings)
         end))

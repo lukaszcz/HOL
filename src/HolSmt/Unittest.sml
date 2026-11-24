@@ -8539,6 +8539,100 @@ in
 end
 end
 
+(* With SmtLib.drop_untranslatable_assumptions set, a solver translation
+   leaves out each assumption it cannot translate, encoded under the choices
+   made for the whole goal, and still refuses an untranslatable
+   conclusion. *)
+fun smtlib_drop_untranslatable_assumptions_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 goal = Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal
+  fun cvc goal = CVC.goal_to_SmtLib_translation goal
+  fun dropping f x =
+    Thread_Data.setmp SmtLib.drop_untranslatable_assumptions (SOME true) f x
+  (* native Seq for an int list, where Z3 has no seq.rev *)
+  val reversed = ``REVERSE (xs:int list) = ys``
+  (* MEM selects the algebraic list encoding for the whole goal *)
+  val member = ``MEM (1:int) zs``
+  (* Z3 has no set.card; cvc5's array sets have none *)
+  val card = ``CARD (s:int set) = 3``
+  (* refused by Z3, and the goal's only higher-order trigger *)
+  val card_lambda = ``CARD (s:int set) = 3 /\ (f = \x:int. x + 1)``
+  val applied = ``(f:int -> int) 1 = 2``
+  (* cvc5 refuses a bound function applied to a set *)
+  val bound = ``!set_f:int set -> bool.
+    (if c then set_f else set_g) s /\ (0:int) IN s``
+  val needed = ``(x:int) < y``
+  val conclusion = ``(x:int) <= y``
+  (* a forced first-order translation refuses a surviving lambda inside
+     translate_term, after the preflight passed and an option datatype the
+     kept assumption also uses came first *)
+  fun first_order goal =
+    SmtLib.goal_to_SmtLib_translation_with_regime SmtLib.FirstOrder NONE goal
+  val option_then_lambda = ``(o1:bool option) = NONE /\
+    (H:(int -> int) -> bool) (\x. x + 1)``
+  val option_needed = ``(o2:bool option) = SOME T /\ (x:int) < y``
+  fun refused f goal = (ignore (f goal); false)
+    handle Feedback.HOL_ERR _ => true
+  (* the declarations and assertions, without the logic the whole goal
+     selects *)
+  fun body result = List.filter (fn line =>
+      String.isPrefix "(assert" line orelse String.isPrefix "(declare" line)
+    (String.tokens (fn c => c = #"\n") (text_of result))
+  fun same_as_without f asm =
+    body (dropping f ([asm, needed], conclusion)) =
+    body (f ([needed], conclusion))
+  fun logic_of f goal = contains "(set-logic ALL)" (text_of (f goal))
+in
+  assert (refused z3 ([reversed, needed], conclusion),
+    "Z3 translated seq.rev");
+  assert (refused cvc ([card, needed], conclusion),
+    "cvc5 translated set.card without finiteness");
+  assert (same_as_without z3 reversed,
+    "Z3 did not drop exactly the REVERSE assumption");
+  assert (same_as_without z3 card,
+    "Z3 did not drop exactly the CARD assumption");
+  assert (same_as_without cvc card,
+    "cvc5 did not drop exactly the CARD assumption");
+  assert (refused cvc ([bound, needed], conclusion),
+    "cvc5 translated a bound function over a Set");
+  expect_hol_error_contains "first-order surviving lambda"
+    "unsupported higher-order rator expression"
+    (fn () => ignore
+      (first_order ([option_then_lambda, option_needed], conclusion)));
+  assert (text_of (dropping first_order
+        ([option_then_lambda, option_needed], conclusion)) =
+      text_of (first_order ([option_needed], conclusion)),
+    "an assumption translate_term refused was not dropped exactly");
+  (* the bound function makes the regime higher-order, which declares
+     constants with declare-const *)
+  assert (List.filter (String.isPrefix "(assert")
+      (body (dropping cvc ([bound, needed], conclusion))) =
+    List.filter (String.isPrefix "(assert") (body (cvc ([needed], conclusion))),
+    "cvc5 did not drop exactly the bound-function assumption");
+  assert (case SmtLib.sent_goal
+        (Lib.fst (dropping z3 ([reversed, needed], conclusion)))
+        ([reversed, needed], conclusion) of
+      ([kept], _) => Term.aconv kept needed
+    | _ => false,
+    "replay was not given exactly the assumptions sent");
+  assert (logic_of (dropping z3) ([card_lambda, applied, needed], conclusion)
+    andalso not (logic_of z3 ([applied, needed], conclusion)) andalso
+    not (contains "lambda"
+      (text_of (dropping z3 ([card_lambda, applied, needed], conclusion)))),
+    "the regime was not chosen from the whole goal");
+  assert (text_of (dropping z3 ([reversed, member, needed], conclusion)) =
+    text_of (z3 ([reversed, member, needed], conclusion)) andalso
+    not (contains "seq."
+      (text_of (dropping z3 ([reversed, member, needed], conclusion)))),
+    "REVERSE beside MEM was not kept in the algebraic encoding");
+  assert (text_of (dropping z3 ([member, needed], conclusion)) =
+    text_of (z3 ([member, needed], conclusion)),
+    "dropping changed a goal with nothing to drop");
+  assert (refused (dropping z3) ([needed], card),
+    "an untranslatable conclusion was not refused")
+end
+
 fun smtlib_native_set_translation_success () =
 let
   fun text_of result = String.concat (Lib.snd result)
@@ -40858,6 +40952,8 @@ let
     ("smtlib_seq_set_bag_feature_inference_success",
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_indexed_collection_closure", smtlib_indexed_collection_closure),
+    ("smtlib_drop_untranslatable_assumptions_success",
+      smtlib_drop_untranslatable_assumptions_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
     ("smtlib_graph_function_let_collection_success",
