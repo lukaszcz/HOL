@@ -162,6 +162,14 @@ local
   val ERR = Feedback.mk_HOL_ERR "SmtLib"
   val WARNING = Feedback.HOL_WARNING "SmtLib"
 
+  (* A silenced warning's text is still built, and a text that prints a term
+     or type costs more than translating it: the printer rebuilds its grammar
+     tables on every call.  Build such a text only when HOL_WARNING uses it. *)
+  fun printed_warning function message =
+    if !Feedback.WARNINGs_as_ERRs orelse !Feedback.emit_WARNING then
+      WARNING function (message ())
+    else ()
+
   val reglan_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
   val smtstr_ty =
@@ -4155,8 +4163,8 @@ local
       val decl = "(declare-sort " ^ name ^ " 0)\n"
     in
       if Library.trace() > 0 andalso Type.is_type ty then
-        WARNING "translate_type"
-          ("uninterpreted type " ^ Hol_pp.type_to_string ty)
+        printed_warning "translate_type"
+          (fn () => "uninterpreted type " ^ Hol_pp.type_to_string ty)
       else
         ();
       if Library.trace() > 2 then
@@ -4220,8 +4228,8 @@ local
                 case TypeBase.fetch ty of
                   SOME _ =>
                     if Library.trace () > 0 then
-                      WARNING "translate_type"
-                        ("datatype fallback for " ^ Hol_pp.type_to_string ty)
+                      printed_warning "translate_type" (fn () =>
+                        "datatype fallback for " ^ Hol_pp.type_to_string ty)
                     else
                       ()
                 | NONE => ()
@@ -6286,8 +6294,8 @@ local
                   Int.toString (term_count tmdict)
                 val _ = if Library.trace () > 0 andalso carrier_is_const rator
                   then
-                  WARNING "translate_term"
-                    ("uninterpreted constant " ^ carrier_term_to_string rator)
+                  printed_warning "translate_term" (fn () =>
+                    "uninterpreted constant " ^ carrier_term_to_string rator)
                   else
                     ();
                 val _ = if Library.trace () > 2 then
