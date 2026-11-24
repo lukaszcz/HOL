@@ -1917,7 +1917,8 @@ local
            BackendApplication (left,right) =>
              contains tag head left orelse contains tag head right
          | BackendAbstraction (_,body) => contains tag head body | _ => false))
-      fun select (target:{solver:string,version:string option} option)
+      fun select_backends
+          (target:{solver:string,version:string option} option)
           {goal,sets,bags,computed_set,computed_bag,bound_set,bound_bag,
            mixed_set,mixed_bag} =
         let
@@ -1944,25 +1945,32 @@ local
               raise ERR "goal_to_SmtLib_aux_inner"
                 "native collection passed to an ambiguously typed HOL function"
             else ()
-          (* dropping, the assumptions with such a card are dropped
-             instead (goal_to_SmtLib_aux_inner) *)
-          val roots = if dropping_untranslatable () then [#2 goal]
-                      else #2 goal :: #1 goal
-          val _ = if cvc5 then
-              if set = CVC5ArraySet andalso
-                  List.exists
-                    (contains "set-card" pred_setSyntax.card_tm) roots
-              then raise ERR "goal_to_SmtLib_aux_inner"
-                "set.card requires a finiteness-entailing cvc5 goal"
-              else if bag = CVC5ArrayBag andalso
-                  List.exists (contains "bag-card" bagSyntax.BAG_CARD_tm) roots
-              then raise ERR "goal_to_SmtLib_aux_inner"
-                "bag.card requires a finiteness-entailing cvc5 goal"
-              else ()
-            else ()
         in {set_backend=set,bag_backend=bag} end
+      (* why cvc5 refuses roots with a card the selected array encoding of
+         the collection lacks *)
+      fun card_refusal (target:{solver:string,version:string option} option)
+          {set_backend,bag_backend} roots =
+        case target of
+          SOME {solver="cvc5",...} =>
+            if set_backend = CVC5ArraySet andalso
+               List.exists (contains "set-card" pred_setSyntax.card_tm) roots
+            then SOME "set.card requires a finiteness-entailing cvc5 goal"
+            else if bag_backend = CVC5ArrayBag andalso
+               List.exists (contains "bag-card" bagSyntax.BAG_CARD_tm) roots
+            then SOME "bag.card requires a finiteness-entailing cvc5 goal"
+            else NONE
+        | _ => NONE
+      fun select target (selection as {goal,...}) =
+        let val backends = select_backends target selection
+        in
+          case card_refusal target backends (#2 goal :: #1 goal) of
+            SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
+          | NONE => backends
+        end
     in
-      {select=select,native_set_term=native_set,cvc5_native_bags=native_bags,
+      {select=select,select_backends=select_backends,
+       card_refusal=card_refusal,native_set_term=native_set,
+       cvc5_native_bags=native_bags,
        finite_sets=finite_sets,finite_bags=finite_bags,
        finite_set_term=finite_set,finite_bag_term=finite_bag}
     end
@@ -6776,7 +6784,8 @@ local
 
   fun goal_to_SmtLib_aux_inner request apply_operator
       (policy : logic_selection_policy) target emit_sequences
-      inventory (goal as (original_ts, t)) : translation * string list =
+      inventory refused (goal as (original_ts, t))
+      : translation * string list =
   let
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
@@ -6825,8 +6834,7 @@ local
       SmtLib_CollectionApplicationAnalysis.has_bound_application_with
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
-    val {set_backend=backend,bag_backend} =
-      (#select term_backend_selection) target
+    val selection =
         {goal=goal,sets=set_terms,bags=bag_terms,
          computed_set=not (List.null computed_set_applications),
          computed_bag=not (List.null computed_bag_applications),
@@ -6834,21 +6842,24 @@ local
          bound_bag=fn () => bound_collection_application marked_bags,
          mixed_set=fn () => has_mixed_collection_argument marked_sets,
          mixed_bag=fn () => has_mixed_collection_argument marked_bags}
-    (* dropping, cvc5 drops each assumption with a card its array encoding
-       of the collection lacks, which the selection refuses the goal for *)
-    fun has_application head tm = Lib.can (HolKernel.find_term (fn sub =>
-      Term.is_comb sub andalso Term.same_const (Term.rator sub) head)) tm
-    val original_ts =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if dropping_untranslatable () then
-            List.filter (fn tm => not (
-              (backend = CVC5ArraySet andalso
-               has_application pred_setSyntax.card_tm tm) orelse
-              (bag_backend = CVC5ArrayBag andalso
-               has_application bagSyntax.BAG_CARD_tm tm))) original_ts
-          else original_ts
-      | _ => original_ts
+    (* dropping, an assumption the solver preflight refused ([refused]) or
+       with a card the selected cvc5 array encoding lacks is left out of the
+       translation; every encoding choice is still made from the whole goal *)
+    val card_refusal = (#card_refusal term_backend_selection) target
+    val backends as {set_backend=backend,bag_backend} =
+      if dropping_untranslatable () then
+        let
+          val backends =
+            (#select_backends term_backend_selection) target selection
+        in
+          case card_refusal backends [t] of
+            SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
+          | NONE => backends
+        end
+      else (#select term_backend_selection) target selection
+    fun left_out tm =
+      List.exists (fn other => Term.aconv other tm) refused orelse
+      Option.isSome (card_refusal backends [tm])
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,
@@ -6861,7 +6872,8 @@ local
     val _ = current_bag_helpers := []
     (* Finiteness is a semantic fact of cvc5's native finite collection
        models, including beneath Boolean connectives. *)
-    val (ts, t) =
+    (* each assumption beside its rewriting *)
+    val (pairs, t) =
       if backend = CVC5NativeSet orelse bag_backend = CVC5NativeBag then
         let
           val finite_sets = List.mapPartial finite_set_hypothesis original_ts
@@ -6916,8 +6928,12 @@ local
                  Option.isSome (finite_set_hypothesis tm)) andalso
             not (bag_backend = CVC5NativeBag andalso
                  Option.isSome (finite_bag_hypothesis tm))) original_ts
-        in (List.map replace_finite assumptions, replace_finite t) end
-      else (original_ts, t)
+        in
+          (List.map (fn tm => (tm, replace_finite tm)) assumptions,
+           replace_finite t)
+        end
+      else (List.map (fn tm => (tm, tm)) original_ts, t)
+    val ts = List.map Lib.snd pairs
     val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
@@ -6942,15 +6958,17 @@ local
       in
         let val (acc', smtlib) = translate (acc, tm)
         in (acc', (tm, smtlib) :: kept) end
-        handle Interrupt => raise Interrupt
-             | _ => (restore_cells restorers; (acc, kept))
+        handle Feedback.HOL_ERR _ => (restore_cells restorers; (acc, kept))
+             | NestedTranslation _ => (restore_cells restorers; (acc, kept))
       end
     val (acc, ts, smtlibs) =
       if dropping_untranslatable () then
         let
           val (acc, kept) =
-            List.foldl (fn (tm, state) => translate_assumption (state, tm))
-              ((tydict, tmdict), []) ts
+            List.foldl (fn ((original, tm), state) =>
+                if left_out original then state
+                else translate_assumption (state, tm))
+              ((tydict, tmdict), []) pairs
           val (ts, smtlibs) = ListPair.unzip (List.rev kept)
         in (acc, ts, smtlibs) end
       else
@@ -8892,25 +8910,22 @@ in
                   check_reglan_application (Term.dest_comb term)
                 else ()) subterms
         (* dropping, each assumption is checked on its own, under the
-           sequence emission chosen for the whole goal *)
-        val (goal, inventory) =
+           sequence emission chosen for the whole goal; those refused are
+           left out of the translation *)
+        fun refuses asm =
+          (check (([asm], boolSyntax.T), inventory_of [asm]); false)
+          handle Feedback.HOL_ERR _ => true
+        val refused =
           if dropping_untranslatable () then
-            let
-              val _ = check (([], concl), inventory_of [concl])
-              val kept = List.filter (fn asm =>
-                  Lib.can check (([asm], boolSyntax.T), inventory_of [asm]))
-                asms
-            in
-              if length kept = length asms then (goal, inventory)
-              else ((kept, concl), inventory_of (concl :: kept))
-            end
-          else (check (goal, inventory); (goal, inventory))
+            (check (([], concl), inventory_of [concl]);
+             List.filter refuses asms)
+          else (check (goal, inventory); [])
         val tail = outbound_query_tail string_output_operations get_proof
       in
         Lib.apsnd (fn xs => xs @ tail)
           (with_saved_translation_context (fn () =>
              goal_to_SmtLib_aux_inner request apply_operator policy target
-               (Susp.force sequence_emission) inventory goal))
+               (Susp.force sequence_emission) inventory refused goal))
       end
 
     (* Generic callers emit for the automatic Standard27 regime, with the `_`

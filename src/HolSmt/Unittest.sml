@@ -8550,12 +8550,21 @@ let
   val member = ``MEM (1:int) zs``
   (* Z3 has no set.card; cvc5's array sets have none *)
   val card = ``CARD (s:int set) = 3``
+  (* refused by Z3, and the goal's only higher-order trigger *)
+  val card_lambda = ``CARD (s:int set) = 3 /\ (f = \x:int. x + 1)``
+  val applied = ``(f:int -> int) 1 = 2``
   val needed = ``(x:int) < y``
   val conclusion = ``(x:int) <= y``
   fun refused f goal = not (Lib.can f goal)
+  (* the declarations and assertions, without the logic the whole goal
+     selects *)
+  fun body result = List.filter (fn line =>
+      String.isPrefix "(assert" line orelse String.isPrefix "(declare" line)
+    (String.tokens (fn c => c = #"\n") (text_of result))
   fun same_as_without f asm =
-    text_of (dropping f ([asm, needed], conclusion)) =
-    text_of (f ([needed], conclusion))
+    body (dropping f ([asm, needed], conclusion)) =
+    body (f ([needed], conclusion))
+  fun logic_of f goal = contains "(set-logic ALL)" (text_of (f goal))
 in
   assert (refused z3 ([reversed, needed], conclusion),
     "Z3 translated seq.rev");
@@ -8565,12 +8574,15 @@ in
     "Z3 did not drop exactly the REVERSE assumption");
   assert (same_as_without z3 card,
     "Z3 did not drop exactly the CARD assumption");
-  assert (contains "(assert (< v0 v1))"
-      (text_of (dropping cvc ([card, needed], conclusion))) andalso
-    not (contains "Array" (text_of (dropping cvc ([card, needed], conclusion)))),
+  assert (same_as_without cvc card,
     "cvc5 did not drop exactly the CARD assumption");
-  assert (contains "List_Int"
-      (text_of (dropping z3 ([reversed, member, needed], conclusion))) andalso
+  assert (logic_of (dropping z3) ([card_lambda, applied, needed], conclusion)
+    andalso not (logic_of z3 ([applied, needed], conclusion)) andalso
+    not (contains "lambda"
+      (text_of (dropping z3 ([card_lambda, applied, needed], conclusion)))),
+    "the regime was not chosen from the whole goal");
+  assert (text_of (dropping z3 ([reversed, member, needed], conclusion)) =
+    text_of (z3 ([reversed, member, needed], conclusion)) andalso
     not (contains "seq."
       (text_of (dropping z3 ([reversed, member, needed], conclusion)))),
     "REVERSE beside MEM was not kept in the algebraic encoding");

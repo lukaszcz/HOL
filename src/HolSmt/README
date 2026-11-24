@@ -102,6 +102,14 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+
+`SmtLib.drop_untranslatable_assumptions`, set for the calling thread with
+`Thread_Data.setmp` (off by default), makes the Z3 and cvc5 translations
+leave out each assumption they cannot take (a missing solver operator, a
+refused term, a cvc5 card the array encoding lacks) instead of failing the
+goal.  Encoding choices are still made from the whole goal, and the
+conclusion is never dropped.  Nothing reports which assumptions were left out;
+a proof the solver returns uses only those it was sent.
 CPC bit-vector extraction rewrites include distributing complement through
 a bounded slice (`bv-extract-not`), re-proved by HOL word decision.
 Array-encoded set assumptions are matched to their source context through

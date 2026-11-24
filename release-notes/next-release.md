@@ -77,6 +77,11 @@ New features
     per-operator solver/version matrix records the non-standard dialect
     availability and all checked paths reject oracle-tagged theorems.
 
+-   `HolSmt` has an opt-in option, `SmtLib.drop_untranslatable_assumptions`,
+    under which the solver translations leave out an assumption they cannot
+    translate instead of failing the whole goal, so callers passing many
+    candidate lemmas need not check each one first.
+
 -   Proof traces can be converted to version 0.1.0 binary PFT files and replayed in HOL4 or Candle.
     `src/postkernel/prooftrace/pft.sh` converts a theory's proof dump, and `pft.sh merge` combines selected exports and their dependencies into one file; see `src/postkernel/prooftrace/README.md`.
     Raw traces from earlier versions must be regenerated.
