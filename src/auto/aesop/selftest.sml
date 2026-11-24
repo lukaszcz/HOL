@@ -2071,6 +2071,28 @@ val _ =
          (aesopTree.child_rapps
            (#tree copy_assigned) copied_sibling))
 
+val _ =
+  check
+    ("aesop copies a sibling only when all children drop its dependency",
+     fn () =>
+       let
+         val (ty, store) = clasetMeta.new_tymeta copy_store1
+         val unrelated =
+           tree_cgoal [Term.mk_var ("unrelated", ty)] [] boolSyntax.T
+         val retaining = tree_cgoal [] [] copy_meta
+         fun copies children =
+           let
+             val {tree, goals, ...} =
+               install_tree_rapp (#tree copy_created) copy_path
+                 aesopRule.RSafe "copy_split" store children []
+           in
+             List.mapPartial (#copy_of o aesopTree.goal tree) goals
+           end
+       in
+         copies [unrelated, unrelated] = [copy_sibling] andalso
+         null (copies [unrelated, retaining])
+       end)
+
 (* One metavariable reaches the dependency sets under two spellings:
    [clasetMeta.bindings] reports the redex as [new_meta] created it, at a
    type that was still a type metavariable, while the goal dependencies go

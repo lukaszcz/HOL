@@ -337,21 +337,13 @@ fun initialBranchMeasured checkpoint (assumptions, conclusion) =
 
 fun initialBranch goal = initialBranchMeasured (fn () => ()) goal
 
-fun proto_imp term =
-  case strip_comb term of
-      (Const (name, _), [left, right]) =>
-        if name = {Thy = "min", Name = "==>"}
-        then SOME (left, right)
-        else NONE
-    | _ => NONE
+fun proto_imp ((Const ({Thy = "min", Name = "==>"}, _) $ left) $ right) =
+      SOME (left, right)
+  | proto_imp _ = NONE
 
-fun dest_forall_body term =
-  case strip_comb term of
-      (Const (name, _), [predicate]) =>
-        if name = {Thy = "bool", Name = "!"}
-        then SOME predicate
-        else NONE
-    | _ => NONE
+fun dest_forall_body (Const ({Thy = "bool", Name = "!"}, _) $ predicate) =
+      SOME predicate
+  | dest_forall_body _ = NONE
 
 fun apply_predicate_measured checkpoint predicate argument =
   (checkpoint ();

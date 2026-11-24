@@ -149,6 +149,9 @@ fun outgoing_edges edges =
     #2 (List.foldl add (0, Termtab.empty) edges)
   end
 
+fun outgoing_index edges =
+  Portable.HOLSusp.delay (fn () => outgoing_edges edges)
+
 structure TermGraph = Graph(
   type key = term
   val ord = Term.compare
@@ -307,10 +310,8 @@ fun reachable work transitivity edges outgoing observe source =
           rounds (if Option.isSome (#max_nodes work) then 2 else 0) empty
         end
 
-fun reach_from work transitive distinctions edges =
+fun reach_from work transitive distinctions edges outgoing =
   let
-    (* Share the index across traversals and repeated crossing checks. *)
-    val outgoing = Portable.HOLSusp.delay (fn () => outgoing_edges edges)
     (* Share the rule across ordinary traversals, and instantiate it only
        when a composed path is used. Metered traversals keep the original
        eager instantiation for each source. *)
@@ -490,6 +491,7 @@ fun close _ _ _ [] = NONE
   let
     val {reach_crossing, ...} =
       reach_from work (#transitive (#axioms context)) distinctions edges
+        (outgoing_index edges)
     val lookup = equality_lookup work equalities
     fun one (x, y, distinction) =
       let
@@ -518,11 +520,11 @@ fun refute_graph work context (edges, equalities, distinctions) =
    goal that carries no totality -- [transitive R] and two steps -- is
    reachable this way and no other. *)
 fun prove_literal work context
-      (edges, equalities, distinctions) target =
+      (edges, equalities, distinctions) outgoing target =
   let
     val {reflexive, transitive, ...} = #axioms (context : orderData.context)
     val {reach_crossing, reach_one} =
-      reach_from work transitive [] edges
+      reach_from work transitive [] edges outgoing
     fun weak (x, y) =
       if aconv x y then
         Option.map
@@ -583,10 +585,13 @@ fun prepare (work : work) context theorems =
     val read = orderData.facts_of (#meter work) context
     val supplied = List.concat (List.map read theorems)
     val parts = expand work context supplied
+    (* Direct goals share the supplied edges. Refutations may add edges
+       in a query-specific order, so they build their own index. *)
+    val outgoing = outgoing_index (#1 parts)
     (* Only metered refutation expands the supplied facts again. *)
     val retained = if Option.isSome (#max_nodes work) then [] else supplied
   in
-    {read = read, supplied = retained, parts = parts}
+    {read = read, supplied = retained, parts = parts, outgoing = outgoing}
   end
 
 fun count_nodes limit (edges, _, _) =
@@ -606,14 +611,14 @@ fun attempt (work : work) context base term =
     val _ = normalization work
     val equation = orderData.reduce context term
     val target = rhs (concl equation)
-    val ({read, supplied, parts}, nodes) = base ()
+    val ({read, supplied, parts, outgoing}, nodes) = base ()
     val (edges, equalities, distinctions) = parts
     fun carry theorem = EQ_MP (SYM equation) theorem
   in
     case nodes of
         NONE => NONE
       | SOME nodes =>
-          (case Option.mapPartial (prove_literal work context parts)
+          (case Option.mapPartial (prove_literal work context parts outgoing)
                   (orderData.literal_of_term context target) of
                SOME theorem => SOME (carry theorem)
              | NONE =>

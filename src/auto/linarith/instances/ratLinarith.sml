@@ -45,9 +45,8 @@ fun mk_lit value =
          ratSyntax.term_of_int (Arbint.fromNat denominator))
   end
 
-fun is_poly_lit tm =
-  null (Term.free_vars tm) andalso
-  Option.isSome (Lib.total dest_lit tm)
+(* Every form accepted by dest_lit is built from closed integer literals. *)
+fun is_poly_lit tm = Option.isSome (Lib.total dest_lit tm)
 
 val (_, _, _, _, _, rat_poly_conv) =
   Normalizer.SEMIRING_NORMALIZERS_CONV

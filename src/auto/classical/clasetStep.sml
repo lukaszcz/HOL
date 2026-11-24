@@ -78,6 +78,10 @@ fun supplied_major_thm store (type_substitution, term_substitution)
 val nth1 = clasetNorm.nth1 ("clasetStep", "nth1")
 val delete_nth = clasetNorm.delete_nth ("clasetStep", "delete_nth")
 
+fun nth1_opt values pos =
+  if pos <= 0 then NONE
+  else (SOME (List.nth (values, pos - 1)) handle Subscript => NONE)
+
 fun numbered values =
   let
     fun recurse _ [] = []
@@ -1126,30 +1130,22 @@ fun rule_candidates derive mode part (node, pos) =
   candidates derive (clasetGoal.store node) mode part
     (clasetGoal.lookup_spellings node pos)
 
-fun rule_applications note_skip mode cs duplicated get_tagged (node, pos) =
+fun rule_applications note_skip mode cs duplicated weight_filter get_tagged
+      (node, pos) =
   seq.delay
     (fn () =>
       let
         val (asl, _) = clasetGoal.render node pos
         val tagged = get_tagged ()
-        val majors = Portable.HOLSusp.delay (fn () => numbered asl)
-
         fun applications (entry as (_, (is_elim, theorem))) =
           let
             val prepared = prepare_rule is_elim theorem
             val attempt = total
               (try_rule note_skip FullPrefixes mode cs duplicated
                 node pos entry prepared)
-            fun eliminations [] = seq.empty
-              | eliminations (major :: rest) =
-                  seq.delay
-                    (fn () =>
-                      case attempt (SOME major) of
-                          SOME result => seq.cons result (eliminations rest)
-                        | NONE => eliminations rest)
           in
             if is_elim then
-              eliminations (Portable.HOLSusp.force majors)
+              map_numbered_results (attempt o SOME) asl
             else
               seq.delay
                 (fn () =>
@@ -1159,22 +1155,22 @@ fun rule_applications note_skip mode cs duplicated get_tagged (node, pos) =
           end
 
         fun entries [] = seq.empty
-          | entries (entry :: rest) =
-              seq.delay
-                (fn () =>
-                  case seq.cases (applications entry) of
-                      NONE => entries rest
-                    | SOME (result, tail) =>
-                        seq.cons result (seq.append tail (entries rest)))
+          | entries ((entry as (tag, _)) :: rest) =
+              if weight_filter tag then
+                case seq.cases (applications entry) of
+                    NONE => entries rest
+                  | SOME (result, tail) =>
+                      seq.cons result
+                        (seq.append tail (seq.delay (fn () => entries rest)))
+              else entries rest
       in
         entries tagged
       end)
 
 fun rule_results_with derive note_skip mode cs duplicated part weight_filter
       input =
-  rule_applications note_skip mode cs duplicated
-    (fn () => List.filter (weight_filter o #1)
-      (rule_candidates derive mode part input)) input
+  rule_applications note_skip mode cs duplicated weight_filter
+    (fn () => rule_candidates derive mode part input) input
 
 fun rule_results note_skip =
   rule_results_with listUtil.no_checkpoint note_skip
@@ -1202,12 +1198,9 @@ fun exact_rule_attempts attempt selector elim node pos =
         end
     | (ExactMajor NONE, false) => attempt NONE
     | (ExactMajor (SOME major), true) =>
-        let val assumptions = #asl (clasetGoal.goal_at node pos)
-        in
-          if major > 0 andalso major <= length assumptions then
-            attempt (SOME (major, nth1 assumptions major))
-          else seq.empty
-        end
+        (case nth1_opt (#asl (clasetGoal.goal_at node pos)) major of
+             NONE => seq.empty
+           | SOME assumption => attempt (SOME (major, assumption)))
     | _ => seq.empty
 
 fun supplied_rule_results_with charge note_skip selector policy mode cs
@@ -1312,33 +1305,36 @@ fun builtin_results_in ctxt (node, pos) =
     else if paired_forall w then
       make (clasetGoal.store node) SplitPaired
         clasetReplay.split_paired_action clasetReplay.SPLIT_PAIRED_TAC
-    else if Option.isSome (splittable_variable rendered) then
-      let
-        val target = valOf (splittable_variable rendered)
-        val base = fst (dest_var target)
-        val (first_type, second_type) =
-          pairSyntax.dest_prod (type_of target)
-        val (left, store) =
-          clasetGoal.fresh_eigen node (mk_var (base ^ "_1", first_type))
-        val (right, _) =
-          clasetGoal.fresh_eigen node (mk_var (base ^ "_2", second_type))
-        val names =
-          {variable = base, left = fst (dest_var left),
-           right = fst (dest_var right)}
-      in
-        make store SplitPaired (clasetReplay.split_paired_var_action names)
-          (clasetReplay.SPLIT_PAIRED_VAR_TAC names)
-      end
-    else if is_forall w then
-      let
-        val (bound, _) = dest_forall w
-        val (fresh, store) = clasetGoal.fresh_eigen node bound
-        val name = fst (dest_var fresh)
-      in
-        make store Gen (clasetReplay.gen_action name)
-          (clasetReplay.GEN_NAMED_TAC name)
-      end
-    else seq.empty
+    else
+      case splittable_variable rendered of
+          SOME target =>
+            let
+              val base = fst (dest_var target)
+              val (first_type, second_type) =
+                pairSyntax.dest_prod (type_of target)
+              val (left, store) =
+                clasetGoal.fresh_eigen node (mk_var (base ^ "_1", first_type))
+              val (right, _) =
+                clasetGoal.fresh_eigen node (mk_var (base ^ "_2", second_type))
+              val names =
+                {variable = base, left = fst (dest_var left),
+                 right = fst (dest_var right)}
+            in
+              make store SplitPaired
+                (clasetReplay.split_paired_var_action names)
+                (clasetReplay.SPLIT_PAIRED_VAR_TAC names)
+            end
+        | NONE =>
+            if is_forall w then
+              let
+                val (bound, _) = dest_forall w
+                val (fresh, store) = clasetGoal.fresh_eigen node bound
+                val name = fst (dest_var fresh)
+              in
+                make store Gen (clasetReplay.gen_action name)
+                  (clasetReplay.GEN_NAMED_TAC name)
+              end
+            else seq.empty
   end
 
 fun swapped_builtin_results_in ctxt (node, pos) =
@@ -1679,9 +1675,8 @@ fun clarify_cascade_in ctxt cs input =
         rule_candidates listUtil.no_checkpoint clasetUnify.Match
           (clasetLib.safep_part cs) input)
     fun safep_results weight goal =
-      rule_applications note_skip clasetUnify.Match cs false
-        (fn () => List.filter (weight_is weight o #1)
-          (Portable.HOLSusp.force safep_candidates)) goal
+      rule_applications note_skip clasetUnify.Match cs false (weight_is weight)
+        (fn () => Portable.HOLSusp.force safep_candidates) goal
   in
     first_nonempty
       [assume_or_contradiction,
@@ -1750,10 +1745,11 @@ fun unifying_assumption_candidate prepared positioned =
 fun unifying_assumption_in
       action_of (prepared as {asl, ...} : unifying_assumption_context)
       asm_pos =
-  if asm_pos <= 0 orelse asm_pos > length asl then NONE
-  else
-    unifying_assumption_candidate_with action_of prepared
-      (asm_pos, nth1 asl asm_pos)
+  Option.mapPartial
+    (fn assumption =>
+       unifying_assumption_candidate_with action_of prepared
+         (asm_pos, assumption))
+    (nth1_opt asl asm_pos)
 
 fun unifying_assumption_results (node, pos) =
   seq.delay
@@ -1850,14 +1846,10 @@ fun unifying_contradiction_in
         unifying_contradiction_context)
       {negative = negative_pos, positive = positive_pos} =
   if negative_pos <= 0 orelse positive_pos <= 0 orelse
-     negative_pos > length asl orelse positive_pos > length asl orelse
-     negative_pos = positive_pos
-  then NONE
+     negative_pos = positive_pos then NONE
   else
     let
-        val major = nth1 asl negative_pos
-        val candidate = nth1 asl positive_pos
-      in
+      fun close (major, candidate) =
         case prepare_contradiction_major
           {w = w, params = params, store = initial_store} major of
             NONE => NONE
@@ -1877,6 +1869,12 @@ fun unifying_contradiction_in
                      (negative_pos, positive_pos))
                   selected_store
               end
+    in
+      case nth1_opt asl negative_pos of
+          NONE => NONE
+        | SOME major =>
+            Option.mapPartial (fn candidate => close (major, candidate))
+              (nth1_opt asl positive_pos)
     end
 
 fun unifying_contradiction_results_at positions (node, pos) =
@@ -1962,7 +1960,7 @@ fun unsafe_candidates cs =
     (clasetLib.unsafe_part cs)
 
 fun unsafe_applications cs =
-  rule_applications no_note clasetUnify.Unify cs false
+  rule_applications no_note clasetUnify.Unify cs false all_weights
 
 fun unsafe_cascade cs input =
   unsafe_applications cs (fn () => unsafe_candidates cs input) input

@@ -100,10 +100,18 @@ fun charge_external_pull budget ({apply, ...} : aesopRule.rule) =
     | aesopRule.ContextualStep _ => ()
     | _ => charge budget searchBudget.Candidate
 
+fun same_length (left, right) =
+  Portable.pointer_eq (left, right) orelse
+  (case (left, right) of
+       (_ :: left, _ :: right) => same_length (left, right)
+     | ([], []) => true
+     | _ => false)
+
 fun forward_candidate parent node =
   case clasetGoal.goals node of
       [{asl = added :: rest, ...}] =>
-        if length rest = length (#asl parent) then SOME added
+        (* Engine forwards prepend to the parent's assumption list. *)
+        if same_length (rest, #asl parent) then SOME added
         else NONE
     | _ => NONE
 

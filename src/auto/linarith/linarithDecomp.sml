@@ -107,76 +107,78 @@ and demult_atom (tm, multiplier) =
       SOME arg => demult (arg, multiplier)
     | NONE => (SOME tm, multiplier)
 and demult_with dest (tm, multiplier) =
+  case Lib.total (#dest_mult dest) tm of
+      SOME factors => demult_product tm multiplier factors
+    | NONE =>
+        (case dest_optional (#dest_div dest) tm of
+             SOME operands => demult_quotient tm multiplier operands
+           | NONE =>
+               case dest_optional (#dest_neg dest) tm of
+                   SOME arg => demult (arg, Arbrat.negate multiplier)
+                 | NONE =>
+                     (case Lib.total (#dest_lit dest) tm of
+                          SOME literal =>
+                            (NONE, Arbrat.* (multiplier, literal))
+                        | NONE => demult_atom (tm, multiplier)))
+and demult_product tm multiplier (left, right) =
   let
-    fun give_up () = (SOME tm,multiplier)
-    fun rotate operator left1 left2 right =
+    val (operator, original_left, original_right) = binary_parts tm
+    fun give_up () = (SOME tm, multiplier)
+    fun rotate left1 left2 =
       Option.mapPartial (try_product operator left1)
         (try_product operator left2 right)
-    fun rebuild operator left right left' right' =
-      case
-        (restore_factor_type left left',restore_factor_type right right')
-      of
-          (SOME restored_left,SOME restored_right) =>
-            try_product operator restored_left restored_right
-        | _ => NONE
+    fun rebuild left' right' =
+      (* A registered destructor can return its own operand view. Reuse
+         the original application only when its actual operands survive. *)
+      if Portable.pointer_eq (original_left, left) andalso
+         Portable.pointer_eq (original_right, right) andalso
+         Portable.pointer_eq (left, left') andalso
+         Portable.pointer_eq (right, right') then SOME tm
+      else
+        case
+          (restore_factor_type left left', restore_factor_type right right')
+        of
+            (SOME restored_left, SOME restored_right) =>
+              try_product operator restored_left restored_right
+          | _ => NONE
   in
-    case Lib.total (#dest_mult dest) tm of
-        SOME (left,right) =>
-          let val (operator,_,_) = binary_parts tm
+    case Option.mapPartial
+           (fn instance => Lib.total (#dest_mult (#dest instance)) left)
+           (instance_of left) of
+        SOME (left1, left2) =>
+          (case rotate left1 left2 of
+               SOME rotated => demult (rotated, multiplier)
+             | NONE => give_up ())
+      | NONE =>
+          let val (left_atom, multiplier') = demult (left, multiplier)
           in
-            case Option.mapPartial
-                   (fn instance => Lib.total (#dest_mult (#dest instance)) left)
-                   (instance_of left) of
-                SOME (left1,left2) =>
-                  (case rotate operator left1 left2 right of
-                       SOME rotated => demult (rotated,multiplier)
-                     | NONE => give_up ())
-              | NONE =>
-                  let val (left_atom,multiplier') = demult (left,multiplier)
+            case left_atom of
+                NONE => demult (right, multiplier')
+              | SOME left' =>
+                  let
+                    val (right_atom, multiplier'') =
+                      demult (right, multiplier')
                   in
-                    case left_atom of
-                        NONE => demult (right,multiplier')
-                      | SOME left' =>
-                          let
-                            val (right_atom,multiplier'') =
-                              demult (right,multiplier')
-                          in
-                            case right_atom of
-                                NONE => (SOME left',multiplier'')
-                              | SOME right' =>
-                                  (case rebuild operator left right
-                                          left' right' of
-                                       SOME product =>
-                                         (SOME product,multiplier'')
-                                     | NONE => give_up ())
-                          end
+                    case right_atom of
+                        NONE => (SOME left', multiplier'')
+                      | SOME right' =>
+                          (case rebuild left' right' of
+                               SOME product => (SOME product, multiplier'')
+                             | NONE => give_up ())
                   end
           end
-      | NONE =>
-          case dest_optional (#dest_div dest) tm of
-              SOME (numerator,denominator) =>
-                (case demult (denominator,rat_one) of
-                     (NONE,divisor) =>
-                       if divisor = rat_zero then give_up ()
-                       else
-                         let
-                           val (atom,numerator_multiplier) =
-                             demult (numerator,multiplier)
-                         in
-                           (atom,
-                            Arbrat.*
-                              (numerator_multiplier,Arbrat.inv divisor))
-                         end
-                   | (SOME _,_) => give_up ())
-            | NONE =>
-                case dest_optional (#dest_neg dest) tm of
-                    SOME arg => demult (arg,Arbrat.negate multiplier)
-                  | NONE =>
-                      case Lib.total (#dest_lit dest) tm of
-                          SOME literal =>
-                            (NONE,Arbrat.* (multiplier,literal))
-                        | NONE => demult_atom (tm, multiplier)
   end
+and demult_quotient tm multiplier (numerator, denominator) =
+  case demult (denominator, rat_one) of
+      (NONE, divisor) =>
+        if divisor = rat_zero then (SOME tm, multiplier)
+        else
+          let
+            val (atom, numerator_multiplier) = demult (numerator, multiplier)
+          in
+            (atom, Arbrat.* (numerator_multiplier, Arbrat.inv divisor))
+          end
+    | (SOME _, _) => (SOME tm, multiplier)
 
 fun add_atom atom coefficient
       (atoms as {coefficients, newest} : atoms, constant) =
@@ -242,36 +244,27 @@ and poly_non_suc dest (tm, multiplier, polynomial) =
         (case Lib.total (#dest_lit dest) tm of
              SOME literal => add_constant multiplier literal polynomial
            | NONE =>
-               (* One arm for both, because demult_with re-dispatches on the
-                  term itself: what is asked here is only whether it has
-                  a product or a quotient to take apart, and the answer
-                  decides nothing beyond that.  The aconv self-check is
-                  what stops the mutual recursion with demult when demult
-                  hands the term back unchanged -- a division by a
-                  non-literal, say -- and it is a rule about the
-                  recursion rather than about the operator, so it is
-                  written once.  The order is unchanged: orelse asks
-                  about division only for a term that is no product. *)
-               if Option.isSome (Lib.total (#dest_mult dest) tm) orelse
-                  Option.isSome (dest_optional (#dest_div dest) tm)
-               then
-                 let
-                   val (atom, coefficient) =
-                     demult_with dest (tm, multiplier)
-                 in
-                   case atom of
-                       SOME atom' =>
-                         if Term.aconv atom' tm then
-                           add_atom atom' coefficient polynomial
-                         else
-                           poly_acc (atom', coefficient, polynomial)
-                     | NONE =>
-                         add_constant rat_one coefficient polynomial
-                 end
-               else
-                 (case injection_arg tm of
-                      SOME arg => poly_acc (arg, multiplier, polynomial)
-                    | NONE => add_atom tm multiplier polynomial))
+               case Lib.total (#dest_mult dest) tm of
+                   SOME factors =>
+                     add_demult tm polynomial
+                       (demult_product tm multiplier factors)
+                 | NONE =>
+                     (case dest_optional (#dest_div dest) tm of
+                          SOME operands =>
+                            add_demult tm polynomial
+                              (demult_quotient tm multiplier operands)
+                        | NONE =>
+                            (case injection_arg tm of
+                                 SOME arg =>
+                                   poly_acc (arg, multiplier, polynomial)
+                               | NONE => add_atom tm multiplier polynomial)))
+(* A division by a variable can return the original term. Only feed a
+   changed atom back into decomposition. *)
+and add_demult tm polynomial (SOME atom, coefficient) =
+      if Term.aconv atom tm then add_atom atom coefficient polynomial
+      else poly_acc (atom, coefficient, polynomial)
+  | add_demult _ polynomial (NONE, coefficient) =
+      add_constant rat_one coefficient polynomial
 
 fun poly tm : polynomial =
   let

@@ -294,9 +294,6 @@ fun result_summary result =
       Failed {rule, detail, ...} => rule ^ " (" ^ detail ^ ")"
     | _ => result_rule result
 
-fun is_proved (Proved _) = true
-  | is_proved _ = false
-
 fun is_bad (Failed _) = true
   | is_bad _ = false
 
@@ -321,20 +318,15 @@ fun inspect {claset, budget, waivers} =
     val rule_results = List.concat (map inspect_one rules)
     val splits = split_results waivers
     val results = rule_results @ splits
-    val used =
-      List.filter
-        (fn ({rule, ...} : waiver) =>
-          List.exists
-            (fn Waived {rule = used_rule, ...} => rule = used_rule
-              | _ => false)
-            results)
-        waivers
-    val stale =
-      List.filter
-        (fn waiver =>
-          not
-            (List.exists
-              (fn used_waiver => #rule waiver = #rule used_waiver) used))
+    fun summarize (Proved _, (proved, used)) = (proved + 1, used)
+      | summarize (Waived {rule, ...}, (proved, used)) =
+          (proved, HOLset.add (used, rule))
+      | summarize (Failed _, counts) = counts
+    val (proved, used_names) =
+      List.foldl summarize (0, HOLset.empty String.compare) results
+    val (used, stale) =
+      List.partition
+        (fn ({rule, ...} : waiver) => HOLset.member (used_names, rule))
         waivers
     val stale_results =
       map
@@ -345,7 +337,7 @@ fun inspect {claset, budget, waivers} =
     val results = results @ stale_results
   in
     {checked = length results,
-     proved = length (List.filter is_proved results),
+     proved = proved,
      waivers = used,
      results = results,
      split_checked = length splits}

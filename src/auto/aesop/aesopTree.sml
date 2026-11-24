@@ -934,9 +934,6 @@ fun copying_sources tree parent_id assigned child_specs =
     val relevant_assigned =
       dependencies_intersection assigned (#deps parent)
     val unassigned = dependencies_difference (#deps parent) relevant_assigned
-    fun retains_all (_, deps : dependencies, _, _) =
-      HOLset.isSubset (#terms unassigned, #terms deps) andalso
-      HOLset.isSubset (#types unassigned, #types deps)
     val dropped_candidates =
       if dependencies_empty unassigned then unassigned
       else
@@ -944,19 +941,32 @@ fun copying_sources tree parent_id assigned child_specs =
             [] => unassigned
           | [(_, deps, _, _)] => dependencies_difference unassigned deps
           | _ =>
-              (* One child can retain every dependency of the parent. *)
-              if List.exists retains_all child_specs then
-                empty_dependencies ()
-              else
-                let
-                  val child_dependencies =
-                    List.foldl
-                      (fn ((_, deps, _, _), dependencies) =>
-                        dependencies_union dependencies deps)
-                      (empty_dependencies ()) child_specs
-                in
-                  dependencies_difference unassigned child_dependencies
-                end
+              let
+                val singleton =
+                  HOLset.numItems (#terms unassigned) +
+                  HOLset.numItems (#types unassigned) = 1
+                fun retains_all (_, deps : dependencies, _, _) =
+                  if singleton then dependencies_overlap unassigned deps
+                  else
+                    HOLset.isSubset (#terms unassigned, #terms deps) andalso
+                    HOLset.isSubset (#types unassigned, #types deps)
+              in
+                if List.exists retains_all child_specs then
+                  empty_dependencies ()
+                (* The test has already checked every child for the sole
+                   dependency of a singleton. *)
+                else if singleton then unassigned
+                else
+                  let
+                    val child_dependencies =
+                      List.foldl
+                        (fn ((_, deps, _, _), dependencies) =>
+                          dependencies_union dependencies deps)
+                        (empty_dependencies ()) child_specs
+                  in
+                    dependencies_difference unassigned child_dependencies
+                  end
+              end
   in
     if dependencies_empty relevant_assigned andalso
        dependencies_empty dropped_candidates then []

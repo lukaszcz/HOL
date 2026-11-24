@@ -7604,6 +7604,21 @@ val _ =
              (clasetStep.blast_contradiction_step_at
                {negative = 2, positive = 1}
                (clasetGoal.from_goal contradiction_goal, 1))
+         val invalid_assumptions =
+           List.all
+             (fn position =>
+               seq.null
+                 (clasetStep.blast_assumption_step_at position
+                   (clasetGoal.from_goal assumption_goal, 1)))
+             [~1, 0, 3]
+         val invalid_contradictions =
+           List.all
+             (fn (negative, positive) =>
+               seq.null
+                 (clasetStep.blast_contradiction_step_at
+                   {negative = negative, positive = positive}
+                   (clasetGoal.from_goal contradiction_goal, 1)))
+             [(~1, 2), (1, 0), (4, 2), (1, 4), (1, 1)]
        in
          case (assumption, contradiction) of
              ([(assumption_record, assumption_node)],
@@ -7618,7 +7633,8 @@ val _ =
                valid_grounded_replay assumption_goal assumption_node andalso
                valid_grounded_replay contradiction_goal
                  contradiction_node andalso
-               wrong_assumption andalso wrong_polarity
+               wrong_assumption andalso wrong_polarity andalso
+               invalid_assumptions andalso invalid_contradictions
            | _ => false
        end)
 
@@ -7685,6 +7701,8 @@ val _ =
        in
          empty {theorem = theorem, elim = false, major = SOME 1}
          andalso empty {theorem = theorem, elim = true, major = NONE}
+         andalso
+         empty {theorem = theorem, elim = true, major = SOME ~1}
          andalso
          empty {theorem = theorem, elim = true, major = SOME 0}
          andalso

@@ -701,7 +701,7 @@ val position_cache =
   ref ([] : ((simpLib.thname option * thm) list *
               abstraction_position HOLset.set) list)
 
-fun positions_of_sources sources =
+fun cache_positions_of_sources sources =
   let
     fun cached rules =
       List.find
@@ -731,6 +731,13 @@ fun positions_of_sources sources =
     position_cache := (sources, result) :: (anchor @ retained);
     result
   end
+
+fun positions_of_sources sources =
+  case !position_cache of
+      (previous, result) :: _ =>
+        if Portable.pointer_eq (previous, sources) then result
+        else cache_positions_of_sources sources
+    | [] => cache_positions_of_sources sources
 
 fun position_policy charge positions : Traverse.child_first_policy =
   let
