@@ -192,6 +192,16 @@ fun safe_alternatives ctxt budget (rule : aesopRule.rule) node =
      all is caught by the walk over that sequence. *)
   if #once rule then
     seq.delay (fn () => aesopTree.rule_results_in ctxt rule node)
+  else if not (Option.isSome budget) then
+    (* One pull decides uniqueness when the scan cannot yield. *)
+    seq.delay
+      (fn () =>
+        case seq.cases (aesopTree.rule_results_in ctxt rule node) of
+            NONE => seq.empty
+          | SOME (result, rest) =>
+              (case seq.cases rest of
+                   NONE => seq.result result
+                 | SOME _ => seq.empty))
   else
     let
       val remaining =

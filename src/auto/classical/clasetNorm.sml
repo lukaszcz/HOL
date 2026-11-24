@@ -204,16 +204,28 @@ fun reduction_step eta tm =
    not. *)
 fun expand_binders is_hole tm =
   let
-    fun here tm =
-      case connective tm of
-          SOME ("bool", name, [predicate]) =>
-            if (name = "!" orelse name = "?" orelse name = "?!") andalso
-               not (is_abs predicate) andalso not (is_hole predicate)
-            then Conv.RAND_CONV expand_conv tm
-            else Conv.ALL_CONV tm
-        | _ => Conv.ALL_CONV tm
+    fun is_binder operator =
+      is_const operator andalso
+      (case dest_thy_const operator of
+           {Thy = "bool", Name = "!", ...} => true
+         | {Thy = "bool", Name = "?", ...} => true
+         | {Thy = "bool", Name = "?!", ...} => true
+         | _ => false)
+    fun traverse term =
+      if is_comb term then
+        if is_binder (rator term) then
+          let val predicate = rand term
+          in
+            if is_abs predicate orelse is_hole predicate then
+              descend_comb term
+            else Conv.THENC (Conv.RAND_CONV expand_conv, descend_comb) term
+          end
+        else descend_comb term
+      else if is_abs term then Conv.TRY_CONV (Conv.ABS_CONV traverse) term
+      else Conv.ALL_CONV term
+    and descend_comb term = Conv.TRY_CONV (Conv.COMB_CONV traverse) term
   in
-    Conv.THENC (here, Conv.SUB_CONV (expand_binders is_hole)) tm
+    traverse tm
   end
 
 val reduction = Conv.REDEPTH_CONV (reduction_step true)

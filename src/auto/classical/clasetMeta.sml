@@ -12,17 +12,17 @@ val tymeta_prefix = "'claset_tymeta_"
 fun marked prefix name = String.isPrefix prefix name
 
 fun is_meta tm =
-  case dest_term tm of
-    VAR (name, _) => marked meta_prefix name
-  | _ => false
+  is_var tm andalso marked meta_prefix (fst (dest_var tm))
 
 fun is_tymeta ty =
   is_vartype ty andalso marked tymeta_prefix (dest_vartype ty)
 
 fun meta_name tm =
-  case dest_term tm of
-    VAR (name, _) => if marked meta_prefix name then SOME name else NONE
-  | _ => NONE
+  if is_var tm then
+    let val (name, _) = dest_var tm
+    in if marked meta_prefix name then SOME name else NONE
+    end
+  else NONE
 
 fun tymeta_name ty =
   if is_tymeta ty then SOME (dest_vartype ty) else NONE

@@ -556,23 +556,15 @@ fun wrapper_input (Node {renders, ...}) pos (rendered as (asl, w), cached) =
 
 fun variable_name variable = fst (dest_var variable)
 
-fun lift_with_frees _ _ [] = []
-  | lift_with_frees input_frees params new_goals =
-      let
-        val known = Term.FVL params input_frees
-        fun lift_child (child_asl, child_w) =
-          let
-            val new_params =
-              List.filter
-                (fn variable => not (HOLset.member (known, variable)))
-                (free_varsl (child_w :: child_asl))
-          in
-            ({params = params @ new_params,
-              asl = child_asl, w = child_w}, new_params)
-          end
-      in
-        map lift_child new_goals
-      end
+fun goal_frees (asl, w) = free_varsl (w :: asl)
+
+fun lift_child known params (asl, w) frees =
+  let
+    val new_params =
+      List.filter (fn variable => not (HOLset.member (known, variable))) frees
+  in
+    ({params = params @ new_params, asl = asl, w = w}, new_params)
+  end
 
 fun lift_children node pos new_goals =
   let
@@ -586,11 +578,15 @@ fun lift_children node pos new_goals =
           case cached of
               SOME input => #frees input
             | NONE => FVLset (w :: asl)
+        val lift = lift_child (Term.FVL params frees) params
       in
-        lift_with_frees frees params new_goals
+        map (fn child => lift child (goal_frees child)) new_goals
       end
   end
 
+local
+  exception EscapedMarker
+in
 fun unrender node pos (result as (new_goals, validation)) =
   let
     val entry as ((asl, w), _) = render_entry node pos
@@ -603,13 +599,24 @@ fun unrender node pos (result as (new_goals, validation)) =
     val returned_types = marked_types output_terms
     fun unknown_marker tm =
       clasetMeta.is_meta tm andalso not (HOLset.member (input_frees, tm))
-    val known_markers =
-      not (Option.isSome (HOLset.find unknown_marker (FVLset output_terms)))
-      andalso
-      List.all (fn ty => Lib.mem ty received_types) returned_types
+    val known_types = List.all (fn ty => Lib.mem ty received_types)
+      returned_types
 
     val {params, ...} = goal_at node pos
-    val lifted = lift_with_frees input_frees params new_goals
+    val lifted =
+      if null new_goals then []
+      else
+        let
+          val lift = lift_child (Term.FVL params input_frees) params
+          fun check_and_lift child =
+            let val frees = goal_frees child
+            in
+              if List.exists unknown_marker frees then raise EscapedMarker
+              else lift child frees
+            end
+        in
+          map check_and_lift new_goals
+        end
     val output_params = List.concat (map #2 lifted)
     val known_variables = avoids node
     val globally_fresh =
@@ -617,7 +624,7 @@ fun unrender node pos (result as (new_goals, validation)) =
         (fn variable => not (HOLset.member (known_variables, variable)))
         output_params
   in
-    if not known_markers orelse not globally_fresh then NONE
+    if not known_types orelse not globally_fresh then NONE
     else
       case register_eigens output_params (store node) of
           NONE => NONE
@@ -648,5 +655,7 @@ fun unrender node pos (result as (new_goals, validation)) =
                 end
             end
   end
+  handle EscapedMarker => NONE
+end
 
 end

@@ -2172,19 +2172,33 @@ type restriction = {
 }
 
 fun restrict ({shortfalls_only, goals_wanted} : restriction)
-      {family, goals, shortfalls} =
-  List.filter
-    (fn (goal : corpus_goal) =>
-      (not shortfalls_only orelse
-       List.exists
-         (fn ({id, cause, ...} : shortfall) =>
-           id = #id goal andalso cause <> TranslationGap)
-         shortfalls) andalso
-      (case goals_wanted of
-           SOME (selected_family, ids) =>
-             selected_family <> family orelse
-             List.exists (equal (#id goal)) ids
-         | NONE => true)) goals
+      {family, goals : corpus_goal list, shortfalls : shortfall list} =
+  let
+    val wanted =
+      case goals_wanted of
+          SOME (selected_family, ids) =>
+            if selected_family = family then SOME (id_set ids) else NONE
+        | NONE => NONE
+    val execution_shortfalls =
+      if shortfalls_only then
+        SOME
+          (id_set
+            (List.mapPartial
+              (fn {id, cause, ...} =>
+                if cause = TranslationGap then NONE else SOME id)
+              shortfalls))
+      else NONE
+    fun includes NONE _ = true
+      | includes (SOME ids) id = HOLset.member (ids, id)
+  in
+    case (execution_shortfalls, wanted) of
+        (NONE, NONE) => goals
+      | _ =>
+          List.filter
+            (fn {id, ...} =>
+              includes execution_shortfalls id andalso includes wanted id)
+            goals
+  end
 
 fun environment_restriction () =
   {shortfalls_only =

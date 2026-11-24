@@ -207,6 +207,24 @@ val _ =
 
 val _ =
   check
+    ("combined restrictions exclude translation gaps and duplicate IDs",
+     fn () =>
+       let
+         val {id, cause, date, note} = translation_gap
+         val gap = {id = "unit-solved", cause = cause, date = date,
+                    note = note}
+         val {family, goals, shortfalls} = restriction_family
+         val restricted = benchLib.restrict
+           {shortfalls_only = true,
+            goals_wanted = SOME ("unit", ["unit-failed", id, "unit-solved",
+                                         "unit-failed"])}
+           {family = family, goals = goals, shortfalls = gap :: shortfalls}
+       in
+         map #id restricted = ["unit-failed"]
+       end)
+
+val _ =
+  check
     ("benchmark accounting rejects a newly solved registered shortfall",
      fn () =>
        raises

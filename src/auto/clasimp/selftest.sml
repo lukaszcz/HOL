@@ -2991,6 +2991,20 @@ val _ =
 
 val _ =
   check
+    ("AUTO_TAC instantiates commuting rules for a constant at two types",
+     fn () =>
+       valid_closes (clasimpLib.AUTO_TAC [])
+         ([``!x y : num. cache_num_R x y ==> ((x, y) = (y, x))``,
+           ``!x y : bool. cache_bool_R x y ==> ((x, y) = (y, x))``,
+           ``cache_num_R (a : num) (b : num) : bool``,
+           ``cache_bool_R (c : bool) (d : bool) : bool``,
+           ``cache_num_P ((b : num), (a : num)) : bool``,
+           ``cache_bool_P ((d : bool), (c : bool)) : bool``],
+          ``cache_num_P ((a : num), (b : num)) /\
+            cache_bool_P ((c : bool), (d : bool))``))
+
+val _ =
+  check
     ("AUTO_TAC instantiates one commuting assumption at distinct redexes",
      fn () =>
        valid_closes (clasimpLib.AUTO_TAC [])

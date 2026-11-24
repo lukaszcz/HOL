@@ -2452,16 +2452,23 @@ in
                         Redblackmap.peek (index, condition)
                       end
       val redex_cache = ref (Redblackmap.mkDict Term.compare)
-      fun goal_redexes head =
-        case Redblackmap.peek (!redex_cache, head) of
+      val constant_redex_cache = ref (Redblackmap.mkDict KernelSig.id_compare)
+      fun cached_redexes cache key head =
+        case Redblackmap.peek (!cache, key) of
             SOME found => found
           | NONE =>
               let
                 val found = redexes head (conclusion :: assumptions)
               in
-                redex_cache := Redblackmap.insert (!redex_cache, head, found);
+                cache := Redblackmap.insert (!cache, key, found);
                 found
               end
+      fun goal_redexes head =
+        (* Redex discovery uses same_const, independently of the type. *)
+        if is_const head then
+          cached_redexes constant_redex_cache (#Name (dest_thy_constid head))
+            head
+        else cached_redexes redex_cache head head
       fun instances theorem =
         case permutative_equation theorem of
             NONE => []

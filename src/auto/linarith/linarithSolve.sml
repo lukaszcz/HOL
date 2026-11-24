@@ -96,7 +96,7 @@ fun scale_row n ty =
     raise ERR "multiply_ineq" "negative multiplier on an inequality"
   else fn c => Arbint.* (n, c)
 
-fun elim_var_with (work : work) drop_column
+fun elim_var_with (work : work) dropped
       (Lineq (k1, ty1, coeffs1, just1), c1)
       (Lineq (k2, ty2, coeffs2, just2), c2) =
   let
@@ -142,10 +142,15 @@ fun elim_var_with (work : work) drop_column
               if ai_zero b then zero else scale2 b
             else if ai_zero b then scale1 a
             else Arbint.+ (scale1 a, scale2 b)
+          fun add_without 0 (_ :: left, _ :: right) =
+                ListPair.mapEq add (left, right)
+            | add_without n (a :: left, b :: right) =
+                add (a, b) :: add_without (n - 1) (left, right)
+            | add_without _ _ = raise ListPair.UnequalLengths
         in
-          ListPair.mapEq add
-            (if drop_column then (List.tl coeffs1, List.tl coeffs2)
-             else (coeffs1, coeffs2))
+          case dropped of
+              NONE => ListPair.mapEq add (coeffs1, coeffs2)
+            | SOME v => add_without v (coeffs1, coeffs2)
         end
   in
     Lineq (Arbint.+ (scale1 k1, scale2 k2), find_add_type (ty1, ty2),
@@ -215,8 +220,11 @@ fun pivot_equation_with (work : work) rows =
 
 (* Keep each dependent row's coefficient for the sign partition and
    for every elimination pair that uses that row. *)
-fun partition_pivot_with work v drop_column rows =
+fun partition_pivot_with work v dropped rows =
   let
+    fun drop 0 (_ :: rest) = rest
+      | drop n (c :: rest) = c :: drop (n - 1) rest
+      | drop _ [] = raise Subscript
     fun split (row as Lineq (k, ty, cs, just), (independent, dependent)) =
       let
         val _ = candidate work
@@ -225,8 +233,9 @@ fun partition_pivot_with work v drop_column rows =
         if ai_zero c then
           let
             val remaining =
-              if drop_column then Lineq (k, ty, List.tl cs, just)
-              else row
+              case dropped of
+                  NONE => row
+                | SOME v => Lineq (k, ty, drop v cs, just)
           in
             (remaining :: independent, dependent)
           end
@@ -281,7 +290,7 @@ fun choose_blowup_with work [] = NONE
             end
       in
         List.app (fn Lineq (_, _, cs, _) => tally 0 cs) rows;
-        pick 0 NONE
+        Option.map (fn (_, v) => (v, width)) (pick 0 NONE)
       end
 
 (* Eliminating a variable emits |pos| x |neg| rows per round, and the same
@@ -378,7 +387,7 @@ fun trace (work : work) message = traceUtil.trace (#level work) 2 message
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
    refute rather than the search giving up early. *)
-fun elim_rows_with (work : work) offset nontrivial ineqs =
+fun elim_rows_with (work : work) column nontrivial ineqs =
   let
     val (triv, nontriv) =
       if nontrivial then ([], ineqs)
@@ -386,13 +395,18 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
         List.partition
           (fn row => (candidate work; is_trivial_with work row)) ineqs
     fun report_pivot kind v =
-      trace work (fn () => kind ^ " pivot " ^ Int.toString (offset + v))
-    (* A leading pivot becomes zero in every remaining row and can be
-       dropped without copying any independent coefficient list. Keep
-       interior columns and the original metered scans. *)
-    fun drop_leading v = v = 0 andalso not (#metered work)
+      trace work (fn () => kind ^ " pivot " ^ Int.toString (column v))
+    (* Ordinary elimination can discard a column that is zero in all
+       remaining rows. Retain the original column numbers for tracing. *)
+    fun dropped v = if #metered work then NONE else SOME v
     fun next drop_column =
-      elim_rows_with work (if drop_column then offset + 1 else offset)
+      case drop_column of
+          NONE => elim_rows_with work column
+        | SOME v =>
+            if traceUtil.enabled (#level work) 2 then
+              elim_rows_with work
+                (fn i => column (if i < v then i else i + 1))
+            else elim_rows_with work column
     fun pivot () =
       let
         val (eqs, noneqs) =
@@ -403,7 +417,9 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
         case pivot_equation_with work eqs of
             SOME (v, eq, other_eqs) =>
               let
-                val drop_column = drop_leading v
+                (* Equations generate at most one row per input row. Only
+                   drop a leading column, whose removal shares the tail. *)
+                val drop_column = if v = 0 then dropped v else NONE
                 val (independent, dependent) =
                   partition_pivot_with work v drop_column (other_eqs @ noneqs)
                 val result =
@@ -417,9 +433,12 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
           | NONE =>
               (case choose_blowup_with work noneqs of
                  NONE => NONE
-               | SOME (_, v) =>
+               | SOME (v, width) =>
                    let
-                     val drop_column = drop_leading v
+                     (* Removing a column copies the prefix of every
+                        independent row. Keep late pivots to bound that cost. *)
+                     val drop_column =
+                       if v <= width div 2 then dropped v else NONE
                      val (independent, dependent) =
                        partition_pivot_with work v drop_column nontriv
                      val (pos, neg) =
@@ -441,12 +460,12 @@ fun elim_rows_with (work : work) offset nontrivial ineqs =
       | NONE =>
         (* The metered path retains the original classification charges. *)
         if #metered work andalso not (List.null triv) then
-          elim_rows_with work offset false nontriv
+          elim_rows_with work column false nontriv
         else if List.null nontriv then NONE
         else pivot ()
   end
 
-fun elim_with work rows = elim_rows_with work 0 false rows
+fun elim_with work rows = elim_rows_with work Lib.I false rows
 
 fun scale m rat =
   let
@@ -767,7 +786,7 @@ fun refute_system_with (work : work) is_nonnegative items justs =
           (* Keep the assumption order and stop at the first
              contradiction. Unit rows are already nontrivial. *)
           fun collect kept [] =
-                elim_rows_with work 0 true
+                elim_rows_with work Lib.I true
                   (List.revAppend (kept, List.map nonneg_row eligible_atoms))
             | collect kept (item :: rest) =
                 let

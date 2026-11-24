@@ -2017,6 +2017,25 @@ val _ =
 
 val _ =
   test
+    ("unrender rejects a marker received only by a sibling goal",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [], w = fixed},
+                       {params = [], asl = [], w = meta}],
+              store = store, level = 0}
+         val result =
+           ([([], fixed), ([meta], fixed)],
+            fn _ => raise Fail "unexpected wrapper validation")
+       in
+         not (Option.isSome (clasetGoal.unrender node 1 result))
+       end)
+
+val _ =
+  test
     ("safe-step cascade reaches each ordered slot with valid evidence",
      fn () =>
        let

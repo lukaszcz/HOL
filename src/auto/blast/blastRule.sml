@@ -211,10 +211,9 @@ fun translatorMeasured checkpoint
               end
       end
 
-    fun const_args hol_const =
+    fun const_args {Thy, Name, Ty} =
       let
         val _ = checkpoint ()
-        val {Thy, Name, Ty} = dest_thy_const hol_const
         val (generic_type, generic_vars) = generic {Thy = Thy, Name = Name}
         val _ = checkpoint ()
         val subst = Type.match_type generic_type Ty
@@ -253,8 +252,8 @@ fun translatorMeasured checkpoint
       in
         if is_const tm then
           let
-            val {Thy, Name, ...} = dest_thy_const tm
-            val args = const_args tm
+            val info as {Thy, Name, ...} = dest_thy_const tm
+            val args = const_args info
           in
             Const ({Thy = Thy, Name = Name}, args)
           end
