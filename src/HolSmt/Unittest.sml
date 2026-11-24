@@ -8558,7 +8558,8 @@ let
     (if c then set_f else set_g) s /\ (0:int) IN s``
   val needed = ``(x:int) < y``
   val conclusion = ``(x:int) <= y``
-  fun refused f goal = not (Lib.can f goal)
+  fun refused f goal = (ignore (f goal); false)
+    handle Feedback.HOL_ERR _ => true
   (* the declarations and assertions, without the logic the whole goal
      selects *)
   fun body result = List.filter (fn line =>

@@ -6964,7 +6964,8 @@ local
           save_cell emitted_term_sorts,
           save_cell emitted_datatypes,
           save_cell current_bag_helpers,
-          save_cell current_eta_expansions
+          save_cell current_eta_expansions,
+          save_cell current_translation_failures
         ]
       in
         let val (acc', smtlib) = translate (acc, tm)
