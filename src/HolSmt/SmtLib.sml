@@ -1335,6 +1335,13 @@ local
 
   fun restore_cells restorers = List.app (fn f => f ()) restorers
 
+  (* exported below *)
+  val drop_untranslatable_assumptions : bool Thread_Data.var =
+    Thread_Data.var ()
+
+  fun dropping_untranslatable () =
+    Thread_Data.get drop_untranslatable_assumptions = SOME true
+
   fun sequence_element_type tm =
     if is_native_sequence_type (Term.type_of tm) then
       listSyntax.dest_list_type (Term.type_of tm)
@@ -1937,7 +1944,10 @@ local
               raise ERR "goal_to_SmtLib_aux_inner"
                 "native collection passed to an ambiguously typed HOL function"
             else ()
-          val roots = #2 goal :: #1 goal
+          (* dropping, the assumptions with such a card are dropped
+             instead (goal_to_SmtLib_aux_inner) *)
+          val roots = if dropping_untranslatable () then [#2 goal]
+                      else #2 goal :: #1 goal
           val _ = if cvc5 then
               if set = CVC5ArraySet andalso
                   List.exists
@@ -6772,6 +6782,21 @@ local
          bound_bag=fn () => bound_collection_application marked_bags,
          mixed_set=fn () => has_mixed_collection_argument set_terms,
          mixed_bag=fn () => has_mixed_collection_argument bag_terms}
+    (* dropping, cvc5 drops each assumption with a card its array encoding
+       of the collection lacks, which the selection refuses the goal for *)
+    fun has_application head tm = Lib.can (HolKernel.find_term (fn sub =>
+      Term.is_comb sub andalso Term.same_const (Term.rator sub) head)) tm
+    val original_ts =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if dropping_untranslatable () then
+            List.filter (fn tm => not (
+              (backend = CVC5ArraySet andalso
+               has_application pred_setSyntax.card_tm tm) orelse
+              (bag_backend = CVC5ArrayBag andalso
+               has_application bagSyntax.BAG_CARD_tm tm))) original_ts
+          else original_ts
+      | _ => original_ts
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,
@@ -6846,14 +6871,42 @@ local
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
-    val terms = ts @ [boolSyntax.mk_neg t]
     val _ = current_translation_failures := no_translation_failures
     val _ = current_eta_expansions := []
-    val (acc, smtlibs) = Lib.foldl_map
-      (fn (acc, tm) =>
-        translate_term regime apply_operator (acc, (bounds, tm)))
-      ((tydict, tmdict), terms)
+    fun translate (acc, tm) =
+      translate_term regime apply_operator (acc, (bounds, tm))
       handle NestedTranslation e => raise e
+    (* Dropping, an assumption that fails to translate leaves the
+       accumulator and the emission cells as they were before it. *)
+    fun translate_assumption ((acc, kept), tm) =
+      let
+        val restorers = [
+          save_cell current_generated_forall_emissions,
+          save_cell emitted_term_sorts,
+          save_cell emitted_datatypes,
+          save_cell current_bag_helpers,
+          save_cell current_eta_expansions
+        ]
+      in
+        let val (acc', smtlib) = translate (acc, tm)
+        in (acc', (tm, smtlib) :: kept) end
+        handle Interrupt => raise Interrupt
+             | _ => (restore_cells restorers; (acc, kept))
+      end
+    val (acc, ts, smtlibs) =
+      if dropping_untranslatable () then
+        let
+          val (acc, kept) =
+            List.foldl (fn (tm, state) => translate_assumption (state, tm))
+              ((tydict, tmdict), []) ts
+          val (ts, smtlibs) = ListPair.unzip (List.rev kept)
+        in (acc, ts, smtlibs) end
+      else
+        let val (acc, smtlibs) = Lib.foldl_map translate ((tydict, tmdict), ts)
+        in (acc, ts, smtlibs) end
+    val (acc, negated) = translate (acc, boolSyntax.mk_neg t)
+    val terms = ts @ [boolSyntax.mk_neg t]
+    val smtlibs = smtlibs @ [negated]
     val (tydict, tmdict) = acc
     val features =
       infer_features regime terms tydict tmdict
@@ -8389,6 +8442,16 @@ in
      SMT performance in some cases, hence this escape hatch. *)
   val include_theorems = ref true
 
+  (* Whether a solver translation drops each assumption it cannot translate
+     (one a solver operator is missing for, say) instead of failing, as set
+     for the calling thread with Thread_Data.setmp (off by default).  The
+     encoding choices (native sequences, collection backends, regime) are
+     made once for the whole goal, so the kept assumptions are encoded as
+     they are next to the dropped ones; the solver gets only the kept ones,
+     so a proof it returns uses only those.  The conclusion is never
+     dropped. *)
+  val drop_untranslatable_assumptions = drop_untranslatable_assumptions
+
   fun translation_logic ({logic, ...} : translation) = logic
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
@@ -8742,10 +8805,11 @@ in
         ({request, apply_operator, policy, get_proof, target}
           : smtlib_emit_options) (goal as (asms, concl)) =
       let
-        val inventory = Susp.delay (fn () => query_subterms (concl :: asms))
+        fun inventory_of terms = Susp.delay (fn () => query_subterms terms)
+        val inventory = inventory_of (concl :: asms)
         val sequence_emission = Susp.delay
           (fn () => native_sequence_subterms (Susp.force inventory))
-        val _ =
+        fun check (goal, inventory) =
           case preflight inventory sequence_emission of
             NONE => reject_reglan_hol_equalities goal
           | SOME subterms =>
@@ -8753,6 +8817,20 @@ in
                 if Term.is_comb term then
                   check_reglan_application (Term.dest_comb term)
                 else ()) subterms
+        (* dropping, each assumption is checked on its own, under the
+           sequence emission chosen for the whole goal *)
+        val (goal, inventory) =
+          if dropping_untranslatable () then
+            let
+              val _ = check (([], concl), inventory_of [concl])
+              val kept = List.filter (fn asm =>
+                  Lib.can check (([asm], boolSyntax.T), inventory_of [asm]))
+                asms
+            in
+              if length kept = length asms then (goal, inventory)
+              else ((kept, concl), inventory_of (concl :: kept))
+            end
+          else (check (goal, inventory); (goal, inventory))
         val tail = outbound_query_tail string_output_operations get_proof
       in
         Lib.apsnd (fn xs => xs @ tail)

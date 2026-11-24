@@ -8475,6 +8475,54 @@ in
 end
 end
 
+(* With SmtLib.drop_untranslatable_assumptions set, a solver translation
+   leaves out each assumption it cannot translate, encoded under the choices
+   made for the whole goal, and still refuses an untranslatable
+   conclusion. *)
+fun smtlib_drop_untranslatable_assumptions_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 goal = Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal
+  fun cvc goal = CVC.goal_to_SmtLib_translation goal
+  fun dropping f x =
+    Thread_Data.setmp SmtLib.drop_untranslatable_assumptions (SOME true) f x
+  (* native Seq for an int list, where Z3 has no seq.rev *)
+  val reversed = ``REVERSE (xs:int list) = ys``
+  (* MEM selects the algebraic list encoding for the whole goal *)
+  val member = ``MEM (1:int) zs``
+  (* Z3 has no set.card; cvc5's array sets have none *)
+  val card = ``CARD (s:int set) = 3``
+  val needed = ``(x:int) < y``
+  val conclusion = ``(x:int) <= y``
+  fun refused f goal = not (Lib.can f goal)
+  fun same_as_without f asm =
+    text_of (dropping f ([asm, needed], conclusion)) =
+    text_of (f ([needed], conclusion))
+in
+  assert (refused z3 ([reversed, needed], conclusion),
+    "Z3 translated seq.rev");
+  assert (refused cvc ([card, needed], conclusion),
+    "cvc5 translated set.card without finiteness");
+  assert (same_as_without z3 reversed,
+    "Z3 did not drop exactly the REVERSE assumption");
+  assert (same_as_without z3 card,
+    "Z3 did not drop exactly the CARD assumption");
+  assert (contains "(assert (< v0 v1))"
+      (text_of (dropping cvc ([card, needed], conclusion))) andalso
+    not (contains "Array" (text_of (dropping cvc ([card, needed], conclusion)))),
+    "cvc5 did not drop exactly the CARD assumption");
+  assert (contains "List_Int"
+      (text_of (dropping z3 ([reversed, member, needed], conclusion))) andalso
+    not (contains "seq."
+      (text_of (dropping z3 ([reversed, member, needed], conclusion)))),
+    "REVERSE beside MEM was not kept in the algebraic encoding");
+  assert (text_of (dropping z3 ([member, needed], conclusion)) =
+    text_of (z3 ([member, needed], conclusion)),
+    "dropping changed a goal with nothing to drop");
+  assert (refused (dropping z3) ([needed], card),
+    "an untranslatable conclusion was not refused")
+end
+
 fun smtlib_native_set_translation_success () =
 let
   fun text_of result = String.concat (Lib.snd result)
@@ -40671,6 +40719,8 @@ let
     ("smtlib_seq_set_bag_feature_inference_success",
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_indexed_collection_closure", smtlib_indexed_collection_closure),
+    ("smtlib_drop_untranslatable_assumptions_success",
+      smtlib_drop_untranslatable_assumptions_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
     ("smtlib_graph_function_let_collection_success",
