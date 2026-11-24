@@ -642,6 +642,44 @@ val _ =
 
 val _ =
   check
+    ("ORDER reuses strict goal reduction between admission and search",
+     fn () =>
+       let
+         val axiom =
+           ``relation$StrongOrder (lt : 'a -> 'a -> bool)``
+         val facts = map Thm.ASSUME
+           [axiom, ``(lt : 'a -> 'a -> bool) a b``,
+            ``(lt : 'a -> 'a -> bool) b c``]
+         val goal = ``(lt : 'a -> 'a -> bool) a c``
+         val unrelated = ``p:bool``
+         val direct = hd (orderData.contexts_unmetered facts)
+         val uncached = hd (orderData.contexts searchBudget.free_charger facts)
+         val admits = orderData.is_literal direct goal
+         val (_, saved_cost) = count_primitives (orderData.reduce direct) goal
+         val rejects = not (orderData.is_literal direct unrelated)
+         val (miss, miss_cost) = count_primitives (orderData.reduce direct) goal
+         val (plain, plain_cost) =
+           count_primitives (orderData.reduce uncached) goal
+         val {dprocs, ...} = simpLib.dest_ssfrag ORDER_ss
+         val {addcontext, apply, initial, ...} =
+           Traverse.dest_reducer (hd dprocs)
+         val context = addcontext (initial, facts)
+         fun convert tm = apply
+           {solver = K Thm.REFL, conv = K Thm.REFL, context = context,
+            stack = [], relation = (boolSyntax.equality, Thm.REFL)} tm
+         val converted = convert goal
+       in
+         admits andalso rejects andalso
+         Term.aconv (Thm.concl miss) (Thm.concl plain) andalso
+         miss_cost = plain_cost andalso
+         (not (Portable.pointer_eq (goal, goal)) orelse saved_cost = 0) andalso
+         plain_cost > 0 andalso
+         Term.aconv (Thm.concl converted)
+           (boolSyntax.mk_eq (goal, boolSyntax.T))
+       end)
+
+val _ =
+  check
     ("a step the chain does not reach is refused",
      fn () =>
        refuses

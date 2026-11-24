@@ -154,11 +154,11 @@ fun run_tactic budget timer name tactic term =
          (fn () =>
            let
              val started = Timer.startRealTimer ()
-             val (goals, validation) =
+             val (goals, _) =
                Tactical.VALID tactic ([], term) (Context.snapshot())
              val elapsed = Timer.checkRealTimer started
            in
-             if null goals then SOME (name, elapsed, validation []) else NONE
+             if null goals then SOME (name, elapsed) else NONE
            end) ()
        handle Timeout.TIMEOUT _ => NONE
             | Portable.Interrupt => raise Portable.Interrupt
@@ -227,7 +227,7 @@ fun inspect_rule budget waivers
                   elapsed = Time.zeroTime}
       | _ =>
           (case prove_obligation budget term of
-              SOME (prover, elapsed, _) =>
+              SOME (prover, elapsed) =>
                 Proved {rule = name, kind = kind, prover = prover,
                         elapsed = elapsed}
             | NONE =>

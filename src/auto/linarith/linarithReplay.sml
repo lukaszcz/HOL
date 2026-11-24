@@ -274,14 +274,14 @@ fun add_thms level theorem1 theorem2 =
       SOME theorem => theorem
     | NONE =>
         let
-          val left = conversion_lifts theorem1
           val right = conversion_lifts theorem2
         in
           (* The original pair has already failed. *)
           case try_add theorem1 right of
               SOME theorem => theorem
             | NONE =>
-                (case try_add_pairs left (theorem2 :: right) of
+                (case try_add_pairs (conversion_lifts theorem1)
+                        (theorem2 :: right) of
                      SOME theorem => theorem
                    | NONE => add_failure level theorem1 theorem2)
         end

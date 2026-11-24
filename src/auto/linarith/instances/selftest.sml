@@ -637,6 +637,39 @@ val _ =
          Term.aconv (Thm.concl theorem) boolSyntax.F
        end)
 
+val _ =
+  check
+    ("golden Added replay skips unused left-carrier conversions",
+     fn () =>
+       let
+         val {ty, dest, kit, norm_conv, discrete, nnf_rules, pre_split,
+              atom_facts} = intLinarith.instance
+         val side_calls = ref 0
+         val left = iplus n_int intSyntax.one_tm
+         val right = iplus m_int intSyntax.one_tm
+         fun count_sides tm =
+           (if Term.aconv tm left orelse Term.aconv tm right then
+              side_calls := !side_calls + 1
+            else ();
+            norm_conv tm)
+         val _ = linarithData.register_instance
+           {ty = ty, dest = dest, kit = kit, norm_conv = count_sides,
+            discrete = discrete, nnf_rules = nnf_rules, pre_split = pre_split,
+            atom_facts = atom_facts}
+         fun replay () =
+           linarithReplay.mkthm traceUtil.silent
+             [Thm.ASSUME (ileq left right),
+              Thm.ASSUME (numSyntax.mk_less (m, n))]
+             (linarithSolve.Added
+               (linarithSolve.Asm 0, linarithSolve.Asm 1))
+         val theorem = replay ()
+           handle exn =>
+             (linarithData.register_instance intLinarith.instance; raise exn)
+         val _ = linarithData.register_instance intLinarith.instance
+       in
+         Term.aconv (Thm.concl theorem) boolSyntax.F andalso !side_calls = 0
+       end)
+
 (* Scaling an equality applies (\v. v * n) to both of its sides.  The
    int and rat instances normalize expressions with polynomial
    conversions, which rewrite polynomials and not redexes, so a side

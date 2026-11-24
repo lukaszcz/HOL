@@ -1996,7 +1996,7 @@ fun run_goal_with_timing {now, prepare} budget recipe
                 (fix_parameters,
                  preserve_target (compile_recipe simpset entry recipe)))
              ([], #goal entry) ctxt of
-          ([], validation) => (ignore (validation []); true)
+          ([], _) => true
         | (goals, _) =>
             (residual :=
                "residual goals: [" ^

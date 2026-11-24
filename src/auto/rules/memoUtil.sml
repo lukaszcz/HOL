@@ -24,28 +24,42 @@ fun keyed_memo same compute =
 (* The cache is most-recent-first.  A hit is removed from it and put
    back in front. *)
 fun bounded_memo n same compute =
-  let
-    val cache = ref []
-    fun first_n (_, []) = []
-      | first_n (k, entry :: rest) =
-          if k <= 0 then [] else entry :: first_n (k - 1, rest)
-    fun extract _ [] = NONE
-      | extract key ((entry as (recorded, _)) :: rest) =
-          if same recorded key then SOME (entry, rest)
-          else
-            Option.map (fn (found, others) => (found, entry :: others))
-                       (extract key rest)
-  in
-    fn key =>
-      case extract key (!cache) of
-          SOME (entry as (_, value), others) =>
-            (cache := entry :: others; value)
-        | NONE =>
-            let
-              val value = compute key
-            in
-              cache := first_n (n, (key, value) :: !cache); value
-            end
-  end
+  if n < 1 then compute
+  else
+    let
+      val cache = ref (0, [])
+      fun without_last (entry :: (rest as _ :: _)) =
+            entry :: without_last rest
+        | without_last _ = []
+      fun extract _ [] = NONE
+        | extract key ((entry as (recorded, _)) :: rest) =
+            if same recorded key then SOME (entry, rest)
+            else
+              Option.map (fn (found, others) => (found, entry :: others))
+                         (extract key rest)
+      fun recompute key =
+        let
+          val value = compute key
+          (* Computing may have made recursive calls to this memo. *)
+          val (size, entries) = !cache
+          val entry = (key, value)
+        in
+          cache :=
+            (if size < n then (size + 1, entry :: entries)
+             else (size, entry :: without_last entries));
+          value
+        end
+    in
+      fn key =>
+        case !cache of
+            state as (size, (first as (recorded, value)) :: rest) =>
+              if same recorded key then (cache := state; value)
+              else
+                (case extract key rest of
+                     SOME (entry as (_, value), others) =>
+                       (cache := (size, entry :: first :: others); value)
+                   | NONE => recompute key)
+          | _ => recompute key
+    end
 
 end

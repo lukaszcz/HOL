@@ -156,6 +156,27 @@ val _ =
 
 val _ =
   test
+    ("binding existence filters newly bound terms and types",
+     fn () =>
+       let
+         val (old_meta, store0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} clasetMeta.empty
+         val store1 = the_store (clasetMeta.bind (old_meta, fixed) store0)
+         val (meta, store2) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store1
+         val (tymeta, store3) = clasetMeta.new_tymeta store2
+         val store4 = the_store (clasetMeta.bind (meta, fixed) store3)
+         val store5 = the_store (clasetMeta.bind_ty (tymeta, bool_ty) store4)
+         val test_delta = fn (term, ty) =>
+           clasetMeta.exists_new_binding {term = term, ty = ty} store3 store5
+       in
+         test_delta (clasetMeta.same_meta meta, fn _ => false) andalso
+         test_delta (fn _ => false, clasetMeta.same_tymeta tymeta) andalso
+         not (test_delta (clasetMeta.same_meta old_meta, fn _ => false))
+       end)
+
+val _ =
+  test
     ("normalization follows bindings and contracts beta and eta",
      fn () =>
        let

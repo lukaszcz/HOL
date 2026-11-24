@@ -4955,6 +4955,31 @@ val _ =
         recomputes 0 = 4 andalso recomputes ~3 = 4
       end)
 
+val _ =
+  test ("bounded_memo retains inner calls after recursive computations",
+   fn () =>
+      let
+        exception Failed
+        val computed = ref []
+        val call = ref (fn _ : int => raise Failed)
+        val memo = memoUtil.bounded_memo 2 (Lib.curry (op =))
+          (fn key =>
+            (computed := key :: !computed;
+             case key of
+                 0 => !call 1 + 1
+               | 2 => (ignore (!call 3); raise Failed)
+               | _ => key))
+        val _ = call := memo
+        val outer = memo 0
+        val inner = memo 1
+        val raised = (ignore (memo 2); false) handle Failed => true
+        val nested = memo 3
+        val retained = memo 1
+      in
+        outer = 2 andalso inner = 1 andalso raised andalso nested = 3 andalso
+        retained = 1 andalso List.rev (!computed) = [0, 1, 2, 3]
+      end)
+
 (* The trace level is read from the context it is asked in, not from
    the global flag. *)
 local

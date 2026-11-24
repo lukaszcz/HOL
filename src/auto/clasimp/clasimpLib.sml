@@ -784,15 +784,18 @@ type lhs_view_entry =
 
 fun rename_view_variables theorem =
   let
-    val variables = Listsort.sort Term.compare
-      (free_varsl (concl theorem :: hyp theorem))
+    val variables = HOLset.listItems
+      (Term.FVL (concl theorem :: hyp theorem) Term.empty_tmset)
     val width = size (Int.toString (length variables))
-    val reversed = rev variables
-    val fresh = List.tabulate (length variables,
-      fn n => variant variables
-        (mk_var ("lhs_view_" ^
-                 StringCvt.padLeft #"0" width (Int.toString n),
-                 type_of (List.nth (reversed,n)))))
+    val prefix = "lhs_view_"
+    (* [variant] only appends primes and also checks declared constants. *)
+    val avoids =
+      List.filter (String.isPrefix prefix o fst o dest_var) variables
+    val fresh = Lib.mapi
+      (fn n => fn variable => variant avoids
+        (mk_var (prefix ^ StringCvt.padLeft #"0" width (Int.toString n),
+                 type_of variable)))
+      (rev variables)
     val replacements = ListPair.mapEq
       (fn (v,w) => {redex=v,residue=w}) (variables,rev fresh)
     val inverse = map
@@ -1204,17 +1207,21 @@ fun make_lhs_view_cache_of_base caller_charge =
           end
         val rank_compare = Lib.pair_compare
           (Int.compare,Lib.pair_compare (Int.compare,Int.compare))
-        fun prefer (table,old) =
-          if rank_compare (context_rank table,context_rank old) = LESS
-          then table else old
+        (* Only ties need context inspection, and one table can win many. *)
+        val ranked = map
+          (fn table => (table, Susp.delay (fn () => context_rank table)))
+          (!tables)
+        fun prefer (candidate as (_, rank), old as (_, old_rank)) =
+          if rank_compare (Susp.force rank, Susp.force old_rank) = LESS
+          then candidate else old
         fun matching remaining = List.filter
-          (fn LHSViewTable data =>
-            Portable.pointer_eq (remaining,#sources data)) (!tables)
+          (fn (LHSViewTable data, _) =>
+            Portable.pointer_eq (remaining,#sources data)) ranked
         fun suffix remaining =
           case matching remaining of
               first::rest => SOME (List.foldl prefer first rest)
             | [] => case remaining of [] => NONE | _::rest => suffix rest
-        fun score (table as LHSViewTable data,(best,count)) =
+        fun score (candidate as (LHSViewTable data, _),(best,count)) =
           let
             val reused = List.foldl
               (fn (source,n) =>
@@ -1224,15 +1231,16 @@ fun make_lhs_view_cache_of_base caller_charge =
                       if simpLib.same_rewrite_source (source,#origin entry)
                       then n+1 else n) 0 sources
           in
-            if reused > count then (SOME table,reused)
+            if reused > count then (SOME candidate,reused)
             else if reused = count then
-              (SOME (case best of NONE => table
-                                 | SOME old => prefer (table,old)),count)
+              (SOME (case best of NONE => candidate
+                                 | SOME old => prefer (candidate,old)),count)
             else (best,count)
           end
       in
-        case suffix sources of SOME table => SOME table
-          | NONE => #1 (List.foldl score (NONE,~1) (!tables))
+        Option.map #1
+          (case suffix sources of SOME candidate => SOME candidate
+           | NONE => #1 (List.foldl score (NONE,~1) ranked))
       end
     fun get base ss =
       case List.find

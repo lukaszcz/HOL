@@ -223,7 +223,7 @@ fun weak_context_with meter relation entries reduction =
 fun strict_reduction equation =
   Conv.QCONV (ONCE_DEPTH_CONV (REWR_CONV equation))
 
-fun strict_context_with meter relation entries irreflexive transitive =
+fun strict_context_with memoize meter relation entries irreflexive transitive =
   let
     val _ = application meter
     val strong =
@@ -245,13 +245,19 @@ fun strict_context_with meter relation entries irreflexive transitive =
         | SOME theorem =>
             (application meter;
              [("trichotomous", MATCH_MP order_trichotomous_of_RC theorem)])
+    val reduction = strict_reduction equation
+    (* The reducer's admission check and solver ask for the same goal
+       conversion. The generated rewrite is fixed for this context. *)
+    val reduction =
+      if memoize then memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
+        reduction
+      else reduction
   in
     weak_context_with meter closure
-      (closure_entries @ trichotomous_entries)
-      (strict_reduction equation)
+      (closure_entries @ trichotomous_entries) reduction
   end
 
-fun context_of_with meter (relation, entries) =
+fun context_of_with memoize meter (relation, entries) =
   case lookup_with meter entries "transitive" of
       NONE => NONE
     | SOME transitive =>
@@ -259,19 +265,19 @@ fun context_of_with meter (relation, entries) =
                lookup_with meter entries "reflexive") of
              (SOME irreflexive, NONE) =>
                SOME
-                 (strict_context_with meter relation entries
+                 (strict_context_with memoize meter relation entries
                    irreflexive transitive)
            | _ =>
                SOME (weak_context_with meter relation entries Conv.ALL_CONV))
 
-fun contexts_using group meter theorems =
-  List.mapPartial (context_of_with meter)
+fun contexts_using memoize group meter theorems =
+  List.mapPartial (context_of_with memoize meter)
     (group (axioms_of_with meter theorems))
 
-fun contexts meter = contexts_using (group_with meter) meter
+fun contexts meter = contexts_using false (group_with meter) meter
 
 val contexts_unmetered =
-  contexts_using group_unmetered searchBudget.free_charger
+  contexts_using true group_unmetered searchBudget.free_charger
 
 val all_order_names = axiom_names @ order_names
 

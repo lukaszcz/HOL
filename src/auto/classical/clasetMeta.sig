@@ -54,6 +54,9 @@ sig
   (* [new_bindings old new] returns the metavariables bound in [new]
      whose names had no binding in [old]. *)
   val new_bindings : store -> store -> {terms : meta list, types : tymeta list}
+  (* Test for a newly bound metavariable satisfying either predicate. *)
+  val exists_new_binding : {term : meta -> bool, ty : tymeta -> bool} ->
+                           store -> store -> bool
   val collapse : store ->
                  (hol_type, hol_type) subst * (term, term) subst
 end

@@ -49,7 +49,7 @@ fun closes tactic goal =
   let
     fun run () =
       case Tactical.VALID tactic ([], goal) (Context.snapshot()) of
-          ([], validation) => (ignore (validation []); true)
+          ([], _) => true
         | _ => false
   in
     Timeout.apply (!recognition_budget) run ()

@@ -39,12 +39,12 @@ fun ordered_rules rules =
 
 fun new_binding created parent child =
   let
-    val {terms, types} = clasetMeta.new_bindings parent child
     fun existing_term meta =
       not (List.exists (clasetMeta.same_meta meta) (#terms created))
     fun existing_type tymeta = not (mem tymeta (#types created))
   in
-    List.exists existing_term terms orelse List.exists existing_type types
+    clasetMeta.exists_new_binding {term = existing_term, ty = existing_type}
+      parent child
   end
 
 (* Normalisation rewrites a goal in place, so a norm rule must be

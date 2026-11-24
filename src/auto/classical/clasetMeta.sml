@@ -680,14 +680,16 @@ fun bindings store =
          (Redblackmap.listItems (#ty_bindings store))}
   end
 
+fun new_term_binding (old : store) (new : store) name =
+  if Redblackmap.inDomain (#tm_bindings old, name) then NONE
+  else Redblackmap.peek (#metas new, name)
+
 fun new_bindings old new =
   let
     fun add_term (name, _, terms) =
-      if Redblackmap.inDomain (#tm_bindings old, name) then terms
-      else
-        case Redblackmap.peek (#metas new, name) of
-            NONE => terms
-          | SOME meta => meta :: terms
+      case new_term_binding old new name of
+          NONE => terms
+        | SOME meta => meta :: terms
     fun add_type (name, (tymeta, _), types) =
       if Redblackmap.inDomain (#ty_bindings old, name) then types
       else tymeta :: types
@@ -696,6 +698,23 @@ fun new_bindings old new =
       else Redblackmap.foldr add [] (select new)
   in
     {terms = added #tm_bindings add_term, types = added #ty_bindings add_type}
+  end
+
+fun exists_new_binding {term, ty} old new =
+  let
+    fun exists_added select predicate =
+      not (Portable.pointer_eq (select old, select new)) andalso
+      Redblackmap.existsi predicate (select new)
+  in
+    exists_added #tm_bindings
+      (fn (name, _) =>
+        case new_term_binding old new name of
+            NONE => false
+          | SOME meta => term meta)
+    orelse
+    exists_added #ty_bindings
+      (fn (name, (tymeta, _)) =>
+        not (Redblackmap.inDomain (#ty_bindings old, name)) andalso ty tymeta)
   end
 
 fun collapse store =

@@ -199,16 +199,18 @@ fun dependency_closure store goals =
     (terms, follow_types types (HOLset.empty Type.compare))
   end
 
-fun mark_clashes visible
-      ({terms, types} : clasetGoal.binding_mark) =
-  if List.null terms andalso List.null types then false
-  else
-    let val (visible_terms, visible_types) = Portable.HOLSusp.force visible
-    in
-      List.exists (fn meta => HOLset.member (visible_terms, meta)) terms
-      orelse
-      List.exists (fn meta => HOLset.member (visible_types, meta)) types
-    end
+fun binding_clashes visible source child =
+  let
+    fun term meta =
+      let val (terms, _) = Portable.HOLSusp.force visible
+      in HOLset.member (terms, meta) end
+    fun ty meta =
+      let val (_, types) = Portable.HOLSusp.force visible
+      in HOLset.member (types, meta) end
+  in
+    clasetMeta.exists_new_binding {term = term, ty = ty}
+      (clasetGoal.store source) (clasetGoal.store child)
+  end
 
 type frame =
   {source : node option, states : node seq.seq, ancestors : node_set}
@@ -253,7 +255,7 @@ fun discard_subtree child frames =
                  if not (active_completed source child) then
                    (count, frame :: rest)
                  else
-                   if mark_clashes visible (binding_diff source child) then
+                   if binding_clashes visible source child then
                      (count, frame :: rest)
                    else discard (count + 1) rest)
   in

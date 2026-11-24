@@ -710,7 +710,8 @@ fun remember (Cache {entries, next_stamp, ...}) key safe vars formula rules =
     entries := Redblackmap.insert (!entries, key, entry :: values)
   end
 
-fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
+fun query_skeleton_measured checkpoint measured normalize need_distinct_query
+      formula =
   let
     val goal = isGoal formula
     val body = if goal then rand formula else formula
@@ -727,6 +728,11 @@ fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
       in
         collect (term, [])
       end
+
+    fun poll_head (left $ _) = (checkpoint (); poll_head left)
+      | poll_head term = (checkpoint (); term)
+
+    val query_head = if measured then poll_head else blastTerm.head_of
 
     fun find_decoded variable entries =
       Option.map #2
@@ -778,8 +784,8 @@ fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
               Ty = Type.type_subst subst generic}
          end)
 
-    fun unknown track expected term =
-      case #1 (strip term) of
+    fun unknown track expected term head =
+      case head of
           Var _ =>
             if not track then genvar expected
             else
@@ -798,7 +804,10 @@ fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
         | _ => genvar expected
 
     fun build track expected 0 term =
-          (checkpoint (); unknown track expected term)
+          (checkpoint ();
+           if track orelse measured then
+             unknown track expected term (query_head term)
+           else genvar expected)
       | build track expected level term =
           (checkpoint ();
            (case strip term of
@@ -821,7 +830,10 @@ fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
                     if type_of result = expected then result
                     else genvar expected
                   end
-              | _ => unknown track expected term)
+              | (head, _) =>
+                  (* Measured queries poll during the original second walk. *)
+                  unknown track expected term
+                    (if measured then poll_head term else head))
            handle HOL_ERR _ => genvar expected)
   in
     let
@@ -885,7 +897,7 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) measured
       (* Only the safe zero-premise partition can hold constructor clashes.
          Keep the second traversal's original checkpoints when measured. *)
       val (query, distinct_query) =
-        query_skeleton_measured checkpoint normalize
+        query_skeleton_measured checkpoint measured normalize
           (measured orelse clasetLib.has_distinct_rules first) formula
       val select =
         if isGoal formula then
