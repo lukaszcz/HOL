@@ -500,18 +500,21 @@ fun same_term_meta left right =
 fun unresolved_in_premises store
   ({terms, types} : clasetUnify.rule_metas) premises =
   let
-    val premise_metas =
-      List.concat (map (clasetMeta.metas_of store) premises)
-    val premise_types =
-      List.concat
-        (map (type_vars_in_term o normalize_term store) premises)
     fun created_term meta =
       List.exists (fn created => same_term_meta created meta) terms
     fun created_type ty =
       List.exists (fn created => clasetMeta.same_tymeta created ty) types
+    fun unresolved premise =
+      let val normalized = normalize_term store premise
+      in
+        (not (null terms) andalso
+         List.exists created_term
+           (clasetMeta.metas_of_normalized store normalized)) orelse
+        (not (null types) andalso
+         List.exists created_type (type_vars_in_term normalized))
+      end
   in
-    List.exists created_term premise_metas orelse
-    List.exists created_type premise_types
+    not (null terms andalso null types) andalso List.exists unresolved premises
   end
 
 fun ground_created store

@@ -463,8 +463,7 @@ fun scale m rat =
       end
   end
 
-fun integ (Decomp {lhs, lhs_const, rel, rhs, rhs_const,
-                    discrete, negated}) =
+fun common_denominator lhs lhs_const rhs rhs_const =
   let
     fun include_denominator (rat, acc) =
       let val denominator = Arbrat.denominator rat
@@ -480,15 +479,9 @@ fun integ (Decomp {lhs, lhs_const, rel, rhs, rhs_const,
     fun include_coefficient ((_, c), acc) = include_denominator (c, acc)
     val constants = include_denominator (rhs_const,
                       include_denominator (lhs_const, one))
-    val m =
-      List.foldl include_coefficient
-        (List.foldl include_coefficient constants lhs) rhs
-    fun mult (tm, rat) = (tm, scale m rat)
   in
-    (m, {lhs = List.map mult lhs, lhs_const = scale m lhs_const,
-         rel = rel, rhs = List.map mult rhs,
-         rhs_const = scale m rhs_const, discrete = discrete,
-         negated = negated})
+    List.foldl include_coefficient
+      (List.foldl include_coefficient constants lhs) rhs
   end
 
 (* Termtab is keyed on Term.compare, whose EQUAL is exactly Term.aconv
@@ -513,14 +506,14 @@ fun atom_index_with work atoms =
    no column and are dropped, as they were by mapping over the atom
    list.  The entries are placed back to front so that the first
    occurrence of a repeated atom wins, as List.find did. *)
-fun scatter_with work ({width, column} : atom_index) poly =
+fun scatter_with work ({width, column} : atom_index) m poly =
   let
     val row = Array.array (width, zero)
     fun place (tm, c) =
       (candidate work;
        case Termtab.lookup column tm of
           NONE => ()
-        | SOME i => Array.update (row, i, c))
+        | SOME i => Array.update (row, i, scale m c))
   in
     List.app place (List.rev poly); row
   end
@@ -530,19 +523,22 @@ datatype coefficient =
   | LeftCoefficient of Arbint.int
   | Difference of Arbint.int
 
-fun differences ({width, column} : atom_index) lhs rhs =
+fun differences ({width, column} : atom_index) m lhs rhs =
   let
     val coefficients = Array.array (width, Absent)
     fun place insert (tm, c) =
       case Termtab.lookup column tm of
           NONE => ()
         | SOME i => insert i c (Array.sub (coefficients, i))
-    fun left i c Absent = Array.update (coefficients, i, LeftCoefficient c)
+    fun left i c Absent =
+          Array.update (coefficients, i, LeftCoefficient (scale m c))
       | left _ _ _ = ()
     fun right _ _ (Difference _) = ()
       | right i c (LeftCoefficient l) =
-          Array.update (coefficients, i, Difference (Arbint.- (c, l)))
-      | right i c Absent = Array.update (coefficients, i, Difference c)
+          Array.update
+            (coefficients, i, Difference (Arbint.- (scale m c, l)))
+      | right i c Absent =
+          Array.update (coefficients, i, Difference (scale m c))
     fun coefficient i =
       case Array.sub (coefficients, i) of
           Absent => zero
@@ -556,11 +552,11 @@ fun differences ({width, column} : atom_index) lhs rhs =
     List.tabulate (width, coefficient)
   end
 
-fun differences_with (work : work) index reverse lhs rhs =
+fun differences_with (work : work) index m reverse lhs rhs =
   if #metered work then
     let
-      val lhs_coeffs = scatter_with work index lhs
-      val rhs_coeffs = scatter_with work index rhs
+      val lhs_coeffs = scatter_with work index m lhs
+      val rhs_coeffs = scatter_with work index m rhs
       val (left, right) =
         if reverse then (rhs_coeffs, lhs_coeffs)
         else (lhs_coeffs, rhs_coeffs)
@@ -571,17 +567,18 @@ fun differences_with (work : work) index reverse lhs rhs =
             (candidate work; Arbint.- (Array.sub (right, i),
                                        Array.sub (left, i))))
     end
-  else if reverse then differences index rhs lhs
-  else differences index lhs rhs
+  else if reverse then differences index m rhs lhs
+  else differences index m lhs rhs
 
-fun mklineq_with work index (item, asm_index) =
+fun mklineq_with work index
+      (Decomp {lhs, lhs_const, rel, rhs, rhs_const, discrete, negated},
+       asm_index) =
   let
     val _ = normalization work
-    val (m, {lhs, lhs_const, rel, rhs, rhs_const,
-             discrete, negated}) = integ item
+    val m = common_denominator lhs lhs_const rhs rhs_const
     val reverse = negated andalso (rel = REL_LE orelse rel = REL_LT)
-    val diff = differences_with work index reverse lhs rhs
-    val c = Arbint.- (lhs_const, rhs_const)
+    val diff = differences_with work index m reverse lhs rhs
+    val c = Arbint.- (scale m lhs_const, scale m rhs_const)
     val just = Asm asm_index
     fun lineq (constant, ty, cs, why) =
       Lineq (constant, ty, cs, mk_multiplied m why)
@@ -591,7 +588,7 @@ fun mklineq_with work index (item, asm_index) =
       (* The strengthening steps below add one to the *unscaled*
          assumption -- lineq attaches the scaling by m outside them, and
          replay executes them in that order -- so the constant they
-         contribute to a row whose other constants integ has already
+         contribute to a row whose other constants have already been
          multiplied by m is m, not 1.  Using 1 built a row weaker than
          its own justification by m - 1, which costs no soundness but
          loses refutations of discrete systems the certificate would

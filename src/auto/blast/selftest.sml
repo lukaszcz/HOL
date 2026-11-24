@@ -4640,14 +4640,18 @@ val _ =
          val right = Var f $ Fvar "b"
          val independent = Var g $ Fvar "b"
          val cs = clasetLib.the_claset ()
-         fun count rhs =
+         val head = ref (SOME equality)
+         fun count head vars rhs =
            length
              (blastRule.safeRules (blastRule.newCache traceUtil.silent) cs
-                [f, g] (blastTerm.list_comb (equality, [left, rhs])))
-         val different_apps = count right
+                vars (blastTerm.list_comb (head, [left, rhs])))
+         val direct = count equality [f, g]
+         val bound_head = count (Var head) [head, f, g]
+         val different_apps = direct right
        in
-         different_apps = count independent andalso
-         different_apps > count left
+         different_apps = direct independent andalso
+         different_apps > direct left andalso
+         bound_head right > bound_head left
        end)
 
 val _ =

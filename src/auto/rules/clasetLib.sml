@@ -632,6 +632,9 @@ fun safep_part (CS {index = {safep, ...}, ...}) = (safep, empty_distinct)
 fun unsafe_part (CS {index = {unsafe, ...}, ...}) = (unsafe, empty_distinct)
 fun dup_part (CS {index = {dup, ...}, ...}) = (dup, empty_distinct)
 
+fun has_distinct_rules ((_, distinct) : claset_part) =
+  not (Redblackmap.isEmpty distinct)
+
 fun match_candidates net tm = candidate_order (clasetNet.match tm net)
 
 fun match_intro_candidates (((inet, _), _) : claset_part) =
@@ -684,13 +687,14 @@ fun unify_elim_candidates part =
   unify_elim_candidates_measured listUtil.no_checkpoint part
 
 fun classical_candidates {unify, derive, query_metas, flexible_type}
-      (((inet, enet), distinct) : claset_part) {conclusion, assumptions} =
+      (part as ((inet, enet), distinct) : claset_part)
+      {conclusion, assumptions} =
   let
     val checkpoint = listUtil.no_checkpoint
     val lookup =
       if unify then unify_candidates checkpoint
       else fn net => fn q => clasetNet.match q net
-    val has_distinct = not (Redblackmap.isEmpty distinct)
+    val has_distinct = has_distinct_rules part
     val meter = {checkpoint = checkpoint,
                  derive = if unify then derive else checkpoint}
     val metas = if unify then query_metas else K Term.empty_tmset

@@ -104,6 +104,8 @@ sig
   val safep_part : claset -> claset_part
   val unsafe_part : claset -> claset_part
   val dup_part : claset -> claset_part
+  (* Whether this partition can generate lazy constructor clashes. *)
+  val has_distinct_rules : claset_part -> bool
   val match_intro_candidates : claset_part -> term -> (tag * brl) list
   val match_elim_candidates : claset_part -> term -> (tag * brl) list
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list

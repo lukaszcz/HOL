@@ -20,9 +20,14 @@ fun check_config function_name
     ()
 
 fun qvars_of store ({asl, w, ...} : clasetGoal.cgoal) =
-  HOLset.fromList Term.compare
-    (List.concat
-      (map (clasetMeta.metas_of store) (w :: asl)))
+  let
+    fun add (term, seen) =
+      HOLset.addList (seen, clasetMeta.metas_of store term)
+  in
+    if clasetMeta.has_term_metas store then
+      List.foldl add (add (w, Term.empty_tmset)) asl
+    else Term.empty_tmset
+  end
 
 fun rule_source ctxt budget claset simpset simp_controls
       ({mode, cgoal = cgoal as {asl, w, ...}, store} :

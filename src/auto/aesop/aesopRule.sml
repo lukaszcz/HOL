@@ -530,14 +530,15 @@ fun unsafe_percent ({phase, ...} : rule) =
    the claset's own candidate order -- ahead of tactic rules. *)
 fun order_unsafe rules =
   let
-    val positioned = Lib.enumerate 0 rules
+    fun priority (left, right) =
+      Int.compare (unsafe_percent right, unsafe_percent left)
     fun compare ((left_index, left), (right_index, right)) =
-      case Int.compare
-             (unsafe_percent right, unsafe_percent left) of
+      case priority (left, right) of
           EQUAL => Int.compare (left_index, right_index)
         | order => order
   in
-    map #2 (Listsort.sort compare positioned)
+    if Listsort.sorted priority rules then rules
+    else map #2 (Listsort.sort compare (Lib.enumerate 0 rules))
   end
 
 fun claset_rules_core

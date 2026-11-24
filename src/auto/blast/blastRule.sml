@@ -719,7 +719,7 @@ fun remember (Cache {entries, next_stamp, ...}) key safe vars formula rules =
     entries := Redblackmap.insert (!entries, key, entry :: values)
   end
 
-fun query_skeleton_measured checkpoint formula =
+fun query_skeleton_measured checkpoint normalize need_distinct_query formula =
   let
     val goal = isGoal formula
     val body = if goal then rand formula else formula
@@ -836,8 +836,8 @@ fun query_skeleton_measured checkpoint formula =
     let
       val static = build false bool depth body
       val query =
-        if goal then static
-        else build true bool depth (blastTerm.normMeasured checkpoint body)
+        if goal orelse not need_distinct_query then static
+        else build true bool depth (normalize body)
     in
       (* Rigid goal types decode to named type variables; only the
          generated ones stand for type metas. *)
@@ -880,33 +880,45 @@ fun isVarForm (Var _) = true
       name = {Thy = "bool", Name = "~"}
   | isVarForm _ = false
 
-fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
+fun candidatesMeasured ({checkpoint, ...} : monitor) measured
+      claset safe formula =
   if not (isGoal formula) andalso isVarForm formula then []
   else
     let
+      val first =
+        if safe then clasetLib.safe0_part claset
+        else clasetLib.unsafe_part claset
+      val normalize =
+        if measured then blastTerm.normMeasured checkpoint
+        else blastTerm.norm
+      (* Only the safe zero-premise partition can hold constructor clashes.
+         Keep the second traversal's original checkpoints when measured. *)
       val (query, distinct_query) =
-        query_skeleton_measured checkpoint formula
-      fun intros part =
-        clasetLib.unify_intro_candidates_measured checkpoint part query
-      fun elims part =
-        clasetLib.unify_elim_candidates_with
-          {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
-          part query distinct_query
-      val tagged =
-        if safe then
-          if isGoal formula then
-            appendMeasured checkpoint
-              (intros (clasetLib.safe0_part claset))
-              (intros (clasetLib.safep_part claset))
-          else
-            appendMeasured checkpoint
-              (elims (clasetLib.safe0_part claset))
-              (elims (clasetLib.safep_part claset))
-        else if isGoal formula then
-          intros (clasetLib.unsafe_part claset)
-        else elims (clasetLib.unsafe_part claset)
+        query_skeleton_measured checkpoint normalize
+          (measured orelse clasetLib.has_distinct_rules first) formula
+      val select =
+        if isGoal formula then
+          fn part =>
+            clasetLib.unify_intro_candidates_measured checkpoint part query
+        else
+          fn part =>
+            clasetLib.unify_elim_candidates_with
+              {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
+              part query distinct_query
+      val initial = select first
+      val order = clasetRules.candidate_order_measured checkpoint
     in
-      clasetRules.candidate_order_measured checkpoint tagged
+      (* Individual partitions are already ordered. Keep the final sort
+         for measured lookups and when joining two nonempty partitions. *)
+      if safe then
+        let val later = select (clasetLib.safep_part claset)
+        in
+          if not measured andalso null initial then later
+          else if not measured andalso null later then initial
+          else order (appendMeasured checkpoint initial later)
+        end
+      else if measured then order initial
+      else initial
     end
 
 (* Rule variables are assigned destructively and off-trail by unify.  Keep
@@ -1086,7 +1098,7 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
         else copyRulesWith checkpoint measured cache vars formula true rules
     | (primary, NONE) =>
         let
-          val tagged = candidatesMeasured monitor claset safe formula
+          val tagged = candidatesMeasured monitor measured claset safe formula
           val _ =
             if measured then
               appMeasured checkpoint (fn _ => candidate ()) tagged
