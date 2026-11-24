@@ -4629,13 +4629,33 @@ let
     | NONE => die "indexed ambiguity script lost BitVec variable w"
   val word8 = wordsSyntax.mk_word_type
     (fcpLib.index_type (Arbnum.fromInt 8))
+  fun check_extract indices other =
+    ignore (SmtLib_Parser.typecheck_script_string
+      ("(set-logic QF_BV)\n" ^
+       "(declare-const w (_ BitVec 8))\n" ^
+       "(assert (= ((_ extract " ^ indices ^ ") w) " ^ other ^ "))\n"))
 in
   assert (Term.type_of assertion = Type.bool,
     "indexed extract ambiguity pin did not produce Bool");
   assert (Type.compare (Term.type_of w, word8) = EQUAL,
     "(_ BitVec 8) no longer denotes the expected word sort");
   assert (not (#apply_operator_used (#surface_flags state)),
-    "indexed identifiers were misclassified as the _ apply operator")
+    "indexed identifiers were misclassified as the _ apply operator");
+  check_extract "7 0" "w";
+  check_extract "7 7" "#b0";
+  expect_hol_error_contains "extract with reversed indices"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "3 5" "w");
+  expect_hol_error_contains "extract above the operand width"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "8 1" "w");
+  expect_hol_error_contains "extract with a negative upper index"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => ignore (SmtLib_Parser.typecheck_script_string
+      "(set-logic QF_BV)\n(assert (= ((_ extract -1 0) #b1) #b1))\n"));
+  expect_hol_error_contains "extract with a negative lower index"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "0 -1" "#b00")
 end
 
 fun smtlib_indexed_metadata_after_reset () =
@@ -6271,6 +6291,11 @@ end
 
 fun smtlib_set_dialect_builders_success () =
 let
+  val neutral_options = {
+    dict_logic = NONE,
+    solver = NONE,
+    elaborate_datatypes = false
+  }
   val z3_options = {
     dict_logic = NONE,
     solver = SOME "Z3",
@@ -6333,14 +6358,10 @@ let
           String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
         label ^ " retained an smtlib_* placeholder")
     end
-  fun reject options label text =
-    let
-      val rejected =
-        ((ignore (typecheck options text); false)
-         handle Feedback.HOL_ERR _ => true)
-    in
-      assert (rejected, label ^ " was accepted in the wrong dialect")
-    end
+  fun rejection_message options label text =
+    (ignore (typecheck options text); die (label ^ " was accepted"))
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  fun reject options label text = ignore (rejection_message options label text)
   val filter_x = Term.mk_var ("set_filter_x", intSyntax.int_ty)
   val all_x = Term.mk_var ("set_all_x", intSyntax.int_ty)
   val some_x = Term.mk_var ("set_some_x", intSyntax.int_ty)
@@ -6350,6 +6371,27 @@ let
     "(declare-const s (Set Int))\n" ^
     "(assert (set.member 0 s))\n" ^
     "(check-sat)\n"
+  val legacy_intersection_script =
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(assert (= (set.intersect s s) s))\n"
+  fun reject_mixed_nested_sorts operator =
+    let
+      val application = "(" ^ operator ^ " ss sa)"
+      val body =
+        if operator = "set.subset" then application
+        else "(= " ^ application ^ " ss)"
+      val message = rejection_message neutral_options operator
+        ("(set-logic ALL)\n\
+         \(declare-const ss (Set (Set Int)))\n\
+         \(declare-const sa (Set (Array Int Bool)))\n\
+         \(assert " ^ body ^ ")\n")
+    in
+      assert (contains (operator ^ " arguments must have the same surface sort")
+        message, operator ^ " had the wrong diagnostic: " ^ message)
+    end
+  val declared_intersection = Term.mk_var ("set.intersect",
+    Type.--> (intSyntax.int_ty, Type.bool))
   val cvc5_state = typecheck cvc5_options cvc5_script
   val finite_hypotheses =
     case #queries cvc5_state of
@@ -6409,6 +6451,46 @@ in
        s));
   assert_builder "cvc5 set.inter" cvc5_options "(= (set.inter s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "neutral legacy set.intersect" neutral_options
+    "(= (set.intersect s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "neutral n-ary legacy set.intersect" neutral_options
+    ("(= (ite true (set.intersect bs (set.singleton true) " ^
+     "(as set.empty (Set Bool))) bs) bs)")
+    (boolSyntax.mk_eq (boolSyntax.mk_cond (boolSyntax.T,
+       pred_setSyntax.mk_inter (pred_setSyntax.mk_inter
+         (bs, pred_setSyntax.mk_insert (boolSyntax.T, bool_empty)), bool_empty),
+       bs), bs));
+  reject neutral_options "neutral legacy set.intersect with Array operand"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(declare-const a (Array Int Bool))\n\
+     \(assert (= (set.intersect s a) s))\n";
+  reject neutral_options "legacy set.intersect with mixed element sorts"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(declare-const b (Set Bool))\n\
+     \(assert (= (set.intersect s b) s))\n";
+  reject neutral_options "unary legacy set.intersect"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(assert (= (set.intersect s) s))\n";
+  List.app reject_mixed_nested_sorts
+    ["set.inter", "set.intersect", "set.union", "set.minus", "set.subset"];
+  let
+    val state = typecheck neutral_options
+      "(set-logic ALL)\n\
+       \(declare-fun set.intersect (Int) Bool)\n\
+       \(assert (set.intersect 0))\n"
+  in
+    case #assertions state of
+      [tm] => assert
+        (Term.aconv tm (Term.mk_comb (declared_intersection, zero)),
+         "neutral set.intersect did not resolve its declared signature")
+    | _ => die "declared set.intersect test did not produce one assertion"
+  end;
+  reject cvc5_options "cvc5 legacy set.intersect" legacy_intersection_script;
+  reject z3_options "Z3 legacy set.intersect" legacy_intersection_script;
   assert_builder "cvc5 set.minus" cvc5_options "(= (set.minus s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_diff (s, t), s));
   assert_builder "cvc5 set.subset" cvc5_options "(set.subset s t)"

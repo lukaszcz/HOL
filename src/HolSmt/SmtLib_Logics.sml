@@ -1223,23 +1223,42 @@ in
         dictionaries
     end
 
+  (* The neutral reader also accepts this historical input spelling. *)
+  val neutral_term_aliases = [("set.intersect", "set.inter")]
+
+  fun neutral_term_spelling terms name =
+    case List.find (fn (alias, _) => alias = name) neutral_term_aliases of
+      SOME (_, canonical) =>
+        if Option.isSome (Redblackmap.peek (terms, name)) then canonical
+        else name
+    | NONE => name
+
   (* The source parser is intentionally usable without a solver target for
      corpus/typecheck inspection.  Such a caller gets the union of the two
      non-conflicting dialect dictionaries; solver-facing callers must use the
      selector above and therefore retain dialect rejection. *)
   fun parsedicts_of_any_solver_logic logic =
-    if String.isPrefix "HO_" logic then
-      (* HO_* is cvc5-only, so do not let Z3's dialect guard prevent
-         solver-neutral parsing of its dictionaries. *)
-      parsedicts_of_solver_logic "cvc5" logic
-    else
-      let
-        val z3 = parsedicts_of_solver_logic "Z3" logic
-        val cvc5 = parsedicts_of_solver_logic "cvc5" logic
-      in
-        (union_dicts [Lib.fst z3, Lib.fst cvc5],
-         union_dicts [Lib.snd z3, Lib.snd cvc5])
-      end
+    let
+      val (types, terms) =
+        if String.isPrefix "HO_" logic then
+          (* HO_* is cvc5-only. *)
+          parsedicts_of_solver_logic "cvc5" logic
+        else
+          let
+            val (z3_tys, z3_terms) = parsedicts_of_solver_logic "Z3" logic
+            val (cvc5_tys, cvc5_terms) =
+              parsedicts_of_solver_logic "cvc5" logic
+          in
+            (union_dicts [z3_tys, cvc5_tys],
+             union_dicts [z3_terms, cvc5_terms])
+          end
+      fun add_alias ((alias, canonical), dict) =
+        case Redblackmap.peek (terms, canonical) of
+          SOME parsers => Redblackmap.insert (dict, alias, parsers)
+        | NONE => dict
+    in
+      (types, List.foldl add_alias terms neutral_term_aliases)
+    end
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =

@@ -5423,6 +5423,10 @@ local
   and apply_symbol fn_name context loc (tydict, tmdict, sigdict)
       name indices args =
     let
+      val builtin =
+        if #solver context = NONE then
+          SmtLib_Logics.neutral_term_spelling tmdict name
+        else name
       fun arity_mismatch symbol expected actual =
         type_error fn_name context loc NONE NONE
           ("ArraysEx " ^ symbol ^ " arity mismatch: expected " ^
@@ -5437,7 +5441,7 @@ local
       fun check_array_builtin arg_sorts =
         if not (List.null indices) then ()
         else
-          case (name, arg_sorts) of
+          case (builtin, arg_sorts) of
             ("select", [array_sort, index_sort]) =>
               let val (expected_index, _) =
                     valOf (array_dom_rng "select" array_sort)
@@ -5483,8 +5487,6 @@ local
               MapSort _ => ()
             | _ => type_error fn_name context loc NONE NONE
                 (operator ^ " requires a function sort")
-          fun require_set_args operator surfaces =
-            List.app (require_set operator) surfaces
           val surfaces = List.map checked_surface_sort args
           fun require_same_surfaces operator surfaces =
             case surfaces of
@@ -5493,16 +5495,19 @@ local
                 if List.all (dialect_sorts_equivalent surface) rest then ()
                 else type_error fn_name context loc NONE NONE
                   (operator ^ " arguments must have the same surface sort")
+          fun require_set_args surfaces =
+            (List.app (require_set name) surfaces;
+             require_same_surfaces name surfaces)
           fun check_sets () =
-            case (name, surfaces) of
+            case (builtin, surfaces) of
               ("set.member", [_ , set]) => require_set "set.member" set
             | ("set.insert", _ :: rest) =>
                 (case List.rev rest of set :: _ =>
                    require_set "set.insert" set | [] => ())
-            | ("set.union", sets) => require_set_args "set.union" sets
-            | ("set.inter", sets) => require_set_args "set.inter" sets
-            | ("set.minus", sets) => require_set_args "set.minus" sets
-            | ("set.subset", sets) => require_set_args "set.subset" sets
+            | ("set.union", sets) => require_set_args sets
+            | ("set.inter", sets) => require_set_args sets
+            | ("set.minus", sets) => require_set_args sets
+            | ("set.subset", sets) => require_set_args sets
             | ("set.complement", [set]) => require_set "set.complement" set
             | ("set.choose", [set]) => require_set "set.choose" set
             | ("set.card", [set]) => require_set "set.card" set
@@ -5523,7 +5528,7 @@ local
         in
           if not (List.null indices) then () else
           (check_sets ();
-          (case name of
+          (case builtin of
              "=" => require_same_surfaces "=" surfaces
            | "distinct" => require_same_surfaces "distinct" surfaces
            | "seq.++" => require_same_surfaces "seq.++" surfaces
@@ -5542,7 +5547,7 @@ local
            | "seq.replace_all" => require_same_surfaces "seq.replace_all"
                surfaces
            | _ => ());
-          case (name, surfaces) of
+          case (builtin, surfaces) of
             ("select", [set_surface, actual_index]) =>
               if is_bag_surface set_surface then
                 type_error fn_name context loc NONE NONE
@@ -5619,7 +5624,7 @@ local
           MapSort (_, range) => terminal_map_surface range
         | _ => surface
       fun result_surface_sort sort =
-        case (name, args) of
+        case (builtin, args) of
           ("set.filter", _ :: set :: _) => checked_surface_sort set
         | ("bag.filter", _ :: bag :: _) => checked_surface_sort bag
         | ("set.map", map :: _) =>
@@ -5700,7 +5705,7 @@ local
                val _ = check_array_builtin arg_sorts
                val _ = check_surface_builtin ()
                val t =
-                 (case (name, args) of
+                 (case (builtin, args) of
                     ("select", [set_tm, element]) =>
                       if is_set_surface (checked_surface_sort set_tm) andalso
                          #solver context <> SOME "cvc5" then
@@ -5741,7 +5746,7 @@ local
                         | _ => true)
                    | _ => false
                in
-                 if name = "set.comprehension" andalso
+                 if builtin = "set.comprehension" andalso
                     #solver context = SOME "cvc5" andalso
                     not (List.all (finite_binder o checked_surface_sort) args)
                  then type_error fn_name context loc NONE NONE

@@ -360,12 +360,17 @@ in
      sort elaborator may preserve decimal indices as Num terms; accept both.
      An index that is neither form is genuinely symbolic. *)
   fun natural_of_index n_tm =
-    (Arbint.toNat (intSyntax.int_of_term n_tm)
-     handle Feedback.HOL_ERR _ => numSyntax.dest_numeral n_tm)
-    handle Feedback.HOL_ERR _ =>
-      raise ERR "natural_of_index"
-        ("numeric index expected, but '" ^ Hol_pp.term_to_string n_tm ^
-         "' found")
+    case (SOME (intSyntax.int_of_term n_tm)
+          handle Feedback.HOL_ERR _ => NONE) of
+      SOME n =>
+        if Arbint.< (n, Arbint.zero) then
+          raise ERR "natural_of_index" "index must be non-negative"
+        else Arbint.toNat n
+    | NONE => (numSyntax.dest_numeral n_tm
+        handle Feedback.HOL_ERR _ =>
+          raise ERR "natural_of_index"
+            ("numeric index expected, but '" ^ Hol_pp.term_to_string n_tm ^
+             "' found"))
 
   fun word_index_type n_tm =
     fcpLib.index_type (natural_of_index n_tm)
@@ -1852,6 +1857,26 @@ in
   structure Fixed_Size_BitVectors =
   struct
 
+    fun extract (high, low) word =
+      let
+        fun index tm = natural_of_index tm
+          handle Feedback.HOL_ERR error =>
+            decline "extract" (Feedback.message_of error)
+        val hi = index high
+        val lo = index low
+        val _ = Arbnum.<= (lo, hi) orelse
+          decline "extract" "lower index exceeds upper index"
+        val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+          handle Feedback.HOL_ERR _ =>
+            decline "extract" "operand must have a fixed bit-vector width"
+        val _ = Arbnum.< (hi, width) orelse
+          decline "extract" "upper index is outside the operand width"
+        val result_dim = fcpLib.index_type (Arbnum.plus1 (Arbnum.- (hi, lo)))
+      in
+        wordsSyntax.mk_word_extract
+          (numSyntax.mk_numeral hi, numSyntax.mk_numeral lo, word, result_dim)
+      end
+
     val tyentries = [
       official_entry "BitVec" (indexed_attributes ["m"])
         ["((_ BitVec m) 0)"] (K_one_zero
@@ -1891,15 +1916,7 @@ in
         (K_zero_two wordsSyntax.mk_word_concat),
       official_entry "extract" (indexed_attributes ["i", "j"])
         ["((_ extract i j) (_ BitVec m) (_ BitVec (- i j -1)))"]
-        (K_two_one (fn (m_tm, n_tm) =>
-        let
-          val (m, n) = Lib.pair_map (Arbint.toNat o intSyntax.int_of_term)
-            (m_tm, n_tm)
-          val index_type = fcpLib.index_type (Arbnum.plus1 (Arbnum.- (m, n)))
-          val (m, n) = Lib.pair_map numSyntax.mk_numeral (m, n)
-        in
-          fn t => wordsSyntax.mk_word_extract (m, n, t, index_type)
-        end)),
+        (K_two_one extract),
       extension_entry "cvc5" "@bit_of" (indexed_attributes ["i"])
         ["cvc5 proof term: ((_ @bit_of i) (_ BitVec m) Bool)"]
         (K_one_one (fn n => fn t =>
