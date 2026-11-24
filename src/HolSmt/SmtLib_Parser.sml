@@ -5056,21 +5056,15 @@ local
   datatype checked_sort_tree =
     CheckedSort of Type.hol_type * checked_sort_tree list
 
-  fun index_term_from_ast_with_options elaborate_datatypes context
-      (tydict, tmdict, sigdict) term_ast =
+  fun index_term_from_ast check term_ast =
     case node_of term_ast of
       TermIdentifier token =>
         (index_numeral_term token
          handle Feedback.HOL_ERR _ =>
-           ((checked_term o
-               typecheck_term_with_options elaborate_datatypes context
-                 (tydict, tmdict, sigdict)) term_ast
+           (checked_term (check ())
             handle Feedback.HOL_ERR _ =>
               Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
-    | _ =>
-        checked_term
-          (typecheck_term_with_options elaborate_datatypes context
-            (tydict, tmdict, sigdict) term_ast)
+    | _ => checked_term (check ())
 
   and typecheck_sort context tydict sort_ast =
     typecheck_sort_with (List.map (typecheck_sort context tydict))
@@ -6101,8 +6095,6 @@ local
     let
       val (tydict, tmdict, sigdict) = env
       fun check t = typecheck_term_with_options elaborate_datatypes context env t
-      fun check_index t =
-        index_term_from_ast_with_options elaborate_datatypes context env t
       fun apply_operator loc operator head args =
         if not (apply_operator_available context operator) then
           type_error "typecheck_term" context loc NONE NONE
@@ -6138,39 +6130,61 @@ local
 
       fun indexed_or_apply loc name indices outer_args =
         let
-          val indexed_result =
+          val symbol = located_string_node name
+          fun indexed check_indices check_args =
             if List.null indices then
               raise ERR "typecheck_term"
                 "indexed identifier requires at least one index"
             else
-              apply_symbol "typecheck_term" context loc env
-                (located_string_node name) (List.map check_index indices)
-                (List.map check outer_args)
+              let
+                val indices = check_indices ()
+                val arguments = check_args ()
+              in
+                apply_symbol "typecheck_term" context loc env
+                  symbol indices arguments
+              end
         in
-          indexed_result
-        end
-        handle original as Feedback.HOL_ERR _ =>
-          if indexed_term_family context (located_string_node name) orelse
-             located_string_node name = "is" then
-            raise original
+          if symbol = "is" orelse indexed_term_family context symbol then
+            indexed (fn () => List.map (fn term =>
+              index_term_from_ast (fn () => check term) term) indices)
+              (fn () => List.map check outer_args)
           else
-            (case Lib.total
-                (fn () =>
-                  apply_symbol "typecheck_term" context (loc_of name) env
-                    (located_string_node name) [] []) () of
-             SOME head =>
-               if (case checked_surface_sort head of MapSort _ => true
-                   | _ => false) then
-                 let
-                   val explicit = apply_operator loc "_" head
-                     (List.map check indices)
-                 in
-                   apply_checked_args "typecheck_term" context loc
-                     "higher-order application" explicit
-                     (List.map check outer_args)
-                 end
-               else raise original
-           | NONE => raise original)
+            let
+              (* The two interpretations share ordinary operand elaboration.
+                 Index numerals still use the index-specific representation. *)
+              fun defer term =
+                let
+                  val result = Susp.delay (fn () =>
+                    Exn.Res (check term)
+                    handle error as Feedback.HOL_ERR _ => Exn.Exn error)
+                in fn () => Exn.release (Susp.force result) end
+              val checked_indices = List.map defer indices
+              val checked_args = List.map defer outer_args
+              fun force_args () = List.map (fn force => force ()) checked_args
+              fun force_indices () =
+                ListPair.mapEq (fn (term, force) =>
+                  index_term_from_ast force term) (indices, checked_indices)
+            in
+              indexed force_indices force_args
+              handle original as Feedback.HOL_ERR _ =>
+                (case Lib.total
+                    (fn () =>
+                      apply_symbol "typecheck_term" context (loc_of name) env
+                        symbol [] []) () of
+                   SOME head =>
+                     if (case checked_surface_sort head of MapSort _ => true
+                         | _ => false) then
+                       let
+                         val explicit = apply_operator loc "_" head
+                           (List.map (fn force => force ()) checked_indices)
+                       in
+                         apply_checked_args "typecheck_term" context loc
+                           "higher-order application" explicit (force_args ())
+                       end
+                     else raise original
+                 | NONE => raise original)
+            end
+        end
 
       fun z3_or_neutral () =
         case #solver context of SOME "cvc5" => false | _ => true

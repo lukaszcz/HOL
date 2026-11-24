@@ -312,12 +312,14 @@ local
       callback_case NONE "SAT -1 -2 0\n" NONE NONE GEN_SAT
         (fn Exn.Exn satTools.satCheckError => true | _ => false))
 
-  val _ = control "SAT model checking keeps the last equality for an atom"
+  val _ = control "SAT model checking handles duplicate and nested atoms"
     (fn () =>
       let
         val first = ``(f : (bool -> bool) -> bool) (\x. x)``
         val second = ``(f : (bool -> bool) -> bool) (\y. y)``
         val negative = mk_neg second
+        val inner = ``~(p:bool)``
+        val outer = ``(g:bool -> bool) p``
         fun checks model goal =
             let val th = satTools.satCheck model goal
             in null (hyp th) andalso
@@ -325,7 +327,8 @@ local
             end
       in checks [first, second] first andalso
          checks [first, negative] (mk_neg first) andalso
-         checks [negative, first] second
+         checks [negative, first] second andalso
+         checks [inner, outer] (mk_conj (outer,inner))
       end)
 
   val _ = control "SAT observation scopes retire on failure and reject reentry"

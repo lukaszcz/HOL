@@ -4592,6 +4592,28 @@ in
     "apply lost map provenance or existing Int-to-Real coercions")
 end
 
+fun smtlib_apply_deep_underscore_success () =
+let
+  fun check operator =
+    let
+      val nested =
+        String.concat (List.tabulate (25, fn _ => "(" ^ operator ^ " f ") @
+          ("0" :: List.tabulate (25, fn _ => ")")))
+    in
+      SmtLib_Parser.typecheck_script_string
+        ("(set-logic ALL)\n" ^
+         "(declare-const f (-> Int Int))\n" ^
+         "(assert (= " ^ nested ^ " 0))\n")
+    end
+  val state = check "_"
+  val expected = check "@"
+in
+  assert (Term.aconv (hd (#assertions state)) (hd (#assertions expected)),
+    "deep underscore applications differ from explicit @ applications");
+  assert (#apply_operator_used (#surface_flags state),
+    "nested apply operator surface event was not recorded")
+end
+
 fun smtlib_apply_indexed_ambiguity_success () =
 let
   val state = SmtLib_Parser.typecheck_script_string
@@ -21308,6 +21330,37 @@ in
     "CPC canonical rung did not discharge the hypothesis")
 end
 
+fun cpc_canonical_rung_indexed_hypotheses () =
+let
+  val domain = intSyntax.int_ty
+  fun equation suffix =
+    let
+      val ty = Type.--> (domain, domain)
+      val left = Term.mk_var ("left" ^ suffix, ty)
+      val right = Term.mk_var ("right" ^ suffix, ty)
+      val arg = Term.mk_var ("arg", domain)
+      val eta_left = Term.mk_abs (arg, Term.mk_comb (left, arg))
+    in
+      (boolSyntax.mk_eq (right, left), boolSyntax.mk_eq (left, right),
+       boolSyntax.mk_eq (eta_left, right))
+    end
+  val first as (hyp1, _, _) = equation "1"
+  val second as (hyp2, _, _) = equation "2"
+  (* Visit the last source first, then look up a source already indexed. *)
+  val ((early, early_source, _), (late, late_source, late_duplicate)) =
+    if Term.compare (hyp1, hyp2) = LESS then (first, second)
+    else (second, first)
+  val input = Thm.CONJ (Thm.ASSUME early) (Thm.ASSUME late)
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([late_source, late_duplicate, early_source], boolSyntax.F, input)
+in
+  check_oracle_tags "CPC indexed canonical hypotheses" theorem;
+  assert (Term.aconv (Thm.concl theorem) (Thm.concl input) andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset, [early_source, late_source])),
+    "CPC canonical lookup lost a source or selected a later duplicate")
+end
+
 (* An extra hypothesis that only a proof from the whole context discharges. *)
 fun cpc_context_proof_hypothesis_success () =
 let
@@ -34708,6 +34761,15 @@ let
   fun prod (left, right) = Type.mk_type ("prod", [left, right])
   val funs = shared Type.--> 40
   val prods = shared prod 40
+  fun fibonacci 0 (current, _) = current
+    | fibonacci n (current, previous) =
+        fibonacci (n - 1) (Type.--> (current, previous), current)
+  val shared_funs = fibonacci 40 (Type.bool, Type.alpha)
+  val visits = ref 0
+  val has_feature = Library.type_contains_pure (fn _ =>
+    (visits := !visits + 1;
+     assert (!visits <= 84, "pure type traversal revisited shared arguments");
+     false)) shared_funs
   val fp = ``:smt_rounding``
   fun false_flag () = false
   val state : SmtLib.outbound_feature_state =
@@ -34737,8 +34799,10 @@ in
   assert (has_fp (prod (Type.bool, fp))
       andalso within_mutator_seconds 2 has_fp (Type.--> (funs, fp))
       andalso not (within_mutator_seconds 2 has_fp funs)
+      andalso not (within_mutator_seconds 2 has_fp shared_funs)
       andalso not (has_fp Type.alpha),
     "datatype traversal changed its floating-point feature");
+  assert (not has_feature, "pure type traversal found an absent feature");
   assert (!calls = 3, "generic type_contains skipped an occurrence")
 end
 
@@ -40765,6 +40829,8 @@ let
       smtlib_lambda_surface_syntax_hygiene),
     ("smtlib_apply_operators_success",
       smtlib_apply_operators_success),
+    ("smtlib_apply_deep_underscore_success",
+      smtlib_apply_deep_underscore_success),
     ("smtlib_apply_indexed_ambiguity_success",
       smtlib_apply_indexed_ambiguity_success),
     ("smtlib_indexed_metadata_after_reset",
@@ -41174,6 +41240,8 @@ let
       cpc_context_proof_hypothesis_success),
     ("cpc_canonical_rung_hypothesis_success",
       cpc_canonical_rung_hypothesis_success),
+    ("cpc_canonical_rung_indexed_hypotheses",
+      cpc_canonical_rung_indexed_hypotheses),
     ("smt_replay_canon_transport_hypothesis",
       smt_replay_canon_transport_hypothesis),
     ("cpc_arrays_select_const_set_success",

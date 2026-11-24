@@ -1393,17 +1393,9 @@ local
   fun type_is_binary_ieee_float ty =
     type_has_name "binary_ieee" "float" ty
   fun type_contains_fp ty =
-    let
-      fun visit ty = type_is_smtfp ty orelse
-        ((case #2 (Type.dest_type ty) of
-           [] => false
-         | first :: rest => visit first orelse remaining first rest)
-         handle Feedback.HOL_ERR _ => false)
-      and remaining _ [] = false
-        | remaining previous (child :: rest) =
-            (not (Portable.pointer_eq (previous, child)) andalso visit child)
-            orelse remaining child rest
-    in visit ty end
+    Library.type_contains_pure_with
+      (fn ty => #2 (Type.dest_type ty) handle Feedback.HOL_ERR _ => [])
+      type_is_smtfp ty
   (* smtstr only, which is exactly the set of types that 'builtin_types' maps
      to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
@@ -2927,10 +2919,6 @@ local
 
   fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
 
-  fun member_type ty tys = List.exists (fn ty' => same_type (ty, ty')) tys
-
-  fun add_type ty tys = if member_type ty tys then tys else ty :: tys
-
   fun free_datatype_tyinfo tyinfo =
     not (List.null (TypeBasePure.constructors_of tyinfo)) andalso
     Lib.can TypeBasePure.nchotomy_of tyinfo andalso
@@ -2965,8 +2953,14 @@ local
     in
       case Lib.get_first (Lib.total instantiate) patterns of
         SOME family =>
-          List.rev (List.foldl (fn (fam_ty, acc) => add_type fam_ty acc)
-            [] family)
+          let
+            fun add (ty, (seen, types)) =
+              if Redblackset.member (seen, ty) then (seen, types)
+              else (Redblackset.add (seen, ty), ty :: types)
+          in
+            List.rev (#2 (List.foldl add
+              (Redblackset.empty Type.compare, []) family))
+          end
       | NONE => raise ERR "datatype_family_types" "no matching family member"
     end
 
@@ -4271,37 +4265,41 @@ local
   and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
-    | SOME _ =>
+    | SOME initial_family =>
       let
         fun constructor_doms ty = List.concat (List.map
           (Lib.fst o boolSyntax.strip_fun o Term.type_of o
            TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
-        fun known ty types = member_type ty types orelse
+        fun known ty seen = Redblackset.member (seen, ty) orelse
           Option.isSome (Redblackmap.peek (tydict, ty))
         (* A nested container can refer back to its parent datatype without
            appearing in the parent's induction theorem. Collect the whole
            dependency closure before partitioning its recursive components. *)
-        fun collect (ty, types) =
-          if known ty types then types
+        fun collect (ty, acc as (seen, _)) =
+          if known ty seen then acc
           else if !current_native_sequence_emission andalso
                   is_native_sequence_type ty then
-            collect (listSyntax.dest_list_type ty, types)
+            collect (listSyntax.dest_list_type ty, acc)
           else if is_function_type ty then
             let val (dom, rng) = Type.dom_rng ty
-            in collect (rng, collect (dom, types)) end
-          else if has_type_builtin ty then types
+            in collect (rng, collect (dom, acc)) end
+          else if has_type_builtin ty then acc
           else case datatype_family ty of
-            NONE => types
-          | SOME family =>
-              let
-                val fresh = List.filter (fn ty => not (known ty types)) family
-                val types = List.foldl (fn (ty, acc) => add_type ty acc)
-                  types fresh
-              in
-                List.foldl (fn (ty, acc) =>
-                  List.foldl collect acc (constructor_doms ty)) types fresh
-              end
-        val family = List.rev (collect (ty, []))
+            NONE => acc
+          | SOME family => collect_family family acc
+        and collect_family family (seen, entries_rev) =
+          let
+            val fresh = List.filter (fn ty => not (known ty seen)) family
+            val entries = List.map (fn ty => (ty, constructor_doms ty)) fresh
+            val seen = Redblackset.addList (seen, fresh)
+          in
+            List.foldl
+              (fn ((_, fields), acc) => List.foldl collect acc fields)
+              (seen, List.revAppend (entries, entries_rev)) entries
+          end
+        val (family_set, family_rev) =
+          collect_family initial_family (Redblackset.empty Type.compare, [])
+        val family = List.rev family_rev
         fun field_dependencies ty =
           if !current_native_sequence_emission andalso
              is_native_sequence_type ty then
@@ -4309,15 +4307,15 @@ local
           else if is_function_type ty then
             let val (dom, rng) = Type.dom_rng ty
             in field_dependencies dom @ field_dependencies rng end
-          else if member_type ty family then [ty]
+          else if Redblackset.member (family_set, ty) then [ty]
           else []
-        val graph = List.foldl (fn (ty, graph) =>
+        val graph = List.foldl (fn ((ty, _), graph) =>
           DatatypeGraph.new_node (ty, ()) graph) DatatypeGraph.empty family
-        fun add_dependencies (ty, graph) =
+        fun add_dependencies ((ty, fields), graph) =
           List.foldl (fn (field, graph) =>
             List.foldl (fn (dependency, graph) =>
               DatatypeGraph.add_edge (dependency, ty) graph) graph
-              (field_dependencies field)) graph (constructor_doms ty)
+              (field_dependencies field)) graph fields
         val components = DatatypeGraph.strong_conn
           (List.foldl add_dependencies graph family)
         (* Most stems need only a direct probe. Once suffixes also collide,
@@ -4325,23 +4323,22 @@ local
         val used_names = Susp.delay (fn () => Redblackmap.foldl
           (fn (_, name, names) => Redblackset.add (names, name))
           (Redblackset.empty String.compare) tydict)
-        fun add_name (fam_ty, used) =
+        fun add_name ((fam_ty, _), (used, dict)) =
           let
             fun unavailable (suffix, name) =
               is_smt_reserved smt_reserved_type_names name orelse
-              List.exists (Lib.equal name) used orelse
+              Redblackset.member (used, name) orelse
               (if suffix < 2 then Redblackmap.exists (Lib.equal name) tydict
                else Redblackset.member (Susp.force used_names, name))
             val name =
               fresh_smt_name_avoiding unavailable (type_name_stem fam_ty)
           in
-            name :: used
+            (Redblackset.add (used, name),
+             Redblackmap.insert (dict, fam_ty, name))
           end
-        val names = List.rev (List.foldl add_name [] family)
-        val tydict_with_family = ListPair.foldlEq
-          (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
-          tydict (family, names)
-        fun translate_constructor_doms (fam_ty, acc) =
+        val (_, tydict_with_family) = List.foldl add_name
+          (Redblackset.empty String.compare, tydict) family
+        fun translate_constructor_doms ((_, fields), acc) =
           let
             fun translate_dom (dom, (dict, decls_rev, sorts)) =
               let
@@ -4352,7 +4349,7 @@ local
                  Redblackmap.insert (sorts, dom, sort))
               end
           in
-            List.foldl translate_dom acc (constructor_doms fam_ty)
+            List.foldl translate_dom acc fields
           end
         val (tydict, dependency_decls_rev, field_sorts) =
           List.foldl translate_constructor_doms

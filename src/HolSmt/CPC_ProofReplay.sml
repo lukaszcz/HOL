@@ -22062,34 +22062,79 @@ local
       val context = boolSyntax.mk_neg g :: asl
       val expected = HOLset.addList (Term.empty_tmset, context)
       val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
-      fun delay_context prove = Susp.delay (fn () =>
-        List.map (fn assumption => Susp.delay (fn () => prove assumption))
-          context)
+      val reuse_context = HOLset.numItems bad_hyps > 1
+      fun transport hyp_conv assumption =
+        case SmtReplayCanon.transport_hypothesis hyp_conv assumption of
+          SOME theorem => theorem
+        | NONE => raise ERR "remove_extra_hyps"
+            "normalized assumption did not match extra hypothesis"
+      fun index_context prove =
+        if not reuse_context then
+          fn hyp_conv => Lib.tryfind (transport hyp_conv o prove) context
+        else let
+          val sources = Susp.delay (fn () =>
+            List.map (fn assumption => Susp.delay (fn () => prove assumption))
+              context)
+          val pending = ref NONE
+          val indexed = ref (Redblackmap.mkDict Term.compare)
+          fun keep_first (previous, _) = previous
+        in
+          fn hyp_conv =>
+            let
+              val key = boolSyntax.rhs (Thm.concl hyp_conv)
+              fun search remaining = Lib.tryfind
+                (transport hyp_conv o Susp.force) remaining
+              fun use (assumption, rest) =
+                case Lib.total (transport hyp_conv) assumption of
+                  SOME theorem => theorem
+                | NONE => search rest
+              fun extend [] = search []
+                | extend (source :: rest) =
+                  (* Failed suspensions can be retried by the next lookup.
+                     Keep the cursor here and search the remaining sources
+                     in context order for this lookup. *)
+                  case Lib.total Susp.force source of
+                    NONE => search rest
+                  | SOME assumption =>
+                      let
+                        val conclusion = Thm.concl assumption
+                        val entry = (assumption, rest)
+                        val () = indexed := Redblackmap.insertWith keep_first
+                          (!indexed, conclusion, entry)
+                        val () = pending := SOME rest
+                      in
+                        if Term.aconv conclusion key then use entry
+                        else extend rest
+                      end
+            in
+              case Redblackmap.peek (!indexed, key) of
+                SOME entry => use entry
+              | NONE => extend (case !pending of
+                    SOME remaining => remaining
+                  | NONE => Susp.force sources)
+            end
+        end
       (* Match assumptions only after both sides pass through the same proved
          canonical conversion.  In particular, this absorbs cvc5's SMT-LIB
          ceiling-as-negated-floor spelling without a dedicated bridge rung. *)
-      val canonical_context = delay_context
+      val canonical_context = index_context
         (SmtReplayCanon.cpc_canon_rule o Thm.ASSUME)
       fun prove_canonical_hyp hyp =
         let
-          val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
-          fun match assumption =
-            case SmtReplayCanon.transport_hypothesis hyp_canon
-                   (Susp.force assumption) of
-              NONE =>
-                raise ERR "remove_extra_hyps"
-                  "canonical assumption did not match extra hypothesis"
-              | SOME theorem =>
-                  (profile_event "CPC(canon:assumption-interface)"; theorem)
+          val theorem = canonical_context (SmtReplayCanon.cpc_canon_conv hyp)
         in
-          Lib.tryfind match (Susp.force canonical_context)
+          profile_event "CPC(canon:assumption-interface)";
+          theorem
         end
-      val array_set_context = delay_context (fn assumption =>
+      val array_set_context = index_context (fn assumption =>
         Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
           (Thm.ASSUME assumption))
+      val context_contains_array_set_echo = Susp.delay (fn () =>
+        List.exists contains_array_set_echo context)
       fun prove_array_set_hyp hyp =
         let
-          val _ = List.exists contains_array_set_echo (hyp :: context) orelse
+          val _ = contains_array_set_echo hyp orelse
+            Susp.force context_contains_array_set_echo orelse
             raise ERR "remove_extra_hyps" "no array-set echo form"
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
@@ -22100,16 +22145,9 @@ local
             Drule.EQT_ELIM (Conv.QCONV (Conv.EVERY_CONV
               [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
                Rewrite.REWRITE_CONV []]) hyp)
-          fun match assumption =
-            case SmtReplayCanon.transport_hypothesis hyp_eq
-                   (Susp.force assumption) of
-              NONE =>
-                raise ERR "remove_extra_hyps"
-                  "array-set assumption did not match extra hypothesis"
-            | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
-            Lib.tryfind match (Susp.force array_set_context)
+            array_set_context hyp_eq
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),

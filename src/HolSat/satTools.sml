@@ -214,18 +214,18 @@ local
    to keep the last equality for duplicate atoms in large models. *)
 fun substitute_model equalities t =
     let
-      fun placeholder th = let val atom = lhs (concl th)
-                           in atom |-> genvar (type_of atom) end
-      val placeholders = map placeholder equalities
-      val replacements =
-          ListPair.map (fn ({residue,...},th) => residue |-> th)
-            (placeholders,equalities)
-      fun retain (entry as {redex,...},(seen,unique)) =
-          if HOLset.member (seen,redex) then (seen,unique)
-          else (HOLset.add (seen,redex),entry :: unique)
-      val (_,unique) = List.foldl retain (Term.empty_tmset,[])
-                         (List.rev placeholders)
-    in SUBST replacements (mk_eq (t,Term.subst unique t)) (REFL t) end
+      fun retain (th, state as (seen,placeholders,replacements)) =
+          let val atom = lhs (concl th) in
+            if HOLset.member (seen,atom) then state
+            else
+              let val variable = genvar (type_of atom) in
+                (HOLset.add (seen,atom), (atom |-> variable) :: placeholders,
+                 (variable |-> th) :: replacements)
+              end
+          end
+      val (_,placeholders,replacements) =
+          List.foldr retain (Term.empty_tmset,[],[]) equalities
+    in SUBST replacements (mk_eq (t,Term.subst placeholders t)) (REFL t) end
 
 in
 fun satCheck model t =

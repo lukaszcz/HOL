@@ -1399,24 +1399,50 @@ struct
   (*  proof replay)                                                          *)
   (***************************************************************************)
 
+  (* Pure feature tests can reuse recent negative results for shared type
+     arguments. A fixed pointer cache avoids structural comparisons of
+     large types and keeps unshared spines linear. *)
+  fun type_contains_pure_with children pred root =
+    pred root orelse
+    (case children root of
+       [] => false
+     | args =>
+         let
+           (* The root cannot recur as a proper child of a HOL type. *)
+           val newest = ref root
+           val previous = ref root
+           fun visit ty =
+             if Portable.pointer_eq (ty, !newest) orelse
+                Portable.pointer_eq (ty, !previous) then false
+             else pred ty orelse
+               (case children ty of
+                  [] => false
+                | args =>
+                    any args orelse
+                    (previous := !newest; newest := ty; false))
+           and any [] = false
+             | any (first :: rest) = visit first orelse remaining first rest
+           and remaining _ [] = false
+             | remaining prior (child :: rest) =
+                 (not (Portable.pointer_eq (prior, child)) andalso visit child)
+                 orelse remaining child rest
+         in any args end)
+
   (* Does [ty], a function component, or a native sequence element type
      satisfy [pred]? Other arguments, such as word widths, do not contribute
-     features here. The built-in predicates need only test a shared child
-     once. Preserve occurrence-by-occurrence calls for arbitrary predicates. *)
+     features here. Preserve occurrence-by-occurrence calls for arbitrary
+     predicates. *)
   local
-    fun contains skip_duplicate pred root =
-      let
-        fun visit ty = pred ty orelse
-          (case Lib.total Type.dest_type ty of
-             SOME ("fun", [dom, rng]) => visit dom orelse
-               (not (skip_duplicate andalso Portable.pointer_eq (dom, rng))
-                andalso visit rng)
-           | SOME ("list", [element]) => visit element
-           | _ => false)
-      in visit root end
+    fun feature_children ty =
+      case Lib.total Type.dest_type ty of
+        SOME ("fun", args as [_, _]) => args
+      | SOME ("list", args as [_]) => args
+      | _ => []
   in
-  fun type_contains pred ty = contains false pred ty
-  fun type_contains_pure pred ty = contains true pred ty
+  fun type_contains pred =
+    let fun visit ty = pred ty orelse List.exists visit (feature_children ty)
+    in visit end
+  fun type_contains_pure pred = type_contains_pure_with feature_children pred
 
   fun type_contains_int ty =
     type_contains_pure (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
