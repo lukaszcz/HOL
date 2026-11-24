@@ -85548,15 +85548,14 @@ val _ = run_postlude 441 "num-function-arguments" (fn () =>
 
 (* Under SmtLib.drop_untranslatable_assumptions, the checked tactics prove
    a goal past an assumption the translation left out (Z3 has no seq.rev;
-   cvc5's array sets have no card), with a checked theorem of the goal. *)
+   cvc5's array sets have no card), with a checked theorem of the goal; over
+   num, the dropped assumption is one the num-to-int transfer handled. *)
 val _ = run_postlude 442 "drop-untranslatable-replay" (fn () =>
   let
-    val needed = ``(x:int) < y``
-    val conclusion = ``(x:int) <= y``
-    fun prove (name, configured, tac, dropped) =
+    fun prove (name, configured, tac, dropped, needed, conclusion) =
       if not configured then () else
       let
-        val goal = ([``(x:int) < y /\ ^dropped``, needed], conclusion)
+        val goal = ([boolSyntax.mk_conj (needed, dropped), needed], conclusion)
         val _ = testutils.tprint (name ^ " proves past a dropped assumption")
         val thm = Thread_Data.setmp SmtLib.drop_untranslatable_assumptions
           (SOME true) Tactical.TAC_PROOF (goal, tac)
@@ -85570,12 +85569,16 @@ val _ = run_postlude 442 "drop-untranslatable-replay" (fn () =>
            testutils.OK ())
         else testutils.die ("unexpected theorem: " ^ Hol_pp.thm_to_string thm)
       end
+    val int_needed = ``(x:int) < y``
+    val int_conclusion = ``(x:int) <= y``
   in
     List.app prove
       [("Z3_TAC", Z3.is_configured (), HolSmtLib.Z3_TAC,
-        ``REVERSE (xs:int list) = ys``),
+        ``REVERSE (xs:int list) = ys``, int_needed, int_conclusion),
        ("CVC_TAC", CVC.is_configured (), HolSmtLib.CVC_TAC,
-        ``CARD (s:int set) = 3``)]
+        ``CARD (s:int set) = 3``, int_needed, int_conclusion),
+       ("Z3_TAC over num", Z3.is_configured (), HolSmtLib.Z3_TAC,
+        ``REVERSE (xs:num list) = ys``, ``(x:num) < y``, ``(x:num) <= y``)]
   end)
 
 val () =

@@ -6969,7 +6969,8 @@ local
       translate_term regime apply_operator (acc, (bounds, tm))
       handle NestedTranslation e => raise e
     (* Dropping, an assumption that fails to translate leaves the
-       accumulator and the emission cells as they were before it. *)
+       accumulator and the emission cells as they were before it.  No
+       reachable input is known that changes a cell before failing. *)
     fun translate_assumption ((acc, kept, dropped), (original, tm)) =
       let
         val restorers = [
