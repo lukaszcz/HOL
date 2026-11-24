@@ -1022,8 +1022,7 @@ local
 
   val _ = control "ordinary false obligations are never certified"
     (fn () => List.all (fn bytes => with_trace bytes (fn conf =>
-      let val th = GEN_SAT (set_term ``p /\ q`` conf)
-      in not (concl th ~~ ``~(p /\ q)``) andalso null (hyp th) end
+      (GEN_SAT (set_term ``p /\ q`` conf); false)
       handle HOL_ERR _ => true | Domain => true | Subscript => true
            | SAT_cex _ => true))
       [[2,0,0], roots, roots @ forward, roots @ backward])
