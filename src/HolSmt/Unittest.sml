@@ -8553,6 +8553,9 @@ let
   (* refused by Z3, and the goal's only higher-order trigger *)
   val card_lambda = ``CARD (s:int set) = 3 /\ (f = \x:int. x + 1)``
   val applied = ``(f:int -> int) 1 = 2``
+  (* cvc5 refuses a bound function applied to a set *)
+  val bound = ``!set_f:int set -> bool.
+    (if c then set_f else set_g) s /\ (0:int) IN s``
   val needed = ``(x:int) < y``
   val conclusion = ``(x:int) <= y``
   fun refused f goal = not (Lib.can f goal)
@@ -8576,6 +8579,20 @@ in
     "Z3 did not drop exactly the CARD assumption");
   assert (same_as_without cvc card,
     "cvc5 did not drop exactly the CARD assumption");
+  assert (refused cvc ([bound, needed], conclusion),
+    "cvc5 translated a bound function over a Set");
+  (* the bound function makes the regime higher-order, which declares
+     constants with declare-const *)
+  assert (List.filter (String.isPrefix "(assert")
+      (body (dropping cvc ([bound, needed], conclusion))) =
+    List.filter (String.isPrefix "(assert") (body (cvc ([needed], conclusion))),
+    "cvc5 did not drop exactly the bound-function assumption");
+  assert (case SmtLib.sent_goal
+        (Lib.fst (dropping z3 ([reversed, needed], conclusion)))
+        ([reversed, needed], conclusion) of
+      ([kept], _) => Term.aconv kept needed
+    | _ => false,
+    "replay was not given exactly the assumptions sent");
   assert (logic_of (dropping z3) ([card_lambda, applied, needed], conclusion)
     andalso not (logic_of z3 ([applied, needed], conclusion)) andalso
     not (contains "lambda"

@@ -21233,7 +21233,7 @@ in
         {logic = #logic base,regime = #regime base,tydict = #tydict base,
          tmdict = #tmdict base,records = fn () =>
            (calls := !calls+1;W.close (Option.valOf (!held));
-            SmtLib.translation_records base)}
+            SmtLib.translation_records base),dropped = #dropped base}
       val denied = refuses (fn () =>
         SmtCheckedGraph.admit_translation_with_work invocation translation)
       val closed = refuses (fn () => S.owning_scope (Option.valOf (!source)))
@@ -22458,7 +22458,8 @@ in
         {logic = #logic translation,regime = #regime translation,
          tydict = #tydict translation,tmdict = #tmdict translation,
          records = fn () => (calls := !calls+1;
-           SmtLib.translation_records translation)}
+           SmtLib.translation_records translation),
+         dropped = #dropped translation}
       val denied = refusal (fn () => E.describe_for copy goal receipt)
     in ensure "public records callback manufactured declaration authority"
       (denied andalso !calls = 0) end
@@ -85545,9 +85546,41 @@ val _ = run_postlude 441 "num-function-arguments" (fn () =>
        ("CVC_TAC", CVC.is_configured (), HolSmtLib.CVC_TAC)]
   end)
 
+(* Under SmtLib.drop_untranslatable_assumptions, the checked tactics prove
+   a goal past an assumption the translation left out (Z3 has no seq.rev;
+   cvc5's array sets have no card), with a checked theorem of the goal. *)
+val _ = run_postlude 442 "drop-untranslatable-replay" (fn () =>
+  let
+    val needed = ``(x:int) < y``
+    val conclusion = ``(x:int) <= y``
+    fun prove (name, configured, tac, dropped) =
+      if not configured then () else
+      let
+        val goal = ([``(x:int) < y /\ ^dropped``, needed], conclusion)
+        val _ = testutils.tprint (name ^ " proves past a dropped assumption")
+        val thm = Thread_Data.setmp SmtLib.drop_untranslatable_assumptions
+          (SOME true) Tactical.TAC_PROOF (goal, tac)
+      in
+        if Thm.concl thm ~~ conclusion andalso
+           List.all (fn h => List.exists (Term.aconv h) (#1 goal))
+             (Thm.hyp thm)
+        then
+          (Library.check_oracle_tags (Option.getOpt (Thm.getCT (), "-"))
+             "dropped assumption" thm;
+           testutils.OK ())
+        else testutils.die ("unexpected theorem: " ^ Hol_pp.thm_to_string thm)
+      end
+  in
+    List.app prove
+      [("Z3_TAC", Z3.is_configured (), HolSmtLib.Z3_TAC,
+        ``REVERSE (xs:int list) = ys``),
+       ("CVC_TAC", CVC.is_configured (), HolSmtLib.CVC_TAC,
+        ``CARD (s:int set) = 3``)]
+  end)
+
 val () =
   let
-    val expected = 442
+    val expected = 443
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso

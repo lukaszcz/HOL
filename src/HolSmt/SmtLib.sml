@@ -70,7 +70,9 @@ type translation = {
   tmdict : (Term.term * int, string) Redblackmap.dict,
   (* Built lazily.  Diagnostics and checked replay force this through
      [translation_records] and [translation_definitions], respectively. *)
-  records : unit -> translation_record list
+  records : unit -> translation_record list,
+  (* the assumptions [drop_untranslatable_assumptions] left out *)
+  dropped : Term.term list
 }
 
 type logic_selection_policy = {
@@ -6829,22 +6831,28 @@ local
         collection_operations Term.compare Lib.I
         (fn term => Redblackset.member (marked, term)) subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
-    fun bound_collection_application marked =
+    fun bound_collection_application roots marked =
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_bound_application_with
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
+    (* dropping, cvc5's refusal of a bound function over a collection is
+       about the conclusion only; an assumption with one is left out *)
+    val bound_roots = if dropping_untranslatable () then [t] else roots
     val selection =
         {goal=goal,sets=set_terms,bags=bag_terms,
          computed_set=not (List.null computed_set_applications),
          computed_bag=not (List.null computed_bag_applications),
-         bound_set=fn () => bound_collection_application marked_sets,
-         bound_bag=fn () => bound_collection_application marked_bags,
+         bound_set=fn () =>
+           bound_collection_application bound_roots marked_sets,
+         bound_bag=fn () =>
+           bound_collection_application bound_roots marked_bags,
          mixed_set=fn () => has_mixed_collection_argument marked_sets,
          mixed_bag=fn () => has_mixed_collection_argument marked_bags}
-    (* dropping, an assumption the solver preflight refused ([refused]) or
-       with a card the selected cvc5 array encoding lacks is left out of the
-       translation; every encoding choice is still made from the whole goal *)
+    (* dropping, an assumption the solver preflight refused ([refused]),
+       with a card the selected cvc5 array encoding lacks, or with a bound
+       function over a cvc5 collection is left out of the translation; every
+       encoding choice is still made from the whole goal *)
     val card_refusal = (#card_refusal term_backend_selection) target
     val backends as {set_backend=backend,bag_backend} =
       if dropping_untranslatable () then
@@ -6857,9 +6865,12 @@ local
           | NONE => backends
         end
       else (#select term_backend_selection) target selection
+    val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
     fun left_out tm =
       List.exists (fn other => Term.aconv other tm) refused orelse
-      Option.isSome (card_refusal backends [tm])
+      Option.isSome (card_refusal backends [tm]) orelse
+      (cvc5 andalso (bound_collection_application [tm] marked_sets orelse
+                     bound_collection_application [tm] marked_bags))
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,
@@ -6946,7 +6957,7 @@ local
       handle NestedTranslation e => raise e
     (* Dropping, an assumption that fails to translate leaves the
        accumulator and the emission cells as they were before it. *)
-    fun translate_assumption ((acc, kept), tm) =
+    fun translate_assumption ((acc, kept, dropped), (original, tm)) =
       let
         val restorers = [
           save_cell current_generated_forall_emissions,
@@ -6957,23 +6968,26 @@ local
         ]
       in
         let val (acc', smtlib) = translate (acc, tm)
-        in (acc', (tm, smtlib) :: kept) end
-        handle Feedback.HOL_ERR _ => (restore_cells restorers; (acc, kept))
-             | NestedTranslation _ => (restore_cells restorers; (acc, kept))
+        in (acc', (tm, smtlib) :: kept, dropped) end
+        handle Feedback.HOL_ERR _ =>
+                 (restore_cells restorers; (acc, kept, original :: dropped))
+             | NestedTranslation _ =>
+                 (restore_cells restorers; (acc, kept, original :: dropped))
       end
-    val (acc, ts, smtlibs) =
+    val (acc, ts, smtlibs, dropped) =
       if dropping_untranslatable () then
         let
-          val (acc, kept) =
-            List.foldl (fn ((original, tm), state) =>
-                if left_out original then state
-                else translate_assumption (state, tm))
-              ((tydict, tmdict), []) pairs
+          val (acc, kept, dropped) =
+            List.foldl (fn (pair as (original, _),
+                            state as (acc, kept, dropped)) =>
+                if left_out original then (acc, kept, original :: dropped)
+                else translate_assumption (state, pair))
+              ((tydict, tmdict), [], []) pairs
           val (ts, smtlibs) = ListPair.unzip (List.rev kept)
-        in (acc, ts, smtlibs) end
+        in (acc, ts, smtlibs, List.rev dropped) end
       else
         let val (acc, smtlibs) = Lib.foldl_map translate ((tydict, tmdict), ts)
-        in (acc, ts, smtlibs) end
+        in (acc, ts, smtlibs, []) end
     val (acc, negated) = translate (acc, boolSyntax.mk_neg t)
     val terms = ts @ [boolSyntax.mk_neg t]
     val smtlibs = smtlibs @ [negated]
@@ -7020,7 +7034,7 @@ local
         Portable.finally restore work ()
       end
     val translation = {logic = selected_logic, regime = regime,
-      tydict = tydict, tmdict = tmdict, records = records}
+      tydict = tydict, tmdict = tmdict, records = records, dropped = dropped}
   in
     (translation,outbound_query_script string_output_operations
       {logic=selected_logic,assertions=smtlibs})
@@ -8548,6 +8562,13 @@ in
   fun translation_logic ({logic, ...} : translation) = logic
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
+
+  (* [goal] without the assumptions [translation] left out: replay may use
+     only those the solver was given *)
+  fun sent_goal ({dropped, ...} : translation) (assumptions, conclusion) =
+    (List.filter (fn assumption =>
+       not (List.exists (fn other => Term.aconv other assumption) dropped))
+       assumptions, conclusion)
 
   (* The immutable Task06 view, also used by bounded checked adapters. *)
   val replay_datatype_destructor_theorems = datatype_destructor_theorems
