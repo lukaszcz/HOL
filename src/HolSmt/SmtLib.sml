@@ -2541,9 +2541,8 @@ local
 
   val has_quantifier = Library.has_quantifier
 
-  fun builtin_encoding tm =
+  fun builtin_encoding_at tm (rator, rands) =
     let
-      val (rator, rands) = boolSyntax.strip_comb tm
       fun try_whole () =
         if not (Lib.can Type.dom_rng (Term.type_of tm)) then
           (case first_success (fn parsefn => parsefn (tm, []))
@@ -2557,30 +2556,10 @@ local
       case first_success (fn parsefn => parsefn (rator, rands))
           (Net.match rator builtin_symbols) of
         SOME (symbol, _) => SOME (symbol, List.length rands)
-      | NONE => try_whole ()
+      | NONE => if List.null rands then NONE else try_whole ()
     end
 
-  fun encoded_symbol_records terms =
-    let
-      val empty = Redblackset.empty (Lib.pair_compare (Term.compare,
-        Lib.pair_compare (String.compare, Int.compare)))
-      fun add (tm, state as (seen, records)) =
-        case builtin_encoding tm of
-          SOME (encoding as (symbol, arity)) =>
-            let
-              val head = Lib.fst (boolSyntax.strip_comb tm)
-              val key = (head, encoding)
-            in
-              if Redblackset.member (seen, key) then state
-              else (Redblackset.add (seen, key),
-                EncodedSymbol {hol_term = head, smt_symbol = symbol,
-                  arity = arity} :: records)
-            end
-        | NONE => state
-      fun add_root (tm, state) = List.foldl add state (subterms tm)
-    in
-      Lib.snd (List.foldl add_root (empty, []) terms)
-    end
+  fun builtin_encoding tm = builtin_encoding_at tm (boolSyntax.strip_comb tm)
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
@@ -3790,13 +3769,65 @@ local
       [regex_record, ho_core_record]
     end
 
-  fun advanced_encoding_records regime terms features =
+  (* Metadata needs first occurrences in raw preorder. A repeated subtree
+     contributes no new symbol or string presence in this emission context. *)
+  fun record_encodings terms =
     let
-      val has_strings = native_string_presence terms
-    in
-      advanced_encoding_records_with_presence regime
-        {has_hol_strings = has_strings} features
-    end
+      val recent = ref boolSyntax.T
+      val previous = ref boolSyntax.T
+      val symbols = ref (Redblackset.empty (Lib.pair_compare (Term.compare,
+        Lib.pair_compare (String.compare, Int.compare))))
+      val records = ref []
+      val strings = ref false
+      fun observe tm =
+        let
+          val spine as (head,_) = boolSyntax.strip_comb tm
+          val _ = case builtin_encoding_at tm spine of
+              NONE => ()
+            | SOME (encoding as (symbol,arity)) =>
+                let val key = (head,encoding)
+                in
+                  if Redblackset.member (!symbols,key) then ()
+                  else
+                    (symbols := Redblackset.add (!symbols,key);
+                     records := EncodedSymbol {hol_term=head,smt_symbol=symbol,
+                       arity=arity} :: !records)
+                end
+        in
+          (* The operator type contains the application's result type,
+             and descending through operators visits every constant head. *)
+          if not (!strings orelse Term.is_comb tm) andalso
+             (type_contains_string (Term.type_of tm) orelse is_string_const tm)
+          then strings := true
+          else ()
+        end
+      fun compound tm = Term.is_comb tm orelse Term.is_abs tm
+      fun branching (rator,rand) =
+        compound rand andalso Term.is_comb rator andalso
+        let val (head,left) = Term.dest_comb rator
+        in compound left orelse compound head end
+      (* Publish after visiting children so a sibling can hit. *)
+      fun remember tm visit =
+        if Portable.pointer_eq (tm,!recent) orelse
+           Portable.pointer_eq (tm,!previous) then ()
+        else (visit (); previous := !recent; recent := tm)
+      fun walk root tm =
+        if Term.is_comb tm then
+          let
+            val (rator,rand) = Term.dest_comb tm
+            fun visit () =
+              (observe tm; walk false rator; walk false rand)
+          in
+            if root orelse branching (rator,rand) then remember tm visit
+            else visit ()
+          end
+        else if Term.is_abs tm then
+          let fun visit () =
+            (observe tm; walk false (Lib.snd (Term.dest_abs tm)))
+          in if root then remember tm visit else visit () end
+        else observe tm
+      val _ = List.app (walk true) terms
+    in (!records,!strings) end
 
   (* Only final emitted datatype blocks authorize grouped type records. *)
   fun type_declaration_records tydict datatype_records =
@@ -3849,8 +3880,9 @@ local
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict operations regime (key, name) :: acc)
         [] tmdict
-      val builtin_records = encoded_symbol_records terms
-      val advanced_records = advanced_encoding_records regime terms features
+      val (builtin_records,has_hol_strings) = record_encodings terms
+      val advanced_records = advanced_encoding_records_with_presence regime
+        {has_hol_strings = has_hol_strings} features
     in
       regime_record :: logic_record :: type_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
@@ -6772,9 +6804,11 @@ local
         (fn term => Redblackset.member (marked, term)) subterms
     val computed_set_applications = computed_applications marked_sets
     val computed_bag_applications = computed_applications marked_bags
-    fun has_mixed_collection_argument collection_terms =
-      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_by
-        collection_operations Term.compare Lib.I collection_terms subterms
+    fun has_mixed_collection_argument marked =
+      not (Redblackset.isEmpty marked) andalso
+      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
+        collection_operations Term.compare Lib.I
+        (fn term => Redblackset.member (marked, term)) subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application marked =
       not (Redblackset.isEmpty marked) andalso
@@ -6788,8 +6822,8 @@ local
          computed_bag=not (List.null computed_bag_applications),
          bound_set=fn () => bound_collection_application marked_sets,
          bound_bag=fn () => bound_collection_application marked_bags,
-         mixed_set=fn () => has_mixed_collection_argument set_terms,
-         mixed_bag=fn () => has_mixed_collection_argument bag_terms}
+         mixed_set=fn () => has_mixed_collection_argument marked_sets,
+         mixed_bag=fn () => has_mixed_collection_argument marked_bags}
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,

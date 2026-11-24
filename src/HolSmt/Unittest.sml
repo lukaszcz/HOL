@@ -7319,11 +7319,41 @@ let
       | SmtLib.EncodedSymbol {smt_symbol = "=", ...} => true
       | _ => false) records
   val _ = SmtLib.parser_dicts_for_translation translation
+  fun leaf () =
+    boolSyntax.mk_conj (``(s:smtstr) = t``, ``(x:int) < y``)
+  fun wrap (left,right) = boolSyntax.mk_conj
+    (boolSyntax.mk_neg left, boolSyntax.mk_disj (right,boolSyntax.T))
+  fun encoding_records term =
+    let
+      val (translation, _) = SmtLib.goal_to_SmtLib_translation NONE
+        ([],term)
+      fun encoding (SmtLib.EncodedSymbol _) = true
+        | encoding (SmtLib.HOLTheoryEncoding _) = true
+        | encoding _ = false
+    in List.filter encoding (SmtLib.translation_records translation) end
+  fun same_record
+        (SmtLib.EncodedSymbol left, SmtLib.EncodedSymbol right) =
+        #smt_symbol left = #smt_symbol right andalso
+        #arity left = #arity right andalso
+        Term.aconv (#hol_term left) (#hol_term right)
+    | same_record
+        (SmtLib.HOLTheoryEncoding left, SmtLib.HOLTheoryEncoding right) =
+        left = right
+    | same_record _ = false
+  val shared_leaf = leaf ()
+  val shared_records = encoding_records (wrap (shared_leaf,shared_leaf))
+  val separate_records = encoding_records (wrap (leaf (),leaf ()))
+  val has_strings = List.exists
+    (fn SmtLib.HOLTheoryEncoding {smt_theory="UnicodeStrings",...} => true
+      | _ => false) shared_records
 in
   assert (has_logic, "translation records did not include selected logic");
   assert (has_type_decl, "translation records did not include type declaration");
   assert (has_term_decl, "translation records did not include array term declaration");
-  assert (has_encoded_symbol, "translation records did not include encoded symbol")
+  assert (has_encoded_symbol, "translation records did not include encoded symbol");
+  assert (has_strings, "shared records did not include the String encoding");
+  assert (ListPair.allEq same_record (shared_records,separate_records),
+    "sharing changed the ordered encoding records")
 end
 
 fun z3_quantified_check_sat_policy_success () =
@@ -29789,6 +29819,42 @@ in
   List.app check cases
 end
 
+fun shared_arithmetic_detection_success () =
+let
+  fun shared _ 0 term = term
+    | shared plus depth term = shared plus (depth - 1) (plus (term, term))
+  val linear = shared intSyntax.mk_plus 40 ``(x:int) + y``
+  val nonlinear = intSyntax.mk_plus (linear, ``(x:int) * y``)
+  val conditional = intSyntax.mk_plus
+    (linear, ``if p then x else y:int``)
+  val polynomial = shared realSyntax.mk_plus 40 ``((x:real) / 2) pow 2``
+  val division = realSyntax.mk_plus (polynomial, ``(x:real) / y``)
+  val shared_type = shared (fn (dom,rng) => dom --> rng) 40 intSyntax.int_ty
+  val shared_type_variable = Term.mk_var ("shared_type",shared_type)
+  val integer_function = ``f:int -> int``
+  fun chain 0 term = term
+    | chain depth term =
+        chain (depth - 1) (Term.mk_comb (integer_function, term))
+in
+  assert (not (Library.is_nonlinear linear) andalso
+    Library.is_nonlinear nonlinear, "shared DAG nonlinear detection failed");
+  assert (not (Library.contains_conditional linear) andalso
+    Library.contains_conditional conditional,
+    "shared DAG conditional detection failed");
+  assert (not (Library.contains_nonpolynomial_arithmetic polynomial) andalso
+    Library.contains_nonpolynomial_arithmetic division,
+    "shared DAG nonpolynomial detection failed");
+  assert (not (Library.term_contains_real_ty linear) andalso
+    not (Library.term_contains_real_ty shared_type_variable) andalso
+    not (Library.term_contains_real_ty (chain 4096 ``x:int``)) andalso
+    Library.term_contains_real_ty (boolSyntax.mk_conj
+      (intSyntax.mk_leq (linear, ``y:int``), ``(x:real) < y``)),
+    "arithmetic real type detection failed");
+  assert (Library.term_contains_real_ty ``\x:real. T`` andalso
+    not (Library.term_contains_real_ty ``\x:int. (0:real) < y``),
+    "arithmetic abstraction type detection failed")
+end
+
 fun z3_difference_directed_rewrite_canon_success () =
 let
   fun canonical_target target = boolSyntax.rhs (Thm.concl
@@ -30046,7 +30112,12 @@ let
     ("real symbolic exponent", ``(x:real) pow (2 * n)``, true),
     ("num symbolic exponent", ``(x:num) ** (2 * n)``, true),
     ("real literal base symbolic exponent", ``(2:real) pow n``, true),
-    ("real numeral exponent", ``(x:real) pow 2``, false)
+    ("real numeral exponent", ``(x:real) pow 2``, false),
+    ("real partially applied power", Term.mk_comb (realSyntax.exp_tm,
+      ``x:real``), true),
+    ("real numeral denominator", ``(x:real) / 2``, false),
+    ("real partially applied division", Term.mk_comb (realSyntax.div_tm,
+      ``x:real``), true)
   ]
   fun check (name, term, expected) =
     assert (Library.contains_nonpolynomial_arithmetic term = expected,
@@ -41483,6 +41554,8 @@ let
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
       nonlinear_power_detection_success),
+    ("shared_arithmetic_detection_success",
+      shared_arithmetic_detection_success),
     ("symbolic_power_nonpolynomial_detection_success",
       symbolic_power_nonpolynomial_detection_success),
     ("nonlinear_tight_integer_bounds_success",

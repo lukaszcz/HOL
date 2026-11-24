@@ -25072,8 +25072,9 @@ struct
         val Block{owner=next_owner,...}=next
         (* No arbitrary next Block is supplied. These tokens are issued
            only for this exact successful frontier/freeze publication. *)
+        val Block{source_count=old_count,...}=old
         val appended=Lib.mapi(fn offset=>fn node=>
-          let val index=List.length old_nodes+offset
+          let val index=old_count+offset
           in ps_slot_from_block expected next contract
             (ActualSourceSlot(next_owner,index))index node end)append
         val continued=PolicyScopeLayout{work=expected,block=next,
