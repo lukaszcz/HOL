@@ -6825,24 +6825,30 @@ local
         (fn term => Redblackset.member (marked, term)) subterms
     val computed_set_applications = computed_applications marked_sets
     val computed_bag_applications = computed_applications marked_bags
-    (* dropping, the assumptions the preflight refused are never sent, so
-       they take no part in the ambiguous-argument check *)
-    val sent_subterms =
-      if List.null refused then subterms
-      else query_subterms (t :: List.filter (fn tm =>
-        not (List.exists (fn other => Term.aconv other tm) refused))
-        original_ts)
-    fun has_mixed_collection_argument marked =
-      not (Redblackset.isEmpty marked) andalso
-      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
-        collection_operations Term.compare Lib.I
-        (fn term => Redblackset.member (marked, term)) sent_subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application roots marked =
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_bound_application_with
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
+    val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
+    (* dropping, an assumption the preflight refused or with a bound function
+       over a cvc5 collection is never sent, so it takes no part in the
+       ambiguous-argument check *)
+    fun unsent tm =
+      List.exists (fn other => Term.aconv other tm) refused orelse
+      (dropping_untranslatable () andalso cvc5 andalso
+       (bound_collection_application [tm] marked_sets orelse
+        bound_collection_application [tm] marked_bags))
+    val sent_subterms =
+      if dropping_untranslatable () andalso List.exists unsent original_ts
+      then query_subterms (t :: List.filter (not o unsent) original_ts)
+      else subterms
+    fun has_mixed_collection_argument marked =
+      not (Redblackset.isEmpty marked) andalso
+      SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
+        collection_operations Term.compare Lib.I
+        (fn term => Redblackset.member (marked, term)) sent_subterms
     (* dropping, cvc5's refusal of a bound function over a collection is
        about the conclusion only; an assumption with one is left out *)
     val bound_roots = if dropping_untranslatable () then [t] else roots
@@ -6872,12 +6878,8 @@ local
           | NONE => backends
         end
       else (#select term_backend_selection) target selection
-    val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
     fun left_out tm =
-      List.exists (fn other => Term.aconv other tm) refused orelse
-      Option.isSome (card_refusal backends [tm]) orelse
-      (cvc5 andalso (bound_collection_application [tm] marked_sets orelse
-                     bound_collection_application [tm] marked_bags))
+      unsent tm orelse Option.isSome (card_refusal backends [tm])
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,
