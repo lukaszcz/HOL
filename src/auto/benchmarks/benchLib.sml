@@ -802,11 +802,19 @@ fun theorem_statement theorem : comparison_statement =
 fun theorem_is_goal goal theorem =
   compare_with_goal goal (theorem_statement theorem)
 
-fun withheld_primitives goal =
-  List.mapPartial
-    (fn (definition, rewrite) =>
-      if theorem_is_goal goal rewrite then SOME definition else NONE)
+val primitive_citations =
+  map (fn (definition, rewrite) =>
+         (definition, memoized_citation (Thm.concl rewrite)))
     primitive_definitions
+
+fun withheld_primitives goal =
+  let val compare = compare_with_goal goal
+  in
+    List.mapPartial
+      (fn (definition, citation) =>
+        if compare citation then SOME definition else NONE)
+      primitive_citations
+  end
 
 fun simp_controls goal exclusions =
   translation_base :: withheld_primitives goal @ controls exclusions
@@ -1543,10 +1551,11 @@ fun tactic_for simpset goal Simp args exclusions =
       end
   | tactic_for simpset goal Auto args exclusions =
       let
+        val controls_for_simp = simp_controls goal exclusions
         val automatic =
           processed_clasimp simpset
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
-            (all_class_args args @ simp_controls goal exclusions)
+            (all_class_args args @ controls_for_simp)
         val simps = List.mapPartial simp_arg args
         val set_equality = set_equality_pass simpset goal simps
       in
@@ -1560,7 +1569,7 @@ fun tactic_for simpset goal Simp args exclusions =
                  (Tactical.THEN
                     (set_equality,
                      simpLib.FULL_SIMP_TAC simpset
-                       (simps @ simp_controls goal exclusions)),
+                       (simps @ controls_for_simp)),
                   Tactical.ORELSE (predicate_abstraction_tac, automatic))))
       end
   | tactic_for simpset goal Blast args exclusions =
@@ -1770,17 +1779,18 @@ fun tactic_for simpset goal Simp args exclusions =
   | tactic_for simpset goal Force args exclusions =
       let
         val simps = List.mapPartial simp_arg args
+        val controls_for_simp = simp_controls goal exclusions
         val prepare =
           Tactical.THEN
             (set_equality_pass simpset goal simps,
              simpLib.FULL_SIMP_TAC simpset
-               (simps @ simp_controls goal exclusions))
+               (simps @ controls_for_simp))
       in
         with_facts args
           (Tactical.THEN
             (prepare,
              processed_clasimp simpset clasimpLib.CS_FORCE_TAC
-               (all_class_args args @ simp_controls goal exclusions)))
+               (all_class_args args @ controls_for_simp)))
       end
   | tactic_for simpset goal Fastforce args exclusions =
       with_facts args

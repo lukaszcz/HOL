@@ -4207,6 +4207,48 @@ val _ =
 
 val _ =
   test
+    ("equational views preserve selection order and normalization charges",
+     fn () =>
+       let
+         val premise = ``citation_select_support:bool``
+         val proposition = Thm.ASSUME premise
+         val first = Thm.REFL ``citation_select_subject:'a``
+         val second = Thm.REFL ``SUC citation_select_number``
+         val source =
+           Thm.CONJ (Thm.CONJ first proposition)
+             (Thm.CONJ (Thm.CONJ proposition proposition) second)
+         val charges = ref []
+         val environment =
+           clasetFacts.create_with_charge
+             (fn kind => charges := kind :: !charges)
+             ([], boolSyntax.T) [Thm.CONJ proposition proposition, source]
+         val selected = clasetFacts.equational_views environment
+         val selected_again = clasetFacts.equational_views environment
+         val expected =
+           case clasetFacts.facts environment of
+               [_, entry] =>
+                 let val {theorem, ...} = clasetFacts.schematic_view entry
+                 in
+                   [Thm.CONJUNCT1 (Thm.CONJUNCT1 theorem),
+                    Thm.CONJUNCT2 (Thm.CONJUNCT2 theorem)]
+                 end
+             | _ => []
+         fun check ({source_id, source = original, theorem, support} :
+                      clasetFacts.view, piece) =
+           source_id = 1 andalso
+           Term.aconv (Thm.concl original) (Thm.concl source) andalso
+           Term.aconv (Thm.concl theorem) (Thm.concl piece) andalso
+           (case support of [hyp] => Term.aconv premise hyp | _ => false)
+       in
+         List.rev (!charges) =
+           [searchBudget.Candidate, searchBudget.Candidate,
+            searchBudget.Normalization] andalso
+         ListPair.allEq check (selected, expected) andalso
+         ListPair.allEq check (selected_again, expected)
+       end)
+
+val _ =
+  test
     ("implication rule views preserve source identity and support",
      fn () =>
        let

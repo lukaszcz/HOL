@@ -129,15 +129,17 @@ fun assumption_thm store asm target =
   let
     val asm' = clasetMeta.norm store asm
     val target' = clasetMeta.norm store target
-    val asm_equality = normalize_conv asm
-    val normalized_input_asm = rhs (concl asm_equality)
     val assumption =
       if aconv asm' asm then ASSUME asm
-      else if aconv asm' normalized_input_asm then
-        EQ_MP asm_equality (ASSUME asm)
       else
-        raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
-          "the normalized assumption cannot be restored exactly"
+        let val asm_equality = normalize_conv asm
+        in
+          if aconv asm' (rhs (concl asm_equality)) then
+            EQ_MP asm_equality (ASSUME asm)
+          else
+            raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+              "the normalized assumption cannot be restored exactly"
+        end
     val normalized = normalize_thm assumption
     val closing =
       clasetNorm.align_conclusion target' normalized
@@ -148,16 +150,14 @@ fun assumption_thm store asm target =
     restore_target "ASSUMPTION_TAC" target target' closing
   end
 
+fun assumption_validation prove [] = prove ()
+  | assumption_validation _ _ =
+      raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+        "validation received child theorems"
+
 fun ASSUMPTION_TAC store pos (asl, w) _ =
-  let
-    val asm = nth1 "ASSUMPTION_TAC" asl pos
-    fun validation [] = assumption_thm store asm w
-      | validation _ =
-          raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
-            "validation received child theorems"
-  in
-    ([], validation)
-  end
+  let val asm = nth1 "ASSUMPTION_TAC" asl pos
+  in ([], assumption_validation (fn () => assumption_thm store asm w)) end
 
 fun CONTRADICTION_TAC store (negative_pos, positive_pos) (asl, w) _ =
   let
@@ -976,18 +976,21 @@ fun MOVE_ASSUMPTION_TO_BACK_TAC pos (asl, w) _ =
 (* Rule replay can introduce alpha-renamed eigenvariables in a different
    positional order from search.  Keep the recorded position when possible,
    but recover by the semantic closing condition if that position drifted. *)
-fun assumption_action pos store (goal as (asl, w)) =
+fun assumption_action pos store (asl, w) =
   let
     val selected = nth1 "ASSUMPTION_TAC" asl pos
-    fun closes asm = can (fn () => assumption_thm store asm w) ()
-    fun find _ [] =
-          raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
-            "no assumption closes the replay goal"
-      | find current (asm :: rest) =
-          if closes asm then current else find (current + 1) rest
-    val actual = if closes selected then pos else find 1 asl
+    val close = total (fn asm => assumption_thm store asm w)
+    val theorem =
+      case close selected of
+          SOME theorem => theorem
+        | NONE =>
+            (case Lib.get_first close asl of
+                 SOME theorem => theorem
+               | NONE =>
+                   raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+                     "no assumption closes the replay goal")
   in
-    ASSUMPTION_TAC store actual goal
+    fn _ => ([], assumption_validation (fn () => theorem))
   end
 
 (* Exact reconstruction must reject a stale occurrence selector. *)
@@ -1041,6 +1044,7 @@ fun grounded_fixed_action (goals, validation) store =
     val validation_schema = validation (map assume_package goals)
     val grounded_schema =
       Drule.INST_TY_TERM (term_subst, type_subst) validation_schema
+    val grounded_goals = map ground_goal goals
 
     fun ground_validation theorems =
       let
@@ -1048,15 +1052,14 @@ fun grounded_fixed_action (goals, validation) store =
           List.foldr (fn (asm, result) => DISCH asm result)
             theorem child_asl
         val packaged =
-          ListPair.map package_theorem
-            (map ground_goal goals, theorems)
+          ListPair.map package_theorem (grounded_goals, theorems)
       in
         List.foldl
           (fn (theorem, result) => Drule.PROVE_HYP theorem result)
           grounded_schema packaged
       end
   in
-    (map ground_goal goals, ground_validation)
+    (grounded_goals, ground_validation)
   end
 
 fun fixed_action_on recorded result store current _ =

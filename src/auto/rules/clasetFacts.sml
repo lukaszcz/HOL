@@ -184,31 +184,44 @@ fun implication_rule_view entry =
 fun equational term =
   boolSyntax.is_eq (#2 (boolSyntax.strip_imp_only (quantified_body term)))
 
-(* Inspect the source's shape before deriving any conjunct theorems. Only
-   outer conjunctions split into views, as in Drule.CONJUNCTS. *)
-fun has_equational_conjunct term =
-  if boolSyntax.is_conj term then
-    let val (left, right) = boolSyntax.dest_conj term
-    in has_equational_conjunct left orelse has_equational_conjunct right
-    end
-  else equational term
+datatype conjunct_selection =
+    Skip
+  | Select
+  | Branch of conjunct_selection * conjunct_selection
+
+(* Schematic freshening preserves the shape of the original conclusion.
+   Classify once and omit subtrees with no equational leaves. *)
+fun select_equational term =
+  case total boolSyntax.dest_conj term of
+      SOME (left, right) =>
+        (case (select_equational left, select_equational right) of
+             (Skip, Skip) => Skip
+           | children => Branch children)
+    | NONE => if equational term then Select else Skip
 
 fun equational_views environment =
   List.concat
     (map
       (fn entry =>
-        if not (has_equational_conjunct (Thm.concl (source entry))) then []
-        else
-          let
-            val {source_id, source, support, theorem} =
-              schematic_view entry
-          in
-            map
-              (fn piece =>
-                {source_id = source_id, source = source,
-                 theorem = piece, support = support} : view)
-              (List.filter (equational o Thm.concl) (Drule.CONJUNCTS theorem))
-          end)
+        case select_equational (Thm.concl (source entry)) of
+            Skip => []
+          | selection =>
+              let
+                val {source_id, source, support, theorem} =
+                  schematic_view entry
+                fun collect Skip _ views = views
+                  | collect Select piece views =
+                      {source_id = source_id, source = source,
+                       theorem = piece, support = support} :: views
+                  | collect (Branch (left, right)) piece views =
+                      descend Thm.CONJUNCT1 left piece
+                        (descend Thm.CONJUNCT2 right piece views)
+                and descend _ Skip _ views = views
+                  | descend project child piece views =
+                      collect child (project piece) views
+              in
+                collect selection theorem []
+              end)
       environment)
 
 end

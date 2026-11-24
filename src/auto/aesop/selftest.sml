@@ -406,6 +406,11 @@ val merged_unsafe_order =
           phase = aesopRule.RUnsafe 50,
           tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
           index = SOME (aesopRule.TargetPattern boolSyntax.T)};
+       aesopRule.register_tactic_rule
+         {name = "tactic_fifty_next",
+          phase = aesopRule.RUnsafe 50,
+          tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+          index = SOME (aesopRule.TargetPattern boolSyntax.T)};
        #unsafe
          (aesopRule.claset_rules
            {ctxt = Context.snapshot (),
@@ -420,7 +425,7 @@ val _ =
      fn () =>
        rule_names merged_unsafe_order =
          ["tactic_ninety_five", "unsafe_eighty", "unsafe_default",
-          "tactic_fifty"])
+          "tactic_fifty", "tactic_fifty_next"])
 
 val _ =
   check

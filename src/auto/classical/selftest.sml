@@ -5413,9 +5413,23 @@ val _ =
          val strict_fails =
            (ignore (Tactical.VALID strict goal); false)
            handle HOL_ERR _ => true
-         val (residues, _) = Tactical.VALID recovered goal
+         val (residues, validate_recovered) = Tactical.VALID recovered goal
+         val bound = Term.mk_var ("replay_assumption_bound", Type.bool)
+         val redex = mk_comb (mk_abs (bound, bound), phase1_pa)
+         val preferred_goal = ([phase1_pa, redex], phase1_pa)
+         val (preferred_residues, validate_preferred) =
+           clasetReplay.assumption_action 2 clasetMeta.empty
+             preferred_goal (Context.snapshot ())
+         val rejects_children =
+           (ignore (validate_preferred [ASSUME phase1_pa]); false)
+           handle HOL_ERR _ => true
+         fun uses theorem assumption =
+           case hyp theorem of [asm] => aconv asm assumption | _ => false
        in
-         strict_fails andalso List.null residues
+         strict_fails andalso null residues andalso null preferred_residues
+         andalso rejects_children
+         andalso uses (validate_recovered []) phase1_pa
+         andalso uses (validate_preferred []) redex
        end)
 
 val _ =

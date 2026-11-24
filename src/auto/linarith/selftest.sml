@@ -1328,6 +1328,30 @@ val _ =
 
 val _ =
   check
+    ("replay a shared certificate with the same hypotheses as traced replay",
+     fn () =>
+       let
+         val less = LessD (Asm 0)
+         val pair = Added (less, less)
+         val certificate = Added (Added (pair, pair), Asm 1)
+         val twice = num_plus num_x num_x
+         val four = numSyntax.mk_numeral (Arbnum.fromInt 4)
+         val premises = List.map Thm.ASSUME
+           [num_less num_x num_one, num_leq four (num_plus twice twice)]
+         val ordinary = linarithReplay.mkthm traceUtil.silent premises
+           certificate
+         val tracer = linarithData.tracer
+         val level = traceUtil.level_of tracer
+           (HOLFlags.set_flagC (traceUtil.flag tracer, 1) (Context.snapshot ()))
+         val traced = linarithReplay.mkthm level premises certificate
+       in
+         Term.aconv (Thm.concl ordinary) boolSyntax.F andalso
+         Term.aconv (Thm.concl ordinary) (Thm.concl traced) andalso
+         HOLset.equal (Thm.hypset ordinary, Thm.hypset traced)
+       end)
+
+val _ =
+  check
     ("replay rejects a certificate that does not derive false",
      fn () =>
        ((ignore (replay [num_leq num_x num_x] (Asm 0)); false)

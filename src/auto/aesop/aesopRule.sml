@@ -196,12 +196,12 @@ fun tactic_rule {name, phase, tactic, index} : rule =
    once = false}
 
 type tactic_registry_state =
-  {rules : (rule * tactic_index option) list,
+  {newest : (rule * tactic_index option) list,
    generation : int}
 
 val tactic_registry =
   Sref.new
-    ({rules = [], generation = 0} : tactic_registry_state)
+    ({newest = [], generation = 0} : tactic_registry_state)
 
 fun registry_generation () =
   #generation (Sref.value tactic_registry)
@@ -209,8 +209,8 @@ fun registry_generation () =
 fun register_tactic_rule
       (registration as {index, ...}) =
   Sref.update tactic_registry
-    (fn {rules, generation} =>
-      {rules = rules @ [(tactic_rule registration, index)],
+    (fn {newest, generation} =>
+      {newest = (tactic_rule registration, index) :: newest,
        generation = generation + 1})
 
 (* Registration is session-global and additive, which is what a library
@@ -220,25 +220,27 @@ fun register_tactic_rule
    restores the registry afterwards whether [f] returns or raises. *)
 fun with_tactic_rules f x =
   let
-    val saved = #rules (Sref.value tactic_registry)
+    val saved = #newest (Sref.value tactic_registry)
     fun restore () =
       Sref.update tactic_registry
         (fn {generation, ...} =>
-          {rules = saved, generation = generation + 1})
+          {newest = saved, generation = generation + 1})
     val result = f x handle e => (restore (); raise e)
   in
     restore (); result
   end
 
+(* Consing results in newest-first traversal restores registration order. *)
 fun registered_tactic_rules () =
-  map #1 (#rules (Sref.value tactic_registry))
+  List.foldl (fn ((rule, _), ordered) => rule :: ordered) []
+    (#newest (Sref.value tactic_registry))
 
 fun applicable_tactic_rules conclusion assumptions =
-  map #1
-    (List.filter
-      (fn (_, index) =>
-        goal_matches_index index (assumptions, conclusion))
-      (#rules (Sref.value tactic_registry)))
+  List.foldl
+    (fn ((rule, index), ordered) =>
+      if goal_matches_index index (assumptions, conclusion)
+      then rule :: ordered else ordered)
+    [] (#newest (Sref.value tactic_registry))
 
 fun norm_phase_rule ({phase, ...} : rule) =
   case phase of RNorm _ => true | _ => false

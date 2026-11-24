@@ -499,9 +499,32 @@ fun normalize_final theorem =
 fun implications_of theorem =
   linarithData.instance_implications (instance_of_thm theorem)
 
-fun mkthm_with charge level assumption trace_assumptions justification =
+fun mkthm_with checkpoint level assumption trace_assumptions justification =
   let
-    fun one why = (charge (); decode why)
+    val charge = Option.getOpt (checkpoint, fn () => ())
+    (* Elimination reuses rows, so a certificate can refer to the same
+       subproof more than once. Keep only a bounded set of physical nodes
+       for this replay. Metered and traced replay visit the original tree. *)
+    val memo =
+      if Option.isSome checkpoint orelse traceUtil.enabled level 1 then NONE
+      else SOME (memoUtil.bounded_memo 64
+        (fn left => fn right => Portable.pointer_eq (left, right))
+        (fn _ => ref (NONE : thm option)))
+    fun one why = (charge (); replay why)
+    and replay (why as Asm _) = decode why
+      | replay (why as Nonneg _) = decode why
+      | replay why =
+          case memo of
+              NONE => decode why
+            | SOME lookup =>
+                let val result = lookup why
+                in
+                  case !result of
+                      SOME theorem => theorem
+                    | NONE =>
+                        let val theorem = decode why
+                        in result := SOME theorem; theorem end
+                end
     and decode (Asm index) =
           (assumption index
            handle Subscript =>
@@ -578,7 +601,7 @@ fun mkthm level assumptions justification =
       linarithData.trace_items level 1 "Assumptions:"
         Parse.thm_to_string assumptions
   in
-    mkthm_with (fn () => ()) level assumption trace_assumptions justification
+    mkthm_with NONE level assumption trace_assumptions justification
   end
 
 (* Both replay paths use this operation to select neqE from the instance
@@ -721,7 +744,7 @@ fun append_negated_tac (assumptions, conclusion) _ =
     ([goal], justify)
   end
 
-fun justification_tac_with charge justification
+fun justification_tac_with checkpoint justification
       (assumptions, goal) ctxt =
   if not (Term.aconv goal boolSyntax.F) then
     raise ERR "justification_tac" "goal is not false"
@@ -751,11 +774,12 @@ fun justification_tac_with charge justification
           (Parse.thm_to_string o Thm.ASSUME) assumptions
     in
       Tactic.ACCEPT_TAC
-        (mkthm_with charge level assumption trace_assumptions justification)
+        (mkthm_with checkpoint level assumption trace_assumptions
+           justification)
         (assumptions, goal) ctxt
     end
 
-fun refute_tac_with charge split_neq justifications =
+fun refute_tac_with checkpoint split_neq justifications =
   let
     fun split_tac goal ctxt =
       if split_neq then
@@ -765,14 +789,14 @@ fun refute_tac_with charge split_neq justifications =
         Tactical.THEN (neq_elim_tac true, neq_elim_tac false) goal ctxt
       else Tactical.ALL_TAC goal ctxt
     val leaves =
-      List.map (justification_tac_with charge) justifications
+      List.map (justification_tac_with checkpoint) justifications
   in
     Tactical.THEN
       (append_negated_tac, Tactical.THENL (split_tac, leaves))
   end
 
 fun refute_tac split_neq justifications =
-  refute_tac_with (fn () => ()) split_neq justifications
+  refute_tac_with NONE split_neq justifications
 
 fun refute level config assumptions conclusion =
   let
@@ -800,7 +824,7 @@ fun refute_budgeted level budget config assumptions conclusion =
         linarithSolve.CertificateFound
           {split_neq, justifications} =>
             RefutationReady
-              (refute_tac_with charge split_neq justifications)
+              (refute_tac_with (SOME charge) split_neq justifications)
       | linarithSolve.CertificateExhausted => RefutationExhausted
       | linarithSolve.CertificateLimitReached {kind, usage} =>
           RefutationLimitReached {kind = kind, usage = usage}

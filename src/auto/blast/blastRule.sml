@@ -105,9 +105,6 @@ fun resolved_head_tag formula =
            | SOME assigned => resolved_head_tag assigned)
     | head => stable_head_tag head
 
-fun cache_key safe vars formula =
-  (safe, length vars, stable_head_tag formula)
-
 fun containsZeroMeasured checkpoint =
   existsMeasured checkpoint (fn i => i = 0)
 
@@ -654,9 +651,8 @@ fun newest (NONE, right) = right
   | newest (left as SOME first, right as SOME second) =
       if #stamp first > #stamp second then left else right
 
-fun find_cached find entries safe vars formula =
+fun find_cached find entries (primary, fallback) =
   let
-    val (primary, fallback) = lookup_keys safe vars formula
     val first = find (bucket entries primary)
     val second =
       case fallback of
@@ -668,9 +664,8 @@ fun find_cached find entries safe vars formula =
 
 (* Each bucket is newest first.  Visit the two buckets in stamp order so
    an ordinary lookup can stop as soon as it finds a matching entry. *)
-fun find_newest_cached matches entries safe vars formula =
+fun find_newest_cached matches entries (primary, fallback) =
   let
-    val (primary, fallback) = lookup_keys safe vars formula
     val first = bucket entries primary
     val second = case fallback of NONE => [] | SOME key => bucket entries key
     fun find [] right = List.find matches right
@@ -696,25 +691,24 @@ fun cachedWith measured checkpoint (Cache {entries, hits, ...})
       #safe entry = safe andalso
       same (#vars entry, vars) andalso
       equal (#formula entry, formula)
+    val keys as (primary, _) = lookup_keys safe vars formula
     val found =
       if measured then
-        find_cached (findMeasured checkpoint matches) (!entries)
-          safe vars formula
-      else find_newest_cached matches (!entries) safe vars formula
+        find_cached (findMeasured checkpoint matches) (!entries) keys
+      else find_newest_cached matches (!entries) keys
   in
     (* Red-black lookup itself is indivisible.  Poll once for every member
        of the selected head bucket (and the variable-head fallback), rather
        than once for every entry in the whole search cache. *)
     case found of
-        NONE => NONE
+        NONE => (primary, NONE)
       | SOME entry =>
           (hits := !hits + 1;
-           SOME (#rules entry))
+           (primary, SOME (#rules entry)))
   end
 
-fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
+fun remember (Cache {entries, next_stamp, ...}) key safe vars formula rules =
   let
-    val key = cache_key safe vars formula
     val stamp = !next_stamp
     val entry =
       {formula = formula, safe = safe, vars = vars, rules = rules,
@@ -1087,10 +1081,10 @@ fun copyRulesWith checkpoint eager_external_skolems
 fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
       cache claset safe vars formula =
   case cachedWith measured checkpoint cache safe vars formula of
-      SOME rules =>
+      (_, SOME rules) =>
         if not measured andalso null rules then []
         else copyRulesWith checkpoint measured cache vars formula true rules
-    | NONE =>
+    | (primary, NONE) =>
         let
           val tagged = candidatesMeasured monitor claset safe formula
           val _ =
@@ -1135,7 +1129,8 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
           val templates =
             copyRulesWith checkpoint measured
               cache vars formula false rules
-          val _ = remember cache safe vars formula templates
+          (* The primary key is stable across variable assignments. *)
+          val _ = remember cache primary safe vars formula templates
         in
           rules
         end
