@@ -361,6 +361,26 @@ struct
         (fn () => exact_registry ([], [])) ()
     in exact_registry saved_b end
 
+  (* Only the newest eight retained proofs keep their metadata: an older
+     proof scope gets an empty registry, like an unregistered proof. *)
+  fun retained_capacity () =
+    let
+      fun fixture i =
+        let
+          val proof =
+            retained_fixture ("retained_capacity_" ^ Int.toString i)
+          val _ = marker_pair proof
+        in (proof, registry ()) end
+      val fixtures = List.tabulate (9, fixture)
+      fun restores (proof, saved) =
+        P.with_cpc_fp_private_proof proof
+          (fn () => exact_registry saved) ()
+    in
+      List.app restores (tl fixtures);
+      P.with_cpc_fp_private_proof (#1 (hd fixtures))
+        (fn () => exact_registry ([], [])) ()
+    end
+
   fun source_name_collision () =
     let
       val prefix = "%%genvar%%"
@@ -1400,6 +1420,8 @@ struct
        mixed_markers;
      test "CPC parse A/parse B/GC/replay A restores exact private scopes"
        retained_registry;
+     test "CPC retains only the newest eight proofs' FP metadata"
+       retained_capacity;
      test "CPC private allocation avoids colliding original source names"
        source_name_collision;
      test "CPC shared source freshness stays lazy and DAG-linear"
