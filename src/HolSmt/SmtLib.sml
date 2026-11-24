@@ -6832,27 +6832,25 @@ local
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
     val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
-    (* dropping, an assumption the preflight refused or with a bound function
-       over a cvc5 collection is never sent, so it takes no part in the
-       ambiguous-argument check *)
-    fun unsent tm =
+    (* dropping, an assumption the solver preflight refused ([refused]),
+       with a bound function over a cvc5 collection, or with a card the
+       selected cvc5 array encoding lacks is left out of the translation *)
+    fun left_out backends tm =
       List.exists (fn other => Term.aconv other tm) refused orelse
       (dropping_untranslatable () andalso cvc5 andalso
        (bound_collection_application [tm] marked_sets orelse
-        bound_collection_application [tm] marked_bags))
-    val sent_subterms =
-      if dropping_untranslatable () andalso List.exists unsent original_ts
-      then query_subterms (t :: List.filter (not o unsent) original_ts)
-      else subterms
-    fun has_mixed_collection_argument marked =
+        bound_collection_application [tm] marked_bags orelse
+        Option.isSome ((#card_refusal term_backend_selection) target backends
+          [tm])))
+    fun has_mixed_collection_argument subterms marked =
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
         collection_operations Term.compare Lib.I
-        (fn term => Redblackset.member (marked, term)) sent_subterms
+        (fn term => Redblackset.member (marked, term)) subterms
     (* dropping, cvc5's refusal of a bound function over a collection is
        about the conclusion only; an assumption with one is left out *)
     val bound_roots = if dropping_untranslatable () then [t] else roots
-    val selection =
+    fun selection mixed_subterms =
         {goal=goal,sets=set_terms,bags=bag_terms,
          computed_set=not (List.null computed_set_applications),
          computed_bag=not (List.null computed_bag_applications),
@@ -6860,26 +6858,32 @@ local
            bound_collection_application bound_roots marked_sets,
          bound_bag=fn () =>
            bound_collection_application bound_roots marked_bags,
-         mixed_set=fn () => has_mixed_collection_argument marked_sets,
-         mixed_bag=fn () => has_mixed_collection_argument marked_bags}
-    (* dropping, an assumption the solver preflight refused ([refused]),
-       with a card the selected cvc5 array encoding lacks, or with a bound
-       function over a cvc5 collection is left out of the translation; every
-       encoding choice is still made from the whole goal *)
-    val card_refusal = (#card_refusal term_backend_selection) target
+         mixed_set=fn () =>
+           has_mixed_collection_argument mixed_subterms marked_sets,
+         mixed_bag=fn () =>
+           has_mixed_collection_argument mixed_subterms marked_bags}
+    (* dropping, every encoding choice is made from the whole goal, and the
+       ambiguous-argument check, which only refuses, then looks at what is
+       sent *)
+    val select_backends = (#select_backends term_backend_selection) target
     val backends as {set_backend=backend,bag_backend} =
       if dropping_untranslatable () then
         let
-          val backends =
-            (#select_backends term_backend_selection) target selection
+          val backends = select_backends (selection [])
+          val _ =
+            case (#card_refusal term_backend_selection) target backends [t] of
+              SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
+            | NONE => ()
+          val sent_subterms =
+            if List.exists (left_out backends) original_ts then
+              query_subterms
+                (t :: List.filter (not o left_out backends) original_ts)
+            else subterms
         in
-          case card_refusal backends [t] of
-            SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
-          | NONE => backends
+          select_backends (selection sent_subterms)
         end
-      else (#select term_backend_selection) target selection
-    fun left_out tm =
-      unsent tm orelse Option.isSome (card_refusal backends [tm])
+      else (#select term_backend_selection) target (selection subterms)
+    val left_out = left_out backends
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
     val _ = current_raw_num_terms := Redblackset.addList (empty_marked_terms,

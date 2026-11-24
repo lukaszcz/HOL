@@ -8558,6 +8558,14 @@ let
     (if c then set_f else set_g) s /\ (0:int) IN s``
   val needed = ``(x:int) < y``
   val conclusion = ``(x:int) <= y``
+  (* a forced first-order translation refuses a surviving lambda inside
+     translate_term, after the preflight passed and an option datatype the
+     kept assumption also uses came first *)
+  fun first_order goal =
+    SmtLib.goal_to_SmtLib_translation_with_regime SmtLib.FirstOrder NONE goal
+  val option_then_lambda = ``(o1:bool option) = NONE /\
+    (H:(int -> int) -> bool) (\x. x + 1)``
+  val option_needed = ``(o2:bool option) = SOME T /\ (x:int) < y``
   fun refused f goal = (ignore (f goal); false)
     handle Feedback.HOL_ERR _ => true
   (* the declarations and assertions, without the logic the whole goal
@@ -8582,6 +8590,14 @@ in
     "cvc5 did not drop exactly the CARD assumption");
   assert (refused cvc ([bound, needed], conclusion),
     "cvc5 translated a bound function over a Set");
+  expect_hol_error_contains "first-order surviving lambda"
+    "unsupported higher-order rator expression"
+    (fn () => ignore
+      (first_order ([option_then_lambda, option_needed], conclusion)));
+  assert (text_of (dropping first_order
+        ([option_then_lambda, option_needed], conclusion)) =
+      text_of (first_order ([option_needed], conclusion)),
+    "an assumption translate_term refused was not dropped exactly");
   (* the bound function makes the regime higher-order, which declares
      constants with declare-const *)
   assert (List.filter (String.isPrefix "(assert")
