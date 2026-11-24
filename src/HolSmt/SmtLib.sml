@@ -6825,11 +6825,18 @@ local
         (fn term => Redblackset.member (marked, term)) subterms
     val computed_set_applications = computed_applications marked_sets
     val computed_bag_applications = computed_applications marked_bags
+    (* dropping, the assumptions the preflight refused are never sent, so
+       they take no part in the ambiguous-argument check *)
+    val sent_subterms =
+      if List.null refused then subterms
+      else query_subterms (t :: List.filter (fn tm =>
+        not (List.exists (fn other => Term.aconv other tm) refused))
+        original_ts)
     fun has_mixed_collection_argument marked =
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
         collection_operations Term.compare Lib.I
-        (fn term => Redblackset.member (marked, term)) subterms
+        (fn term => Redblackset.member (marked, term)) sent_subterms
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application roots marked =
       not (Redblackset.isEmpty marked) andalso
