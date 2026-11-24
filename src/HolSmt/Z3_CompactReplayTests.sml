@@ -263,13 +263,19 @@ struct
               val result = Exn.capture (fn () => replay graph scope proof
                 maximum (fn _ => (count := !count+1;raise error))) ()
           in require "producer retried after terminal error" (!count=1);
-             case result of Exn.Exn held => require "changed first error"
-               (case (held,error) of
-                  (Feedback.HOL_ERR got,Feedback.HOL_ERR expected) =>
-                    Portable.pointer_eq (got,expected)
-                | (Fail got,Fail expected) => got=expected
-                | (Thread.Interrupt,Thread.Interrupt) => true
-                | _ => false)
+             case result of
+               Exn.Exn held =>
+                 if (case (held,error) of
+                       (Feedback.HOL_ERR got,Feedback.HOL_ERR expected) =>
+                         Portable.pointer_eq (got,expected)
+                     | (Fail got,Fail expected) => got=expected
+                     | (Thread.Interrupt,Thread.Interrupt) => true
+                     | _ => false)
+                 then ()
+                 else raise Fail ("changed first error: " ^
+                   (case held of
+                      Feedback.HOL_ERR _ => Feedback.exn_to_string held
+                    | _ => General.exnMessage held))
              | _ => raise Fail "terminal producer error was swallowed" end
       in run primary;run (Fail "terminal producer failure");
          run Thread.Interrupt end)
