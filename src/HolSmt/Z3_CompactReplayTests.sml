@@ -264,7 +264,12 @@ struct
                 maximum (fn _ => (count := !count+1;raise error))) ()
           in require "producer retried after terminal error" (!count=1);
              case result of Exn.Exn held => require "changed first error"
-               (General.exnMessage held=General.exnMessage error)
+               (case (held,error) of
+                  (Feedback.HOL_ERR got,Feedback.HOL_ERR expected) =>
+                    Portable.pointer_eq (got,expected)
+                | (Fail got,Fail expected) => got=expected
+                | (Thread.Interrupt,Thread.Interrupt) => true
+                | _ => false)
              | _ => raise Fail "terminal producer error was swallowed" end
       in run primary;run (Fail "terminal producer failure");
          run Thread.Interrupt end)
