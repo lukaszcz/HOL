@@ -322,6 +322,7 @@ structure CVC = struct
       val (goal, validation) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) goal
       val (translation, strings) =
         goal_to_SmtLib_with_get_proof_translation goal
+      val goal = SmtLib.sent_goal translation goal
       val arrays_exp = List.exists
         (fn text => String.isSubstring "(as const (Array" text) strings
     in

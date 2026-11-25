@@ -27,7 +27,8 @@ struct
            exact EncodedSymbol identity survives parser and worker use. *)
         val translation : SmtLib.translation =
           {logic = #logic raw,regime = #regime raw,tydict = #tydict raw,
-           tmdict = #tmdict raw,records = fn () => records}
+           tmdict = #tmdict raw,records = fn () => records,
+           dropped = #dropped raw}
         val _ = if Type.type_epoch () = epoch andalso
             Term.term_epoch () = symbols then () else
           raise ERR "emit" "translation callback changed declaration epoch"

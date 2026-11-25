@@ -116,9 +116,16 @@ struct
   fun close_original (Invocation {session,...}) = W.close session
   fun audit_original (Invocation {session,...}) = W.audit session
 
+  (* An original Source route sources every assumption before translating,
+     so it refuses a translation that left some out. *)
+  fun refuse_dropped name (translation : SmtLib.translation) =
+    if null (#dropped translation) then () else
+      raise ERR name "original Source route takes no dropped assumptions"
+
   fun admit_translation (Invocation {session,translation = selected,...})
       translation =
     let
+      val _ = refuse_dropped "admit_translation" translation
       val _ = ignore (W.sources session)
       val _ = case !selected of
           NONE => ()
@@ -217,7 +224,8 @@ struct
   fun admit_translation_with_work (OwnedInvocation
       {invocation = invocation as Invocation
         {session,translation = selected,...},work,emissions}) translation =
-    ((W.validate_with_work work session;
+    ((refuse_dropped "admit_translation_with_work" translation;
+      W.validate_with_work work session;
       (case !emissions of NONE => admit_translation invocation translation
        | SOME receipt =>
          let val input = W.preprocessing_with_work work session
@@ -640,7 +648,8 @@ struct
     (validate_with_policy expected saved;W.sources session)
   fun admit_translation_with_policy expected
       (saved as PolicyInvocation{translation=selected,...}) translation=
-    ((validate_with_policy expected saved;
+    ((refuse_dropped "admit_translation_with_policy" translation;
+      validate_with_policy expected saved;
       (case !selected of NONE=>()|SOME previous=>
         if Portable.pointer_eq(previous,translation)then ()else
           raise ERR "admit_translation_with_policy"
