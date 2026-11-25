@@ -3694,11 +3694,31 @@ fun transport_bound_facts viewed
       [] => (state,[])
     | views =>
   let
-    fun is_fact (theorem,_) = List.exists
-      (fn (view : clasetFacts.view) =>
-        Portable.pointer_eq (theorem,#theorem view)) views
-    val sources = List.concat (map #2 (List.filter is_fact
-      (simpLib.rewrite_bundle_rules (#bundle data))))
+    fun same_fact theorem (view : clasetFacts.view) =
+      Portable.pointer_eq (theorem,#theorem view)
+    val rules = simpLib.rewrite_bundle_rules (#bundle data)
+    fun enough_sources 0 _ = true
+      | enough_sources _ [] = false
+      | enough_sources count ((_,sources) :: rest) =
+          enough_sources (if null sources then count else count - 1) rest
+    (* Scanning wins on small batches. Only index when there are many
+       fact views and many rules with rewrite sources to check. *)
+    val batch = 256
+    val is_fact =
+      if length views < batch orelse not (enough_sources batch rules) then
+        fn (theorem,_) => List.exists (same_fact theorem) views
+      else
+        let
+          val index = List.foldl
+            (fn (view : clasetFacts.view,index) =>
+              Termtab.cons_list (concl (#theorem view),view) index)
+            Termtab.empty views
+        in
+          fn (theorem,_) => List.exists (same_fact theorem)
+            (Termtab.lookup_list index (concl theorem))
+        end
+    val sources = List.concat (map #2 (List.filter
+      (fn entry => not (null (#2 entry)) andalso is_fact entry) rules))
     val basis = simpLib.suspend_rewrite_sources sources
       (bound_simplification_simpset viewed state)
     exception FactViewLimit

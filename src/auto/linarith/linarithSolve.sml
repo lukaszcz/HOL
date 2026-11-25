@@ -250,6 +250,8 @@ fun partition_pivot_with work v dropped rows =
    Packed counters avoid allocating a reference pair per column and
    walking a second list during each row scan. *)
 fun choose_blowup_with work [] = NONE
+  (* A pivot requires two rows with opposite signs in one column. *)
+  | choose_blowup_with ({metered = false, ...} : work) [_] = NONE
   | choose_blowup_with work (rows as Lineq (_, _, first, _) :: _) =
       let
         (* Preserve the metered row visits before scanning coefficients. *)
@@ -265,11 +267,12 @@ fun choose_blowup_with work [] = NONE
               if i = width then raise ListPair.UnequalLengths
               else
                 (candidate work;
-                 if ai_pos c then
-                   Array.update (positives, i, Array.sub (positives, i) + 1)
-                 else if ai_neg c then
-                   Array.update (negatives, i, Array.sub (negatives, i) + 1)
-                 else ();
+                 (case Arbint.compare (c, zero) of
+                      GREATER => Array.update
+                        (positives, i, Array.sub (positives, i) + 1)
+                    | LESS => Array.update
+                        (negatives, i, Array.sub (negatives, i) + 1)
+                    | EQUAL => ());
                  tally (i + 1) cs)
         (* Choose the smallest nonzero product, favouring earlier columns. *)
         fun pick i best =

@@ -127,6 +127,34 @@ fun charge (budget as Budget {parent, ...}) kind =
     end
   end
 
+fun charge_many budget kind units =
+  if units < 0 then raise ERR "charge_many" "work must not be negative"
+  else if units = 0 then ()
+  else
+    let
+      fun admit (current as Budget {parent, ...}) count counters =
+        let
+          val (used, limit) = counter current kind
+          val cap =
+            case limit of NONE => Int.maxInt | SOME _ => limit
+          val count' =
+            case cap of
+                NONE => count
+              | SOME maximum => Int.min (count, maximum - !used)
+          val counters' = used :: counters
+        in
+          case parent of
+              NONE => (count', counters')
+            | SOME ancestor => admit ancestor count' counters'
+        end
+      val (admitted, counters) = admit budget units []
+    in
+      List.app (fn used => used := !used + admitted) counters;
+      (* The next charge chooses the same exhausted budget, or raises
+         Overflow with the same counter updates as consecutive charges. *)
+      if admitted = units then () else charge budget kind
+    end
+
 fun extend (Budget {limits, ...}) kind extra =
   if extra < 0 then
     raise ERR "extend" "an additional allocation must not be negative"

@@ -1628,7 +1628,7 @@ fun invocation_facts theorems =
 (* Matching uses applications with a constant head. After crossing an
    abstraction on the fact's side, check that the site's variables also
    occur free in the whole fact. *)
-fun matchable_subterms_with charge under_abstraction term =
+fun matchable_subterms_with checkpoint under_abstraction term =
   let
     fun head_name sub =
       if is_comb sub then head_name (rator sub)
@@ -1638,7 +1638,7 @@ fun matchable_subterms_with charge under_abstraction term =
     (* Visit in [find_terms] order, returning the sites in reverse.  Every
        operator in an application spine has the same head. *)
     fun visit head under_binder sub sites =
-      let val _ = charge searchBudget.Candidate
+      let val _ = checkpoint ()
       in
         if is_comb sub then
           let
@@ -1664,25 +1664,11 @@ fun matchable_subterms_with charge under_abstraction term =
     visit NONE false term []
   end
 
-fun matching_pairs_with charge goal_terms patterns =
-  let
-    val sites =
-      List.concat
-        (map (matchable_subterms_with charge (fn _ => true)) goal_terms)
-  in
-    List.concat
-      (map
-        (fn (pattern_head, pattern) =>
-          List.mapPartial
-            (fn (site_head, site) =>
-              if (charge searchBudget.Candidate; pattern_head = site_head)
-              then SOME (pattern, site)
-              else NONE)
-            sites)
-        patterns)
-  end
+fun goal_match_sites checkpoint goal_terms =
+  List.concat
+    (map (matchable_subterms_with checkpoint (fn _ => true)) goal_terms)
 
-fun match_indexed_sites goal_terms =
+fun match_indexed_sites get_sites =
   let
     (* Prepend from the right to preserve the original order within a head. *)
     val sites =
@@ -1694,11 +1680,8 @@ fun match_indexed_sites goal_terms =
                 (fn (later, earlier) => earlier @ later)
                 (index, head, [site]))
             (Redblackmap.mkDict String.compare)
-            (List.concat
-              (map (matchable_subterms_with (fn _ => ()) (fn _ => true))
-                 goal_terms)))
+            (get_sites ()))
   in
-    (* Match within each bucket without collecting the candidate pairs. *)
     fn match =>
       fn [] => []
        | patterns =>
@@ -1711,6 +1694,39 @@ fun match_indexed_sites goal_terms =
                      (Option.getOpt (Redblackmap.peek (index, head), [])))
                  patterns)
            end
+  end
+
+fun match_measured_sites budget goal_terms =
+  let
+    val charge_many = searchBudget.charge_many budget searchBudget.Candidate
+    val cached = ref NONE
+    fun get_sites () =
+      case !cached of
+          SOME (matched, count, visits) =>
+            (charge_many visits; (matched, count))
+        | NONE =>
+            let
+              val visits = ref 0
+              fun checkpoint () =
+                (searchBudget.charge budget searchBudget.Candidate;
+                 visits := !visits + 1)
+              val sites = goal_match_sites checkpoint goal_terms
+              val count = length sites
+              val matched = match_indexed_sites (fn () => sites)
+            in
+              cached := SOME (matched, count, !visits);
+              (matched, count)
+            end
+  in
+    fn match => fn patterns =>
+      let
+        (* Each fact pays for the original traversal and all head checks
+           before any type match, including when there are no patterns. *)
+        val (matched, count) = get_sites ()
+        val _ = List.app (fn _ => charge_many count) patterns
+      in
+        matched match patterns
+      end
   end
 
 fun compare_type_binding ({redex, residue}, {redex = other, residue = value}) =
@@ -2026,7 +2042,8 @@ fun polymorphic_instances_with budgeted charge
                 let val free = Portable.HOLSusp.force schematic
                 in List.all (fn v => HOLset.member (free, v)) variables end
         val patterns =
-          matchable_subterms_with charge eligible match_body
+          matchable_subterms_with (fn () => charge searchBudget.Candidate)
+            eligible match_body
         fun instance_of (pattern, site) =
           (charge searchBudget.Candidate;
            case Lib.total (Term.match_term pattern) site of
@@ -2144,13 +2161,12 @@ fun insert_facts_tac_with budget facts =
        val (budgeted, charge, match_sites) =
          case budget of
              NONE =>
-               (false, fn _ => (), match_indexed_sites terms)
+               (false, fn _ => (),
+                match_indexed_sites
+                  (fn () => goal_match_sites listUtil.no_checkpoint terms))
            | SOME owned =>
-               let val charge = searchBudget.charge owned
-                   fun match_sites match patterns =
-                     List.mapPartial match
-                       (matching_pairs_with charge terms patterns)
-               in (true, charge, match_sites) end
+               (true, searchBudget.charge owned,
+                match_measured_sites owned terms)
        val instances =
          List.rev
            (List.concat

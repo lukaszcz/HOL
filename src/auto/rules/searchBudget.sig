@@ -26,6 +26,8 @@ sig
   val available : budget -> kind -> bool
   (* Charge before work starts.  A zero limit rejects its first unit. *)
   val charge : budget -> kind -> unit
+  (* Equivalent to consecutive charges with no intervening work. *)
+  val charge_many : budget -> kind -> int -> unit
   (* Add an explicit allocation to a finite limit.  An unbounded
      dimension remains unbounded.  This preserves usage and lets a
      suspended invocation resume with its existing cursors. *)

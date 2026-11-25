@@ -3788,12 +3788,21 @@ val _ =
                  (assumptions, length assumptions - length (#1 goal))
              | _ => raise Fail "expected one goal after fact insertion"
          val ordinary = inserted INSERT_FACTS_TAC
-         val measured =
-           inserted (INSERT_FACTS_TAC_BUDGETED (searchBudget.unbounded ()))
+         val budget = searchBudget.unbounded ()
+         val measured = inserted (INSERT_FACTS_TAC_BUDGETED budget)
+         val cutoff = searchBudget.create
+           {candidates = SOME 128, applications = NONE, normalization = NONE}
+         val stops_during_matching =
+           (ignore (inserted (INSERT_FACTS_TAC_BUDGETED cutoff)); false)
+           handle searchBudget.LimitReached (searchBudget.Candidate, used) =>
+             used = {candidates = 128, applications = 0, normalization = 3}
        in
          length ordinary = 2 andalso
          ListPair.allEq (fn (left, right) => aconv left right)
-           (ordinary, measured)
+           (ordinary, measured) andalso
+         searchBudget.usage budget =
+           {candidates = 433, applications = 2, normalization = 43} andalso
+         stops_during_matching
        end)
 
 val _ =
@@ -4691,6 +4700,62 @@ val _ =
        in
          root_rejected andalso refuses 1 andalso counts () = [2, 1, 1]
        end)
+
+val _ =
+  test
+    ("bulk charges preserve nested exhaustion and prior usage",
+     fn () =>
+       let
+         fun limits candidates =
+           {candidates = SOME candidates, applications = NONE,
+            normalization = NONE}
+         val kind = searchBudget.Candidate
+         fun run charge (root_limit, middle_limit, leaf_limit, units) =
+           let
+             val root = searchBudget.create (limits root_limit)
+             val middle = searchBudget.child root (limits middle_limit)
+             val leaf = searchBudget.child middle (limits leaf_limit)
+             val _ = searchBudget.charge root searchBudget.Application
+             val _ = searchBudget.charge middle kind
+             val rejected =
+               (charge leaf units; NONE)
+               handle searchBudget.LimitReached
+                 (searchBudget.Candidate, used) => SOME used
+           in
+             (rejected, map searchBudget.usage [root, middle, leaf])
+           end
+         fun singles budget 0 = ()
+           | singles budget units =
+               (searchBudget.charge budget kind; singles budget (units - 1))
+         fun bulk budget = searchBudget.charge_many budget kind
+       in
+         List.all (fn input => run singles input = run bulk input)
+           [(1, 1, 0, 0), (1, 1, 0, 3), (2, 2, 3, 4),
+            (2, 3, 3, 4), (4, 3, 3, 4), (4, 4, 1, 4), (3, 3, 2, 2)]
+       end)
+
+val _ =
+  test
+    ("bulk charges preserve counter overflow",
+     fn () =>
+       case Int.maxInt of
+           NONE => true
+         | SOME maximum =>
+             let
+               val root = searchBudget.unbounded ()
+               val leaf = searchBudget.child root
+                 {candidates = NONE, applications = NONE,
+                  normalization = NONE}
+               val kind = searchBudget.Candidate
+               val _ = searchBudget.charge_many root kind (maximum - 1)
+               val overflows =
+                 (searchBudget.charge_many leaf kind 3; false)
+                 handle Overflow => true
+             in
+               overflows andalso
+               #candidates (searchBudget.usage root) = maximum andalso
+               #candidates (searchBudget.usage leaf) = 2
+             end)
 
 val _ =
   test

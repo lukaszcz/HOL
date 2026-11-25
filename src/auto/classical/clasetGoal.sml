@@ -26,6 +26,7 @@ datatype node =
            level : int,
            paths : int list list,
            marks : binding_marks,
+           marks_aligned : bool,
            avoids : term HOLset.set,
            rendering : term option ref,
            (* A rendering and its lookup spellings are pure functions of
@@ -142,9 +143,9 @@ fun register_fresh bound avoids store =
     attempt (HOLset.listItems avoids)
   end
 
-(* A caller can supply marks through [set_binding_marks]. *)
-fun check_marks goal_count marks =
-  if length marks = goal_count then ()
+(* Keep the error deferred until a caller uses a mismatched mark list. *)
+fun check_marks aligned =
+  if aligned then ()
   else
     raise mk_HOL_ERR "clasetGoal" "make_node"
       "search bookkeeping does not correspond to the open goals"
@@ -152,6 +153,7 @@ fun check_marks goal_count marks =
 fun make_node goals goal_count store replay level paths marks avoids =
   Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
         size = ref NONE, level = level, paths = paths, marks = marks,
+        marks_aligned = true,
         avoids = avoids, rendering = ref NONE, renders = ref Inttab.empty,
         spellings = ref Inttab.empty}
 
@@ -212,38 +214,53 @@ fun fresh_eigen node bound =
 
 fun set_store store'
   (node as Node {goals, goal_count, store, replay, level, paths, marks,
-                 avoids, ...}) =
-  (check_marks goal_count marks;
+                 marks_aligned, avoids, ...}) =
+  (check_marks marks_aligned;
    if Portable.pointer_eq (store, store') then node
    else
      make_node goals goal_count (register_params goals store')
        replay level paths marks avoids)
 
 fun set_level level'
-  (Node {goals, goal_count, store, replay, size, paths, marks, avoids,
-         rendering, renders, spellings, ...}) =
+  (Node {goals, goal_count, store, replay, size, paths, marks,
+         marks_aligned, avoids, rendering, renders, spellings, ...}) =
   (* Goals and store are unchanged, so their cached derivatives remain
      valid. *)
   Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
         size = size, level = level', paths = paths, marks = marks,
+        marks_aligned = marks_aligned,
         avoids = avoids, rendering = rendering, renders = renders,
         spellings = spellings}
 
 fun set_binding_marks marks'
-  (Node {goals, goal_count, store, replay, size, level, paths, avoids,
-         rendering, renders, spellings, ...}) =
-  Node {goals = goals, goal_count = goal_count, store = store, replay = replay,
-        size = size, level = level, paths = paths, marks = marks',
-        avoids = avoids, rendering = rendering, renders = renders,
-        spellings = spellings}
+  (Node {goals, goal_count, store, replay, size, level, paths, marks,
+         marks_aligned, avoids, rendering, renders, spellings}) =
+  let
+    (* Search transitions only change a short prefix of an aligned list. *)
+    fun same_length (left, right) =
+      Portable.pointer_eq (left, right) orelse
+      (case (left, right) of
+           ([], []) => true
+         | (_ :: lefts, _ :: rights) => same_length (lefts, rights)
+         | _ => false)
+    val aligned =
+      if marks_aligned then same_length (marks, marks')
+      else length marks' = goal_count
+  in
+    Node {goals = goals, goal_count = goal_count, store = store,
+          replay = replay, size = size, level = level, paths = paths,
+          marks = marks', marks_aligned = aligned, avoids = avoids,
+          rendering = rendering, renders = renders, spellings = spellings}
+  end
 
 fun record_step record
-  (Node {goals, goal_count, store, replay, size, level, paths, marks, avoids,
-         rendering, renders, spellings}) =
+  (Node {goals, goal_count, store, replay, size, level, paths, marks,
+         marks_aligned, avoids, rendering, renders, spellings}) =
   Node
     {goals = goals, goal_count = goal_count, store = store,
      replay = clasetReplay.append replay record, size = size,
-     level = level, paths = paths, marks = marks, avoids = avoids,
+     level = level, paths = paths, marks = marks,
+     marks_aligned = marks_aligned, avoids = avoids,
      rendering = rendering, renders = renders, spellings = spellings}
 
 fun nth1 function_name =
@@ -280,7 +297,8 @@ fun child_paths parent count =
       enumerate 0
     end
 
-fun replace_goal node {pos, children, store = store'} =
+fun replace_goal (node as Node {marks_aligned, ...})
+      {pos, children, store = store'} =
   let
     val old_goals = goals node
     val old_paths = goal_paths node
@@ -294,7 +312,9 @@ fun replace_goal node {pos, children, store = store'} =
     val marks' = splice1 "replace_goal" old_marks pos
       (List.tabulate (children_count, fn _ => inherited_mark))
     val count' = goal_count node - 1 + children_count
-    val _ = check_marks count' marks'
+    (* Both the goal and mark lists lost one element and gained one per
+       child, so the splice preserves alignment. *)
+    val _ = check_marks marks_aligned
     (* The shared store already owns every inherited goal parameter. *)
     val register =
       if Portable.pointer_eq (store node, store') then children else goals'

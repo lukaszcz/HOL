@@ -1829,6 +1829,40 @@ val _ =
 
 val _ =
   test
+    ("binding marks can recover from a malformed replacement",
+     fn () =>
+       let
+         val goal = {params = [], asl = [], w = boolSyntax.T}
+         val store = clasetMeta.empty
+         val node =
+           clasetGoal.create {goals = [goal, goal], store = store, level = 0}
+         val marks = clasetGoal.binding_marks node
+         val short =
+           clasetGoal.set_level 1
+             (clasetGoal.set_binding_marks (List.tl marks) node)
+         val long = clasetGoal.set_binding_marks
+           (clasetGoal.empty_mark :: marks) node
+         val recovered = clasetGoal.set_binding_marks marks short
+         fun remove pos current =
+           clasetGoal.replace_goal current
+             {pos = pos, children = [], store = store}
+         fun rejects message operation =
+           (let val _ = operation () in false end)
+           handle HOL_ERR error => Feedback.message_of error = message
+         val mismatch =
+           "search bookkeeping does not correspond to the open goals"
+       in
+         length (clasetGoal.binding_marks short) = 1 andalso
+         rejects mismatch (fn () => clasetGoal.set_store store short)
+         andalso rejects mismatch (fn () => remove 1 long)
+         andalso rejects "position out of range" (fn () => remove 2 short)
+         andalso
+           null (clasetGoal.binding_marks
+                   (remove 1 (remove 1 (clasetGoal.set_store store recovered))))
+       end)
+
+val _ =
+  test
     ("engine size counts atoms and abstractions after substitution",
      fn () =>
        let

@@ -541,11 +541,18 @@ fun PERMUTE_PREMISES_RULE kind order th =
 fun ext_info ({kind, safe, ...} : rulespec) th =
   let
     val th' = canonical_rule_of kind th
+    fun check_premises () =
+      let
+        val conclusion = concl th'
+        val body =
+          if is_forall conclusion then #2 (strip_forall conclusion)
+          else conclusion
+      in
+        if is_imp_only body then () else illformed_rule "ext_info" kind
+      end
     fun elim_rule () =
       let
-        val _ = (case rule_premises_of kind th' of
-                    [] => illformed_rule "ext_info" kind
-                  | _ => ())
+        val _ = check_premises ()
         val elim = if kind = Dest then MAKE_ELIM_RULE th' else th'
       in
         CLASSICAL_RULE elim
@@ -579,9 +586,7 @@ fun ext_info ({kind, safe, ...} : rulespec) th =
       end
     fun forward_info () =
       let
-        val _ = (case rule_premises_of kind th' of
-                    [] => illformed_rule "ext_info" kind
-                  | _ => ())
+        val _ = check_premises ()
         val forward = MAKE_ELIM_RULE th'
         val rl = (forward, NONE)
       in

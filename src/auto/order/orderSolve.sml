@@ -486,12 +486,17 @@ fun equality_lookup (work : work) equalities =
         end
     | _ => stated work equalities
 
-fun close _ _ _ [] = NONE
-  | close work (context : orderData.context) (edges, equalities) distinctions =
+fun close _ _ (_, _, []) _ = NONE
+  | close work (context : orderData.context)
+      (edges, equalities, distinctions) prepared_outgoing =
   let
+    val outgoing =
+      case prepared_outgoing of
+          NONE => outgoing_index edges
+        | SOME index => index
     val {reach_crossing, ...} =
       reach_from work (#transitive (#axioms context)) distinctions edges
-        (outgoing_index edges)
+        outgoing
     val lookup = equality_lookup work equalities
     fun one (x, y, distinction) =
       let
@@ -510,9 +515,6 @@ fun close _ _ _ [] = NONE
   in
     search work one distinctions
   end
-
-fun refute_graph work context (edges, equalities, distinctions) =
-  close work context (edges, equalities) distinctions
 
 (* Proving a literal outright is the other half of the procedure.  A
    refutation reads the negated goal as a literal, and a relational atom
@@ -544,7 +546,8 @@ fun prove_literal work context
                  NONE => NONE
                | SOME path =>
                    (case refute_equation work context
-                           (edges, equalities, distinctions) (x, y) of
+                           (edges, equalities, distinctions) outgoing
+                           (x, y) of
                         NONE => NONE
                       | SOME apart =>
                           let val step = path_theorem path
@@ -555,14 +558,14 @@ fun prove_literal work context
                           end))
       | orderData.Distinct pair =>
           refute_equation work context
-            (edges, equalities, distinctions) pair
+            (edges, equalities, distinctions) outgoing pair
   end
 
 (* [x <> y] is proved by adding the equation and refuting the graph.
    Adding it does not create a distinction, so ordinary calls can skip
    the expansion when there are none. *)
 and refute_equation work context
-      (edges, equalities, distinctions) (x, y) =
+      (edges, equalities, distinctions) outgoing (x, y) =
   if null distinctions andalso Option.isSome (#max_nodes work) then NONE
   else
     let
@@ -571,10 +574,13 @@ and refute_equation work context
       val facts = [{literal = orderData.Equal (x, y), theorem = assumed}]
       val (extra_edges, extra_equalities, _) =
         expand work context facts
+      val (extended, index) =
+        case extra_edges of
+            [] => (edges, SOME outgoing)
+          | _ => (edges @ extra_edges, NONE)
       val closed =
         close work context
-          (edges @ extra_edges, extra_equalities @ equalities)
-          distinctions
+          (extended, extra_equalities @ equalities, distinctions) index
     in
       Option.map (fn refutation => NOT_INTRO (DISCH equation refutation))
         closed
@@ -585,8 +591,7 @@ fun prepare (work : work) context theorems =
     val read = orderData.facts_of (#meter work) context
     val supplied = List.concat (List.map read theorems)
     val parts = expand work context supplied
-    (* Direct goals share the supplied edges. Refutations may add edges
-       in a query-specific order, so they build their own index. *)
+    (* Queries that keep the supplied edges share their outgoing index. *)
     val outgoing = outgoing_index (#1 parts)
     (* Only metered refutation expands the supplied facts again. *)
     val retained = if Option.isSome (#max_nodes work) then [] else supplied
@@ -629,11 +634,12 @@ fun attempt (work : work) context base term =
                            (body, fn r => NOT_INTRO (DISCH body r))
                        | NONE => (mk_neg target, fn r => CCONTR target r)
                    val negated = read (ASSUME assumption)
-                   val refutation_graph =
+                   val refutation =
                      case #max_nodes work of
                          (* Keep the order of charges in the metered path. *)
                          NONE =>
-                           SOME (expand work context (negated @ supplied))
+                           close work context
+                             (expand work context (negated @ supplied)) NONE
                        | SOME maximum =>
                            let
                              val (extra_edges, extra_equalities,
@@ -643,14 +649,16 @@ fun attempt (work : work) context base term =
                                (extra_edges @ edges,
                                 extra_equalities @ equalities,
                                 extra_distinctions @ distinctions)
+                             val index =
+                               if null extra_edges then SOME outgoing
+                               else NONE
                            in
-                             Option.map (fn _ => extended)
+                             Option.mapPartial
+                               (fn _ => close work context extended index)
                                (bounded_nodes maximum nodes extra_edges)
                            end
                  in
-                   Option.map (carry o restore)
-                     (Option.mapPartial (refute_graph work context)
-                        refutation_graph)
+                   Option.map (carry o restore) refutation
                  end)
   end
 
