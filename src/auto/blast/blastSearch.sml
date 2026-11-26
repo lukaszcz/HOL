@@ -1107,6 +1107,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
          appendUnsafeAt=fn _ => appendPlain,
          safeRulesFor=blastRule.safeRules rule_cache claset,
          unsafeRulesFor=blastRule.unsafeRules rule_cache claset,
+         hasUnsafeRulesFor=blastRule.hasUnsafeRules rule_cache claset,
          noteUnsafeRuleAttempt=noop,
          mapPairAt=fn _ => pairUnflagged,
          requeueGammaAt=fn _ => requeueTrackedGamma,
@@ -1305,6 +1306,9 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                    rule_monitor rule_cache claset,
                  unsafeRulesFor=blastRule.unsafeRulesMeasured
                    rule_monitor rule_cache claset,
+                 hasUnsafeRulesFor=fn vars => fn formula =>
+                   not (null (blastRule.unsafeRulesMeasured
+                     rule_monitor rule_cache claset vars formula)),
                  noteUnsafeRuleAttempt=ruleAttempt unsafe_attempts,
                  mapPairAt=fn mark =>
                    mapMeasured (at mark) (fn item => (item, false)),
@@ -1336,7 +1340,8 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
          noteLiteralAttempt,noteLiteralSuccess,addVarsAt,varsInVarsAt,
          foldPremVarsAt,unifyAt,tryCloseAt,pruneAt,equalSubstAt,joinMdAt,
          negGoalsAt,mapNegLitsAt,existsGoalAt,addTrackedLitAt,
-         appendUnsafeAt,safeRulesFor,unsafeRulesFor,noteUnsafeRuleAttempt,
+         appendUnsafeAt,safeRulesFor,unsafeRulesFor,hasUnsafeRulesFor,
+         noteUnsafeRuleAttempt,
          mapPairAt,requeueGammaAt,recursivePremiseAt,mayUndoAt,normAt,
          mergeUnsafe,initialFormulasOf,initialBranchOf,
          cleanupRun} = searchWorkers
@@ -1782,39 +1787,38 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                       end)
 
               fun fallback () =
-                case unsafeRulesFor vars (trackedTerm formula) of
-                    [] =>
-                      prv
-                        (tacs, remember brs0 trace, choices, open_count,
-                         {pairs = (safe, unsafe) :: pairs,
-                          lits = addTrackedLitAt mark (formula, lits),
-                          vars = vars, lim = lim,
-                          assumptions = assumptions} :: brs)
-                  | _ =>
-                      let
-                        val goal_formula = isGoal (trackedTerm formula)
-                        val (deferred, assumptions') =
-                          if goal_formula then
-                            let
-                              val token = freshToken ()
-                              val term = negOfGoal (trackedTerm formula)
-                            in
-                              (Tracked {term = term, token = SOME token},
-                               (token, term) :: assumptions)
-                            end
-                          else (negOfTracked formula, assumptions)
-                      in
-                        prv
-                          ((if goal_formula then DeferGoal :: tacs
-                            else tacs),
-                           remember brs0 trace, choices, open_count,
-                           {pairs =
-                              (safe,
-                               appendUnsafeAt mark unsafe
-                                 [(deferred, md)]) :: pairs,
-                            lits = lits, vars = vars, lim = lim,
-                            assumptions = assumptions'} :: brs)
-                      end
+                if not (hasUnsafeRulesFor vars (trackedTerm formula)) then
+                  prv
+                    (tacs, remember brs0 trace, choices, open_count,
+                     {pairs = (safe, unsafe) :: pairs,
+                      lits = addTrackedLitAt mark (formula, lits),
+                      vars = vars, lim = lim,
+                      assumptions = assumptions} :: brs)
+                else
+                  let
+                    val goal_formula = isGoal (trackedTerm formula)
+                    val (deferred, assumptions') =
+                      if goal_formula then
+                        let
+                          val token = freshToken ()
+                          val term = negOfGoal (trackedTerm formula)
+                        in
+                          (Tracked {term = term, token = SOME token},
+                           (token, term) :: assumptions)
+                        end
+                      else (negOfTracked formula, assumptions)
+                  in
+                    prv
+                      ((if goal_formula then DeferGoal :: tacs
+                        else tacs),
+                       remember brs0 trace, choices, open_count,
+                       {pairs =
+                          (safe,
+                           appendUnsafeAt mark unsafe
+                             [(deferred, md)]) :: pairs,
+                        lits = lits, vars = vars, lim = lim,
+                        assumptions = assumptions'} :: brs)
+                  end
 
             in
               preserve

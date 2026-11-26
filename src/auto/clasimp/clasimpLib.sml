@@ -3436,7 +3436,16 @@ val transport_claset_rules = transport_claset_rules_with
 val transport_bound_claset_rules = transport_claset_rules_with
   simpLib.filter_rewrites_preserving_controls bound_rule_normal_form_conv
 
-fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
+(* Transport the claset only if the fact views leave a residue. *)
+fun transport_rule_inventory consumer base_cs cs () =
+  let
+    val candidates = clasetLib.rules_of base_cs @
+      clasetLib.invocation_marker_rules cs
+    fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
+  in
+    if consumer = clasetLib.SafeFacts
+    then List.filter safe_named_rule candidates else candidates
+  end
 
 (* Only declarations connected to the goal's vocabulary need a new
    normal-form view. Follow direct rewrite-head bridges as well: a rule
@@ -3571,15 +3580,15 @@ fun transport_candidates budget ss goals candidates =
     List.filter related candidates
   end
 
-fun with_claset_transport_from transport budget policy ss candidates cs build
-      initial goal ctxt =
+fun with_claset_transport_from transport budget policy ss get_candidates cs
+      build initial goal ctxt =
   let
     fun initial_result () =
       case initial of
           (SOME result, _) => result
         | (NONE, SOME exn) => raise exn
         | _ => raise ERR "with_claset_transport" "missing result"
-    fun improve () =
+    fun improve candidates =
       if null candidates then initial_result ()
       else let
         val sites =
@@ -3609,7 +3618,7 @@ fun with_claset_transport_from transport budget policy ss candidates cs build
   in
     case initial of
         (SOME ([], validation), _) => ([], validation)
-      | _ => improve ()
+      | _ => improve (get_candidates ())
   end
 
 fun with_claset_transport budget policy ss candidates cs build goal ctxt =
@@ -3832,10 +3841,6 @@ fun bound_fact_views viewed consumer budget body base_cs
             val (next,transported) =
               transport_bound_facts viewed bound environment
             val fact_cs = add_transported_facts consumer budget transported cs
-            val candidates = clasetLib.rules_of base_cs @
-              clasetLib.invocation_marker_rules cs
-            val eligible = if consumer = clasetLib.SafeFacts
-              then List.filter safe_named_rule candidates else candidates
             val policy = bound_simplification_policy next
             val ss = bound_simplification_simpset viewed next
             val same = Portable.pointer_eq (bound,next) andalso
@@ -3843,7 +3848,8 @@ fun bound_fact_views viewed consumer budget body base_cs
             val start = if same then initial else attempt next fact_cs
             val completed =
               SOME (with_claset_transport_from transport_bound_claset_rules
-                budget policy ss eligible fact_cs
+                budget policy ss (transport_rule_inventory consumer base_cs cs)
+                fact_cs
                 (fn current => body next current environment)
                 start goal ctxt)
               handle HOL_ERR _ => NONE
@@ -3915,17 +3921,11 @@ fun process_clasimp_args_fact_views consumer budget
                         end
                       else state)
                     (cs, 0) transported)
-              val candidates =
-                clasetLib.rules_of base_cs @
-                clasetLib.invocation_marker_rules cs
-              val eligible =
-                if consumer = clasetLib.SafeFacts then
-                  List.filter safe_named_rule candidates
-                else candidates
               val arguments =
                 controls @ map #theorem (views @ transported)
             in
-              with_claset_transport budget policy ss eligible fact_cs
+              with_claset_transport budget policy ss
+                (transport_rule_inventory consumer base_cs cs) fact_cs
                 (fn current => body policy current ss arguments)
             end
         | NONE =>

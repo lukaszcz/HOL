@@ -616,9 +616,9 @@ fun refresh tree =
       NONE => tree
     | SOME next => refresh next
 
-(* Without copies, only the unique parent can depend on a changed state.
-   Stop at the first unchanged node.  Copy support can also depend on the
-   applications elsewhere in the tree, so those trees use the fixpoint. *)
+(* Follow each changed state to its unique parent, stopping at the first
+   unchanged node. A proof gained or lost on this path can also affect
+   copy support elsewhere in the tree. *)
 fun refresh_goal_ancestors id (tree as Tree fields) =
   let
     val current = goal tree id
@@ -679,15 +679,10 @@ fun refresh_after_proof propagate tree =
   end
 
 fun refresh_goal id proof_retracted tree =
-  if not (has_copies tree) then refresh_goal_ancestors id tree
-  else
-    let val current = goal tree id
-    in
-      if proof_retracted orelse
-         derive_goal tree current <> #state current
-      then refresh tree
-      else tree
-    end
+  (* Exhaustion changes only Unknown and Stuck as it propagates.
+     Copy support depends on which goals and applications are proved. *)
+  if proof_retracted andalso has_copies tree then refresh tree
+  else refresh_goal_ancestors id tree
 
 fun queue_goal id prio (queue, insertion) =
   (searchHeap.add {goal = id, prio = prio, insertion = insertion} queue,

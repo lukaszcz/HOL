@@ -81,40 +81,49 @@ val empty =
    ty_bindings = Redblackmap.mkDict string_compare,
    occurring = Redblackset.empty string_compare}
 
+(* Siblings share the tables they inherit from their common store. *)
 fun merge_table table equal (left, right) =
-  let
-    fun merge (key, value1, value2) =
-      if equal value1 value2 then value1
-      else
-        raise mk_HOL_ERR "clasetMeta" "absorb"
-          ("conflicting " ^ table ^ " entry for key " ^ key)
-  in
-    Redblackmap.unionWithi merge (left, right)
-  end
+  if Portable.pointer_eq (left, right) orelse Redblackmap.isEmpty right
+  then left
+  else if Redblackmap.isEmpty left then right
+  else
+    let
+      fun merge (key, value1, value2) =
+        if equal value1 value2 then value1
+        else
+          raise mk_HOL_ERR "clasetMeta" "absorb"
+            ("conflicting " ^ table ^ " entry for key " ^ key)
+    in
+      Redblackmap.unionWithi merge (left, right)
+    end
 
 fun absorb {base, extensions} =
   let
     fun merge (extension : store, store : store) =
-      {allows =
-         merge_table "allow-set" (Lib.list_eq aconv)
-           (#allows store, #allows extension),
-       eigens =
-         merge_table "eigenvariable" (Lib.list_eq aconv)
-           (#eigens store, #eigens extension),
-       metas =
-         merge_table "term metavariable" aconv
-           (#metas store, #metas extension),
-       tm_bindings =
-         merge_table "term binding" aconv
-           (#tm_bindings store, #tm_bindings extension),
-       tymetas =
-         merge_table "type metavariable" (Lib.curry op =)
-           (#tymetas store, #tymetas extension),
-       ty_bindings =
-         merge_table "type binding" (Lib.curry op =)
-           (#ty_bindings store, #ty_bindings extension),
-       occurring =
-         Redblackset.union (#occurring store, #occurring extension)}
+      if Portable.pointer_eq (store, extension) then store
+      else
+        {allows =
+           merge_table "allow-set" (Lib.list_eq aconv)
+             (#allows store, #allows extension),
+         eigens =
+           merge_table "eigenvariable" (Lib.list_eq aconv)
+             (#eigens store, #eigens extension),
+         metas =
+           merge_table "term metavariable" aconv
+             (#metas store, #metas extension),
+         tm_bindings =
+           merge_table "term binding" aconv
+             (#tm_bindings store, #tm_bindings extension),
+         tymetas =
+           merge_table "type metavariable" (Lib.curry op =)
+             (#tymetas store, #tymetas extension),
+         ty_bindings =
+           merge_table "type binding" (Lib.curry op =)
+             (#ty_bindings store, #ty_bindings extension),
+         occurring =
+           if Portable.pointer_eq (#occurring store, #occurring extension)
+           then #occurring store
+           else Redblackset.union (#occurring store, #occurring extension)}
   in
     List.foldl merge base extensions
   end

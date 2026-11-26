@@ -1725,6 +1725,32 @@ val bound_coupled_tree3 =
 
 val _ =
   check
+    ("exhausting and reopening a copy updates only its ancestor path",
+     fn () =>
+       let
+         val waiting =
+           bound_coupled_tree2
+           |> aesopTree.exhaust_goal bound_coupled_root
+           |> aesopTree.exhaust_goal bound_coupled_left
+           |> aesopTree.exhaust_goal bound_coupled_right
+         val exhausted =
+           aesopTree.exhaust_goal bound_coupled_copy waiting
+         val reopened =
+           aesopTree.set_safe_done bound_coupled_copy false exhausted
+         fun state tree id = #state (aesopTree.goal tree id)
+       in
+         state waiting bound_coupled_root = aesopTree.Unknown andalso
+         state exhausted bound_coupled_left = aesopTree.Stuck andalso
+         state exhausted bound_coupled_root = aesopTree.Stuck andalso
+         state reopened bound_coupled_left = aesopTree.Unknown andalso
+         state reopened bound_coupled_root = aesopTree.Unknown andalso
+         List.all (fn tree =>
+           state tree bound_coupled_right = aesopTree.Stuck)
+           [waiting, exhausted, reopened]
+       end)
+
+val _ =
+  check
     ("aesop coupled clusters close through the copy of every sibling",
      fn () =>
        #copy_of

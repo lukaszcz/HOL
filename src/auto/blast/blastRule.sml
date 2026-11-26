@@ -1094,11 +1094,9 @@ fun copyRulesWith checkpoint eager_external_skolems
   end
 
 fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
-      cache claset safe vars formula =
+      cache claset safe vars formula use_templates =
   case cachedWith measured checkpoint cache safe vars formula of
-      (_, SOME rules) =>
-        if not measured andalso null rules then []
-        else copyRulesWith checkpoint measured cache vars formula true rules
+      (_, SOME rules) => use_templates rules
     | (primary, NONE) =>
         let
           val tagged = candidatesMeasured monitor measured claset safe formula
@@ -1150,12 +1148,23 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
           rules
         end
 
+fun acquireRulesWith (monitor as {checkpoint, ...} : monitor) measured
+      cache claset safe vars formula =
+  let
+    fun instantiate rules =
+      if not measured andalso null rules then []
+      else copyRulesWith checkpoint measured cache vars formula true rules
+  in
+    acquireWith monitor measured cache claset safe vars formula instantiate
+  end
+
 (* Candidate lookup recognizes the shared no-op as the unmetered query. *)
+val plain_monitor =
+  {candidate = fn () => (), conversion = fn () => (),
+   checkpoint = listUtil.no_checkpoint}
+
 fun acquire cache claset safe vars formula =
-  acquireWith
-    {candidate = fn () => (), conversion = fn () => (),
-     checkpoint = listUtil.no_checkpoint}
-    false cache claset safe vars formula
+  acquireRulesWith plain_monitor false cache claset safe vars formula
 
 fun safeRules cache claset vars formula =
   acquire cache claset true vars formula
@@ -1163,11 +1172,17 @@ fun safeRules cache claset vars formula =
 fun unsafeRules cache claset vars formula =
   acquire cache claset false vars formula
 
+(* Deferring a formula needs only the presence of rules. Cache misses
+   still populate the same templates as an ordinary acquisition. *)
+fun hasUnsafeRules cache claset vars formula =
+  not (null (acquireWith plain_monitor false cache claset false vars
+    formula Lib.I))
+
 fun safeRulesMeasured monitor cache claset vars formula =
-  acquireWith monitor true cache claset true vars formula
+  acquireRulesWith monitor true cache claset true vars formula
 
 fun unsafeRulesMeasured monitor cache claset vars formula =
-  acquireWith monitor true cache claset false vars formula
+  acquireRulesWith monitor true cache claset false vars formula
 
 (* The tableau premises are the stored rule's minor premises: conversion
    takes the major premise of an elimination out of the list and leaves it

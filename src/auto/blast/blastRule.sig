@@ -50,6 +50,8 @@ sig
     cache -> clasetLib.claset -> var list -> pterm -> tableau_rule list
   val unsafeRules :
     cache -> clasetLib.claset -> var list -> pterm -> tableau_rule list
+  val hasUnsafeRules :
+    cache -> clasetLib.claset -> var list -> pterm -> bool
 
   (* Search monitoring is deliberately confined to these measured rule
      acquisition entry points.  candidate records a tagged rule presented
