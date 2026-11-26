@@ -202,6 +202,33 @@ fun dependencies_difference
 fun dependencies_empty ({terms, types} : dependencies) =
   HOLset.isEmpty terms andalso HOLset.isEmpty types
 
+fun subtract_split_dependencies
+      ({terms = retained_terms, types = retained_types} : dependencies)
+      ({terms = pending_terms, types = pending_types} : dependencies) =
+  let
+    fun subtract (pending, retained) =
+      let
+        val needed = HOLset.numItems pending
+        val supplied = HOLset.numItems retained
+        fun remove (item, set) =
+          if HOLset.member (set, item) then HOLset.delete (set, item)
+          else set
+      in
+        if needed = 0 orelse supplied = 0 then pending
+        (* Keep the linear merge for comparable sizes. At four to one,
+           iterate over the smaller set and look up items in the larger. *)
+        else if supplied div 4 >= needed then
+          HOLset.filter (fn item => not (HOLset.member (retained, item)))
+            pending
+        else if needed div 4 >= supplied then
+          HOLset.foldl remove pending retained
+        else HOLset.difference (pending, retained)
+      end
+  in
+    {terms = subtract (pending_terms, retained_terms),
+     types = subtract (pending_types, retained_types)}
+  end
+
 fun extend_priority priority aesopRule.RSafe = priority
   | extend_priority priority (aesopRule.RNorm _) = priority
   | extend_priority priority (aesopRule.RUnsafe percent) =
@@ -945,22 +972,18 @@ fun copying_sources tree parent_id assigned child_specs =
                   else
                     HOLset.isSubset (#terms unassigned, #terms deps) andalso
                     HOLset.isSubset (#types unassigned, #types deps)
+                fun absent pending [] = pending
+                  | absent pending ((_, deps, _, _) :: rest) =
+                      if dependencies_empty pending then pending
+                      else absent (subtract_split_dependencies deps pending)
+                             rest
               in
                 if List.exists retains_all child_specs then
                   empty_dependencies ()
                 (* The test has already checked every child for the sole
                    dependency of a singleton. *)
                 else if singleton then unassigned
-                else
-                  let
-                    val child_dependencies =
-                      List.foldl
-                        (fn ((_, deps, _, _), dependencies) =>
-                          dependencies_union dependencies deps)
-                        (empty_dependencies ()) child_specs
-                  in
-                    dependencies_difference unassigned child_dependencies
-                  end
+                else absent unassigned child_specs
               end
   in
     if dependencies_empty relevant_assigned andalso
@@ -990,13 +1013,14 @@ fun install_rapp parent_id
     val child_cgoals = clasetGoal.goals node
     val assigned =
       assigned_between (active_store parent) child_store
+    val child_forwarded =
+      case forwarded of
+          NONE => #forwarded parent
+        | SOME hypothesis => hypothesis :: #forwarded parent
     val child_specs =
       map
         (fn cgoal =>
-          (cgoal, dependencies_of child_store cgoal, NONE,
-           case forwarded of
-               NONE => #forwarded parent
-             | SOME hypothesis => hypothesis :: #forwarded parent))
+          (cgoal, dependencies_of child_store cgoal, NONE, child_forwarded))
         child_cgoals
     val copy_sources =
       if not (Option.isSome (#parent parent)) orelse

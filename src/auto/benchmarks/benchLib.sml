@@ -1229,12 +1229,15 @@ fun type_mentions_pair ty =
     | SOME {Args, ...} => List.exists type_mentions_pair Args
     | NONE => false
 
+(* The operator's type already contains the result type of an application.
+   An abstraction's type is covered by its binder and body, even when the
+   binder is unused. Inspecting only atomic types avoids retyping a spine. *)
 fun mentions_pair term =
-  type_mentions_pair (Term.type_of term) orelse
-  (case Term.dest_term term of
-       COMB (rator, rand) => mentions_pair rator orelse mentions_pair rand
-     | LAMB (bound, body) => mentions_pair bound orelse mentions_pair body
-     | _ => false)
+  case Term.dest_term term of
+      VAR (_, ty) => type_mentions_pair ty
+    | CONST {Ty, ...} => type_mentions_pair Ty
+    | COMB (rator, rand) => mentions_pair rator orelse mentions_pair rand
+    | LAMB (bound, body) => mentions_pair bound orelse mentions_pair body
 
 fun blast_translation_args goal =
   (if mentions_pair goal then [pairTheory.PAIR] else []) @

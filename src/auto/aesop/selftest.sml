@@ -2119,6 +2119,42 @@ val _ =
          null (copies [unrelated, retaining])
        end)
 
+val _ =
+  check
+    ("aesop retains dependencies distributed across split children",
+     fn () =>
+       let
+         fun fresh store =
+           clasetMeta.new_meta {allow = [], ty = Type.bool} store
+         val (left, store) = fresh clasetMeta.empty
+         val (right, store) = fresh store
+         val (unrelated, child_store) =
+           List.foldl
+             (fn ((), (metas, current)) =>
+               let val (meta, next) = fresh current
+               in (meta :: metas, next) end)
+             ([], store) (List.tabulate (8, fn _ => ()))
+         val (root, tree) = pop_expected
+           (new_tree clasetMeta.empty fifo_goal [])
+         val {tree, goals = [path, _, right_sibling], ...} =
+           install_tree_rapp tree root aesopRule.RSafe "split_creator" store
+             [tree_cgoal [] [left] right, tree_cgoal [] [] left,
+              tree_cgoal [] [] right]
+             [tree_creation_record [left, right] []]
+         fun copies target =
+           let
+             val {tree, goals, ...} =
+               install_tree_rapp tree path aesopRule.RSafe "retaining_split"
+                 child_store
+                 [tree_cgoal [] unrelated left,
+                  tree_cgoal [] unrelated target] []
+           in
+             List.mapPartial (#copy_of o aesopTree.goal tree) goals
+           end
+       in
+         null (copies right) andalso copies boolSyntax.T = [right_sibling]
+       end)
+
 (* One metavariable reaches the dependency sets under two spellings:
    [clasetMeta.bindings] reports the redex as [new_meta] created it, at a
    type that was still a type metavariable, while the goal dependencies go

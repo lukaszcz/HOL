@@ -3875,6 +3875,45 @@ val _ =
             normalization = SOME 0}
        end)
 
+val _ =
+  test
+    ("repeated polymorphic facts retain insertion charges and cutoff",
+     fn () =>
+       let
+         val goal =
+           (List.tabulate (64, fn _ => T), ``FST (p : num # bool) = FST p``)
+         val fact = pointwise_reflexivity
+         val facts = [fact, fact]
+         val ctxt = Context.snapshot ()
+         fun insert tactic =
+           case #1 (Tactical.VALID tactic goal ctxt) of
+               [(assumptions, _)] => assumptions
+             | _ => raise Fail "expected one goal after fact insertion"
+         val single = searchBudget.unbounded ()
+         val _ = insert (INSERT_FACTS_TAC_BUDGETED single [fact])
+         val {candidates, applications, normalization} =
+           searchBudget.usage single
+         val funded = searchBudget.unbounded ()
+         val measured = insert (INSERT_FACTS_TAC_BUDGETED funded facts)
+         val limit = candidates + 32
+         val budget =
+           searchBudget.create
+             {candidates = SOME limit, applications = NONE,
+              normalization = NONE}
+       in
+         ListPair.allEq (fn (left, right) => aconv left right)
+           (insert (INSERT_FACTS_TAC facts), measured)
+         andalso
+         searchBudget.usage funded =
+           {candidates = 2 * candidates, applications = 2 * applications,
+            normalization = 2 * normalization}
+         andalso
+         ((ignore (insert (INSERT_FACTS_TAC_BUDGETED budget facts)); false)
+          handle searchBudget.LimitReached (searchBudget.Candidate, used) =>
+            #candidates used = limit andalso #applications used = 0 andalso
+            used = searchBudget.usage budget)
+       end)
+
 (* A fact the goal's own type variables cover is usable as it stands,
    and which of its atoms happens to match where is no evidence of the
    instance wanted: the citation itself is one of the instances, so it
