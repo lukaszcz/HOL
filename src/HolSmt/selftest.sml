@@ -10,6 +10,48 @@ val _ =
 
 val _ = print "Testing HolSmtLib\n"
 
+val _ =
+  let
+    val cases =
+        [(``SUC (w2n (w:word8)) = 0``, true),
+         (``(f:word8 -> num -> bool) w n``, true),
+         (``!(w:word8). w2n w = 0``, true),
+         (``SUC (LENGTH (xs:word8 list)) = 0``, false),
+         (``LENGTH (REPLICATE n (w:word8)) = 0``, true),
+         (``(f:(word8 -> bool) -> num) (\w. T) = 0``, true)]
+    fun check (term, expected) =
+      Library.exists_subterm SmtLib.num_meets_word term = expected andalso
+      SmtLib.goal_entangles_num_and_word ([], term) = expected
+    fun successors 0 term = term
+      | successors n term =
+          successors (n-1) (Term.mk_comb (numSyntax.suc_tm,term))
+    val numeric = boolSyntax.mk_eq
+      (successors 4096 numSyntax.zero_tm, numSyntax.zero_tm)
+    fun double 0 term = term
+      | double depth term =
+          double (depth-1) (boolSyntax.mk_conj (term,term))
+    val words = ``(w:word8) = v``
+    val mixed = boolSyntax.mk_conj (numeric, words)
+    val word_dag = double 50 words
+    fun type_dag 0 ty = ty
+      | type_dag depth ty =
+          let val child = type_dag (depth-1) ty
+          in Type.mk_type ("fun", [child, child]) end
+  in
+    testutils.tprint "Numeric and word entanglement preserves prefix barriers";
+    if List.all check cases andalso
+       not (SmtLib.goal_entangles_num_and_word ([], double 50 mixed)) andalso
+       not (SmtLib.goal_mentions_num ([], word_dag)) andalso
+       not (SmtLib.goal_mentions_num_or_int_literal ([], word_dag)) andalso
+       not (SmtLib.goal_mentions_num ([], ``(-2:int) = 0``)) andalso
+       SmtLib.goal_mentions_num_or_int_literal ([], ``(-2:int) = 0``) andalso
+       SmtLib.goal_mentions_num ([], ``\n:num. T``) andalso
+       not (SmtLib.type_mentions_num (type_dag 50 bool)) andalso
+       SmtLib.type_mentions_num (type_dag 50 numSyntax.num) then
+      testutils.OK ()
+    else testutils.die "numeric and word entanglement changed"
+  end
+
 (* Cond_rewr's conditional form, CONJ_DISCH ants th, of a theorem th
    concluding c = T, read through the exported IMP_EQ_CANON.  BOUNDED
    keeps a boolean-variable c as the left-hand side. *)

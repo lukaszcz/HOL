@@ -601,8 +601,11 @@ struct
     in List.foldr (fn (root, rest) =>
          (observe 1; union (variables root, rest))) [] roots end
 
-  fun free_variables observe syntax =
-    free_occurrences observe (observations observe syntax)
+  fun free_variables_reader observe =
+    let val entries = observations observe
+    in fn syntax => free_occurrences observe (entries syntax) end
+
+  fun free_variables observe syntax = free_variables_reader observe syntax
 
   (* Qualified-head replay supplies fresh, distinct holes. On an opening-
      freshening kernel substitution preserves stored binder names; on a

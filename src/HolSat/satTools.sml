@@ -212,19 +212,34 @@ exception satCheckError;
 local
 (* Use the same template substitution as SUBST_CONV, with an ordered set
    to keep the last equality for duplicate atoms in large models. *)
-fun substitute_model equalities t =
+fun substitute_model conjuncts t =
     let
       fun retain (th, state as (seen,placeholders,replacements)) =
-          let val atom = lhs (concl th) in
-            if HOLset.member (seen,atom) then state
+          let
+            val literal = concl th
+            val (atom,implication) =
+                if is_comb literal then
+                  let val (operator,operand) = dest_comb literal in
+                    if Term.same_const boolSyntax.negation operator then
+                      (operand,EQF_Imp1)
+                    else (literal,EQT_Imp1)
+                  end
+                else (literal,EQT_Imp1)
+            (* Test for a new atom with a single tree traversal. *)
+            val seen' = HOLset.add (seen,atom)
+          in
+            if HOLset.numItems seen' = HOLset.numItems seen then state
             else
-              let val variable = genvar (type_of atom) in
-                (HOLset.add (seen,atom), (atom |-> variable) :: placeholders,
-                 (variable |-> th) :: replacements)
+              let
+                val equality = MP (SPEC atom implication) th
+                val variable = genvar (type_of atom)
+              in
+                (seen', (atom |-> variable) :: placeholders,
+                 (variable |-> equality) :: replacements)
               end
           end
       val (_,placeholders,replacements) =
-          List.foldr retain (Term.empty_tmset,[],[]) equalities
+          List.foldr retain (Term.empty_tmset,[],[]) conjuncts
     in SUBST replacements (mk_eq (t,Term.subst placeholders t)) (REFL t) end
 
 in
@@ -232,12 +247,7 @@ fun satCheck model t =
    let
       val mtm  = list_mk_conj model (*  (l1 /\ ... /\ ln) *)
       val th1  = ASSUME mtm (* l1 /\ ... /\ ln |- l1 /\ ... /\ ln *)
-      val thl  = map
-                  (fn th => if is_neg(concl th)
-                             then MP (SPEC (dest_neg(concl th))EQF_Imp1) th
-                             else MP (SPEC(concl th)EQT_Imp1) th)
-                  (CONJUNCTS th1) (* [ l1 /\ ... /\ ln |- l1 = T, ... ] *)
-      val th2 = substitute_model thl t
+      val th2 = substitute_model (CONJUNCTS th1) t
                 (* l1 /\ ... /\ ln |- t = t[l1/T,...] *)
       val th3 = CONV_RULE (RHS_CONV computeLib.EVAL_CONV) th2
                 (* l1 /\ ... /\ ln |- t = T *)

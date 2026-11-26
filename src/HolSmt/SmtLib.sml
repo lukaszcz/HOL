@@ -1693,11 +1693,23 @@ local
     {family:finite_family,evidence:'term list,subject:'term,
      branch:'term finite_branch}
 
+  fun check_mixed_collection_arguments
+      (target:{solver:string,version:string option} option)
+      {set_backend,bag_backend} {mixed_set,mixed_bag} =
+    case target of
+      SOME {solver="cvc5",...} =>
+        if (set_backend <> CVC5ArraySet andalso mixed_set ()) orelse
+           (bag_backend = CVC5NativeBag andalso mixed_bag ()) then
+          raise ERR "goal_to_SmtLib_aux_inner"
+            "native collection passed to an ambiguously typed HOL function"
+        else ()
+    | _ => ()
+
   (* One registry and one decision programme serve native and graph syntax.
      shadow_same is restricted to the old lexical evidence-shadow check;
      all actual finite-evidence membership uses the carrier's own equality.
      Memo contexts include every evidence list and lexical bound stack. *)
-  fun backend_selection_with_finite_trace
+  fun backend_selection_parts
       (operations:'term backend_selection_operations)
       (report:'term finite_report -> unit) =
     let
@@ -1919,10 +1931,10 @@ local
            BackendApplication (left,right) =>
              contains tag head left orelse contains tag head right
          | BackendAbstraction (_,body) => contains tag head body | _ => false))
-      fun select_backends
+      fun choose_backends
           (target:{solver:string,version:string option} option)
           {goal,sets,bags,computed_set,computed_bag,bound_set,bound_bag,
-           mixed_set,mixed_bag} =
+           mixed_set=_,mixed_bag=_} =
         let
           val cvc5 = case target of
               SOME {solver="cvc5",...} => true | _ => false
@@ -1941,13 +1953,13 @@ local
               else (if computed_set then CVC5ArraySet else initial_set,
                     if computed_bag then CVC5ArrayBag else initial_bag)
             else (initial_set,initial_bag)
-          val _ = if cvc5 andalso
-              ((set <> CVC5ArraySet andalso mixed_set ()) orelse
-               (bag = CVC5NativeBag andalso mixed_bag ())) then
-              raise ERR "goal_to_SmtLib_aux_inner"
-                "native collection passed to an ambiguously typed HOL function"
-            else ()
         in {set_backend=set,bag_backend=bag} end
+      fun select_backends target (selection as {mixed_set,mixed_bag,...}) =
+        let val backends = choose_backends target selection
+        in check_mixed_collection_arguments target backends
+             {mixed_set=mixed_set,mixed_bag=mixed_bag};
+           backends
+        end
       (* why cvc5 refuses roots with a card the selected array encoding of
          the collection lacks *)
       fun card_refusal (target:{solver:string,version:string option} option)
@@ -1970,12 +1982,15 @@ local
           | NONE => backends
         end
     in
-      {select=select,select_backends=select_backends,
+      (choose_backends,{select=select,select_backends=select_backends,
        card_refusal=card_refusal,native_set_term=native_set,
        cvc5_native_bags=native_bags,
        finite_sets=finite_sets,finite_bags=finite_bags,
-       finite_set_term=finite_set,finite_bag_term=finite_bag}
+       finite_set_term=finite_set,finite_bag_term=finite_bag})
     end
+
+  fun backend_selection_with_finite_trace operations report =
+    #2 (backend_selection_parts operations report)
 
   (* Reports describe successful finite branches only, inside the existing
      memo thunk, after all selected child decisions. They are syntax DATA,
@@ -2000,8 +2015,8 @@ local
      is_parsed_bag_literal=is_parsed_bag_literal,
      set_element_type=set_element_type,bag_element_type=bag_element_type,
      memoize=fn _ => fn _ => fn _ => fn compute => compute ()}
-  val term_backend_selection =
-    backend_selection_with term_backend_selection_operations
+  val (choose_term_backends,term_backend_selection) =
+    backend_selection_parts term_backend_selection_operations (fn _ => ())
   val native_set_term = #native_set_term term_backend_selection
   val cvc5_native_bags = #cvc5_native_bags term_backend_selection
   val finite_set_term = #finite_set_term term_backend_selection
@@ -4200,9 +4215,26 @@ local
        Library.union_dict logic_tmdict tm_dict)
     end
 
-  (* returns an updated accumulator, a (possibly empty) list of
-     SMT-LIB type declarations, and the SMT-LIB representation of the
-     given type *)
+  (* Query-local and populated only when a datatype name is needed. *)
+  val current_type_names = ref (NONE :
+    (((Type.hol_type, string) Redblackmap.dict * string Redblackset.set)
+      option ref) option)
+
+  fun cached_type_names dictionary =
+    case !current_type_names of
+      SOME cache =>
+        (case !cache of
+           SOME (saved, names) =>
+             if Portable.pointer_eq (saved, dictionary) then SOME names
+             else NONE
+         | NONE => NONE)
+    | NONE => NONE
+
+  fun remember_type_names dictionary names =
+    Option.app (fn cache => cache := SOME (dictionary, names))
+      (!current_type_names)
+
+  (* Returns the updated type dictionary, declarations, and sort name. *)
   fun uninterpreted_type (tydict, ty) =
     let
       val name = ty_prefix ^ Int.toString (Redblackmap.numItems tydict)
@@ -4218,7 +4250,11 @@ local
           "' for HOL type '" ^ Hol_pp.type_to_string ty ^ "'")
       else
         ();
-      (Redblackmap.insert (tydict, ty, name), ([decl], name))
+      let val updated = Redblackmap.insert (tydict, ty, name)
+          val _ = Option.app
+            (fn names => remember_type_names updated
+              (Redblackset.add (names, name))) (cached_type_names tydict)
+      in (updated, ([decl], name)) end
     end
   structure DatatypeGraph = Graph(
     type key = Type.hol_type
@@ -4338,26 +4374,27 @@ local
               (field_dependencies field)) graph fields
         val components = DatatypeGraph.strong_conn
           (List.foldl add_dependencies graph family)
-        (* Most stems need only a direct probe. Once suffixes also collide,
-           index the existing names so retries need not scan the map. *)
-        val used_names = Susp.delay (fn () => Redblackmap.foldl
-          (fn (_, name, names) => Redblackset.add (names, name))
-          (Redblackset.empty String.compare) tydict)
+        (* Share the reverse index across successive registrations. A retry
+           may return to an earlier dictionary, so reuse only an exact hit. *)
+        val used_names = case cached_type_names tydict of
+            SOME names => names
+          | NONE => Redblackmap.foldl
+              (fn (_, name, names) => Redblackset.add (names, name))
+              (Redblackset.empty String.compare) tydict
         fun add_name ((fam_ty, _), (used, dict)) =
           let
-            fun unavailable (suffix, name) =
+            fun unavailable (_, name) =
               is_smt_reserved smt_reserved_type_names name orelse
-              Redblackset.member (used, name) orelse
-              (if suffix < 2 then Redblackmap.exists (Lib.equal name) tydict
-               else Redblackset.member (Susp.force used_names, name))
+              Redblackset.member (used, name)
             val name =
               fresh_smt_name_avoiding unavailable (type_name_stem fam_ty)
           in
             (Redblackset.add (used, name),
              Redblackmap.insert (dict, fam_ty, name))
           end
-        val (_, tydict_with_family) = List.foldl add_name
-          (Redblackset.empty String.compare, tydict) family
+        val (names, tydict_with_family) =
+          List.foldl add_name (used_names, tydict) family
+        val _ = remember_type_names tydict_with_family names
         fun translate_constructor_doms ((_, fields), acc) =
           let
             fun translate_dom (dom, (dict, decls_rev, sorts)) =
@@ -6851,7 +6888,7 @@ local
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
         collection_operations Term.compare Lib.I
-        (fn term => Redblackset.member (marked, term)) subterms
+        (fn term => Redblackset.member (marked, term)) (subterms ())
     (* dropping, cvc5's refusal of a bound function over a collection is
        about the conclusion only; an assumption with one is left out *)
     val bound_roots = if dropping_untranslatable () then [t] else roots
@@ -6870,24 +6907,31 @@ local
     (* dropping, every encoding choice is made from the whole goal, and the
        ambiguous-argument check, which only refuses, then looks at what is
        sent *)
-    val select_backends = (#select_backends term_backend_selection) target
     val backends as {set_backend=backend,bag_backend} =
       if dropping_untranslatable () then
         let
-          val backends = select_backends (selection [])
+          val backends = choose_term_backends target (selection (fn () => []))
           val _ =
             case (#card_refusal term_backend_selection) target backends [t] of
               SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
             | NONE => ()
-          val sent_subterms =
-            if List.exists (left_out backends) original_ts then
-              query_subterms
-                (t :: List.filter (not o left_out backends) original_ts)
-            else subterms
+          val sent_subterms = Susp.delay (fn () =>
+            let val (excluded, sent) =
+              List.partition (left_out backends) original_ts
+            in if null excluded then subterms
+               else query_subterms (t :: sent)
+            end)
+          fun mixed marked =
+            has_mixed_collection_argument
+              (fn () => Susp.force sent_subterms) marked
         in
-          select_backends (selection sent_subterms)
+          check_mixed_collection_arguments target backends
+            {mixed_set=fn () => mixed marked_sets,
+             mixed_bag=fn () => mixed marked_bags};
+          backends
         end
-      else (#select term_backend_selection) target (selection subterms)
+      else (#select term_backend_selection) target
+        (selection (fn () => subterms))
     val left_out = left_out backends
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
@@ -7076,12 +7120,16 @@ local
       save_cell current_bag_helpers,
       save_cell current_collection_function_arguments,
       save_cell current_translation_failures,
-      save_cell current_eta_expansions
+      save_cell current_eta_expansions,
+      save_cell current_type_names
     ]
     fun restore () = restore_cells restorers
   in
     Portable.finally restore
-      (fn () => (current_backend_installation := NONE;work ())) ()
+      (fn () =>
+        (current_backend_installation := NONE;
+         current_type_names := SOME (ref NONE);
+         work ())) ()
   end
 
   type backend_context_options =
@@ -9190,10 +9238,15 @@ in
   val native_float_transfer_theorems = native_float_transfer_theorems
 
   fun type_mentions_num ty =
-    Type.compare (ty, numSyntax.num) = EQUAL orelse
-    (case Lib.total Type.dom_rng ty of
-       SOME (dom, rng) => type_mentions_num dom orelse type_mentions_num rng
-     | NONE => false)
+    let
+      fun children ty =
+        case Lib.total Type.dom_rng ty of
+          SOME (dom, rng) => [dom, rng]
+        | NONE => []
+    in
+      Library.type_contains_pure_with children
+        (fn ty => Type.compare (ty, numSyntax.num) = EQUAL) ty
+    end
 
   fun is_num_transfer_const tm =
     if not (Term.is_const tm) orelse not (type_mentions_num (Term.type_of tm))
@@ -9254,7 +9307,7 @@ in
     end
 
   fun goal_entangles_num_and_word (asms, concl) =
-    List.exists (Library.exists_subterm num_meets_word) (concl :: asms)
+    List.exists Library.term_entangles_num_and_word (concl :: asms)
 
   (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
      numeral, which the solvers read as an integer constant: it needs no
@@ -9279,10 +9332,16 @@ in
     mentions (concl :: asms)
   end
 
-  val goal_mentions_num =
-    mentions_num true (type_mentions_num o Term.type_of)
-  val goal_mentions_num_or_int_literal =
-    mentions_num false atom_needs_num_transfer
+  local
+    fun mentions_shared skip counts (asms, concl) =
+      List.exists (Library.exists_shared_atom skip counts) (concl :: asms)
+  in
+    val goal_mentions_num =
+      mentions_shared intSyntax.is_int_literal
+        (type_mentions_num o Term.type_of)
+    val goal_mentions_num_or_int_literal =
+      mentions_shared (fn _ => false) atom_needs_num_transfer
+  end
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
      skolemizes existentials but never case-splits, because preprocessing
@@ -9298,17 +9357,22 @@ in
      unchanged at the end of every subgoal's assumptions.  [tac] must not
      introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
      withheld assumption. *)
-  fun WITHHOLDING_TAC held (tac : Tactical.tactic) : Tactical.tactic =
+  fun withholding_tac is_held (tac : Tactical.tactic) : Tactical.tactic =
     fn (asl, w) =>
       fn ctxt =>
         let
-          val (withheld, kept) =
-            List.partition (fn a => Lib.op_mem Term.aconv a held) asl
+          val (withheld, kept) = List.partition is_held asl
           val (goals, validation) = tac (kept, w) ctxt
         in
           (List.map (fn (asl', w') => (asl' @ withheld, w')) goals,
            validation)
         end
+
+  fun held_assumption held =
+    let val set = Redblackset.addList (Redblackset.empty Term.compare, held)
+    in fn a => Redblackset.member (set, a) end
+
+  fun WITHHOLDING_TAC held tac = withholding_tac (held_assumption held) tac
 
   (* Runs the proved num-to-int transfer on the conclusion and the
      assumptions that mention num.  These assumptions are first moved into
@@ -9317,31 +9381,30 @@ in
      as they are: the transfer's simplification doesn't rewrite with them,
      so a solver proof still names those it uses. *)
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
-  let
-    open Tactic Tactical
-    val (num_asms, held) =
-      List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
-    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made, each
-       once, taken out of the others, which stay for the fresh names of
-       their witnesses *)
-    fun STRIP_TRANSFERRED_TAC (asl, w) =
-      MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
-        (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
-        (asl, w)
-  in
+  let open Tactic Tactical in
     if goal_mentions_num_or_int_literal g andalso
        not (goal_entangles_num_and_word g)
-    then
+    then let
+      val (num_asms, held) =
+        List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
+      val is_held = held_assumption held
+      (* Strip each transferred assumption once, leaving the others in
+         scope for fresh witness names. *)
+      fun STRIP_TRANSFERRED_TAC (asl, w) =
+        MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
+          (List.filter (not o is_held) asl) (asl, w)
+    in
       (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
           would case-split disjunctive assumptions into several subgoals. *)
-       WITHHOLDING_TAC held
+       withholding_tac is_held
          (simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
             num_transfer_rewrites) THEN
        STRIP_TRANSFERRED_TAC) g
+    end
     else
       ALL_TAC g
   end

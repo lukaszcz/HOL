@@ -79,22 +79,6 @@ struct
     (case Lib.total Type.dom_rng (Term.type_of term) of
        SOME (_,range) => Type.compare (range,numSyntax.num)=EQUAL
      | NONE => false)
-  (* Exact old word-entanglement recognizer; no theorem normalization. *)
-  fun num_meets_word term =
-    let fun below term =
-          let val (head,args)=boolSyntax.strip_comb term
-          in if Library.same_const head listSyntax.length_tm then false
-            else Library.type_contains_word (Term.type_of term) orelse
-              List.exists below args end
-          handle Feedback.HOL_ERR _ =>
-            Library.type_contains_word (Term.type_of term)
-        val (_,args)=boolSyntax.strip_comb term
-        val head= #1 (boolSyntax.strip_comb term)
-    in (Type.compare (Term.type_of term,numSyntax.num)=EQUAL andalso
-         below term) orelse
-       (Library.type_contains_word (Term.type_of head) andalso
-        List.exists (fn arg =>
-          Type.compare (Term.type_of arg,numSyntax.num)=EQUAL) args) end
   fun prepare (owner as Owner {work,traversal,graph,sources,limits,...}) =
     protect owner (fn () =>
     let val _=active owner
@@ -146,8 +130,7 @@ struct
         val _=ignore (profile (#output_limit limits) base)
         val _=spend 1
         val all_variables=Term.free_vars base
-        val entangled=List.exists num_meets_word
-          (Library.subterms base)
+        val entangled=Library.term_entangles_num_and_word base
         val _=if entangled then () else
           if List.exists bag_variable all_variables then
             raise ERR "prepare" "free BAG sequent transfer not implemented"

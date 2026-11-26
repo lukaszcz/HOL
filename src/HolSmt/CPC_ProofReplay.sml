@@ -95,7 +95,8 @@ local
 
   fun provenance_term_summary limit root =
     let
-      val bucket_count = 4093
+      (* The walk records at most the fixed node cap plus one miss. *)
+      val bucket_count = 257
       val seen = Array.array (bucket_count, [] : Term.term list)
       fun string_hash string =
         let
@@ -253,14 +254,16 @@ local
           | _ => false
     in visit root end
 
-  fun contains_binder_block_dag root = provenance_exists_dag
-    (fn BinderBlockProvenance _ => true | _ => false) root
+  fun contains_binder_block_dag AtomicProvenance = false
+    | contains_binder_block_dag root = provenance_exists_dag
+        (fn BinderBlockProvenance _ => true | _ => false) root
 
-  fun definitely_no_conjunction_dag root = not (provenance_exists_dag
-    (fn ConjunctionProvenance _ => true
-      | UnavailableProvenance _ => true
-      | AmbiguousProvenance _ => true
-      | _ => false) root)
+  fun definitely_no_conjunction_dag AtomicProvenance = true
+    | definitely_no_conjunction_dag root = not (provenance_exists_dag
+        (fn ConjunctionProvenance _ => true
+          | UnavailableProvenance _ => true
+          | AmbiguousProvenance _ => true
+          | _ => false) root)
 
   fun has_binder_shell provenance =
     case provenance of
@@ -561,6 +564,7 @@ local
                term_contains_conjunction term then
               AmbiguousProvenance reason
             else conjunction_free_semantic_provenance reason term
+        | AtomicProvenance => AtomicProvenance
         | exact =>
             if not (use_compact_provenance term) andalso
                not (contains_binder_block_dag exact) then

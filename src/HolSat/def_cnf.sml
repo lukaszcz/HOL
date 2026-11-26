@@ -170,12 +170,13 @@ val GCONJUNCTS  =
                              (GCONJUNCTS' (CONJUNCT2 th) acc)
                | _ => th::acc
           end
-        fun GCONJUNCTS'' th = GCONJUNCTS' th []
     in fn tm => fn th =>
           let open Uref
-              val ths0 = if is_neg tm andalso is_neg (rand tm)
-                         then CONJUNCTSR (CONV_RULE NOT_NOT_CONV th) else [th]
-              val ths1 = List.map GCONJUNCTS'' ths0
+              val conjuncts =
+                  if is_neg tm andalso is_neg (rand tm) then
+                    List.concat (List.map (fn th => GCONJUNCTS' th [])
+                      (CONJUNCTSR (CONV_RULE NOT_NOT_CONV th)))
+                  else GCONJUNCTS' th []
               val is_cnf = Uref.new true
               (* A clause of variable literals contains no T or F. *)
               fun classify th =
@@ -185,7 +186,7 @@ val GCONJUNCTS  =
                           (false,if contains_constant clause
                                  then CONV_RULE presimp_conv th else th))
                   end
-              val ths2 = List.map classify (List.concat ths1)
+              val ths2 = List.map classify conjuncts
           in (!is_cnf,ths2) end
     end
 end
@@ -397,11 +398,12 @@ end
 
 val cnfv_ref = ref "SP"
 
-fun clausify tm lfn eq cls =
+fun clausify assumption lfn eq cls =
     let val fvs = free_vars eq
         val eth = to_cnf' eq
         val tth = INST (map (fn v => v |-> rbapply lfn v) fvs) eth
-        val xth = ADD_ASSUM tm (EQ_MP tth (REFL(rbapply lfn (land eq))))
+        val proof = EQ_MP tth (REFL (rbapply lfn (land eq)))
+        val xth = MP (DISCH (concl assumption) proof) assumption
     in zip (strip_conj(rand(concl eth))) (CONJUNCTS xth) @ cls end
 
 (* DIMACS numbers name the distinct propositional atoms of the clauses,
@@ -471,7 +473,7 @@ fun to_cnf is_cnf tm =
                   [] defs
                 val vc = (n + 1)
             in (SOME cnfv,vc,eqs,tops,lfn) end
-        val all_clauses = itlist (clausify tm lfn) eqs tops
+        val all_clauses = itlist (clausify th lfn) eqs tops
      in (cnfv,vc,lfn,Array.fromList all_clauses) end
 
 end

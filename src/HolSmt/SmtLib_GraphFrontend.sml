@@ -43,6 +43,7 @@ struct
     let
       val root = B.root backend
       val spend = B.syntax_spend backend
+      val free_variables = C.free_variables_reader spend
       fun compare ((li,le),(ri,re)) =
         (spend 1;case IntInf.compare (li,ri) of EQUAL =>
            Lib.list_compare Int.compare (le,re) | order => order)
@@ -57,8 +58,7 @@ struct
           | NONE => raise ERR "private_source" "unknown private allocation"
       fun walk frame environment syntax =
         let
-          val free = if null environment then []
-            else C.free_variables spend syntax
+          val free = if null environment then [] else free_variables syntax
           val relevant = List.filter (fn (variable,_,_,_) =>
             List.exists (fn current => Term.compare (variable,current)=EQUAL)
               free) environment
