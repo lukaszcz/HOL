@@ -2734,10 +2734,10 @@ end
 fun num_transfer_assumptions_do_not_rewrite_each_other_success () =
 let
   val equality = ``(n:num) = m``
-  val application_equality = ``f n = f m``
+  val application_equality = ``f (n:num) = f (m:num)``
   val held = ``0 <= (x:int)``
   val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
-    ([equality, held, application_equality], ``g n = h m``)
+    ([equality, held, application_equality], ``g (n:num) = h (m:num)``)
   fun is_applied_equality tm =
     case Lib.total boolSyntax.dest_eq tm of
         SOME (left, right) =>

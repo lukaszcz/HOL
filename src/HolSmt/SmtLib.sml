@@ -9332,8 +9332,8 @@ in
         (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
         (asl, w)
     (* The transfer introduces 0 <= i guards before this point.  Keep those
-       guards as rewrite rules, without letting a transferred premise rewrite
-       any other premise. *)
+       guards as rewrite rules for the goal, without letting a transferred
+       premise or a user assumption rewrite any other premise. *)
     fun is_num_guard tm =
       case Lib.total intSyntax.dest_leq tm of
           SOME (left, right) =>
@@ -9345,17 +9345,18 @@ in
           List.map Thm.ASSUME
             (List.filter (fn a => not (Lib.op_mem Term.aconv a held)
                                 andalso is_num_guard a) asl)
-        val rewrites = guard_rewrites @ num_transfer_rewrites
+        val assumption_rewrites = num_transfer_rewrites
+        val goal_rewrites = guard_rewrites @ num_transfer_rewrites
         fun simplify thm =
           if Lib.op_mem Term.aconv (Thm.concl thm) held orelse
              is_num_guard (Thm.concl thm) then
             ASSUME_TAC thm
           else
             ASSUME_TAC
-              (simpLib.SIMP_RULE pureSimps.pure_ss rewrites thm)
+              (simpLib.SIMP_RULE pureSimps.pure_ss assumption_rewrites thm)
       in
         (POP_ASSUM_LIST (MAP_EVERY simplify o List.rev) THEN
-         CONV_TAC (simpLib.SIMP_CONV pureSimps.pure_ss rewrites)) (asl, w)
+         CONV_TAC (simpLib.SIMP_CONV pureSimps.pure_ss goal_rewrites)) (asl, w)
       end
   in
     if goal_mentions_num_or_int_literal g andalso
