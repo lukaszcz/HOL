@@ -447,8 +447,20 @@ New tools
     and loads the selected theories. See `src/statementdossier/README.md`
     for examples.
 
+-   A Neovim plugin for HOL's language server (`hol lsp`), in
+    `tools/editor-modes/vim/neovim`. Besides the server's diagnostics,
+    hover, definitions and completion, it has a goals pane that follows
+    the cursor through a proof (with each step's time), SML evaluated in
+    the server's session, theorem search, and background proof checking
+    with marks on each theorem and a statusline tally. It needs Neovim 0.12 or later; see
+    its `README.md`, or `:help hol4` once it is installed.
+
 New examples
 ------------
+
+-   Added short-Weierstrass elliptic-curve groups, torsion, morphisms and
+    cardinality results, with certified finite-field arithmetic and concrete
+    secp256k1, P-256, BN254 and BLS12-381 instances.
 
 -   The algebra examples now connect fields to the HOL Light-compatible
     ring interface, with inverse laws and a homogeneous-coordinate
@@ -493,6 +505,11 @@ Incompatibilities
     Adding a translation for a pattern that already has a different one (via `cv_trans` or the `[cv_rep]` attribute) is now an error; remove the old one first with the new `cv_transLib.cv_rep_delete "thy.name"`.
     When two independently loaded ancestors translate the same pattern differently, loading still works, but using that pattern fails with an "ambiguous translation" error naming both theorems until one is removed with `cv_rep_delete`.
     The same theorem reached through several ancestors is not a conflict.
+
+-   The `cv_compute` translator no longer picks by load order between two from/to translations of a type (the `cv_from_to` theorems that `define_from_to` saves) that come from theories neither of which is an ancestor of the other.
+    When both match a type and give different translations (whether or not their premises could be proved for it), using the type is now an error naming both theorems; keep one by removing the other with the new `cv_transLib.cv_from_to_delete "thy.name"`, which holds in descendant theories too.
+    For a datatype, `define_from_to` also saves a `cv_rep` theorem for its constructors and case constant, so remove the other theory's with `cv_rep_delete` as well.
+    As with `cv_rep`, a translation added in a descendant of both, or in the current theory or session (`cv_memLib.cv_from_to_add`), does not settle such a clash; it still takes precedence over the translations of the theories it descends from.
 
 -   AKS's `computeBasic` no longer defines numeric modular exponentiation;
     use `expModTheory` for `exp_mod_binary`, `exp_mod_step`, their definitions,
