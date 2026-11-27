@@ -167,23 +167,32 @@ fun term_constants term =
     (HOLset.empty String.compare,
      map (#1 o dest_const) (find_terms is_const term))
 
+fun prepare_definition theorem =
+  Option.map
+    (fn head =>
+      (head, theorem,
+       Portable.HOLSusp.delay (fn () => term_constants (concl theorem))))
+    (defined_head theorem)
+
+(* Reuse the prepared heads while the installed definition list is shared. *)
+val prepared_definitions =
+  memoUtil.keyed_memo
+    (fn previous => fn current => Portable.pointer_eq (previous, current))
+    (List.mapPartial prepare_definition)
+
 fun relevant_definitions goal =
   let
-    val definitions =
-      List.mapPartial
-        (fn theorem =>
-          Option.map (fn head => (head, theorem)) (defined_head theorem))
-        (benchLib.definitional_theorems ())
+    val definitions = prepared_definitions (benchLib.definitional_theorems ())
     (* A wrapper over a wrapper needs the inner definition as well, so
        the set is closed under the constants the kept definitions
        introduce. *)
     fun close names kept 0 = kept
       | close names kept fuel =
           let
-            val heads = map #1 kept
+            val heads = map (fn (head, _, _) => head) kept
             val fresh =
               List.filter
-                (fn (head, _) =>
+                (fn (head, _, _) =>
                   HOLset.member (names, head) andalso
                   not (List.exists (equal head) heads))
                 definitions
@@ -192,13 +201,13 @@ fun relevant_definitions goal =
             else
               close
                 (List.foldl
-                  (fn ((_, theorem), set) =>
-                    HOLset.union (set, term_constants (concl theorem)))
+                  (fn ((_, _, constants), set) =>
+                    HOLset.union (set, Portable.HOLSusp.force constants))
                   names fresh)
                 (kept @ fresh) (fuel - 1)
           end
   in
-    map #2 (close (term_constants goal) [] 5)
+    map (fn (_, theorem, _) => theorem) (close (term_constants goal) [] 5)
   end
 
 (* Recognition is a rule matching the goal, so the rule's own constants

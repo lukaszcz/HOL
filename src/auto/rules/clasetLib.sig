@@ -187,6 +187,16 @@ sig
   val invocation_marker_rules :
     claset -> (rulespec * (string * thm)) list
 
+  (* Transport considers base declarations followed by effective marker
+     declarations. A prepared addition retains the source's role and
+     reuses the derived theorem's rule forms at admission. *)
+  type transport_rule
+  val transport_rules :
+    {safe_only : bool} -> claset -> claset -> transport_rule list
+  val transport_rule_theorem : transport_rule -> thm
+  val prepare_transported_rule :
+    transport_rule -> thm -> (string -> claset -> claset) option
+
   (* A name of the form "<prefix><n>", with n at least [from], that no
      declaration in the claset uses.  Engines name invocation-scoped rules
      -- those coming from marker arguments -- this way, so that such a rule

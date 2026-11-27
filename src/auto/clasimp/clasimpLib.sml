@@ -3397,33 +3397,32 @@ fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
                 (null premises orelse not (own_direction rewrite))) ss)
         else Susp.force ambient
       end
-    fun add ((spec, (_, theorem)), state as (added, from)) =
+    fun add (source, state as (added, from)) =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate
+        val theorem = clasetLib.transport_rule_theorem source
         val derived = Conv.CONV_RULE (conversion theorem) theorem
-        fun role_preserved () =
-          clasetRules.safe_class_of spec (clasetRules.ext_info spec theorem) =
-          clasetRules.safe_class_of spec (clasetRules.ext_info spec derived)
         fun support_preserved () =
           List.all
             (fn assumption => boolSyntax.tmem assumption (hyp theorem))
             (hyp derived)
       in
         if aconv (concl derived) (concl theorem) orelse
-           aconv (concl derived) boolSyntax.T orelse
-           not (role_preserved ()) orelse
-           not (support_preserved ()) then state
+           aconv (concl derived) boolSyntax.T then state
         else
-          let
-            val current = Option.getOpt (added, cs)
-            val (name, index) = transport_name current from
-          in
-            searchBudget.charge budget searchBudget.Application;
-            (* The fresh name makes admission independent of whether an
-               earlier declaration has the same conclusion. *)
-            (SOME (clasetLib.add_derived_rule spec (name, derived) current),
-             index)
-          end
+          case clasetLib.prepare_transported_rule source derived of
+              NONE => state
+            | SOME admit =>
+                if not (support_preserved ()) then state
+                else
+                  let
+                    val current = Option.getOpt (added, cs)
+                    val (name, index) = transport_name current from
+                  in
+                    searchBudget.charge budget searchBudget.Application;
+                    (* A fresh name permits duplicate conclusions. *)
+                    (SOME (admit name current), index)
+                  end
       end
       handle HOL_ERR _ => state
            | Conv.UNCHANGED => state
@@ -3438,14 +3437,8 @@ val transport_bound_claset_rules = transport_claset_rules_with
 
 (* Transport the claset only if the fact views leave a residue. *)
 fun transport_rule_inventory consumer base_cs cs () =
-  let
-    val candidates = clasetLib.rules_of base_cs @
-      clasetLib.invocation_marker_rules cs
-    fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
-  in
-    if consumer = clasetLib.SafeFacts
-    then List.filter safe_named_rule candidates else candidates
-  end
+  clasetLib.transport_rules {safe_only = consumer = clasetLib.SafeFacts}
+    base_cs cs
 
 (* Only declarations connected to the goal's vocabulary need a new
    normal-form view. Follow direct rewrite-head bridges as well: a rule
@@ -3571,9 +3564,10 @@ fun transport_candidates budget ss goals candidates =
     exception RelevantHead
     fun check_head ((), head) =
       if HOLset.member (relevant, head) then raise RelevantHead else ()
-    fun related (_, (_, theorem)) =
+    fun related source =
       (searchBudget.charge budget searchBudget.Candidate;
-       fold_heads check_head (concl theorem) ();
+       fold_heads check_head (concl (clasetLib.transport_rule_theorem source))
+         ();
        false)
       handle RelevantHead => true
   in

@@ -135,7 +135,7 @@ fun lift_by (entry : linarithData.derived_injection) theorem =
   Option.map (normalize_lift (#rewrite_conv entry))
     (match_implications (#relation_imps entry) theorem)
 
-fun lifts visited theorem =
+fun lifts visited theorem = seq.delay (fn () =>
   let
     val normalized = normalize_relation_sides theorem
     fun unseen_lift entry =
@@ -147,9 +147,9 @@ fun lifts visited theorem =
               else SOME (lifted, carrier :: visited)
             end
   in
-    List.mapPartial unseen_lift
-      (linarithData.derived_injections ())
-  end
+    seq.mapPartial unseen_lift
+      (seq.fromList (linarithData.derived_injections ()))
+  end)
 
 (* List lifts breadth-first, because replay takes the first pair that
    adds: first the direct lifts, then their lifts. Each queued theorem
@@ -160,29 +160,31 @@ fun lifts visited theorem =
    sibling carriers through their common source and are bounded by the
    finite registry.
 
-   The queue is kept as a front list and a reversed back list, and the
-   result is accumulated reversed, so neither the enqueueing nor the
-   appending walks what it has already built. *)
+   The queue keeps batches of children in a front list and a reversed
+   back list. Each batch is lazy, so finding an addable pair leaves
+   its remaining siblings and descendants unforced. *)
 fun conversion_lifts theorem =
   let
-    fun explore ([], []) _ found = List.rev found
-      | explore ([], back) seen found =
-          explore (List.rev back, []) seen found
-      | explore ((current, visited) :: front, back) seen found =
-          let val conclusion = Thm.concl current
-          in
-            if Termtab.defined seen conclusion then
-              explore (front, back) seen found
-            else
-              explore (front, List.revAppend (lifts visited current, back))
-                (Termtab.insert_set conclusion seen) (current :: found)
-          end
+    fun explore ([], []) _ = seq.empty
+      | explore ([], back) seen = explore (List.rev back, []) seen
+      | explore (batch :: front, back) seen =
+          (case seq.cases batch of
+               NONE => explore (front, back) seen
+             | SOME ((current, visited), rest) =>
+                 let val conclusion = Thm.concl current
+                 in
+                   if Termtab.defined seen conclusion then
+                     explore (rest :: front, back) seen
+                   else
+                     seq.cons current (seq.delay (fn () =>
+                       explore (rest :: front, lifts visited current :: back)
+                         (Termtab.insert_set conclusion seen)))
+                 end)
     val conclusion = Thm.concl theorem
   in
-    case lifts [relation_carrier conclusion] theorem of
-        [] => []
-      | direct =>
-          explore (direct, []) (Termtab.insert_set conclusion Termtab.empty) []
+    seq.delay (fn () =>
+      explore ([lifts [relation_carrier conclusion] theorem], [])
+        (Termtab.insert_set conclusion Termtab.empty))
   end
 
 (* The relation's operator constant, read off the first subterm of the
@@ -255,10 +257,16 @@ fun add_direct theorem1 theorem2 =
   end
   handle HOL_ERR _ => NONE
 
-fun try_add theorem others = Lib.get_first (add_direct theorem) others
+fun first_in f alternatives =
+  case seq.cases alternatives of
+      NONE => NONE
+    | SOME (value, rest) =>
+        (case f value of NONE => first_in f rest | result => result)
+
+fun try_add theorem others = first_in (add_direct theorem) others
 
 fun try_add_pairs theorems others =
-  Lib.get_first (fn theorem => try_add theorem others) theorems
+  first_in (fn theorem => try_add theorem others) theorems
 
 fun add_failure level theorem1 theorem2 =
   let
@@ -281,7 +289,7 @@ fun add_thms level theorem1 theorem2 =
               SOME theorem => theorem
             | NONE =>
                 (case try_add_pairs (conversion_lifts theorem1)
-                        (theorem2 :: right) of
+                        (seq.cons theorem2 right) of
                      SOME theorem => theorem
                    | NONE => add_failure level theorem1 theorem2)
         end

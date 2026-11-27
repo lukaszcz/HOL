@@ -7,15 +7,6 @@ type run_state =
   {node : clasetGoal.node,
    validation : validation}
 
-fun rendered_goals node =
-  let
-    fun render _ [] = []
-      | render pos (_ :: rest) =
-          clasetGoal.render node pos :: render (pos + 1) rest
-  in
-    render 1 (clasetGoal.goals node)
-  end
-
 fun initial_validation [theorem] = theorem
   | initial_validation _ =
       raise mk_HOL_ERR "classicalLib" "initial_validation"
@@ -66,7 +57,7 @@ fun safe_saturate cs goal ctxt =
     val final =
       clasetStep.fold_safe_saturation (fn _ => ()) ctxt cs (#node initial)
         accept_safe_transition initial
-    val goals = rendered_goals (#node final)
+    val goals = clasetGoal.render_goals (#node final)
   in
     if boolSyntax.goals_eq goals [goal] then seq.empty
     else seq.result (caller_result goal (goals, #validation final))
@@ -79,7 +70,7 @@ fun step_ntactic step cs goal ctxt =
     seq.map
       (fn (record, next) =>
         caller_result goal
-          (rendered_goals next, clasetStep.validation_of record))
+          (clasetGoal.render_goals next, clasetStep.validation_of record))
       (step ctxt cs (node, 1))
   end
 

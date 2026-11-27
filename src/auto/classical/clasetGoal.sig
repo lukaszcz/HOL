@@ -102,6 +102,7 @@ sig
      solver-level wrapper instantiation remains an explicit Phase-3 option,
      rather than weakening this rigid interface. *)
   val render : node -> int -> goal
+  val render_goals : node -> goal list
   val unrender : node -> int -> goal list * validation -> node option
   (* Each child as a goal of the node, over the parameters of the goal at
      the position and the child's own new free variables, which are also

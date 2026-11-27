@@ -222,22 +222,27 @@ fun delete_decl by_pattern =
   update_decl (delete_rl by_pattern) (delete_aesop_decl by_pattern)
     delete_norm_decl
 
-fun make_rule_decl spec (name, th) =
+fun make_rule_decl_with_info spec info (name, th) =
   let
-    val info = ext_info spec th
     val weight = subgoals_of (rule_brl (#kind spec) (#1 (#rl info)))
   in
     make_decl {name = name, spec = spec, weight = weight,
                info = info, orig = th}
   end
 
-fun add_rule_by extend spec named_th
+fun make_rule_decl spec (named_th as (_, th)) =
+  make_rule_decl_with_info spec (ext_info spec th) named_th
+
+fun add_decl_by extend decl
       (cs as CS {decls, wrappers, index, distinct}) =
-  case extend (make_rule_decl spec named_th) decls of
+  case extend decl decls of
       (NONE, _) => cs
     | (SOME new_decl, decls') =>
         CS {decls = decls', wrappers = wrappers, distinct = distinct,
             index = add_decl new_decl index}
+
+fun add_rule_by extend spec named_th cs =
+  add_decl_by extend (make_rule_decl spec named_th) cs
 
 val add_rule = add_rule_by extend_decl
 
@@ -1502,10 +1507,45 @@ fun marker_of theorem =
 
 val marker_prefix = "__claset_marker_"
 
-fun invocation_marker_rules cs =
-  List.filter
-    (fn (_, (name, _)) => String.isPrefix marker_prefix name)
-    (rules_of cs)
+local
+  open clasetRules
+in
+
+fun marker_decl (decl : decl) = String.isPrefix marker_prefix (#name decl)
+
+fun invocation_marker_rules (CS {decls, ...}) =
+  List.mapPartial
+    (fn decl =>
+      if marker_decl decl then SOME (#spec decl, (#name decl, #orig decl))
+      else NONE)
+    (dest_decls decls)
+
+type transport_rule = decl
+
+fun transport_rules {safe_only}
+      (CS {decls = base, ...}) (CS {decls = effective, ...}) =
+  let
+    fun eligible (decl : decl) = not safe_only orelse #safe (#spec decl)
+  in
+    (if safe_only then List.filter eligible (dest_decls base)
+     else dest_decls base) @
+    List.filter (fn decl => marker_decl decl andalso eligible decl)
+      (dest_decls effective)
+  end
+
+fun transport_rule_theorem (decl : transport_rule) = #orig decl
+
+fun prepare_transported_rule ({spec, info, ...} : transport_rule) theorem =
+  let
+    val derived_info = ext_info spec theorem
+  in
+    if safe_class_of spec info = safe_class_of spec derived_info then
+      SOME (fn name => fn cs => add_decl_by extend_derived_decl
+        (make_rule_decl_with_info spec derived_info (name, theorem)) cs)
+    else NONE
+  end
+
+end
 
 (* The first "<prefix><n>" with n at least [from] that no declaration
    already uses.  Invocation-scoped rules are named this way so that a

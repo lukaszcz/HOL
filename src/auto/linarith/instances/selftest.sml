@@ -639,7 +639,7 @@ val _ =
 
 val _ =
   check
-    ("golden Added replay skips unused left-carrier conversions",
+    ("golden Added replay skips unused carrier conversions",
      fn () =>
        let
          val {ty, dest, kit, norm_conv, discrete, nnf_rules, pre_split,
@@ -647,8 +647,10 @@ val _ =
          val side_calls = ref 0
          val left = iplus n_int intSyntax.one_tm
          val right = iplus m_int intSyntax.one_tm
+         (* The right premise can add as soon as it is lifted to int.
+            Neither int premise needs another conversion. *)
          fun count_sides tm =
-           (if Term.aconv tm left orelse Term.aconv tm right then
+           (if List.exists (Term.aconv tm) [left, right, m_int, n_int] then
               side_calls := !side_calls + 1
             else ();
             norm_conv tm)

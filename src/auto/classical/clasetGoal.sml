@@ -513,6 +513,19 @@ fun render_entry (node as Node {renders, ...}) pos =
 
 fun render node pos = #1 (render_entry node pos)
 
+fun render_goals (node as Node {renders, ...}) =
+  let
+    fun render index goal =
+      let val pos = index + 1
+      in
+        case Inttab.lookup (!renders) pos of
+            SOME (rendered, _) => rendered
+          | NONE => render_cgoal node pos goal
+      end
+  in
+    Lib.mapi render (goals node)
+  end
+
 fun lookup_spellings (node as Node {spellings, ...}) pos =
   case Inttab.lookup (!spellings) pos of
       SOME forms => forms

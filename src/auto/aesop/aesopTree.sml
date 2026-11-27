@@ -445,9 +445,8 @@ fun copy_support tree original_parent record_path copy =
           else NONE
         end
 
-fun copy_support_path tree original copy =
-  Option.map List.rev
-    (copy_support tree (#parent (goal tree original)) true copy)
+fun copy_support_path tree original_parent copy =
+  Option.map List.rev (copy_support tree original_parent true copy)
 
 fun independently_proved tree (current : goal) =
   case #norm current of
@@ -492,16 +491,20 @@ fun select_copy_supports_with add_path tree goals initial_required =
        its continuation across retries. *)
     fun prepare [] = SOME
       | prepare (id :: rest) =
-          if independently_proved tree (goal tree id) then prepare rest
-          else
-            let
-              val paths = seq.mapPartial (copy_support_path tree id)
-                (seq.fromList (List.rev (reverse_copy_goals tree id)))
-              val support = Portable.HOLSusp.delay (fn () => prepare rest)
-            in
-              choose paths
-                (fn required => Portable.HOLSusp.force support required)
-            end
+          let val current = goal tree id
+          in
+            if independently_proved tree current then prepare rest
+            else
+              let
+                val paths =
+                  seq.mapPartial (copy_support_path tree (#parent current))
+                    (seq.fromList (List.rev (reverse_copy_goals tree id)))
+                val support = Portable.HOLSusp.delay (fn () => prepare rest)
+              in
+                choose paths
+                  (fn required => Portable.HOLSusp.force support required)
+              end
+          end
   in
     prepare goals initial_required
   end
@@ -873,42 +876,42 @@ fun checked_ancestor id ancestor =
 
 fun ancestry tree start =
   let
-    fun walk id =
-      case #parent (goal tree id) of
+    fun walk (current : goal) =
+      case #parent current of
           NONE => []
-        | SOME parent =>
-            (id, parent) ::
-            walk (checked_ancestor id (#parent (rapp tree parent)))
+        | SOME rid =>
+            let
+              val application = rapp tree rid
+              val id = checked_ancestor (#id current) (#parent application)
+            in
+              (current, application) :: walk (goal tree id)
+            end
   in
     walk start
   end
 
 (* Installation records the original goal even when copying a copy. *)
-fun original_goal tree id = Option.getOpt (#copy_of (goal tree id), id)
+fun original_goal ({id, copy_of, ...} : goal) = Option.getOpt (copy_of, id)
 
 fun take_through_rapp wanted [] = []
-  | take_through_rapp wanted (entry :: rest) =
-      let val (_, current) = entry
-      in
-        entry ::
-        (if current = wanted then []
-         else take_through_rapp wanted rest)
-      end
+  | take_through_rapp wanted ((entry as (_, current : rapp)) :: rest) =
+      entry ::
+      (if #id current = wanted then [] else take_through_rapp wanted rest)
 
-fun copying_sources_on_path tree parent_id relevant_assigned
+fun copying_sources_on_path tree parent relevant_assigned
       dropped_candidates =
   let
-    val path = ancestry tree parent_id
+    val path = ancestry tree parent
     (* HOL types are inhabited, so a dropped metavariable needs no
        synthesis goal.  It still drives copying exactly like an
        assignment if it was created along this path. Every creator of
        an assigned or dropped candidate can therefore bound the search. *)
     val candidates = dependencies_union relevant_assigned dropped_candidates
-    fun creator ((_, rid), result as (missing, _)) =
-      let val created = #created (rapp tree rid)
+    fun creator ((_, application : rapp), result as (missing, _)) =
+      let val created = #created application
       in
         if dependencies_overlap candidates created then
-          (dependencies_difference missing created, SOME rid)
+          (dependencies_difference missing created, SOME (#id application))
         else result
       end
     val (missing, topmost) = List.foldl creator (candidates, NONE) path
@@ -924,35 +927,38 @@ fun copying_sources_on_path tree parent_id relevant_assigned
           | SOME rid => take_through_rapp rid path
     val path_originals =
       List.foldl
-        (fn ((id, _), origins) => HOLset.add (origins, original_goal tree id))
+        (fn ((current, _), origins) =>
+          HOLset.add (origins, original_goal current))
         (HOLset.empty Int.compare) bounded_path
 
     fun add_source path_goal (id, result as (seen, sources)) =
-      if id = path_goal orelse
-         not (dependencies_overlap copying (#deps (goal tree id)))
-      then result
+      if id = path_goal then result
       else
-        let val original = original_goal tree id
+        let
+          val candidate = goal tree id
+          val original = original_goal candidate
         in
-          (* Canonical origins both skip copies of path goals and collapse
+          (* Canonical origins skip copies of path goals and collapse
              multiple candidates copied from the same goal. *)
-          if HOLset.member (seen, original) then result
-          else (HOLset.add (seen, original), (id, original) :: sources)
+          if not (dependencies_overlap copying (#deps candidate)) orelse
+             HOLset.member (seen, original)
+          then result
+          else
+            (HOLset.add (seen, original), (candidate, original) :: sources)
         end
 
     val (_, reversed_sources) =
       List.foldl
         (fn ((path_goal, parent_rapp), result) =>
-          List.foldl (add_source path_goal) result
-            (rapp_goals tree parent_rapp))
+          List.foldl (add_source (#id path_goal)) result
+            (rapp_goals tree (#id parent_rapp)))
         (path_originals, []) bounded_path
   in
     List.rev reversed_sources
   end
 
-fun copying_sources tree parent_id assigned child_specs =
+fun copying_sources tree (parent : goal) assigned child_specs =
   let
-    val parent = goal tree parent_id
     val relevant_assigned =
       dependencies_intersection assigned (#deps parent)
     val unassigned = dependencies_difference (#deps parent) relevant_assigned
@@ -989,7 +995,7 @@ fun copying_sources tree parent_id assigned child_specs =
     if dependencies_empty relevant_assigned andalso
        dependencies_empty dropped_candidates then []
     else
-      copying_sources_on_path tree parent_id relevant_assigned
+      copying_sources_on_path tree parent relevant_assigned
         dropped_candidates
   end
 
@@ -1026,12 +1032,11 @@ fun install_rapp parent_id
       if not (Option.isSome (#parent parent)) orelse
          dependencies_empty (#deps parent)
       then []
-      else copying_sources tree parent_id assigned child_specs
+      else copying_sources tree parent assigned child_specs
     val copy_specs =
       map
-        (fn (source, original) =>
+        (fn (source_goal, original) =>
           let
-            val source_goal = goal tree source
             val cgoal = cgoal_under child_store (#cgoal source_goal)
             (* This already normalized both the formulas and each
                parameter's type in the child store. *)

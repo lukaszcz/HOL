@@ -1990,14 +1990,7 @@ fun first_step step cs goal =
 
 fun safe_step cs = clasetStep.safe_step_in (Context.snapshot ()) cs
 
-fun rendered_goals node =
-  let
-    fun recurse pos [] = []
-      | recurse pos (_ :: rest) =
-          clasetGoal.render node pos :: recurse (pos + 1) rest
-  in
-    recurse 1 (clasetGoal.goals node)
-  end
+val rendered_goals = clasetGoal.render_goals
 
 fun valid_step goal (record, node) =
   let

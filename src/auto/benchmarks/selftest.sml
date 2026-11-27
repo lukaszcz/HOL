@@ -1728,6 +1728,26 @@ val _ =
              (Thm.concl parityTranslationTheory.source_lexord_def))
          (benchGuards.relevant_definitions wrapped_goal))
 
+val _ =
+  check
+    ("ambient wrapper definitions follow the installed list and its order",
+     fn () =>
+       without_definitions
+         (fn () =>
+           let
+             val definition = parityTranslationTheory.source_lexord_def
+             val reflexive = Thm.REFL ``source_lexord R (xs:'a list) ys``
+             fun keeps definitions =
+               (benchLib.set_definitional_context definitions;
+                ListPair.allEq
+                  (fn (left, right) =>
+                    Term.aconv (Thm.concl left) (Thm.concl right))
+                  (benchGuards.relevant_definitions wrapped_goal, definitions))
+           in
+             keeps [definition, reflexive, definition] andalso
+             keeps [reflexive, definition] andalso keeps []
+           end))
+
 (* Collecting the candidates is not the same as consulting them: A1 has
    to run the sweep, or a rule the corpus declares for every goal is
    never judged at all.  The witness is taken from the live claset --

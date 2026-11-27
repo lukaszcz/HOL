@@ -672,11 +672,12 @@ fun find_newest_cached matches entries (primary, fallback) =
 fun cachedWith measured checkpoint (Cache {entries, hits, ...})
       safe vars formula =
   let
-    fun same ([], []) = true
-      | same (left :: lefts, right :: rights) =
+    fun same_measured ([], []) = true
+      | same_measured (left :: lefts, right :: rights) =
           (checkpoint ();
-           left = right andalso same (lefts, rights))
-      | same _ = false
+           left = right andalso same_measured (lefts, rights))
+      | same_measured _ = false
+    val same = if measured then same_measured else ListPair.allEq (op =)
     val equal = if measured then aconvMeasured checkpoint else aconv
     fun matches entry =
       #safe entry = safe andalso
