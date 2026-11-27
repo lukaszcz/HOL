@@ -2738,18 +2738,19 @@ let
   val held = ``0 <= (x:int)``
   val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
     ([equality, held, application_equality], ``g (n:num) = h (m:num)``)
-  fun is_applied_equality tm =
+  fun is_transferred_applied_equality tm =
     case Lib.total boolSyntax.dest_eq tm of
         SOME (left, right) =>
           let
             val (head, args) = boolSyntax.strip_comb left
           in
             Term.is_var head andalso not (List.null args) andalso
-            Term.is_comb right
+            Term.is_comb right andalso
+            not (SmtLib.goal_mentions_num ([], tm))
           end
       | NONE => false
 in
-  assert (List.exists is_applied_equality asl,
+  assert (List.exists is_transferred_applied_equality asl,
     "num transfer let one premise rewrite another to true: " ^
     String.concatWith "; " (List.map Hol_pp.term_to_string asl));
   assert (Lib.op_mem Term.aconv held asl,

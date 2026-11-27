@@ -9315,9 +9315,10 @@ in
       MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
         (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
         (asl, w)
-    (* The transfer introduces 0 <= i guards before this point.  Keep those
-       guards as rewrite rules for the goal, without letting a transferred
-       premise or a user assumption rewrite any other premise. *)
+    (* The transfer and discharged antecedents can leave 0 <= i guards before
+       this point.  Keep those guards as rewrite rules for the goal, without
+       letting a transferred premise or a user assumption rewrite any other
+       premise. *)
     fun is_num_guard tm =
       case Lib.total intSyntax.dest_leq tm of
           SOME (left, right) =>
