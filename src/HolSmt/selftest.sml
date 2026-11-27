@@ -554,6 +554,9 @@ val graph_expect_thm = expect_thm
     (``smtstring$smt_in_re (smtstring$SmtStr [97])
        (smtstring$reglan_to_re (smtstring$SmtStr [97]))``,
       [thm_Z3p_v4, thm_CVCp]),
+    (``~(smtstring$smt_in_re (smtstring$SmtStr [97]) r /\
+         ~smtstring$smt_in_re (smtstring$SmtStr [97]) r)``,
+      [thm_Z3p_v4, thm_CVCp]),
     (``smtstring$smtstr_to_int (smtstring$SmtStr [49; 50]) = 12``,
       [thm_Z3p_v4]),
     (``smtstring$smtstr_lt

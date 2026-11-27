@@ -234,7 +234,7 @@ local
        reaches SMT-LIB only through the str_inj images that
        HOL_STRING_TO_SMT_CONV produces, and those have type smtstr. *)
     (smtstr_ty, Lib.K "String"),
-    (reglan_ty, Lib.K "(RegLan String)"),
+    (reglan_ty, Lib.K "RegLan"),
     (* The canonical-NaN subtype has exactly the SMT FloatingPoint universe.
        Raw binary_ieee float records deliberately have no entry here. *)
     (smtfp_ty, smtfp_sort),

@@ -4445,6 +4445,24 @@ fun typechecked_single_assertion script =
     [assertion] => assertion
   | _ => die "expected exactly one typechecked assertion"
 
+fun smtlib_reglan_sort_arguments () =
+  let
+    fun script sort =
+      "(set-logic QF_SLIA)\n(declare-const r " ^ sort ^ ")\n" ^
+      "(assert (str.in_re \"a\" r))\n(check-sat)\n"
+    fun check sort =
+      let val argument = Term.rand (typechecked_single_assertion (script sort))
+      in assert (Type.compare (Term.type_of argument,
+           SmtLib_Theories.reglan_ty) = EQUAL,
+         "RegLan spelling did not produce the Unicode regular-language sort")
+      end
+  in
+    List.app check ["RegLan", "(RegLan String)"];
+    expect_hol_error_contains "non-String RegLan sort argument"
+      "RegLan sort argument must be String"
+      (fn () => ignore (typechecked_single_assertion (script "(RegLan Bool)")))
+  end
+
 fun smtlib_lambda_abstraction_alpha_success () =
 let
   val state = SmtLib_Parser.typecheck_script_string
@@ -5670,8 +5688,10 @@ in
     "indexed floating-point conversion metadata was not preserved");
   assert (metadata_is_official string_sort,
     "String sort metadata is not marked official");
-  assert (not (List.null (#parametric_sorts (#attributes reglan_sort))),
-    "RegLan metadata did not preserve its parameter");
+  assert (metadata_is_official reglan_sort andalso
+          #declarations reglan_sort = ["(RegLan 0)"] andalso
+          null (#parametric_sorts (#attributes reglan_sort)),
+    "RegLan metadata did not record the standard nullary sort");
   assert (#left_associative (#attributes concat_symbol),
     "str.++ metadata did not record left associativity");
   assert (#chainable (#attributes str_lt) andalso
@@ -41202,6 +41222,7 @@ let
       smtlib_core_arith_array_bv_symbol_coverage_success),
     ("smtlib_advanced_symbol_coverage_success",
       smtlib_advanced_symbol_coverage_success),
+    ("smtlib_reglan_sort_arguments", smtlib_reglan_sort_arguments),
     ("smtlib_first_order_dictionary_guard",
       smtlib_first_order_dictionary_guard),
     ("smtlib_arith_array_parse_signatures_success",

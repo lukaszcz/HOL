@@ -1009,12 +1009,20 @@ in
     val string_ty =
       Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
 
+    (* SMT-LIB uses the bare sort. Z3 also prints its String parameter. *)
+    fun reglan_sort token indices arguments =
+      case (indices, arguments) of
+        ([], []) => reglan_ty
+      | ([], [element]) =>
+          if Type.compare (element, string_ty) = EQUAL then reglan_ty
+          else decline token "RegLan sort argument must be String"
+      | _ => decline token
+          "RegLan expects no indices and at most one sort argument"
+
     val tyentries = [
       official_entry "String" no_attributes ["(String 0)"]
         (K_zero_zero string_ty),
-      official_entry "RegLan" (parametric_attributes ["String"])
-        ["(RegLan String)"]
-        (K_zero_one (fn _ => reglan_ty))
+      official_entry "RegLan" no_attributes ["(RegLan 0)"] reglan_sort
     ]
 
     fun str_predicate smt_name hol_name =
