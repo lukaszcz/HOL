@@ -140,10 +140,13 @@ fun getIntRoot next first = first :: rev (fold_root next (op ::) first [])
 fun addClause next lfn roots cl sva vc clauseth lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
-        val length = fold_root next (fn (_, length) => length + 1) (next ()) 1
-        val _ = if not (sat_profile ()) then () else
-          (count "root-clauses" 1;
-           count "root-literal-occurrences" length)
+        val first = next ()
+        val _ = if sat_profile () then
+          let val length = fold_root next (fn (_, n) => n + 1) first 1 in
+            count "root-clauses" 1;
+            count "root-literal-occurrences" length
+          end
+          else fold_root next (fn _ => ()) first ()
     in prepareRootClause lfn roots orc clauseth cl id
     end
 

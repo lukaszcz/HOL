@@ -70,13 +70,12 @@ struct
         else hash 0 tm
   type occurrence = {literal : Term.term, negative : bool, atom : Term.term}
   datatype clause = Clause of
-    {occurrences : occurrence list, thm : Thm.thm,
+    {literals : Term.term list, thm : Thm.thm,
      index : (int, (Term.term * int) list) Redblackmap.dict}
   fun term [] = boolSyntax.F
     | term [literal] = literal
     | term (literal :: rest) = boolSyntax.mk_disj (literal, term rest)
-  fun literals (Clause {occurrences, ...}) =
-    (observe #clause_accesses;List.map #literal occurrences)
+  fun literals (Clause {literals, ...}) = (observe #clause_accesses;literals)
   fun theorem (Clause {thm, ...}) = (observe #clause_accesses;thm)
   fun occurrence literal =
     case Lib.total boolSyntax.dest_neg literal of
@@ -100,8 +99,7 @@ struct
       val (_, index) = List.foldr add
         (List.length literals, Redblackmap.mkDict Int.compare) literals
     in observe #clause_objects;
-      Clause {occurrences = List.map occurrence literals,
-      thm = thm, index = index} end
+      Clause {literals = literals, thm = thm, index = index} end
   fun find literal (Clause {index, ...}) =
     let val key = hash 6 literal in
       let val _ = observe #clause_accesses
@@ -450,19 +448,21 @@ struct
   structure Graph = SmtReplayGraph
   val _ = SmtReplayInvocationWork.validate
   datatype owned_witness = OwnedWitness of
-    {work:W.portfolio,clause:clause,graph:Graph.graph,scope:Graph.scope,
-     sources:Source.sources,limits:W.limits,epoch:int,symbols:int}
-  fun retain_with_work work clause =
+    {work:W.portfolio,thm:Thm.thm,occurrences:occurrence list,
+     graph:Graph.graph,scope:Graph.scope,sources:Source.sources,
+     limits:W.limits,epoch:int,symbols:int}
+  fun retain_with_work work (Clause {literals,thm,...}) =
     let val sources = W.original_sources work
         val graph = Source.owning_graph sources
         val scope = Source.owning_scope sources
         val limits = W.semantic_limits work
         val _ = W.validate work graph scope sources limits
-    in OwnedWitness {work = work,clause = clause,graph = graph,scope = scope,
+    in OwnedWitness {work = work,thm = thm,
+      occurrences = List.map occurrence literals,graph = graph,scope = scope,
       sources = sources,limits = limits,epoch = Type.type_epoch (),
       symbols = Term.term_epoch ()} end
   fun description_for expected (OwnedWitness
-      {work,clause = Clause {thm,occurrences,...},graph,scope,sources,limits,
+      {work,thm,occurrences,graph,scope,sources,limits,
        epoch,symbols}) =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "description_for" "different original Work";

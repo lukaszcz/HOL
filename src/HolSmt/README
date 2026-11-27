@@ -244,6 +244,12 @@ finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
 a parser-side alias only: the printer always emits `seq.foldl`).
 
+For compatibility with older HolSmt input, the solver-neutral reader accepts
+`set.intersect` wherever `set.inter` is available.  Both spellings build
+HOL set intersection and take two or more sets of the same sort.
+Solver-specific input and output use `set.inter` for cvc5 and
+`intersection` for Z3.
+
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
 `AUFBVDT`.  For every discovered 4.14.* patch version, HolSmt therefore widens

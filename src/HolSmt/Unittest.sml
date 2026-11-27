@@ -4058,12 +4058,15 @@ let
     parse_smtlib_state
       ("(set-logic QF_UF)\n" ^
        "(declare-const a Bool)\n" ^
+       "(declare-const b Bool)\n" ^
        "(define-fun id ((p Bool)) Bool p)\n" ^
        "(assert a)\n" ^
        "(check-sat)\n" ^
        "(declare-fun unused (Bool) Bool)\n" ^
        "(check-sat-assuming (a))\n" ^
+       "(check-sat-assuming (b))\n" ^
        "(push 1)\n" ^
+       "(define-fun later () Bool true)\n" ^
        "(assert false)\n" ^
        "(check-sat)\n" ^
        "(pop 1)\n" ^
@@ -4093,8 +4096,8 @@ let
     | _ => die "unexpected sequence of finite check-sat queries"
 in
   case queries of
-    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat pushed,
-     QueryCheckSat popped, QueryCheckSat reset] =>
+    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat other,
+     QueryCheckSat pushed, QueryCheckSat popped, QueryCheckSat reset] =>
       (assert (Portable.pointer_eq (#assertions first, #assertions repeated),
          "repeated check copied the assertions");
        assert (List.length (#local_definitions first) = 1 andalso
@@ -4104,6 +4107,14 @@ in
        assert (null (#assumptions first) andalso
          List.exists (term_is_var_named "a") (#assumptions repeated),
          "repeated check did not record its assumptions");
+       let val terms = query_fragment_terms
+             (List.map QueryCheckSat [first, repeated, other, pushed])
+           fun variable name = Term.mk_var (name, Type.bool)
+           val (a, b, p) = (variable "a", variable "b", variable "p")
+       in assert (ListPair.allEq (fn (left, right) => Term.aconv left right)
+             (terms, [p, p, a, a, b, p, p, boolSyntax.T, a, boolSyntax.F]),
+           "fragment terms duplicated snapshots or omitted a query change")
+       end;
        assert (case #assertions pushed of
            [outer, inner] => term_is_var_named "a" outer andalso
              Term.term_eq inner boolSyntax.F
@@ -4260,8 +4271,11 @@ let
     parse_smtlib_state
       ("(set-logic ALL)\n" ^
        "(define-sort WordPair (T) (Array T (_ BitVec 8)))\n" ^
-       "(declare-const a (Array Int (_ BitVec 8)))\n" ^
-       "(assert (= (select a 0) #x00))\n" ^
+       "(define-sort KeepSort (WordPair) WordPair)\n" ^
+       "(declare-const a (WordPair (KeepSort Int)))\n" ^
+       "(define-fun first ((a (WordPair Int))) (_ BitVec 8)\n" ^
+       "  (select (as a (WordPair Int)) 0))\n" ^
+       "(assert (and (= (select a 0) #x00) (= (first a) #x00)))\n" ^
        "(exit)\n")
   val {assertions = fp_assertions, ...} =
     parse_smtlib_state
@@ -4706,6 +4720,28 @@ in
     "apply lost map provenance or existing Int-to-Real coercions")
 end
 
+fun smtlib_apply_deep_underscore_success () =
+let
+  fun check operator =
+    let
+      val nested =
+        String.concat (List.tabulate (25, fn _ => "(" ^ operator ^ " f ") @
+          ("0" :: List.tabulate (25, fn _ => ")")))
+    in
+      SmtLib_Parser.typecheck_script_string
+        ("(set-logic ALL)\n" ^
+         "(declare-const f (-> Int Int))\n" ^
+         "(assert (= " ^ nested ^ " 0))\n")
+    end
+  val state = check "_"
+  val expected = check "@"
+in
+  assert (Term.aconv (hd (#assertions state)) (hd (#assertions expected)),
+    "deep underscore applications differ from explicit @ applications");
+  assert (#apply_operator_used (#surface_flags state),
+    "nested apply operator surface event was not recorded")
+end
+
 fun smtlib_apply_indexed_ambiguity_success () =
 let
   val state = SmtLib_Parser.typecheck_script_string
@@ -4721,13 +4757,33 @@ let
     | NONE => die "indexed ambiguity script lost BitVec variable w"
   val word8 = wordsSyntax.mk_word_type
     (fcpLib.index_type (Arbnum.fromInt 8))
+  fun check_extract indices other =
+    ignore (SmtLib_Parser.typecheck_script_string
+      ("(set-logic QF_BV)\n" ^
+       "(declare-const w (_ BitVec 8))\n" ^
+       "(assert (= ((_ extract " ^ indices ^ ") w) " ^ other ^ "))\n"))
 in
   assert (Term.type_of assertion = Type.bool,
     "indexed extract ambiguity pin did not produce Bool");
   assert (Type.compare (Term.type_of w, word8) = EQUAL,
     "(_ BitVec 8) no longer denotes the expected word sort");
   assert (not (#apply_operator_used (#surface_flags state)),
-    "indexed identifiers were misclassified as the _ apply operator")
+    "indexed identifiers were misclassified as the _ apply operator");
+  check_extract "7 0" "w";
+  check_extract "7 7" "#b0";
+  expect_hol_error_contains "extract with reversed indices"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "3 5" "w");
+  expect_hol_error_contains "extract above the operand width"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "8 1" "w");
+  expect_hol_error_contains "extract with a negative upper index"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => ignore (SmtLib_Parser.typecheck_script_string
+      "(set-logic QF_BV)\n(assert (= ((_ extract -1 0) #b1) #b1))\n"));
+  expect_hol_error_contains "extract with a negative lower index"
+    "could not resolve indexed symbol 'extract'"
+    (fn () => check_extract "0 -1" "#b00")
 end
 
 fun smtlib_indexed_metadata_after_reset () =
@@ -5163,7 +5219,21 @@ fun smtlib_logic_fragment_diagnostics () =
           let val child = shared_sum (depth - 1)
           in intSyntax.mk_plus (child, child) end
     val shared_int_atom = intSyntax.mk_less (shared_sum 28, ``y:int``)
+    val chain_depth = 100
+    val equality_chain = List.foldl (fn (_, body) =>
+      "(= true " ^ body ^ " true)") "true"
+      (List.tabulate (chain_depth, Lib.I))
+    val {assertions = chain_assertions, ...} = parse_smtlib_state
+      (script "QF_UF" ("(assert " ^ equality_chain ^ ")\n"))
+    val application_visits = ref 0
+    fun count_application term =
+      (if Term.is_comb term then application_visits := !application_visits + 1
+       else ();
+       SmtLib_Logics.term_children term)
+    val () = SmtLib_Logics.walk_terms count_application chain_assertions
   in
+    assert (!application_visits = 6 * chain_depth,
+      "fragment scan revisited a chainable equality operand after eviction");
     expect_no_term_fragment "shared Boolean assertion" "QF_UF" shared_assertion;
     expect_term_fragment "quantifier after shared Boolean assertion" "QF_UF"
       (boolSyntax.mk_conj (shared_assertion, ``!n:num. n = n``))
@@ -5172,6 +5242,21 @@ fun smtlib_logic_fragment_diagnostics () =
       "difference logic atom shape";
     expect_term_fragment "shared pure integer atom" "QF_BV" shared_int_atom
       "integer atom";
+    (let
+       val arguments = List.tabulate (128, fn i =>
+         Term.mk_var ("arg" ^ Int.toString i, Type.bool))
+       fun apply_bools range =
+         let val sort = List.foldl
+               (fn (_, result) => Type.--> (Type.bool, result)) range arguments
+         in Term.list_mk_comb (Term.mk_var ("wide", sort), arguments) end
+     in
+       expect_no_term_fragment "wide Boolean application" "QF_UF"
+         (apply_bools Type.bool);
+       expect_term_fragment "datatype in a partial application sort" "QF_UF"
+         (apply_bools (Type.--> (oneSyntax.one_ty, Type.bool))) "datatype sort";
+       expect_term_fragment "integer sort on an unused abstraction binder"
+         "QF_UF" ``\unused:int. T`` "integer term sort"
+     end);
     expect_fragment_with_options "nested Seq datatype unavailable"
       all_elaborated "QF_S"
       (script "QF_S"
@@ -6363,6 +6448,11 @@ end
 
 fun smtlib_set_dialect_builders_success () =
 let
+  val neutral_options = {
+    dict_logic = NONE,
+    solver = NONE,
+    elaborate_datatypes = false
+  }
   val z3_options = {
     dict_logic = NONE,
     solver = SOME "Z3",
@@ -6425,14 +6515,10 @@ let
           String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
         label ^ " retained an smtlib_* placeholder")
     end
-  fun reject options label text =
-    let
-      val rejected =
-        ((ignore (typecheck options text); false)
-         handle Feedback.HOL_ERR _ => true)
-    in
-      assert (rejected, label ^ " was accepted in the wrong dialect")
-    end
+  fun rejection_message options label text =
+    (ignore (typecheck options text); die (label ^ " was accepted"))
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  fun reject options label text = ignore (rejection_message options label text)
   val filter_x = Term.mk_var ("set_filter_x", intSyntax.int_ty)
   val all_x = Term.mk_var ("set_all_x", intSyntax.int_ty)
   val some_x = Term.mk_var ("set_some_x", intSyntax.int_ty)
@@ -6442,6 +6528,27 @@ let
     "(declare-const s (Set Int))\n" ^
     "(assert (set.member 0 s))\n" ^
     "(check-sat)\n"
+  val legacy_intersection_script =
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(assert (= (set.intersect s s) s))\n"
+  fun reject_mixed_nested_sorts operator =
+    let
+      val application = "(" ^ operator ^ " ss sa)"
+      val body =
+        if operator = "set.subset" then application
+        else "(= " ^ application ^ " ss)"
+      val message = rejection_message neutral_options operator
+        ("(set-logic ALL)\n\
+         \(declare-const ss (Set (Set Int)))\n\
+         \(declare-const sa (Set (Array Int Bool)))\n\
+         \(assert " ^ body ^ ")\n")
+    in
+      assert (contains (operator ^ " arguments must have the same surface sort")
+        message, operator ^ " had the wrong diagnostic: " ^ message)
+    end
+  val declared_intersection = Term.mk_var ("set.intersect",
+    Type.--> (intSyntax.int_ty, Type.bool))
   val cvc5_state = typecheck cvc5_options cvc5_script
   val finite_hypotheses =
     case #queries cvc5_state of
@@ -6501,6 +6608,46 @@ in
        s));
   assert_builder "cvc5 set.inter" cvc5_options "(= (set.inter s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "neutral legacy set.intersect" neutral_options
+    "(= (set.intersect s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "neutral n-ary legacy set.intersect" neutral_options
+    ("(= (ite true (set.intersect bs (set.singleton true) " ^
+     "(as set.empty (Set Bool))) bs) bs)")
+    (boolSyntax.mk_eq (boolSyntax.mk_cond (boolSyntax.T,
+       pred_setSyntax.mk_inter (pred_setSyntax.mk_inter
+         (bs, pred_setSyntax.mk_insert (boolSyntax.T, bool_empty)), bool_empty),
+       bs), bs));
+  reject neutral_options "neutral legacy set.intersect with Array operand"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(declare-const a (Array Int Bool))\n\
+     \(assert (= (set.intersect s a) s))\n";
+  reject neutral_options "legacy set.intersect with mixed element sorts"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(declare-const b (Set Bool))\n\
+     \(assert (= (set.intersect s b) s))\n";
+  reject neutral_options "unary legacy set.intersect"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(assert (= (set.intersect s) s))\n";
+  List.app reject_mixed_nested_sorts
+    ["set.inter", "set.intersect", "set.union", "set.minus", "set.subset"];
+  let
+    val state = typecheck neutral_options
+      "(set-logic ALL)\n\
+       \(declare-fun set.intersect (Int) Bool)\n\
+       \(assert (set.intersect 0))\n"
+  in
+    case #assertions state of
+      [tm] => assert
+        (Term.aconv tm (Term.mk_comb (declared_intersection, zero)),
+         "neutral set.intersect did not resolve its declared signature")
+    | _ => die "declared set.intersect test did not produce one assertion"
+  end;
+  reject cvc5_options "cvc5 legacy set.intersect" legacy_intersection_script;
+  reject z3_options "Z3 legacy set.intersect" legacy_intersection_script;
   assert_builder "cvc5 set.minus" cvc5_options "(= (set.minus s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_diff (s, t), s));
   assert_builder "cvc5 set.subset" cvc5_options "(set.subset s t)"
@@ -14320,6 +14467,7 @@ end
    antecedent builds no conjunction constructor; two build one. *)
 fun cpc_process_scope_boundary_matches_plain () =
 let
+  open CPC_Proof
   val a = Term.mk_var ("scope_a", Type.bool)
   val b = Term.mk_var ("scope_b", Type.bool)
   val r = Term.mk_var ("scope_r", Type.bool)
@@ -14332,7 +14480,7 @@ let
      result = {thm = theorem,
                located = {term = Thm.concl theorem, provenance = provenance},
                clause = NONE}}
-  fun check_with r label antecedents incoming expected =
+  fun check_result r label antecedents incoming expected =
     let
       val premise = Thm.ASSUME
         (List.foldr boolSyntax.mk_imp r antecedents)
@@ -14348,9 +14496,25 @@ let
                 (Thm.hypset theorem, Thm.hypset plain)) andalso
               Tag.dest_tag (Thm.tag plain) = Tag.dest_tag (Thm.tag theorem),
         label ^ ": plain and boundary theorems differ");
-      assert (provenance = expected,
+      assert (expected provenance,
         label ^ ": unexpected boundary provenance")
     end
+  fun check_with r label antecedents incoming expected =
+    check_result r label antecedents incoming (fn actual => actual = expected)
+  (* A wrapper distinguishes the two outgoing occurrences, so skipping
+     pointer-identical siblings alone cannot flatten this shared DAG. *)
+  fun share 0 node = node
+    | share n node = share (n - 1)
+        (ApplicationProvenance ("f",
+          [ApplicationProvenance ("g", [node]), node]))
+  val dag = share 30 AtomicProvenance
+  val marked = BinderBlockProvenance ("forall", 1,
+    ConjunctionProvenance (ParsedConjunction, [dag, dag]))
+  fun retains_marked (ApplicationProvenance ("=>", [
+        BinderBlockProvenance ("forall", 1,
+          ConjunctionProvenance (ParsedConjunction, [left, right])), _])) =
+      Portable.pointer_eq (left, dag) andalso Portable.pointer_eq (right, dag)
+    | retains_marked _ = false
 in
   check_with boolSyntax.F "one antecedent, F result" [a]
     (imp_prov (pa, pr)) (CPC_Proof.ApplicationProvenance ("not", [pa]));
@@ -14363,7 +14527,15 @@ in
     (imp_prov (pa, body));
   check_with r "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
     (imp_prov (CPC_Proof.ConjunctionProvenance
-                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body))
+                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body));
+  check_with r "opaque shared occurrence" [a] dag
+    (imp_prov (AtomicProvenance, body));
+  check_with r "opaque shared occurrence with a conjunction" [a]
+    (ApplicationProvenance ("f", [dag, marked]))
+    (imp_prov (UnavailableProvenance
+      "actual scope antecedent has no retained child boundary", body));
+  check_result r "exact binder and conjunction after scope" [a]
+    (imp_prov (marked, pr)) retains_marked
 end
 
 fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
@@ -18884,6 +19056,30 @@ in
       {term = ``F``, provenance = CPC_Proof.AtomicProvenance})
 end
 
+fun cpc_proof_replay_shared_provenance_diagnostic () =
+let
+  open CPC_Proof
+  val premise = Thm.ASSUME ``p:bool``
+  val prefix = "CPC and_elim premise has no recoverable conjunction: "
+  fun diagnostic provenance =
+    (ignore (CPC_ProofReplay.replay_and_elim_provenance_for_test
+       premise provenance 0 NONE);
+     die "FAIL: and_elim accepted a non-conjunction")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
+  fun share 0 node = node
+    | share n node = share (n - 1) (ApplicationProvenance ("f", [node, node]))
+  val one = ApplicationProvenance ("f",
+    [AtomicProvenance, AmbiguousProvenance "example"])
+  val large = diagnostic (share 30 AtomicProvenance)
+in
+  assert (diagnostic one = prefix ^ "application(f,atom,ambiguous(example))",
+    "CPC short occurrence diagnostic changed");
+  assert (String.isPrefix (prefix ^ "application(f,application(f,") large
+      andalso String.size large = String.size prefix + 4096
+      andalso String.isSuffix "..." large,
+    "CPC shared occurrence diagnostic was not truncated at its byte cap")
+end
+
 fun cpc_proof_replay_large_conjunction_provenance_success () =
 let
   val names = List.tabulate (300, fn n => "boundary" ^ Int.toString n)
@@ -19738,6 +19934,29 @@ in
   CPC_ProofParser.with_cpc_fp_private_proof proof (fn () =>
     assert (List.length (CPC_ProofParser.cpc_fp_private_bindings ()) = 2,
       "CPC private marker index changed retained proof metadata")) ()
+end
+
+local
+  structure C = SmtLib_ConstructorSyntax
+in
+fun constructor_source_alpha_short_circuit () =
+let
+  val atom = C.native boolSyntax.T
+  val conjunction = C.native boolSyntax.conjunction
+  fun share 0 body = body
+    | share n body =
+        share (n - 1) (C.application (C.application (conjunction, body), body))
+  val body = share 24 atom
+  val f = C.variable (Term.mk_var ("f", Type.--> (Type.bool, Type.bool)))
+  val g = C.variable (Term.mk_var ("g", Type.--> (Type.bool, Type.bool)))
+  val spent = ref (0 : IntInf.int)
+  fun charge work = spent := !spent + work
+in
+  assert (not (C.aconv charge (C.application (f, body),
+                               C.application (g, body))),
+    "source alpha compared terms with distinct free application heads");
+  assert (!spent < 128, "source alpha visited operands after a head mismatch")
+end
 end
 
 (* Retained proof metadata, not the most recent parse or a name prefix,
@@ -21514,6 +21733,37 @@ in
       profile_call_count
         "CPC(remove_extra_hyps:canonical_assumption)_OK" = 1,
     "CPC canonical rung did not discharge the hypothesis")
+end
+
+fun cpc_canonical_rung_indexed_hypotheses () =
+let
+  val domain = intSyntax.int_ty
+  fun equation suffix =
+    let
+      val ty = Type.--> (domain, domain)
+      val left = Term.mk_var ("left" ^ suffix, ty)
+      val right = Term.mk_var ("right" ^ suffix, ty)
+      val arg = Term.mk_var ("arg", domain)
+      val eta_left = Term.mk_abs (arg, Term.mk_comb (left, arg))
+    in
+      (boolSyntax.mk_eq (right, left), boolSyntax.mk_eq (left, right),
+       boolSyntax.mk_eq (eta_left, right))
+    end
+  val first as (hyp1, _, _) = equation "1"
+  val second as (hyp2, _, _) = equation "2"
+  (* Visit the last source first, then look up a source already indexed. *)
+  val ((early, early_source, _), (late, late_source, late_duplicate)) =
+    if Term.compare (hyp1, hyp2) = LESS then (first, second)
+    else (second, first)
+  val input = Thm.CONJ (Thm.ASSUME early) (Thm.ASSUME late)
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([late_source, late_duplicate, early_source], boolSyntax.F, input)
+in
+  check_oracle_tags "CPC indexed canonical hypotheses" theorem;
+  assert (Term.aconv (Thm.concl theorem) (Thm.concl input) andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset, [early_source, late_source])),
+    "CPC canonical lookup lost a source or selected a later duplicate")
 end
 
 (* An extra hypothesis that only a proof from the whole context discharges. *)
@@ -34916,6 +35166,15 @@ let
   fun prod (left, right) = Type.mk_type ("prod", [left, right])
   val funs = shared Type.--> 40
   val prods = shared prod 40
+  fun fibonacci 0 (current, _) = current
+    | fibonacci n (current, previous) =
+        fibonacci (n - 1) (Type.--> (current, previous), current)
+  val shared_funs = fibonacci 40 (Type.bool, Type.alpha)
+  val visits = ref 0
+  val has_feature = Library.type_contains_pure (fn _ =>
+    (visits := !visits + 1;
+     assert (!visits <= 84, "pure type traversal revisited shared arguments");
+     false)) shared_funs
   val fp = ``:smt_rounding``
   fun false_flag () = false
   val state : SmtLib.outbound_feature_state =
@@ -34945,9 +35204,37 @@ in
   assert (has_fp (prod (Type.bool, fp))
       andalso within_mutator_seconds 2 has_fp (Type.--> (funs, fp))
       andalso not (within_mutator_seconds 2 has_fp funs)
+      andalso not (within_mutator_seconds 2 has_fp shared_funs)
       andalso not (has_fp Type.alpha),
     "datatype traversal changed its floating-point feature");
+  assert (not has_feature, "pure type traversal found an absent feature");
   assert (!calls = 3, "generic type_contains skipped an occurrence")
+end
+
+fun native_feature_shared_branches () =
+let
+  val x = Term.mk_var ("feature_left", Type.bool)
+  val y = Term.mk_var ("feature_right", Type.bool)
+  fun shared 0 (left, _) = left
+    | shared n (left, right) =
+        shared (n - 1) (boolSyntax.mk_conj (left, right), left)
+  fun off () = false
+  val state : SmtLib.outbound_feature_state =
+    {generated_forall = off, sequence_emission = off, has_set_terms = off,
+     native_set_backend = off, has_bag_terms = off, native_bag_backend = off}
+  fun infer root = SmtLib.outbound_infer_features_with_state
+    state SmtLib.FirstOrder [root] (Redblackmap.mkDict Type.compare)
+    (Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare)))
+  val root = shared 26 (x, y)
+  val expected = infer (shared 4 (x, y))
+  val actual = within_mutator_seconds 2 infer root
+  val SmtLib.LogicFeatures {quantifiers, ...} =
+    infer (boolSyntax.mk_conj (root, boolSyntax.mk_forall (x, x)))
+in
+  assert (actual = expected,
+    "native inference changed the features of shared Boolean branches");
+  assert (quantifiers,
+    "native inference missed a feature after shared Boolean branches")
 end
 
 fun binder_opening_resource_success () =
@@ -40792,6 +41079,7 @@ let
       checked_smt_tac_rejects_unsat_without_theorem),
     ("library_type_contains_nested_arguments_success",
       library_type_contains_nested_arguments_success),
+    ("native_feature_shared_branches", native_feature_shared_branches),
     ("smtlib_string_literal_codec_success",
       smtlib_string_literal_codec_success),
     ("smtlib_string_literal_typecheck_success",
@@ -40975,6 +41263,8 @@ let
       smtlib_lambda_surface_syntax_hygiene),
     ("smtlib_apply_operators_success",
       smtlib_apply_operators_success),
+    ("smtlib_apply_deep_underscore_success",
+      smtlib_apply_deep_underscore_success),
     ("smtlib_apply_indexed_ambiguity_success",
       smtlib_apply_indexed_ambiguity_success),
     ("smtlib_indexed_metadata_after_reset",
@@ -41386,6 +41676,8 @@ let
       cpc_context_proof_hypothesis_success),
     ("cpc_canonical_rung_hypothesis_success",
       cpc_canonical_rung_hypothesis_success),
+    ("cpc_canonical_rung_indexed_hypotheses",
+      cpc_canonical_rung_indexed_hypotheses),
     ("smt_replay_canon_transport_hypothesis",
       smt_replay_canon_transport_hypothesis),
     ("cpc_arrays_select_const_set_success",
@@ -41421,6 +41713,8 @@ let
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
       cpc_proof_replay_and_elim_success),
+    ("cpc_proof_replay_shared_provenance_diagnostic",
+      cpc_proof_replay_shared_provenance_diagnostic),
     ("cpc_proof_replay_large_conjunction_provenance_success",
       cpc_proof_replay_large_conjunction_provenance_success),
     ("cpc_proof_replay_boolean_rewrites_success",
@@ -41453,6 +41747,8 @@ let
       cpc_boolean_circuit_shared_projection_success),
     ("cpc_true_elim_shared_normal_form", cpc_true_elim_shared_normal_form),
     ("cpc_fp_private_alpha_index", cpc_fp_private_alpha_index),
+    ("constructor_source_alpha_short_circuit",
+      constructor_source_alpha_short_circuit),
     ("cpc_fp_private_proof_scope_success",
       cpc_fp_private_proof_scope_success),
     ("cpc_fp_private_witness_search_success",

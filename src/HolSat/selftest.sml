@@ -312,12 +312,14 @@ local
       callback_case NONE "SAT -1 -2 0\n" NONE NONE GEN_SAT
         (fn Exn.Exn satTools.satCheckError => true | _ => false))
 
-  val _ = control "SAT model checking keeps the last equality for an atom"
+  val _ = control "SAT model checking handles duplicate and nested atoms"
     (fn () =>
       let
         val first = ``(f : (bool -> bool) -> bool) (\x. x)``
         val second = ``(f : (bool -> bool) -> bool) (\y. y)``
         val negative = mk_neg second
+        val inner = ``~(p:bool)``
+        val outer = ``(g:bool -> bool) p``
         fun checks model goal =
             let val th = satTools.satCheck model goal
             in null (hyp th) andalso
@@ -325,7 +327,10 @@ local
             end
       in checks [first, second] first andalso
          checks [first, negative] (mk_neg first) andalso
-         checks [negative, first] second
+         checks [negative, first] second andalso
+         checks [inner, outer] (mk_conj (outer,inner)) andalso
+         checks [mk_conj (first,negative), outer]
+           (mk_conj (mk_neg first,outer))
       end)
 
   val _ = control "SAT observation scopes retire on failure and reject reentry"
@@ -700,9 +705,61 @@ local
           (Redblackmap.mkDict Term.var_compare) (Array.fromList []))) andalso
         refute F andalso measured (internal (config invalid)) sat_only andalso
         refute nonunit andalso refute negative_units andalso
+        measured (internal (config ``~p /\ ~q /\ (~r \/ s)``)) sat_only andalso
         refute positive_units andalso
         measured (internal (set_term valid base_config))
           (fn conf => checked valid (GEN_SAT_PROVE_ONLY conf))
+      end)
+  val _ = control "proof-only DPLL preserves negative unit hypotheses and tags"
+    (fn () =>
+      let
+        val source = ``~(P (x:'a):bool) /\ (P x \/ y) /\ ~y``
+        val marker = ``marker:bool``
+        val (_,_,lfn,clauses) = def_cnf.explicit_cnf NONE (mk_neg source)
+        val oracle = tag (mk_oracle_thm "dpll_test_oracle" ([],T))
+        val axiom = Tag.ax_tag (Nonce.mk "dpll_test_axiom")
+        val tagged = Array.tabulate (Array.length clauses, fn i =>
+          let val (clause,th) = Array.sub (clauses,i) in
+            (clause, if i = 0 then add_tag (oracle,ADD_ASSUM marker th)
+                     else add_tag (axiom,th))
+          end)
+      in
+        case dpll.DPLL_REFUTE lfn tagged of
+            SOME th =>
+              let val (oracles,axioms) = Tag.dest_tag (tag th)
+              in concl th ~~ F andalso length (hyp th) = 2 andalso
+                 List.exists (aconv marker) (hyp th) andalso
+                 List.exists (aconv source) (hyp th) andalso
+                 List.exists (fn name => name = "dpll_test_oracle") oracles
+                 andalso axioms = #2 (Tag.dest_tag axiom)
+              end
+          | NONE => false
+      end)
+  val _ = control "proof-only DPLL rewrites schematic negative units"
+    (fn () =>
+      let
+        val universal = ``!(x:bool). ~(P x)``
+        val (x,_) = dest_forall universal
+        val term_unit = SPEC x (ASSUME universal)
+        val term_instance = ASSUME ``(P:bool->bool) y``
+        val parameter = Type.mk_vartype "'a"
+        val atom = mk_comb (boolSyntax.mk_arb (Type.--> (parameter,bool)),
+                            boolSyntax.mk_arb parameter)
+        val type_unit = SPEC atom (ASSUME ``!b:bool. ~b``)
+        val type_instance = ASSUME (Term.inst [parameter |-> bool] atom)
+        val lfn = Redblackmap.mkDict Term.var_compare
+        fun refutes unit instance =
+          let val clauses = Array.fromList (List.map (fn th => (concl th,th))
+                [unit,instance])
+          in
+            case dpll.DPLL_REFUTE lfn clauses of
+                SOME th => concl th ~~ F andalso
+                  HOLset.equal (hypset th,
+                    HOLset.union (hypset unit,hypset instance))
+              | NONE => false
+          end
+      in refutes term_unit term_instance andalso
+         refutes type_unit type_instance
       end)
   val _ = control "ordinary missing-proof checked UNSAT/model contracts"
     (fn () => measured

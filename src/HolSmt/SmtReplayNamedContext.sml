@@ -14,11 +14,14 @@ struct
     | tree_term terms (Leaf index) = Vector.sub (terms, index)
     | tree_term terms (Split (left, right)) =
         boolSyntax.mk_conj (tree_term terms left, tree_term terms right)
-  fun project Empty _ = []
-    | project (Leaf _) theorem = [theorem]
-    | project (Split (left, right)) theorem =
-        project left (O.CONJUNCT1 theorem) @
-        project right (O.CONJUNCT2 theorem)
+  fun project tree theorem =
+    let
+      fun collect Empty _ acc = acc
+        | collect (Leaf _) proof acc = proof :: acc
+        | collect (Split (left, right)) proof acc =
+            let val acc = collect left (O.CONJUNCT1 proof) acc
+            in collect right (O.CONJUNCT2 proof) acc end
+    in List.rev (collect tree theorem []) end
   fun tree_proof proofs Empty = boolTheory.TRUTH
     | tree_proof proofs (Leaf index) = Vector.sub (proofs, index)
     | tree_proof proofs (Split (left, right)) =

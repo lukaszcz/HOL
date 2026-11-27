@@ -95,7 +95,8 @@ local
 
   fun provenance_term_summary limit root =
     let
-      val bucket_count = 4093
+      (* The walk records at most the fixed node cap plus one miss. *)
+      val bucket_count = 257
       val seen = Array.array (bucket_count, [] : Term.term list)
       fun string_hash string =
         let
@@ -148,25 +149,48 @@ local
         max_exact_provenance_dag_nodes term
     in has_abs orelse complete end
 
-  fun provenance_shape AtomicProvenance = "atom"
-    | provenance_shape (ApplicationProvenance (head, operands)) =
-        "application(" ^ head ^ "," ^
-        String.concatWith "," (List.map provenance_shape operands) ^ ")"
-    | provenance_shape (BinderProvenance (head, body)) =
-        "binder(" ^ head ^ "," ^ provenance_shape body ^ ")"
-    | provenance_shape (BinderBlockProvenance (head, size, body)) =
-        "binder-block(" ^ head ^ "," ^ Int.toString size ^ "," ^
-        provenance_shape body ^ ")"
-    | provenance_shape (EqualityProvenance (left, right)) =
-        "equality(" ^ provenance_shape left ^ "," ^
-        provenance_shape right ^ ")"
-    | provenance_shape (ConjunctionProvenance (_, operands)) =
-        "conjunction(" ^
-        String.concatWith "," (List.map provenance_shape operands) ^ ")"
-    | provenance_shape (UnavailableProvenance reason) =
-        "unavailable(" ^ reason ^ ")"
-    | provenance_shape (AmbiguousProvenance reason) =
-        "ambiguous(" ^ reason ^ ")"
+  fun provenance_shape root =
+    let
+      (* An alias DAG can have an exponentially large unfolded rendering.
+         Stop visiting it as soon as the diagnostic reaches its byte cap. *)
+      val maximum = 4096
+      val remaining = ref maximum
+      val pieces = ref []
+      exception Truncated
+      fun emit text =
+        let val size = String.size text in
+          if size <= !remaining then
+            (pieces := text :: !pieces; remaining := !remaining - size)
+          else
+            (pieces := String.substring (text, 0, !remaining) :: !pieces;
+             raise Truncated)
+        end
+      fun visit AtomicProvenance = emit "atom"
+        | visit (ApplicationProvenance (head, operands)) =
+            (emit "application("; emit head; emit ",";
+             visit_operands operands; emit ")")
+        | visit (BinderProvenance (head, body)) =
+            (emit "binder("; emit head; emit ","; visit body; emit ")")
+        | visit (BinderBlockProvenance (head, size, body)) =
+            (emit "binder-block("; emit head; emit ","; emit (Int.toString size);
+             emit ","; visit body; emit ")")
+        | visit (EqualityProvenance (left, right)) =
+            (emit "equality("; visit left; emit ","; visit right; emit ")")
+        | visit (ConjunctionProvenance (_, operands)) =
+            (emit "conjunction("; visit_operands operands; emit ")")
+        | visit (UnavailableProvenance reason) =
+            (emit "unavailable("; emit reason; emit ")")
+        | visit (AmbiguousProvenance reason) =
+            (emit "ambiguous("; emit reason; emit ")")
+      and visit_operands [] = ()
+        | visit_operands [last] = visit last
+        | visit_operands (first :: rest) =
+            (visit first; emit ","; visit_operands rest)
+      fun finish suffix = String.concat (List.revAppend (!pieces, suffix))
+    in
+      (visit root; finish [])
+      handle Truncated => SmtResource.bounded_text maximum (finish ["..."])
+    end
 
   (* Exact provenance that proves an occurrence contains no conjunction can
      be represented by the atomic no-conjunction marker once it enters the
@@ -174,93 +198,119 @@ local
      so a later CONG still has the exact source tree it must rewrite.  An
      unavailable or ambiguous occurrence is deliberately not compacted: it
      may contain a conjunction and must continue to fail closed. *)
-  fun definitely_no_conjunction AtomicProvenance = true
-    | definitely_no_conjunction (ApplicationProvenance (_, operands)) =
-        List.all definitely_no_conjunction operands
-    | definitely_no_conjunction (BinderProvenance (_, body)) =
-        definitely_no_conjunction body
-    | definitely_no_conjunction (BinderBlockProvenance (_, _, body)) =
-        definitely_no_conjunction body
-    | definitely_no_conjunction (EqualityProvenance (left, right)) =
-        definitely_no_conjunction left andalso
-        definitely_no_conjunction right
-    | definitely_no_conjunction (ConjunctionProvenance _) = false
-    | definitely_no_conjunction (UnavailableProvenance _) = false
-    | definitely_no_conjunction (AmbiguousProvenance _) = false
+  val provenance_bucket_count = 4093
 
-  fun contains_binder_block provenance =
-    case provenance of
-      BinderBlockProvenance _ => true
-    | ApplicationProvenance (_, operands) =>
-        List.exists contains_binder_block operands
-    | BinderProvenance (_, body) => contains_binder_block body
-    | EqualityProvenance (left, right) =>
-        contains_binder_block left orelse contains_binder_block right
-    | ConjunctionProvenance (_, operands) =>
-        List.exists contains_binder_block operands
-    | _ => false
-
-  fun provenance_exists_dag predicate root =
+  fun provenance_bucket item =
     let
-      val bucket_count = 4093
-      val seen = Array.array
-        (bucket_count, [] : term_provenance list)
+      (* Bucket hints must stay cheap on wide occurrences or long names:
+         a shared occurrence can be looked up once per incoming edge. *)
       fun string_hash string =
         let
+          val limit = Int.min (String.size string, 32)
           fun loop index hash =
-            if index = String.size string then hash
+            if index = limit then hash
             else loop (index + 1)
               ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
+               provenance_bucket_count)
         in loop 0 5381 end
-      fun index item =
-        case item of
+      fun arity 0 _ = 0
+        | arity _ [] = 0
+        | arity left (_ :: rest) = 1 + arity (left - 1) rest
+      val code = case item of
           AtomicProvenance => 0
         | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod bucket_count
-        | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod bucket_count
+            17 * string_hash head + arity 8 operands
+        | BinderProvenance (head, _) => 31 * string_hash head + 1
         | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod bucket_count
+            37 * string_hash head + size
         | EqualityProvenance _ => 41
-        | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod bucket_count
-        | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod bucket_count
-        | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod bucket_count
-      fun known item =
+        | ConjunctionProvenance (_, operands) => 43 + arity 8 operands
+        | UnavailableProvenance reason => 47 * string_hash reason
+        | AmbiguousProvenance reason => 53 * string_hash reason
+    in code mod provenance_bucket_count end
+
+  datatype provenance_query = BinderBlock | PossiblyConjunction
+
+  fun provenance_exists query root =
+    let
+      fun matches (BinderBlockProvenance _) = query = BinderBlock
+        | matches (ConjunctionProvenance _) = query = PossiblyConjunction
+        | matches (UnavailableProvenance _) = query = PossiblyConjunction
+        | matches (AmbiguousProvenance _) = query = PossiblyConjunction
+        | matches _ = false
+      exception UseDAG
+      val branches = ref 16
+      fun branch () =
+        if !branches = 0 then raise UseDAG
+        else branches := !branches - 1
+      fun visit_small item =
+        case item of
+           ApplicationProvenance (_, [child]) => visit_small child
+         | BinderProvenance (_, body) => visit_small body
+         | BinderBlockProvenance (_, _, body) =>
+             query = BinderBlock orelse visit_small body
+         | ApplicationProvenance (_, operands) => visit_children operands
+         | ConjunctionProvenance (_, operands) =>
+             query = PossiblyConjunction orelse visit_children operands
+         | EqualityProvenance (left, right) => visit_pair left right
+         | _ => matches item
+      and visit_children [left, right] = visit_pair left right
+        | visit_children children = (branch (); List.exists visit_small children)
+      and visit_pair left right =
+        if Portable.pointer_eq (left, right) then visit_small left
+        else (branch (); visit_small left orelse visit_small right)
+      fun children item =
+        case item of
+          ApplicationProvenance (_, operands) => operands
+        | BinderProvenance (_, body) => [body]
+        | BinderBlockProvenance (_, _, body) => [body]
+        | EqualityProvenance (left, right) => [left, right]
+        | ConjunctionProvenance (_, operands) => operands
+        | _ => []
+      fun visit_dag () =
         let
-          val bucket = index item
-          val entries = Array.sub (seen, bucket)
-        in
-          if List.exists
-               (fn saved => Portable.pointer_eq (item, saved)) entries then true
-          else
-            (Array.update (seen, bucket, item :: entries); false)
-        end
-      fun visit item =
-        if known item then false
-        else if predicate item then true
-        else
-          case item of
-            ApplicationProvenance (_, operands) => List.exists visit operands
-          | BinderProvenance (_, body) => visit body
-          | BinderBlockProvenance (_, _, body) => visit body
-          | EqualityProvenance (left, right) =>
-              visit left orelse visit right
-          | ConjunctionProvenance (_, operands) => List.exists visit operands
-          | _ => false
-    in visit root end
+          (* Keep the unfolded walk advancing on memo lookups and
+             collisions. Identical bucket hints cannot force quadratic
+             work on an unshared tree. *)
+          exception TreeComplete of bool
+          val pending = ref [[root]]
+          fun push [] rest = rest
+            | push items rest = items :: rest
+          fun advance () =
+            let
+              fun step 0 rest = pending := rest
+                | step _ [] = raise TreeComplete false
+                | step n ((item :: siblings) :: rest) =
+                    if matches item then raise TreeComplete true
+                    else step (n - 1)
+                      (push (children item) (push siblings rest))
+                | step n ([] :: rest) = step n rest
+            in step 4 (!pending) end
+          val {peek,put} = SmtSkeletonProve.new_sparse_buckets
+            provenance_bucket_count
+          fun visit AtomicProvenance = false
+            | visit item =
+                let
+                  val _ = advance ()
+                  val bucket = provenance_bucket item
+                  fun entries () = Option.getOpt (peek bucket, [])
+                  fun same saved =
+                    (advance (); Portable.pointer_eq (item, saved))
+                in
+                  if List.exists same (entries ()) then false
+                  else if matches item orelse
+                          List.exists visit (children item) then true
+                  else (put (bucket, item :: entries ()); false)
+                end
+        in visit root handle TreeComplete found => found end
+    in visit_small root handle UseDAG => visit_dag () end
 
-  fun contains_binder_block_dag root = provenance_exists_dag
-    (fn BinderBlockProvenance _ => true | _ => false) root
+  fun contains_binder_block AtomicProvenance = false
+    | contains_binder_block root = provenance_exists BinderBlock root
 
-  fun definitely_no_conjunction_dag root = not (provenance_exists_dag
-    (fn ConjunctionProvenance _ => true
-      | UnavailableProvenance _ => true
-      | AmbiguousProvenance _ => true
-      | _ => false) root)
+  fun definitely_no_conjunction AtomicProvenance = true
+    | definitely_no_conjunction root = not
+        (provenance_exists PossiblyConjunction root)
 
   fun has_binder_shell provenance =
     case provenance of
@@ -277,44 +327,21 @@ local
   fun compact_live_provenance AtomicProvenance = AtomicProvenance
     | compact_live_provenance (item as UnavailableProvenance _) = item
     | compact_live_provenance (item as AmbiguousProvenance _) = item
+    | compact_live_provenance
+        (item as EqualityProvenance (AtomicProvenance, AtomicProvenance)) =
+        item
     | compact_live_provenance provenance =
     let
-      type summary = term_provenance * bool * bool
-      val bucket_count = 4093
-      val {peek,put} = SmtSkeletonProve.new_sparse_buckets bucket_count
-      fun entries bucket : (term_provenance * summary) list =
-        Option.getOpt (peek bucket, [])
-      fun string_hash string =
-        let
-          fun loop index hash =
-            if index = String.size string then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
-        in loop 0 5381 end
-      fun tag item =
-        case item of
-          AtomicProvenance => 0
-        | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod bucket_count
-        | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod bucket_count
-        | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod bucket_count
-        | EqualityProvenance _ => 41
-        | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod bucket_count
-        | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod bucket_count
-        | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod bucket_count
+      val {peek,put} = SmtSkeletonProve.new_sparse_buckets
+        provenance_bucket_count
+      fun entries bucket = Option.getOpt (peek bucket, [])
       fun lookup [] _ = NONE
         | lookup ((saved, result) :: rest) item =
             if Portable.pointer_eq (saved, item) then SOME result
             else lookup rest item
       fun summarize item =
         let
-          val bucket = tag item
+          val bucket = provenance_bucket item
         in
           case lookup (entries bucket) item of
             SOME result => result
@@ -337,11 +364,28 @@ local
                       end
                   | ConjunctionProvenance (source, operands) =>
                       let
-                        val summaries = List.map summarize operands
+                        fun ordinary () =
+                          let val summaries = List.map summarize operands in
+                            (ConjunctionProvenance
+                               (source, List.map #1 summaries), false,
+                             List.exists #3 summaries)
+                          end
                       in
-                        (ConjunctionProvenance
-                           (source, List.map #1 summaries), false,
-                         List.exists #3 summaries)
+                        case operands of
+                          (first as ConjunctionProvenance (_, shared)) ::
+                            rest =>
+                            (* Recovery can make the outer tail identical to
+                               the inner operand list. Its compacted operands
+                               and binder summary already cover that tail. *)
+                            if Portable.pointer_eq (shared, rest) then
+                              (case summarize first of
+                                 (first' as ConjunctionProvenance (_, tail),
+                                  _, block) =>
+                                   (ConjunctionProvenance
+                                      (source, first' :: tail), false, block)
+                               | _ => ordinary ())
+                            else ordinary ()
+                        | _ => ordinary ()
                       end
                   | ApplicationProvenance (head, operands) =>
                       let
@@ -372,29 +416,27 @@ local
         end
     in #1 (summarize provenance) end
 
-  fun term_contains_conjunction term =
-    let
-      val seen = Array.array (2039, [] : Term.term list)
-      fun visit [] = false
-        | visit (term :: pending) =
-            let
-              val bucket = SmtReplayImport.pointer_bucket 4 2039 term
-              val prior = Array.sub (seen,bucket)
-            in
-              if List.exists (fn old => Portable.pointer_eq (term,old)) prior
-              then visit pending
-              else if boolSyntax.is_conj term then true
-              else
-                (Array.update (seen,bucket,term :: prior);
-                 case Lib.total Term.dest_comb term of
-                   SOME (operator,operand) =>
+  fun term_contains_conjunction root =
+    if not (Term.is_comb root orelse Term.is_abs root) then false
+    else
+      let
+        val seen = SmtPointerTable.new
+          {hint = SmtReplayImport.pointer_bucket 4,
+           initial = 7, ceiling = 4093}
+        fun visit [] = false
+          | visit (term :: pending) =
+              if Term.is_comb term then
+                boolSyntax.is_conj term orelse
+                (if SmtPointerTable.mark seen term then
+                   let val (operator, operand) = Term.dest_comb term in
                      visit (operator :: operand :: pending)
-                 | NONE =>
-                     (case Lib.total Term.dest_abs term of
-                        SOME (_,body) => visit (body :: pending)
-                      | NONE => visit pending))
-            end
-    in visit [term] end
+                   end
+                 else visit pending)
+              else if Term.is_abs term andalso
+                      SmtPointerTable.mark seen term then
+                visit (Term.body term :: pending)
+              else visit pending
+      in visit [root] end
 
   (* CPC's n-ary [and] elaborates to [list_mk_conj], hence to this
      right-associated HOL shape.  Unlike source-occurrence provenance, these
@@ -407,6 +449,32 @@ local
        | NONE => [right])
     end
 
+  (* Sharing in recovered metadata follows actual term pointers. For an
+     atomic result there is no table to allocate. *)
+  fun new_semantic_provenance_memo () =
+    let
+      val pending = ref NONE
+      fun lookup term = case !pending of
+          NONE => NONE
+        | SOME memo => SmtPointerTable.lookup memo term
+      fun reuse term build =
+        case lookup term of
+          SOME saved => saved
+        | NONE =>
+            let
+              val provenance = build ()
+              val memo = case !pending of SOME saved => saved
+                | NONE =>
+                    let val fresh = SmtPointerTable.new
+                      {hint = SmtReplayImport.pointer_bucket 4,
+                       initial = 7, ceiling = 4093}
+                    in pending := SOME fresh; fresh end
+            in
+              SmtPointerTable.insert memo term provenance;
+              provenance
+            end
+    in {lookup = lookup, reuse = reuse} end
+
   (* A proof step can legitimately omit its raw source occurrence after the
      theorem has been kernel-checked.  The only topology that a later
      conclusion-less CPC rule needs to recover is an AND operand boundary;
@@ -417,29 +485,47 @@ local
      retained by compact_live_provenance, including its AND boundaries. *)
   fun recovered_checked_provenance reason term =
     let
+      val {lookup, reuse} = new_semantic_provenance_memo ()
+      val leaf = UnavailableProvenance
+        ("checked result has no recoverable AND boundary: " ^ reason)
       fun recover term =
         case Lib.total boolSyntax.dest_conj term of
-          SOME _ =>
-            ConjunctionProvenance
-              (ParsedConjunction,
-               List.map recover (right_associated_conjuncts term))
-        | NONE => UnavailableProvenance
-            ("checked result has no recoverable AND boundary: " ^ reason)
+          SOME children => #1 (reuse term (fn () =>
+            let val parts = operands children in
+              (ConjunctionProvenance (ParsedConjunction, parts), parts)
+            end))
+        | NONE => leaf
+      and operands (left, right) =
+        let
+          val first = recover left
+          (* Only cache actual nested operand provenance. The suffix of a
+             plain right-associated chain need not have its own record. *)
+          val rest = case Lib.total boolSyntax.dest_conj right of
+              NONE => [leaf]
+            | SOME children =>
+                (case lookup right of
+                   SOME (_, parts) => parts
+                 | NONE => operands children)
+        in first :: rest end
     in recover term end
 
-  (* A successful kernel theorem proves when no conjunction occurrence is
-     present at all.  In that case Atomic is exact, while equality boundaries
-     remain visible in HOL and can be retained recursively.  Any theorem that
-     does contain a conjunction needs occurrence-specific parsed/semantic
-     provenance; never guess its erased n-ary grouping here. *)
+  (* After checking conjunction freedom, retain the equality boundaries
+     with the same sharing as the source term DAG. *)
+  fun semantic_equality_provenance term =
+    let
+      val {reuse, ...} = new_semantic_provenance_memo ()
+      fun recover term =
+        case Lib.total boolSyntax.dest_eq term of
+          SOME (left, right) => reuse term (fn () =>
+            EqualityProvenance (recover left, recover right))
+        | NONE => AtomicProvenance
+    in recover term end
+
+  (* A theorem containing a conjunction needs occurrence-specific
+     provenance to recover its source grouping. *)
   fun conjunction_free_semantic_provenance reason term =
     if term_contains_conjunction term then UnavailableProvenance reason
-    else
-      case Lib.total boolSyntax.dest_eq term of
-        SOME (left, right) => EqualityProvenance
-          (conjunction_free_semantic_provenance reason left,
-           conjunction_free_semantic_provenance reason right)
-      | NONE => AtomicProvenance
+    else semantic_equality_provenance term
 
   (* E1(c): repeated-conclusion theorem reuse is a redundant performance
      cache.  It is opt-in because Net matching is structural and can dominate
@@ -560,10 +646,11 @@ local
                max_exact_provenance_dag_nodes orelse
                term_contains_conjunction term then
               AmbiguousProvenance reason
-            else conjunction_free_semantic_provenance reason term
+            else semantic_equality_provenance term
+        | AtomicProvenance => AtomicProvenance
         | exact =>
             if not (use_compact_provenance term) andalso
-               not (contains_binder_block_dag exact) then
+               not (contains_binder_block exact) then
               compact_live_provenance exact
             else exact
     in
@@ -13262,27 +13349,9 @@ local
                 Redblackmap.insert
                   (!resolution_literal_normalizations, term, theorem)
             in theorem end
-      fun literal_hash_string string =
-        CharVector.foldl
-          (fn (character, hash) =>
-            (hash * 33 + Char.ord character) mod 1000003) 17 string
-      fun literal_hash 0 term =
-            if Term.is_const term then
-              let val {Thy, Name, ...} = Term.dest_thy_const term
-              in (literal_hash_string Thy * 37 +
-                  literal_hash_string Name) mod 1000003 end
-            else if Term.is_var term then 3
-            else if Term.is_abs term then 5
-            else 7
-        | literal_hash depth term =
-            if Term.is_comb term then
-              (literal_hash (depth - 1) (Term.rator term) * 41 +
-               literal_hash (depth - 1) (Term.rand term) * 67 + 11) mod
-                1000003
-            else if Term.is_abs term then
-              (literal_hash (depth - 1) (Term.body term) * 73 + 13) mod
-                1000003
-            else literal_hash 0 term
+      (* A routing hint for alpha equality. Free names separate clauses
+         that have the same shape, and binder bodies stay opaque. *)
+      val literal_hash = SmtReplayImport.pointer_bucket 6 1000003
       fun normalized_literal_equal left right =
         if compact_resolution () then
           #key (word_graph ()) left = #key (word_graph ()) right
@@ -13293,7 +13362,7 @@ local
           val right_residue = boolSyntax.rhs (Thm.concl right_theorem)
         in
           Portable.pointer_eq (left_residue, right_residue) orelse
-          (literal_hash 6 left_residue = literal_hash 6 right_residue andalso
+          (literal_hash left_residue = literal_hash right_residue andalso
            shared_aconv left_residue right_residue)
         end
       val literal_equivalences = ref
@@ -13376,8 +13445,10 @@ local
         end
       fun structural_literal_equal left right =
         Portable.pointer_eq (left, right) orelse
-        (literal_hash 6 left = literal_hash 6 right andalso
+        (literal_hash left = literal_hash right andalso
          shared_aconv left right)
+      fun literal_equal_in_bucket left right =
+        Portable.pointer_eq (left, right) orelse shared_aconv left right
       fun literal_equal left right =
         structural_literal_equal left right orelse
         Option.isSome (literal_equivalence left right)
@@ -13411,23 +13482,26 @@ local
         boolSyntax.dest_neg literal
         handle Feedback.HOL_ERR _ => boolSyntax.mk_neg literal
       val recent_semantic_aliases = ref ([] : Term.term list)
-      fun resolve_pair_on_with_hashed_stop_match require_both stop_match
-          use_structural_equality hashed_stops first_pivot first second =
+      val empty_stops = Redblackmap.mkDict Int.compare
+      fun stop_bucket stops hash =
+        Option.getOpt (Redblackmap.peek (stops, hash), [])
+      (* Keep occurrence order inside each bucket for pivot retirement. *)
+      fun index_stops stops = List.foldr (fn (stop, index) =>
+        let val hash = literal_hash stop in
+          Redblackmap.insert (index, hash, stop :: stop_bucket index hash)
+        end) empty_stops stops
+      fun resolve_pair_with_stops require_both use_structural_equality
+          is_stop first_pivot first second =
         let
           val second_pivot = complement first_pivot
           val equal = if use_structural_equality then
             structural_literal_equal else literal_equal
-          fun is_stop term =
-            let val hash = literal_hash 6 term in
-              List.exists (fn (saved_hash, stop) =>
-                hash = saved_hash andalso stop_match term stop) hashed_stops
-            end
           fun strip_resolution_clause required term =
             let
-              val required_hash = literal_hash 6 required
+              val required_hash = literal_hash required
               fun required_match candidate =
                 Portable.pointer_eq (candidate, required) orelse
-                (literal_hash 6 candidate = required_hash andalso
+                (literal_hash candidate = required_hash andalso
                  shared_aconv candidate required)
               fun strip pending accumulated =
                 case pending of
@@ -13467,14 +13541,14 @@ local
                 val buckets = ref (Redblackmap.mkDict Int.compare)
                 fun keep (literal, kept) =
                   let
-                    val hash = literal_hash 6 literal
+                    val hash = literal_hash literal
                     val bucket =
                       case Redblackmap.peek (!buckets, hash) of
                         SOME saved => saved
                       | NONE => []
                   in
-                    if List.exists
-                        (structural_literal_equal literal) bucket then
+                    if List.exists (literal_equal_in_bucket literal)
+                        bucket then
                       kept
                     else
                       (buckets := Redblackmap.insert
@@ -13594,16 +13668,12 @@ local
             ("kernel resolution failed on pivot " ^
              Library.term_to_string first_pivot ^ ": " ^
              Feedback.message_of holerr)
-      fun resolve_pair_on_with_stop_match require_both stop_match stops =
-        resolve_pair_on_with_hashed_stop_match require_both stop_match false
-          (List.map (fn stop => (literal_hash 6 stop, stop)) stops)
-      fun resolve_pair_on stops = resolve_pair_on_with_stop_match false
-        (fn left => fn right => Portable.pointer_eq (left, right)) stops
-      fun resolve_pair_on_structural stops = resolve_pair_on_with_stop_match
-        false structural_literal_equal stops
-      fun resolve_pair_on_structural_strict_hashed stops =
-        resolve_pair_on_with_hashed_stop_match true
-          structural_literal_equal true stops
+      fun pointer_stop left right = Portable.pointer_eq (left, right)
+      fun matching_stop stop_match index term =
+        Redblackmap.numItems index > 0 andalso
+        List.exists (stop_match term) (stop_bucket index (literal_hash term))
+      val resolve_pair = resolve_pair_with_stops false false (fn _ => false)
+      val resolve_pair_strict = resolve_pair_with_stops true true
       fun replay_chain target polarities pivots =
         let
           val expected = List.length prems - 1
@@ -13672,24 +13742,18 @@ local
                     (#2 (Term.dest_abs term))) mod hash_modulus
                 else stop_hash 0 term
           (* Only a disjunction needs to be kept opaque by a chain stop. *)
-          val hashed_stops = List.foldr (fn (stop, table) =>
-            Redblackmap.insertWith (fn (older, newer) => newer @ older)
-              (table, stop_hash 6 stop, [stop]))
-            (Redblackmap.mkDict Int.compare)
+          val hashed_stops = index_stops
             (List.filter boolSyntax.is_disj chain_stops)
           val dest_disj = Lib.total boolSyntax.dest_disj
+          val stops_here = matching_stop literal_equal_in_bucket hashed_stops
+          val resolve_pair_at_chain_stops = resolve_pair_with_stops
+            false false (matching_stop pointer_stop hashed_stops)
           val clause_pair =
             if Redblackmap.numItems hashed_stops = 0 then dest_disj
             else fn term =>
               case dest_disj term of
                 NONE => NONE
-              | pair =>
-                  (case Redblackmap.peek (hashed_stops, stop_hash 6 term) of
-                     NONE => pair
-                   | SOME stops =>
-                       if List.exists (fn stop =>
-                           Portable.pointer_eq (term, stop) orelse
-                           shared_aconv term stop) stops then NONE else pair)
+              | pair => if stops_here term then NONE else pair
           fun reorder_to_target theorem =
             let
               val exact_modulus = 1000000007
@@ -14543,8 +14607,6 @@ local
           fun sat_chain_consequence () =
             let
               val atoms = ref ([] : (Term.term * Term.term) list)
-              fun is_stop term = List.exists
-                (fn stop => shared_aconv stop term) chain_stops
               fun atom term =
                 case List.find (fn (saved, _) =>
                     Portable.pointer_eq (saved, term) orelse
@@ -14563,12 +14625,10 @@ local
                     SOME body => boolSyntax.mk_neg (atom body)
                   | NONE => atom term
               fun abstract_clause term =
-                if is_stop term then abstract_literal term
-                else
-                  case Lib.total boolSyntax.dest_disj term of
-                    SOME (left, right) => boolSyntax.mk_disj
-                      (abstract_literal left, abstract_clause right)
-                  | NONE => abstract_literal term
+                case clause_pair term of
+                  SOME (left, right) => boolSyntax.mk_disj
+                    (abstract_literal left, abstract_clause right)
+                | NONE => abstract_literal term
               val abstract_prems = List.map
                 (abstract_clause o Thm.concl) prems
               val abstract_target = abstract_clause target
@@ -14618,7 +14678,7 @@ local
               fun advance next polarity pivot accumulated =
                 case selected_pivot accumulated next polarity pivot of
                   SOME selected =>
-                    [resolve_pair_on [] selected accumulated next]
+                    [resolve_pair selected accumulated next]
                 | NONE => [accumulated, next]
               val abstract_theorems = List.map Thm.ASSUME abstract_prems
               val states =
@@ -14654,24 +14714,41 @@ local
           val unused_annotations = ref
             ([] : (Thm.thm * Term.term) list)
           fun annotated_chain_using premises destination pivot_terms
-              strict_resolver resolver record_unused () =
+              fallback_match record_unused () =
             let
               val annotation_index = ref 0
-              fun hashed stop = (literal_hash 6 stop, stop)
-              val target_clause_stops = List.map hashed
+              val target_clause_stops = index_stops
                 (List.filter boolSyntax.is_disj (strip_clause destination))
               val remaining_pivot_stops = ref
-                (List.map hashed (List.filter boolSyntax.is_disj
+                (index_stops (List.filter boolSyntax.is_disj
                   (pivot_terms @ List.map complement pivot_terms)))
+              fun active_stop match term =
+                let val remaining = !remaining_pivot_stops in
+                  if Redblackmap.numItems target_clause_stops = 0 andalso
+                     Redblackmap.numItems remaining = 0 then false
+                  else
+                    let val hash = literal_hash term in
+                      List.exists (match term)
+                        (stop_bucket target_clause_stops hash) orelse
+                      List.exists (match term) (stop_bucket remaining hash)
+                    end
+                end
               fun retire_stop stop =
                 if not (boolSyntax.is_disj stop) then ()
                 else
-                  case remove_first_using
-                      (fn sought => fn (_, candidate) =>
-                        structural_literal_equal sought candidate)
-                      stop (!remaining_pivot_stops) of
-                    SOME remaining => remaining_pivot_stops := remaining
-                  | NONE => ()
+                  let val index = !remaining_pivot_stops
+                      val hash = literal_hash stop
+                  in
+                    case remove_first_using literal_equal_in_bucket
+                        stop (stop_bucket index hash) of
+                      SOME [] =>
+                        remaining_pivot_stops :=
+                          #1 (Redblackmap.remove (index, hash))
+                    | SOME remaining =>
+                        remaining_pivot_stops :=
+                          Redblackmap.insert (index, hash, remaining)
+                    | NONE => ()
+                  end
             in case premises of
               first :: rest => List.foldl
                 (fn ((next, (polarity, pivot)), accumulated) =>
@@ -14701,14 +14778,13 @@ local
                        TextIO.flushOut TextIO.stdOut)
                     else ()
                     val annotated = signed_pivot polarity pivot
-                    val active_stops =
-                      target_clause_stops @ !remaining_pivot_stops
                     fun strict candidate =
                       SmtResource.or_else
                         (fn () =>
                           SOME (candidate,
-                            strict_resolver active_stops candidate
-                              accumulated next))
+                            resolve_pair_strict
+                              (active_stop literal_equal_in_bucket)
+                              candidate accumulated next))
                         (fn () => NONE)
                     val strict_result =
                       case strict annotated of
@@ -14729,8 +14805,9 @@ local
                         SOME (selected, resolved) =>
                           (selected, resolved, true)
                       | NONE =>
-                          (annotated, resolver (List.map #2 active_stops)
-                            annotated accumulated next, false)
+                          (annotated, resolve_pair_with_stops false false
+                            (active_stop fallback_match) annotated
+                            accumulated next, false)
                     val _ = if not used andalso record_unused then
                         (unused_prems := next :: !unused_prems;
                          unused_annotations :=
@@ -14758,12 +14835,10 @@ local
             end
           fun annotated_chain () =
             annotated_chain_using prems target pivots
-              resolve_pair_on_structural_strict_hashed
-              resolve_pair_on_structural true ()
+              literal_equal_in_bucket true ()
           fun structural_annotated_chain () =
             annotated_chain_using prems target pivots
-              resolve_pair_on_structural_strict_hashed
-              resolve_pair_on false ()
+              pointer_stop false ()
           fun abstract_structural_annotated_chain () =
             let
               val bucket_count = 16381
@@ -14773,12 +14848,12 @@ local
                 ([] : {redex : Term.term, residue : Term.term} list)
               fun atom term =
                 let
-                  val hash = literal_hash 6 term
+                  val hash = literal_hash term
                   val index = hash mod bucket_count
                 in
                   case List.find (fn (saved_hash, saved, _) =>
                       hash = saved_hash andalso
-                      structural_literal_equal saved term)
+                      literal_equal_in_bucket saved term)
                       (Array.sub (atoms, index)) of
                     SOME (_, _, variable) => variable
                   | NONE =>
@@ -14822,8 +14897,7 @@ local
               val abstract_result = annotated_chain_using
                 (List.map Thm.ASSUME abstract_prems)
                 abstract_target abstract_pivots
-                resolve_pair_on_structural_strict_hashed
-                resolve_pair_on_structural false ()
+                literal_equal_in_bucket false ()
               val law = List.foldr
                 (fn (premise, theorem) => Thm.DISCH premise theorem)
                 abstract_result abstract_prems
@@ -14841,10 +14915,10 @@ local
               val substitutions = ref
                 ([] : {redex : Term.term, residue : Term.term} list)
               fun atom term =
-                let val hash = literal_hash 6 term in
+                let val hash = literal_hash term in
                   case List.find (fn (saved_hash, saved, _) =>
                       hash = saved_hash andalso
-                      structural_literal_equal saved term)
+                      literal_equal_in_bucket saved term)
                       (Array.sub (atoms, bucket hash)) of
                     SOME (_, _, variable) => variable
                   | NONE =>
@@ -14866,34 +14940,11 @@ local
                   case Lib.total boolSyntax.dest_neg term of
                     SOME body => boolSyntax.mk_neg (atom body)
                   | NONE => atom term
-              val stops = Array.array
-                (bucket_count, [] : (int * Term.term) list)
-              fun add_stop term =
-                let
-                  val hash = literal_hash 6 term
-                  val index = bucket hash
-                in Array.update
-                  (stops, index,
-                   (hash, term) :: Array.sub (stops, index)) end
-              val _ = List.app add_stop
-                (List.filter boolSyntax.is_disj
-                  (strip_clause target @ pivots @
-                   List.map complement pivots))
               fun abstract_clause term =
-                let
-                  val hash = literal_hash 6 term
-                  val stopped = List.exists (fn (saved_hash, stop) =>
-                    hash = saved_hash andalso
-                    structural_literal_equal term stop)
-                    (Array.sub (stops, bucket hash))
-                in
-                  if stopped then abstract_literal term
-                  else
-                    case Lib.total boolSyntax.dest_disj term of
-                      SOME (left, right) => boolSyntax.mk_disj
-                        (abstract_clause left, abstract_clause right)
-                    | NONE => abstract_literal term
-                end
+                case clause_pair term of
+                  SOME (left, right) => boolSyntax.mk_disj
+                    (abstract_clause left, abstract_clause right)
+                | NONE => abstract_literal term
               val _ = List.null prems andalso
                 raise ERR "resolution" "empty resolution chain"
               val abstract_prems = List.map
@@ -15058,7 +15109,7 @@ local
                   fun strict candidate =
                     SmtResource.or_else
                       (fn () =>
-                        SOME (resolve_pair_on_structural_strict_hashed []
+                        SOME (resolve_pair_strict (fn _ => false)
                           candidate accumulated_assumption next_assumption))
                       (fn () => NONE)
                   val resolved =
@@ -15067,7 +15118,7 @@ local
                     | NONE =>
                         (case strict (complement pivot) of
                            SOME theorem => theorem
-                         | NONE => resolve_pair_on_structural [] pivot
+                           | NONE => resolve_pair pivot
                              accumulated_assumption next_assumption)
                 in bounded_factor resolved end
               val (resolved, concrete_result) =
@@ -15179,12 +15230,12 @@ local
                 ([] : {redex : Term.term, residue : Term.term} list)
               fun atom term =
                 let
-                  val hash = literal_hash 6 term
+                  val hash = literal_hash term
                   val index = hash mod bucket_count
                 in
                   case List.find (fn (saved_hash, saved, _) =>
                       hash = saved_hash andalso
-                      structural_literal_equal saved term)
+                      literal_equal_in_bucket saved term)
                       (Array.sub (atoms, index)) of
                     SOME (_, _, variable) => variable
                   | NONE =>
@@ -15254,14 +15305,14 @@ local
                       val buckets = ref (Redblackmap.mkDict Int.compare)
                       fun keep (literal, kept) =
                         let
-                          val hash = literal_hash 6 literal
+                          val hash = literal_hash literal
                           val bucket =
                             case Redblackmap.peek (!buckets, hash) of
                               SOME saved => saved
                             | NONE => []
                         in
                           if List.exists
-                              (structural_literal_equal literal) bucket then
+                              (literal_equal_in_bucket literal) bucket then
                             kept
                           else
                             (buckets := Redblackmap.insert
@@ -15350,9 +15401,9 @@ local
                           (fn (literal, theorem) =>
                             Drule.PROVE_HYP (deny literal) theorem)
                           contradiction literals)
-                  val residual = List.filter (fn hyp => not (List.exists
-                      (structural_literal_equal hyp) abstract_prems))
-                      (Thm.hyp resolved)
+                  val known = matching_stop literal_equal_in_bucket
+                    (index_stops abstract_prems)
+                  val residual = List.filter (not o known) (Thm.hyp resolved)
                   val _ = List.null residual orelse
                     raise ERR "resolution"
                       ("abstract refutation has an undischarged literal " ^
@@ -15365,7 +15416,7 @@ local
                   fun strict candidate =
                     SmtResource.or_else
                       (fn () =>
-                        SOME (resolve_pair_on_structural_strict_hashed []
+                        SOME (resolve_pair_strict (fn _ => false)
                           candidate accumulated next))
                       (fn () => NONE)
                 in
@@ -15374,7 +15425,7 @@ local
                   | NONE =>
                       (case strict (complement pivot) of
                          SOME theorem => theorem
-                       | NONE => resolve_pair_on_structural [] pivot
+                       | NONE => resolve_pair pivot
                            accumulated next)
                 end
               fun explicit_resolved () =
@@ -15503,7 +15554,7 @@ local
                     case candidate remaining of
                       SOME (literal, premise, rest) =>
                         cleanup
-                          (resolve_pair_on chain_stops literal theorem premise)
+                          (resolve_pair_at_chain_stops literal theorem premise)
                           rest
                     | NONE => theorem
                 end
@@ -15517,7 +15568,7 @@ local
                 if contains_literal pivot theorem andalso
                    contains_literal (complement pivot) premise then
                   annotated_cleanup
-                    (resolve_pair_on chain_stops pivot theorem premise)
+                    (resolve_pair_at_chain_stops pivot theorem premise)
                     rest remaining
                 else annotated_cleanup theorem rest (premise :: remaining)
           val (annotated_cleaned, annotated_remaining) =
@@ -15634,7 +15685,7 @@ local
                     (case resolution_profile "deep/pivot-search"
                         (find_pivot theorem) premise of
                        SOME pivot => resolve_remaining
-                         (resolve_pair_on [] pivot theorem premise)
+                         (resolve_pair pivot theorem premise)
                          (List.revAppend (kept, rest)) []
                      | NONE => resolve_remaining theorem rest
                          (premise :: kept))
@@ -15695,7 +15746,7 @@ local
                 let
                   val planned = resolution_profile "deep/recognition"
                     (fn () => disjunction_alignment_plan
-                      {target = target, hash = literal_hash 6,
+                      {target = target, hash = literal_hash,
                        equivalence = checked_equivalence,
                        conversion = checked_conversion,
                        count = fn name => resolution_count ("deep/" ^ name)}
@@ -21137,11 +21188,11 @@ local
                                occurs. *)
                             val keep = exact_small andalso
                               List.all (exact_small_term o Thm.concl) prems
-                              andalso (contains_binder_block_dag
+                              andalso (contains_binder_block
                                 (#provenance source) orelse
-                              not (definitely_no_conjunction_dag
+                              not (definitely_no_conjunction
                                 (#provenance source) andalso List.all
-                                  (definitely_no_conjunction_dag o
+                                  (definitely_no_conjunction o
                                     step_provenance) premise_steps))
                             fun retained () =
                               SmtResource.or_else
@@ -21558,7 +21609,7 @@ local
                         (max_exact_provenance_dag_nodes + 1) (#term target)
                     in
                       if dag_nodes > max_exact_provenance_dag_nodes andalso
-                         not (contains_binder_block_dag
+                         not (contains_binder_block
                            (#provenance target)) then
                         raw_unavailable_result
                           "ACI provenance exceeds the replay tree budget"
@@ -22062,34 +22113,79 @@ local
       val context = boolSyntax.mk_neg g :: asl
       val expected = HOLset.addList (Term.empty_tmset, context)
       val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
-      fun delay_context prove = Susp.delay (fn () =>
-        List.map (fn assumption => Susp.delay (fn () => prove assumption))
-          context)
+      val reuse_context = HOLset.numItems bad_hyps > 1
+      fun transport hyp_conv assumption =
+        case SmtReplayCanon.transport_hypothesis hyp_conv assumption of
+          SOME theorem => theorem
+        | NONE => raise ERR "remove_extra_hyps"
+            "normalized assumption did not match extra hypothesis"
+      fun index_context prove =
+        if not reuse_context then
+          fn hyp_conv => Lib.tryfind (transport hyp_conv o prove) context
+        else let
+          val sources = Susp.delay (fn () =>
+            List.map (fn assumption => Susp.delay (fn () => prove assumption))
+              context)
+          val pending = ref NONE
+          val indexed = ref (Redblackmap.mkDict Term.compare)
+          fun keep_first (previous, _) = previous
+        in
+          fn hyp_conv =>
+            let
+              val key = boolSyntax.rhs (Thm.concl hyp_conv)
+              fun search remaining = Lib.tryfind
+                (transport hyp_conv o Susp.force) remaining
+              fun use (assumption, rest) =
+                case Lib.total (transport hyp_conv) assumption of
+                  SOME theorem => theorem
+                | NONE => search rest
+              fun extend [] = search []
+                | extend (source :: rest) =
+                  (* Failed suspensions can be retried by the next lookup.
+                     Keep the cursor here and search the remaining sources
+                     in context order for this lookup. *)
+                  case Lib.total Susp.force source of
+                    NONE => search rest
+                  | SOME assumption =>
+                      let
+                        val conclusion = Thm.concl assumption
+                        val entry = (assumption, rest)
+                        val () = indexed := Redblackmap.insertWith keep_first
+                          (!indexed, conclusion, entry)
+                        val () = pending := SOME rest
+                      in
+                        if Term.aconv conclusion key then use entry
+                        else extend rest
+                      end
+            in
+              case Redblackmap.peek (!indexed, key) of
+                SOME entry => use entry
+              | NONE => extend (case !pending of
+                    SOME remaining => remaining
+                  | NONE => Susp.force sources)
+            end
+        end
       (* Match assumptions only after both sides pass through the same proved
          canonical conversion.  In particular, this absorbs cvc5's SMT-LIB
          ceiling-as-negated-floor spelling without a dedicated bridge rung. *)
-      val canonical_context = delay_context
+      val canonical_context = index_context
         (SmtReplayCanon.cpc_canon_rule o Thm.ASSUME)
       fun prove_canonical_hyp hyp =
         let
-          val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
-          fun match assumption =
-            case SmtReplayCanon.transport_hypothesis hyp_canon
-                   (Susp.force assumption) of
-              NONE =>
-                raise ERR "remove_extra_hyps"
-                  "canonical assumption did not match extra hypothesis"
-              | SOME theorem =>
-                  (profile_event "CPC(canon:assumption-interface)"; theorem)
+          val theorem = canonical_context (SmtReplayCanon.cpc_canon_conv hyp)
         in
-          Lib.tryfind match (Susp.force canonical_context)
+          profile_event "CPC(canon:assumption-interface)";
+          theorem
         end
-      val array_set_context = delay_context (fn assumption =>
+      val array_set_context = index_context (fn assumption =>
         Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
           (Thm.ASSUME assumption))
+      val context_contains_array_set_echo = Susp.delay (fn () =>
+        List.exists contains_array_set_echo context)
       fun prove_array_set_hyp hyp =
         let
-          val _ = List.exists contains_array_set_echo (hyp :: context) orelse
+          val _ = contains_array_set_echo hyp orelse
+            Susp.force context_contains_array_set_echo orelse
             raise ERR "remove_extra_hyps" "no array-set echo form"
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
@@ -22100,16 +22196,9 @@ local
             Drule.EQT_ELIM (Conv.QCONV (Conv.EVERY_CONV
               [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
                Rewrite.REWRITE_CONV []]) hyp)
-          fun match assumption =
-            case SmtReplayCanon.transport_hypothesis hyp_eq
-                   (Susp.force assumption) of
-              NONE =>
-                raise ERR "remove_extra_hyps"
-                  "array-set assumption did not match extra hypothesis"
-            | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
-            Lib.tryfind match (Susp.force array_set_context)
+            array_set_context hyp_eq
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),

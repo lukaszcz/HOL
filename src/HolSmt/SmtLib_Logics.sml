@@ -467,9 +467,18 @@ in
     let
       val seen = SmtPointerTable.new
         {hint = SmtReplayImport.pointer_bucket 4, initial = 15, ceiling = 127}
+      val recent = Array.array (8, boolSyntax.T)
+      val next = ref 0
       fun remember tm =
-        (if SmtPointerTable.size seen = 256 then SmtPointerTable.clear seen
+        (* Chained relations reuse an operand in adjacent applications.
+           Keep the last completed nodes across a reset so encountering
+           one immediately after the reset does not reopen its whole DAG. *)
+        (if SmtPointerTable.size seen = 256 then
+           (SmtPointerTable.clear seen;
+            Array.app (fn saved => SmtPointerTable.insert seen saved ()) recent)
          else ();
+         Array.update (recent, !next, tm);
+         next := (!next + 1) mod Array.length recent;
          SmtPointerTable.insert seen tm ())
       fun walk tm =
         if Term.is_comb tm orelse Term.is_abs tm then
@@ -706,11 +715,12 @@ in
     Type.compare (ty, smt_string_ty) = EQUAL orelse
     Type.compare (ty, reglan_ty) = EQUAL orelse
     type_is_smtfloat ty orelse
+    (* The finite-cardinality test also descends into function types. *)
+    Lib.can Type.dom_rng ty orelse
     Lib.can fcpSyntax.dest_numeric_type ty orelse
     (case Lib.total Type.dest_type ty of
        SOME ("itself", [_]) => true
      | _ => false) orelse
-    Lib.can Type.dom_rng ty orelse
     Lib.can wordsSyntax.dest_word_type ty
 
   fun type_is_typebase_datatype ty =
@@ -756,27 +766,23 @@ in
       val type_contains_visible_datatype =
         Library.type_contains type_is_visible_datatype_sort
       fun descend tm =
-        let
-          fun ordinary () =
-            if type_contains_visible_datatype (Term.type_of tm) then
-              raise Found
-            else term_children tm
-        in
-          if Term.is_comb tm then
-            let val (operator, operand) = Term.dest_comb tm in
-              if Term.is_const operator then
-                let val {Thy, Name, ...} = Term.dest_thy_const operator in
-                  if Thy = "smtstring" andalso Name = "SmtStr" then []
-                  else if same_const listSyntax.all_distinct_tm operator then
-                    case Lib.total listSyntax.dest_list operand of
-                        SOME (elements, _) => elements
-                      | NONE => ordinary ()
-                  else ordinary ()
-                end
-              else ordinary ()
-            end
-          else ordinary ()
-        end
+        if Term.is_comb tm then
+          (* The result type is a codomain of the operator's type. *)
+          let val (operator, operand) = Term.dest_comb tm in
+            if Term.is_const operator then
+              let val {Thy, Name, ...} = Term.dest_thy_const operator in
+                if Thy = "smtstring" andalso Name = "SmtStr" then []
+                else if same_const listSyntax.all_distinct_tm operator then
+                  case Lib.total listSyntax.dest_list operand of
+                      SOME (elements, _) => elements
+                    | NONE => [operator, operand]
+                else [operator, operand]
+              end
+            else [operator, operand]
+          end
+        else if type_contains_visible_datatype (Term.type_of tm) then
+          raise Found
+        else term_children tm
     in
       (walk_terms descend assertions; false) handle Found => true
     end
@@ -881,7 +887,12 @@ in
           val _ = walk_terms collect assertions
         in List.rev (!terms) end)
       fun some_subterm p = List.exists p (Portable.HOLSusp.force all_subterms)
-      fun has_int () = some_subterm (type_contains_int o Term.type_of)
+      (* A function head's type contains the result types of all its
+         applications. Stripped constant heads also occur as subterms. *)
+      fun some_nonapplication p =
+        some_subterm (fn tm => not (Term.is_comb tm) andalso p tm)
+      fun has_sort p = some_nonapplication (p o Term.type_of)
+      fun has_int () = has_sort type_contains_int
       fun qf_violation () =
         not (#quantifiers fragment) andalso
         exists_term
@@ -913,25 +924,23 @@ in
       fun int_sort_violation () =
         not (#ints fragment) andalso has_int ()
       fun real_sort_violation () =
-        not (#reals fragment) andalso
-        some_subterm (type_contains_real o Term.type_of)
+        not (#reals fragment) andalso has_sort type_contains_real
       fun bitvector_sort_violation () =
-        not (#bitvectors fragment) andalso
-        some_subterm (type_contains_word o Term.type_of)
+        not (#bitvectors fragment) andalso has_sort type_contains_word
       fun string_sort_violation () =
         not (#strings fragment) andalso
-        (some_subterm (type_contains_string o Term.type_of) orelse
-         some_subterm term_mentions_reglan)
+        (has_sort type_contains_string orelse
+         some_nonapplication term_mentions_reglan)
       fun floatingpoint_sort_violation () =
         not (#floatingpoint fragment) andalso
-        some_subterm term_mentions_floatingpoint
+        some_nonapplication term_mentions_floatingpoint
       (* HOL lists may encode native Seq rather than SMT datatypes. *)
       fun datatype_sort_violation () =
         not (#datatypes fragment) andalso
         assertions_mention_datatype_sort (#strings fragment) assertions
       fun free_sort_violation () =
         not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
-        some_subterm (type_contains_free_sort o Term.type_of)
+        has_sort type_contains_free_sort
       fun higher_order_violation () =
         if #higher_order fragment then NONE
         else if #partial_application_used surface_flags then
@@ -1223,23 +1232,42 @@ in
         dictionaries
     end
 
+  (* The neutral reader also accepts this historical input spelling. *)
+  val neutral_term_aliases = [("set.intersect", "set.inter")]
+
+  fun neutral_term_spelling terms name =
+    case List.find (fn (alias, _) => alias = name) neutral_term_aliases of
+      SOME (_, canonical) =>
+        if Option.isSome (Redblackmap.peek (terms, name)) then canonical
+        else name
+    | NONE => name
+
   (* The source parser is intentionally usable without a solver target for
      corpus/typecheck inspection.  Such a caller gets the union of the two
      non-conflicting dialect dictionaries; solver-facing callers must use the
      selector above and therefore retain dialect rejection. *)
   fun parsedicts_of_any_solver_logic logic =
-    if String.isPrefix "HO_" logic then
-      (* HO_* is cvc5-only, so do not let Z3's dialect guard prevent
-         solver-neutral parsing of its dictionaries. *)
-      parsedicts_of_solver_logic "cvc5" logic
-    else
-      let
-        val z3 = parsedicts_of_solver_logic "Z3" logic
-        val cvc5 = parsedicts_of_solver_logic "cvc5" logic
-      in
-        (union_dicts [Lib.fst z3, Lib.fst cvc5],
-         union_dicts [Lib.snd z3, Lib.snd cvc5])
-      end
+    let
+      val (types, terms) =
+        if String.isPrefix "HO_" logic then
+          (* HO_* is cvc5-only. *)
+          parsedicts_of_solver_logic "cvc5" logic
+        else
+          let
+            val (z3_tys, z3_terms) = parsedicts_of_solver_logic "Z3" logic
+            val (cvc5_tys, cvc5_terms) =
+              parsedicts_of_solver_logic "cvc5" logic
+          in
+            (union_dicts [z3_tys, cvc5_tys],
+             union_dicts [z3_terms, cvc5_terms])
+          end
+      fun add_alias ((alias, canonical), dict) =
+        case Redblackmap.peek (terms, canonical) of
+          SOME parsers => Redblackmap.insert (dict, alias, parsers)
+        | NONE => dict
+    in
+      (types, List.foldl add_alias terms neutral_term_aliases)
+    end
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =

@@ -170,12 +170,13 @@ val GCONJUNCTS  =
                              (GCONJUNCTS' (CONJUNCT2 th) acc)
                | _ => th::acc
           end
-        fun GCONJUNCTS'' th = GCONJUNCTS' th []
     in fn tm => fn th =>
           let open Uref
-              val ths0 = if is_neg tm andalso is_neg (rand tm)
-                         then CONJUNCTSR (CONV_RULE NOT_NOT_CONV th) else [th]
-              val ths1 = List.map GCONJUNCTS'' ths0
+              val conjuncts =
+                  if is_neg tm andalso is_neg (rand tm) then
+                    List.concat (List.map (fn th => GCONJUNCTS' th [])
+                      (CONJUNCTSR (CONV_RULE NOT_NOT_CONV th)))
+                  else GCONJUNCTS' th []
               val is_cnf = Uref.new true
               (* A clause of variable literals contains no T or F. *)
               fun classify th =
@@ -185,7 +186,7 @@ val GCONJUNCTS  =
                           (false,if contains_constant clause
                                  then CONV_RULE presimp_conv th else th))
                   end
-              val ths2 = List.map classify (List.concat ths1)
+              val ths2 = List.map classify conjuncts
           in (!is_cnf,ths2) end
     end
 end
@@ -364,45 +365,47 @@ fun transvar_clause cnfv (n,tm,vdefs,lfn) =
 (* Check if something is clausal (slightly stupid).                          *)
 (* ------------------------------------------------------------------------- *)
 
-(* convert tm to CNF, assuming that it is of the form v =  v' op v'' *)
-(* where all the v's are vars, and op is one of [~,\/,/\,==>,=]      *)
-(* of course when op is ~, there is only one argument               *)
+(* The definition body is one gate applied to schematic variables. *)
 local
 val p_tm = mk_var("p",bool)
 val q_tm = mk_var("q",bool)
 val r_tm = mk_var("r",bool)
 val s_tm = mk_var("s",bool)
+fun gate th = (th,strip_conj (rand (concl th)))
+val neg = gate dc_neg
+val disj = gate dc_disj
+val conj = gate dc_conj
+val imp = gate dc_imp
+val eq = gate dc_eq
+val cond = gate dc_cond
 in
-fun to_cnf' tm =
+fun clausify assumption lfn v body clauses =
     let
-      val (l,r) = dest_eq tm
-      val (opr,args) = strip_comb r
-      val (i, th) =
+      val (opr,args) = strip_comb body
+      fun binary gate = ([q_tm |-> hd args,r_tm |-> last args],gate)
+      val (operands,(gate_thm,compact_clauses)) =
           case fst (dest_const opr) of
-              "~" => ([p_tm |-> l, q_tm |-> (hd args)], dc_neg)
-            | "\\/" => ([p_tm |-> l, q_tm |-> hd args, r_tm |-> last args],
-                        dc_disj)
-            | "/\\" => ([p_tm |-> l, q_tm |-> hd args, r_tm |-> last args],
-                        dc_conj)
-            | "==>" => ([p_tm |-> l, q_tm |-> hd args, r_tm |-> last args],
-                        dc_imp)
-         | "=" => ([p_tm |-> l, q_tm |-> hd args, r_tm |-> last args], dc_eq)
-         | "COND" => ([p_tm |-> l, q_tm |-> hd args, r_tm |-> hd (tl args),
-                       s_tm |-> (last args)], dc_cond)
-         | _ => failwith("to_cnf': "^(fst (dest_const opr)))
+              "~" => ([q_tm |-> hd args],neg)
+            | "\\/" => binary disj
+            | "/\\" => binary conj
+            | "==>" => binary imp
+            | "=" => binary eq
+            | "COND" => ([q_tm |-> hd args,r_tm |-> hd (tl args),
+                          s_tm |-> last args],cond)
+            | name => failwith ("to_cnf': " ^ name)
+      val source = rbapply lfn v
+      val compact = Term.subst ((p_tm |-> v) :: operands)
+      val expanded = (p_tm |-> source) :: List.map
+        (fn {redex,residue} => redex |-> rbapply lfn residue) operands
+      val proof = EQ_MP (INST expanded gate_thm) (REFL source)
+      val with_assumption = MP (DISCH (concl assumption) proof) assumption
     in
-      INST i th
+      zip (List.map compact compact_clauses) (CONJUNCTS with_assumption) @
+        clauses
     end
 end
 
 val cnfv_ref = ref "SP"
-
-fun clausify tm lfn eq cls =
-    let val fvs = free_vars eq
-        val eth = to_cnf' eq
-        val tth = INST (map (fn v => v |-> rbapply lfn v) fvs) eth
-        val xth = ADD_ASSUM tm (EQ_MP tth (REFL(rbapply lfn (land eq))))
-    in zip (strip_conj(rand(concl eth))) (CONJUNCTS xth) @ cls end
 
 (* DIMACS numbers name the distinct propositional atoms of the clauses,
    not just their free HOL variables.  An already-CNF problem can contain a
@@ -438,11 +441,11 @@ fun to_cnf is_cnf tm =
     if is_cnf then explicit_cnf NONE tm else let
         val th = ASSUME tm
         val (is_cnf,ths) = GCONJUNCTS tm th
-        val (cnfv,vc,eqs,tops,lfn) =
+        val (cnfv,vc,lfn,all_clauses) =
             if is_cnf then
             let val tops = List.map (fn (_,th) => (concl th,th)) ths
             in (NONE, cnf_atom_count fst tops,
-                [],tops,RBM.mkDict Term.var_compare) end else
+                RBM.mkDict Term.var_compare,tops) end else
             let
                 val cnfv = (!cnfv_ref)
                 (* The definition tables and source memo cover all clauses. *)
@@ -465,13 +468,12 @@ fun to_cnf is_cnf tm =
                                end) ths
                            (~1,[],RBM.mkDict Term.compare,
                             RBM.mkDict Term.var_compare)
-                val eqs = RBM.foldl
+                val clauses = RBM.foldl
                   (fn (body,v,rest) =>
-                    if is_var body then rest else mk_eq (v,body) :: rest)
-                  [] defs
+                    if is_var body then rest else clausify th lfn v body rest)
+                  tops defs
                 val vc = (n + 1)
-            in (SOME cnfv,vc,eqs,tops,lfn) end
-        val all_clauses = itlist (clausify tm lfn) eqs tops
+            in (SOME cnfv,vc,lfn,clauses) end
      in (cnfv,vc,lfn,Array.fromList all_clauses) end
 
 end

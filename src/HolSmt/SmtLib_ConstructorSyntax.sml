@@ -601,8 +601,11 @@ struct
     in List.foldr (fn (root, rest) =>
          (observe 1; union (variables root, rest))) [] roots end
 
-  fun free_variables observe syntax =
-    free_occurrences observe (observations observe syntax)
+  fun free_variables_reader observe =
+    let val entries = observations observe
+    in fn syntax => free_occurrences observe (entries syntax) end
+
+  fun free_variables observe syntax = free_variables_reader observe syntax
 
   (* Qualified-head replay supplies fresh, distinct holes. On an opening-
      freshening kernel substitution preserves stored binder names; on a
@@ -962,14 +965,20 @@ struct
           in #Thy x = #Thy y andalso #Name x = #Name y andalso
              Type.compare (#Ty x,#Ty y) = EQUAL end
         else (observe 1; false)
+      fun relevant _ _ [] = []
+        | relevant left right environment =
+          let val lf = free left
+              val rf = free right
+          in List.filter (fn (a,b,_) =>
+            (observe 1; member equal a lf orelse member equal b rf))
+            environment
+          end
       fun walk environment (left,right) =
         let
           val _ = observe 1
-          val lf = free left
-          val rf = free right
-          val environment = List.filter (fn (a,b,_) =>
-            (observe 1; member equal a lf orelse member equal b rf))
-            environment
+          (* With no binders in scope, comparing the heads may reject the
+             pair before either operand needs to be visited. *)
+          val environment = relevant left right environment
           val key = (identity left,identity right,
             List.map (fn (_,_,id) => (observe 1; id)) environment)
         in case Redblackmap.peek (!memo,key) of SOME result => result

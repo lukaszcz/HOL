@@ -1326,6 +1326,19 @@ local
     join = String.concatWith
   }
 
+  val fragment_output_operations
+      : SmtLib_OutputFragments.doc output_operations =
+    {text = SmtLib_OutputFragments.text,
+     concat = SmtLib_OutputFragments.concat,
+     join = SmtLib_OutputFragments.join}
+
+  fun render_output document =
+    let
+      val reversed = ref []
+      val _ = SmtLib_OutputFragments.render
+        (fn fragment => reversed := fragment :: !reversed) document
+    in String.concat (List.rev (!reversed)) end
+
   fun generated_forall_with (output : 'doc output_operations)
       declarations body =
     (current_generated_forall_emissions :=
@@ -1402,17 +1415,9 @@ local
   fun type_is_binary_ieee_float ty =
     type_has_name "binary_ieee" "float" ty
   fun type_contains_fp ty =
-    let
-      fun visit ty = type_is_smtfp ty orelse
-        ((case #2 (Type.dest_type ty) of
-           [] => false
-         | first :: rest => visit first orelse remaining first rest)
-         handle Feedback.HOL_ERR _ => false)
-      and remaining _ [] = false
-        | remaining previous (child :: rest) =
-            (not (Portable.pointer_eq (previous, child)) andalso visit child)
-            orelse remaining child rest
-    in visit ty end
+    Library.type_contains_pure_with
+      (fn ty => #2 (Type.dest_type ty) handle Feedback.HOL_ERR _ => [])
+      type_is_smtfp ty
   (* smtstr only, which is exactly the set of types that 'builtin_types' maps
      to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
@@ -1701,11 +1706,23 @@ local
     {family:finite_family,evidence:'term list,subject:'term,
      branch:'term finite_branch}
 
+  fun check_mixed_collection_arguments
+      (target:{solver:string,version:string option} option)
+      {set_backend,bag_backend} {mixed_set,mixed_bag} =
+    case target of
+      SOME {solver="cvc5",...} =>
+        if (set_backend <> CVC5ArraySet andalso mixed_set ()) orelse
+           (bag_backend = CVC5NativeBag andalso mixed_bag ()) then
+          raise ERR "goal_to_SmtLib_aux_inner"
+            "native collection passed to an ambiguously typed HOL function"
+        else ()
+    | _ => ()
+
   (* One registry and one decision programme serve native and graph syntax.
      shadow_same is restricted to the old lexical evidence-shadow check;
      all actual finite-evidence membership uses the carrier's own equality.
      Memo contexts include every evidence list and lexical bound stack. *)
-  fun backend_selection_with_finite_trace
+  fun backend_selection_parts
       (operations:'term backend_selection_operations)
       (report:'term finite_report -> unit) =
     let
@@ -1927,10 +1944,10 @@ local
            BackendApplication (left,right) =>
              contains tag head left orelse contains tag head right
          | BackendAbstraction (_,body) => contains tag head body | _ => false))
-      fun select_backends
+      fun choose_backends
           (target:{solver:string,version:string option} option)
           {goal,sets,bags,computed_set,computed_bag,bound_set,bound_bag,
-           mixed_set,mixed_bag} =
+           mixed_set=_,mixed_bag=_} =
         let
           val cvc5 = case target of
               SOME {solver="cvc5",...} => true | _ => false
@@ -1949,13 +1966,13 @@ local
               else (if computed_set then CVC5ArraySet else initial_set,
                     if computed_bag then CVC5ArrayBag else initial_bag)
             else (initial_set,initial_bag)
-          val _ = if cvc5 andalso
-              ((set <> CVC5ArraySet andalso mixed_set ()) orelse
-               (bag = CVC5NativeBag andalso mixed_bag ())) then
-              raise ERR "goal_to_SmtLib_aux_inner"
-                "native collection passed to an ambiguously typed HOL function"
-            else ()
         in {set_backend=set,bag_backend=bag} end
+      fun select_backends target (selection as {mixed_set,mixed_bag,...}) =
+        let val backends = choose_backends target selection
+        in check_mixed_collection_arguments target backends
+             {mixed_set=mixed_set,mixed_bag=mixed_bag};
+           backends
+        end
       (* why cvc5 refuses roots with a card the selected array encoding of
          the collection lacks *)
       fun card_refusal (target:{solver:string,version:string option} option)
@@ -1978,12 +1995,15 @@ local
           | NONE => backends
         end
     in
-      {select=select,select_backends=select_backends,
+      (choose_backends,{select=select,select_backends=select_backends,
        card_refusal=card_refusal,native_set_term=native_set,
        cvc5_native_bags=native_bags,
        finite_sets=finite_sets,finite_bags=finite_bags,
-       finite_set_term=finite_set,finite_bag_term=finite_bag}
+       finite_set_term=finite_set,finite_bag_term=finite_bag})
     end
+
+  fun backend_selection_with_finite_trace operations report =
+    #2 (backend_selection_parts operations report)
 
   (* Reports describe successful finite branches only, inside the existing
      memo thunk, after all selected child decisions. They are syntax DATA,
@@ -2008,8 +2028,8 @@ local
      is_parsed_bag_literal=is_parsed_bag_literal,
      set_element_type=set_element_type,bag_element_type=bag_element_type,
      memoize=fn _ => fn _ => fn _ => fn compute => compute ()}
-  val term_backend_selection =
-    backend_selection_with term_backend_selection_operations
+  val (choose_term_backends,term_backend_selection) =
+    backend_selection_parts term_backend_selection_operations (fn _ => ())
   val native_set_term = #native_set_term term_backend_selection
   val cvc5_native_bags = #cvc5_native_bags term_backend_selection
   val finite_set_term = #finite_set_term term_backend_selection
@@ -2947,10 +2967,6 @@ local
 
   fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
 
-  fun member_type ty tys = List.exists (fn ty' => same_type (ty, ty')) tys
-
-  fun add_type ty tys = if member_type ty tys then tys else ty :: tys
-
   fun free_datatype_tyinfo tyinfo =
     not (List.null (TypeBasePure.constructors_of tyinfo)) andalso
     Lib.can TypeBasePure.nchotomy_of tyinfo andalso
@@ -2985,8 +3001,14 @@ local
     in
       case Lib.get_first (Lib.total instantiate) patterns of
         SOME family =>
-          List.rev (List.foldl (fn (fam_ty, acc) => add_type fam_ty acc)
-            [] family)
+          let
+            fun add (ty, (seen, types)) =
+              if Redblackset.member (seen, ty) then (seen, types)
+              else (Redblackset.add (seen, ty), ty :: types)
+          in
+            List.rev (#2 (List.foldl add
+              (Redblackset.empty Type.compare, []) family))
+          end
       | NONE => raise ERR "datatype_family_types" "no matching family member"
     end
 
@@ -3566,7 +3588,8 @@ local
        infer=infer}
     end
 
-  val term_feature_operations : Term.term feature_operations =
+  fun term_feature_operations memo_quantifier memo_bitvector :
+      Term.term feature_operations =
     {type_of=Term.type_of,is_var=Term.is_var,is_comb=Term.is_comb,
      is_abs=Term.is_abs,dest_comb=Term.dest_comb,dest_abs=Term.dest_abs,
      strip_comb=boolSyntax.strip_comb,
@@ -3583,9 +3606,7 @@ local
      is_shape_error=fn Feedback.HOL_ERR _ => true | _ => false,
      is_optional_error=fn Portable.Interrupt => false | _ => true,
      metadata_error=fn primary => primary,syntax_error=ERR,
-     memo_quantifier=fn _ => fn compute => compute (),
-     memo_bitvector=fn _ => fn compute => compute ()}
-  val term_feature_analysis = feature_analysis_with term_feature_operations
+     memo_quantifier=memo_quantifier,memo_bitvector=memo_bitvector}
   val current_feature_state : feature_state =
     {generated_forall=fn () => !current_generated_forall_emissions > 0,
      sequence_emission=fn () => !current_native_sequence_emission,
@@ -3594,10 +3615,65 @@ local
      has_bag_terms=fn () => not (Redblackset.isEmpty (!current_bag_terms)),
      native_bag_backend=fn () => !current_bag_backend = CVC5NativeBag}
 
+  fun application_fork compound (operator,operand) =
+    compound operand andalso Term.is_comb operator andalso
+    let val (head,first) = Term.dest_comb operator
+    in compound first orelse compound head end
+
+  (* Cache completed compound terms so a subsequent sibling can reuse them.
+     The initial atom cannot match any compound caller. *)
+  fun remember_recent_compounds default =
+    let
+      val recent = ref (boolSyntax.T,default)
+      val previous = ref (!recent)
+    in fn term => fn compute =>
+      let val (first,first_result) = !recent
+          val (second,second_result) = !previous
+      in
+        if Portable.pointer_eq (term,first) then first_result
+        else if Portable.pointer_eq (term,second) then second_result
+        else
+          let val result = compute ()
+          in previous := !recent; recent := (term,result); result end
+      end
+    end
+
   fun infer_features_with_state state regime terms tydict tmdict =
-    let val all_subterms = List.concat (List.map
-          (#encoding_subterms term_feature_analysis) terms)
-    in (#infer term_feature_analysis) state regime
+    let
+      (* Memoize only forks where both paths can have descendants. Keep
+         recent completed siblings without hashing each ordinary node. *)
+      val branches = application_fork Term.is_comb
+      fun new_memo () =
+        let val remember = remember_recent_compounds false in
+          fn term => fn compute =>
+            if Term.is_comb term andalso branches (Term.dest_comb term)
+            then remember term compute else compute ()
+        end
+      val analysis = feature_analysis_with
+        (term_feature_operations (new_memo ()) (new_memo ()))
+      val remember = remember_recent_compounds ()
+      val inventory = ref []
+      (* Retain the first visit in encoding order. Distinct list literals
+         still select the shared dispatcher's special children. *)
+      fun visit term =
+        if Term.is_comb term then
+          let
+            val (operator,operand) = Term.dest_comb term
+            fun descend () =
+              (inventory := term :: !inventory;
+               if listSyntax.is_all_distinct term then
+                 List.app visit (#encoding_children analysis term)
+               else (visit operator; visit operand))
+          in
+            if branches (operator,operand) then remember term descend
+            else descend ()
+          end
+        else
+          (inventory := term :: !inventory;
+           if Term.is_abs term then visit (#2 (Term.dest_abs term)) else ())
+      val _ = List.app visit terms
+      val all_subterms = List.rev (!inventory)
+    in (#infer analysis) state regime
       all_subterms terms
       (fn predicate => Redblackmap.foldl
         (fn (ty,_,found) => found orelse predicate ty) false tydict)
@@ -3830,10 +3906,7 @@ local
           else ()
         end
       fun compound tm = Term.is_comb tm orelse Term.is_abs tm
-      fun branching (rator,rand) =
-        compound rand andalso Term.is_comb rator andalso
-        let val (head,left) = Term.dest_comb rator
-        in compound left orelse compound head end
+      val branching = application_fork compound
       (* Publish after visiting children so a sibling can hit. *)
       fun remember tm visit =
         if Portable.pointer_eq (tm,!recent) orelse
@@ -4206,9 +4279,26 @@ local
        Library.union_dict logic_tmdict tm_dict)
     end
 
-  (* returns an updated accumulator, a (possibly empty) list of
-     SMT-LIB type declarations, and the SMT-LIB representation of the
-     given type *)
+  (* Query-local and populated only when a datatype name is needed. *)
+  val current_type_names = ref (NONE :
+    (((Type.hol_type, string) Redblackmap.dict * string Redblackset.set)
+      option ref) option)
+
+  fun cached_type_names dictionary =
+    case !current_type_names of
+      SOME cache =>
+        (case !cache of
+           SOME (saved, names) =>
+             if Portable.pointer_eq (saved, dictionary) then SOME names
+             else NONE
+         | NONE => NONE)
+    | NONE => NONE
+
+  fun remember_type_names dictionary names =
+    Option.app (fn cache => cache := SOME (dictionary, names))
+      (!current_type_names)
+
+  (* Returns the updated type dictionary, declarations, and sort name. *)
   fun uninterpreted_type (tydict, ty) =
     let
       val name = ty_prefix ^ Int.toString (Redblackmap.numItems tydict)
@@ -4224,7 +4314,11 @@ local
           "' for HOL type '" ^ Hol_pp.type_to_string ty ^ "'")
       else
         ();
-      (Redblackmap.insert (tydict, ty, name), ([decl], name))
+      let val updated = Redblackmap.insert (tydict, ty, name)
+          val _ = Option.app
+            (fn names => remember_type_names updated
+              (Redblackset.add (names, name))) (cached_type_names tydict)
+      in (updated, ([decl], name)) end
     end
   structure DatatypeGraph = Graph(
     type key = Type.hol_type
@@ -4291,37 +4385,41 @@ local
   and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
-    | SOME _ =>
+    | SOME initial_family =>
       let
         fun constructor_doms ty = List.concat (List.map
           (Lib.fst o boolSyntax.strip_fun o Term.type_of o
            TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
-        fun known ty types = member_type ty types orelse
+        fun known ty seen = Redblackset.member (seen, ty) orelse
           Option.isSome (Redblackmap.peek (tydict, ty))
         (* A nested container can refer back to its parent datatype without
            appearing in the parent's induction theorem. Collect the whole
            dependency closure before partitioning its recursive components. *)
-        fun collect (ty, types) =
-          if known ty types then types
+        fun collect (ty, acc as (seen, _)) =
+          if known ty seen then acc
           else if !current_native_sequence_emission andalso
                   is_native_sequence_type ty then
-            collect (listSyntax.dest_list_type ty, types)
+            collect (listSyntax.dest_list_type ty, acc)
           else if is_function_type ty then
             let val (dom, rng) = Type.dom_rng ty
-            in collect (rng, collect (dom, types)) end
-          else if has_type_builtin ty then types
+            in collect (rng, collect (dom, acc)) end
+          else if has_type_builtin ty then acc
           else case datatype_family ty of
-            NONE => types
-          | SOME family =>
-              let
-                val fresh = List.filter (fn ty => not (known ty types)) family
-                val types = List.foldl (fn (ty, acc) => add_type ty acc)
-                  types fresh
-              in
-                List.foldl (fn (ty, acc) =>
-                  List.foldl collect acc (constructor_doms ty)) types fresh
-              end
-        val family = List.rev (collect (ty, []))
+            NONE => acc
+          | SOME family => collect_family family acc
+        and collect_family family (seen, entries_rev) =
+          let
+            val fresh = List.filter (fn ty => not (known ty seen)) family
+            val entries = List.map (fn ty => (ty, constructor_doms ty)) fresh
+            val seen = Redblackset.addList (seen, fresh)
+          in
+            List.foldl
+              (fn ((_, fields), acc) => List.foldl collect acc fields)
+              (seen, List.revAppend (entries, entries_rev)) entries
+          end
+        val (family_set, family_rev) =
+          collect_family initial_family (Redblackset.empty Type.compare, [])
+        val family = List.rev family_rev
         fun field_dependencies ty =
           if !current_native_sequence_emission andalso
              is_native_sequence_type ty then
@@ -4329,39 +4427,39 @@ local
           else if is_function_type ty then
             let val (dom, rng) = Type.dom_rng ty
             in field_dependencies dom @ field_dependencies rng end
-          else if member_type ty family then [ty]
+          else if Redblackset.member (family_set, ty) then [ty]
           else []
-        val graph = List.foldl (fn (ty, graph) =>
+        val graph = List.foldl (fn ((ty, _), graph) =>
           DatatypeGraph.new_node (ty, ()) graph) DatatypeGraph.empty family
-        fun add_dependencies (ty, graph) =
+        fun add_dependencies ((ty, fields), graph) =
           List.foldl (fn (field, graph) =>
             List.foldl (fn (dependency, graph) =>
               DatatypeGraph.add_edge (dependency, ty) graph) graph
-              (field_dependencies field)) graph (constructor_doms ty)
+              (field_dependencies field)) graph fields
         val components = DatatypeGraph.strong_conn
           (List.foldl add_dependencies graph family)
-        (* Most stems need only a direct probe. Once suffixes also collide,
-           index the existing names so retries need not scan the map. *)
-        val used_names = Susp.delay (fn () => Redblackmap.foldl
-          (fn (_, name, names) => Redblackset.add (names, name))
-          (Redblackset.empty String.compare) tydict)
-        fun add_name (fam_ty, used) =
+        (* Share the reverse index across successive registrations. A retry
+           may return to an earlier dictionary, so reuse only an exact hit. *)
+        val used_names = case cached_type_names tydict of
+            SOME names => names
+          | NONE => Redblackmap.foldl
+              (fn (_, name, names) => Redblackset.add (names, name))
+              (Redblackset.empty String.compare) tydict
+        fun add_name ((fam_ty, _), (used, dict)) =
           let
-            fun unavailable (suffix, name) =
+            fun unavailable (_, name) =
               is_smt_reserved smt_reserved_type_names name orelse
-              List.exists (Lib.equal name) used orelse
-              (if suffix < 2 then Redblackmap.exists (Lib.equal name) tydict
-               else Redblackset.member (Susp.force used_names, name))
+              Redblackset.member (used, name)
             val name =
               fresh_smt_name_avoiding unavailable (type_name_stem fam_ty)
           in
-            name :: used
+            (Redblackset.add (used, name),
+             Redblackmap.insert (dict, fam_ty, name))
           end
-        val names = List.rev (List.foldl add_name [] family)
-        val tydict_with_family = ListPair.foldlEq
-          (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
-          tydict (family, names)
-        fun translate_constructor_doms (fam_ty, acc) =
+        val (names, tydict_with_family) =
+          List.foldl add_name (used_names, tydict) family
+        val _ = remember_type_names tydict_with_family names
+        fun translate_constructor_doms ((_, fields), acc) =
           let
             fun translate_dom (dom, (dict, decls_rev, sorts)) =
               let
@@ -4372,7 +4470,7 @@ local
                  Redblackmap.insert (sorts, dom, sort))
               end
           in
-            List.foldl translate_dom acc (constructor_doms fam_ty)
+            List.foldl translate_dom acc fields
           end
         val (tydict, dependency_decls_rev, field_sorts) =
           List.foldl translate_constructor_doms
@@ -6418,18 +6516,9 @@ local
       (fn (_,document) => document) operations store translate
       regime apply_operator input
 
-  fun translate_term_step_with_carrier operations store translate regime
-      apply_operator input =
-    translate_term_step_with_output string_output_operations operations
-      store translate regime apply_operator input
-
-  fun translate_term_step_with_store store translate regime
-      apply_operator input =
-    translate_term_step_with_carrier term_translation_operations store
-      translate regime apply_operator input
-
   fun translate_term_step translate regime apply_operator input =
-    translate_term_step_with_store legacy_term_store_operations translate
+    translate_term_step_with_output fragment_output_operations
+      term_translation_operations legacy_term_store_operations translate
       regime apply_operator input
 
   (* Translation failures of the current goal, keyed by subterm and lexical
@@ -6792,6 +6881,12 @@ local
       if get_proof then [text "(get-proof)\n",text "(exit)\n"]
       else [text "(exit)\n"] end
 
+  fun assumption_membership [] = Lib.K false
+    | assumption_membership [assumption] = Term.aconv assumption
+    | assumption_membership assumptions =
+        let val indexed = HOLset.addList (Term.empty_tmset, assumptions)
+        in fn assumption => HOLset.member (indexed, assumption) end
+
   fun goal_to_SmtLib_aux_inner request apply_operator
       (policy : logic_selection_policy) target emit_sequences
       inventory refused (goal as (original_ts, t))
@@ -6840,11 +6935,12 @@ local
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
     val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
+    val refused_assumption = assumption_membership refused
     (* dropping, an assumption the solver preflight refused ([refused]),
        with a bound function over a cvc5 collection, or with a card the
        selected cvc5 array encoding lacks is left out of the translation *)
     fun left_out backends tm =
-      List.exists (fn other => Term.aconv other tm) refused orelse
+      refused_assumption tm orelse
       (dropping_untranslatable () andalso cvc5 andalso
        (bound_collection_application [tm] marked_sets orelse
         bound_collection_application [tm] marked_bags orelse
@@ -6854,7 +6950,7 @@ local
       not (Redblackset.isEmpty marked) andalso
       SmtLib_CollectionApplicationAnalysis.has_mixed_argument_with
         collection_operations Term.compare Lib.I
-        (fn term => Redblackset.member (marked, term)) subterms
+        (fn term => Redblackset.member (marked, term)) (subterms ())
     (* dropping, cvc5's refusal of a bound function over a collection is
        about the conclusion only; an assumption with one is left out *)
     val bound_roots = if dropping_untranslatable () then [t] else roots
@@ -6873,24 +6969,31 @@ local
     (* dropping, every encoding choice is made from the whole goal, and the
        ambiguous-argument check, which only refuses, then looks at what is
        sent *)
-    val select_backends = (#select_backends term_backend_selection) target
     val backends as {set_backend=backend,bag_backend} =
       if dropping_untranslatable () then
         let
-          val backends = select_backends (selection [])
+          val backends = choose_term_backends target (selection (fn () => []))
           val _ =
             case (#card_refusal term_backend_selection) target backends [t] of
               SOME message => raise ERR "goal_to_SmtLib_aux_inner" message
             | NONE => ()
-          val sent_subterms =
-            if List.exists (left_out backends) original_ts then
-              query_subterms
-                (t :: List.filter (not o left_out backends) original_ts)
-            else subterms
+          val sent_subterms = Susp.delay (fn () =>
+            let val (excluded, sent) =
+              List.partition (left_out backends) original_ts
+            in if null excluded then subterms
+               else query_subterms (t :: sent)
+            end)
+          fun mixed marked =
+            has_mixed_collection_argument
+              (fn () => Susp.force sent_subterms) marked
         in
-          select_backends (selection sent_subterms)
+          check_mixed_collection_arguments target backends
+            {mixed_set=fn () => mixed marked_sets,
+             mixed_bag=fn () => mixed marked_bags};
+          backends
         end
-      else (#select term_backend_selection) target (selection subterms)
+      else (#select term_backend_selection) target
+        (selection (fn () => subterms))
     val left_out = left_out backends
     val _ = current_set_backend := backend
     val _ = current_set_terms := marked_sets
@@ -6974,7 +7077,13 @@ local
     val _ = current_translation_failures := no_translation_failures
     val _ = current_eta_expansions := []
     fun translate (acc, tm) =
-      translate_term regime apply_operator (acc, (bounds, tm))
+      let
+        val (acc, (declarations, expression)) =
+          translate_term regime apply_operator (acc, (bounds, tm))
+      in
+        (* Keep each declaration and assertion in its original query chunk. *)
+        (acc, (List.map render_output declarations, render_output expression))
+      end
       handle NestedTranslation e => raise e
     (* Dropping, an assumption that fails to translate leaves the
        accumulator and the emission cells as they were before it.  No
@@ -7079,12 +7188,16 @@ local
       save_cell current_bag_helpers,
       save_cell current_collection_function_arguments,
       save_cell current_translation_failures,
-      save_cell current_eta_expansions
+      save_cell current_eta_expansions,
+      save_cell current_type_names
     ]
     fun restore () = restore_cells restorers
   in
     Portable.finally restore
-      (fn () => (current_backend_installation := NONE;work ())) ()
+      (fn () =>
+        (current_backend_installation := NONE;
+         current_type_names := SOME (ref NONE);
+         work ())) ()
   end
 
   type backend_context_options =
@@ -8592,10 +8705,12 @@ in
 
   (* [goal] without the assumptions [translation] left out: replay may use
      only those the solver was given *)
-  fun sent_goal ({dropped, ...} : translation) (assumptions, conclusion) =
-    (List.filter (fn assumption =>
-       not (List.exists (fn other => Term.aconv other assumption) dropped))
-       assumptions, conclusion)
+  fun sent_goal ({dropped, ...} : translation)
+      (goal as (assumptions, conclusion)) =
+    if null dropped then goal
+    else
+      (List.filter (not o assumption_membership dropped) assumptions,
+       conclusion)
 
   (* The immutable Task06 view, also used by bounded checked adapters. *)
   val replay_datatype_destructor_theorems = datatype_destructor_theorems
@@ -8918,9 +9033,17 @@ in
          same_const actual expected} application
 
   fun reject_reglan_hol_equalities (assumptions, conclusion) =
-    let
-      (* Check each shared branch once without comparing entire subterms.
-         The bucket hint only selects candidates for pointer equality. *)
+    if null assumptions then
+      let
+        fun check tm =
+          (if Term.is_comb tm then check_reglan_application (Term.dest_comb tm)
+           else ();
+           false)
+      in
+        ignore (Library.exists_shared_subterm check conclusion)
+      end
+    else let
+      (* Retain sharing across roots, including repeated unary spines. *)
       val seen = SmtPointerTable.new
         {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093}
       fun visit [] = ()
@@ -8961,7 +9084,7 @@ in
            sequence emission chosen for the whole goal; those refused are
            left out of the translation *)
         fun refuses asm =
-          (check (([asm], boolSyntax.T), inventory_of [asm]); false)
+          (check (([], asm), inventory_of [asm]); false)
           handle Feedback.HOL_ERR _ => true
         val refused =
           if dropping_untranslatable () then
@@ -9193,10 +9316,15 @@ in
   val native_float_transfer_theorems = native_float_transfer_theorems
 
   fun type_mentions_num ty =
-    Type.compare (ty, numSyntax.num) = EQUAL orelse
-    (case Lib.total Type.dom_rng ty of
-       SOME (dom, rng) => type_mentions_num dom orelse type_mentions_num rng
-     | NONE => false)
+    let
+      fun children ty =
+        case Lib.total Type.dom_rng ty of
+          SOME (dom, rng) => [dom, rng]
+        | NONE => []
+    in
+      Library.type_contains_pure_with children
+        (fn ty => Type.compare (ty, numSyntax.num) = EQUAL) ty
+    end
 
   fun is_num_transfer_const tm =
     if not (Term.is_const tm) orelse not (type_mentions_num (Term.type_of tm))
@@ -9257,7 +9385,7 @@ in
     end
 
   fun goal_entangles_num_and_word (asms, concl) =
-    List.exists (Library.exists_subterm num_meets_word) (concl :: asms)
+    List.exists Library.term_entangles_num_and_word (concl :: asms)
 
   (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
      numeral, which the solvers read as an integer constant: it needs no
@@ -9282,10 +9410,16 @@ in
     mentions (concl :: asms)
   end
 
-  val goal_mentions_num =
-    mentions_num true (type_mentions_num o Term.type_of)
-  val goal_mentions_num_or_int_literal =
-    mentions_num false atom_needs_num_transfer
+  local
+    fun mentions_shared skip counts (asms, concl) =
+      List.exists (Library.exists_shared_atom skip counts) (concl :: asms)
+  in
+    val goal_mentions_num =
+      mentions_shared intSyntax.is_int_literal
+        (type_mentions_num o Term.type_of)
+    val goal_mentions_num_or_int_literal =
+      mentions_shared (fn _ => false) atom_needs_num_transfer
+  end
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
      skolemizes existentials but never case-splits, because preprocessing
@@ -9297,6 +9431,9 @@ in
         Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
                         Tactic.ASSUME_TAC th])
 
+  fun held_assumption held =
+    let val set = Redblackset.addList (Redblackset.empty Term.compare, held)
+    in fn a => Redblackset.member (set, a) end
   (* Runs the proved num-to-int transfer on the conclusion and the
      assumptions that mention num.  These assumptions are first moved into
      the conclusion so free num variables anywhere in them are made explicit
@@ -9304,55 +9441,55 @@ in
      as they are: the transfer's simplification doesn't rewrite with them,
      so a solver proof still names those it uses. *)
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
-  let
-    open Tactic Tactical
-    val (num_asms, held) =
-      List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
-    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made, each
-       once, taken out of the others, which stay for the fresh names of
-       their witnesses *)
-    fun STRIP_TRANSFERRED_TAC (asl, w) =
-      MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
-        (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
-        (asl, w)
-    (* The transfer and discharged antecedents can leave 0 <= i guards before
-       this point.  Keep those guards as rewrite rules for the goal, without
-       letting a transferred premise or a user assumption rewrite any other
-       premise. *)
-    fun is_num_guard tm =
-      case Lib.total intSyntax.dest_leq tm of
-          SOME (left, right) =>
-            Term.aconv left intSyntax.zero_tm andalso Term.is_var right
-        | NONE => false
-    fun TRANSFER_SIMP_TAC (asl, w) =
-      let
-        val guard_rewrites =
-          List.map Thm.ASSUME
-            (List.filter (fn a => not (Lib.op_mem Term.aconv a held)
-                                andalso is_num_guard a) asl)
-        val assumption_rewrites = num_transfer_rewrites
-        val goal_rewrites = guard_rewrites @ num_transfer_rewrites
-        fun simplify thm =
-          if Lib.op_mem Term.aconv (Thm.concl thm) held orelse
-             is_num_guard (Thm.concl thm) then
-            ASSUME_TAC thm
-          else
-            ASSUME_TAC
-              (simpLib.SIMP_RULE pureSimps.pure_ss assumption_rewrites thm)
-      in
-        (POP_ASSUM_LIST (MAP_EVERY simplify o List.rev) THEN
-         CONV_TAC (simpLib.SIMP_CONV pureSimps.pure_ss goal_rewrites)) (asl, w)
-      end
-  in
+  let open Tactic Tactical in
     if goal_mentions_num_or_int_literal g andalso
        not (goal_entangles_num_and_word g)
-    then
+    then let
+      val (num_asms, held) =
+        List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
+      val is_held = held_assumption held
+      (* Strip each transferred assumption once, leaving the others in
+         scope for fresh witness names. *)
+      fun STRIP_TRANSFERRED_TAC (asl, w) =
+        MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
+          (List.filter (not o is_held) asl) (asl, w)
+      (* Transfer-generated or discharged-antecedent guards can rewrite the
+         conclusion, but no transferred premise or held assumption rewrites
+         another premise. *)
+      fun is_num_guard tm =
+        case Lib.total intSyntax.dest_leq tm of
+            SOME (left, right) =>
+              Term.aconv left intSyntax.zero_tm andalso Term.is_var right
+          | NONE => false
+      fun TRANSFER_SIMP_TAC (asl, w) =
+        let
+          val guard_rewrites =
+            List.map Thm.ASSUME
+              (List.filter (fn a => not (is_held a) andalso
+                                  is_num_guard a) asl)
+          val assumption_rewrites = num_transfer_rewrites
+          val goal_rewrites = guard_rewrites @ num_transfer_rewrites
+          fun simplify thm =
+            if is_held (Thm.concl thm) orelse
+               is_num_guard (Thm.concl thm) then
+              ASSUME_TAC thm
+            else
+              ASSUME_TAC
+                (simpLib.SIMP_RULE pureSimps.pure_ss
+                   assumption_rewrites thm)
+        in
+          (POP_ASSUM_LIST (MAP_EVERY simplify o List.rev) THEN
+           CONV_TAC
+             (simpLib.SIMP_CONV pureSimps.pure_ss goal_rewrites)) (asl, w)
+        end
+    in
       (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        TRANSFER_SIMP_TAC THEN
        STRIP_TRANSFERRED_TAC) g
+    end
     else
       ALL_TAC g
   end
@@ -9442,8 +9579,11 @@ in
     POP_ASSUM_LIST (MAP_EVERY cleanup o List.rev) g
   end
 
-  val has_set_complement =
-    Library.exists_subterm (Lib.can pred_setSyntax.dest_compl)
+  fun has_applied_constant head =
+    Library.exists_shared_subterm (fn tm =>
+      Term.is_comb tm andalso Term.same_const (Term.rator tm) head)
+
+  val has_set_complement = has_applied_constant pred_setSyntax.compl_tm
 
   (* Checked CARD keeps finite set atoms native, while unrelated non-finite
      atoms still lower to predicates. Native-by-default mode only lowers
@@ -9515,7 +9655,7 @@ in
 
   fun CHECKED_SET_SIMP_TAC preserve_native_card g =
     if preserve_native_card andalso
-        List.exists (Lib.can (HolKernel.find_term pred_setSyntax.is_card))
+        List.exists (has_applied_constant pred_setSyntax.card_tm)
           (#1 g @ [#2 g]) then
       let
         val finite_terms = List.mapPartial finite_set_hypothesis (#1 g)

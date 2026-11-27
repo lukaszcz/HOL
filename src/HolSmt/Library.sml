@@ -1399,24 +1399,50 @@ struct
   (*  proof replay)                                                          *)
   (***************************************************************************)
 
+  (* Pure feature tests can reuse recent negative results for shared type
+     arguments. A fixed pointer cache avoids structural comparisons of
+     large types and keeps unshared spines linear. *)
+  fun type_contains_pure_with children pred root =
+    pred root orelse
+    (case children root of
+       [] => false
+     | args =>
+         let
+           (* The root cannot recur as a proper child of a HOL type. *)
+           val newest = ref root
+           val previous = ref root
+           fun visit ty =
+             if Portable.pointer_eq (ty, !newest) orelse
+                Portable.pointer_eq (ty, !previous) then false
+             else pred ty orelse
+               (case children ty of
+                  [] => false
+                | args =>
+                    any args orelse
+                    (previous := !newest; newest := ty; false))
+           and any [] = false
+             | any (first :: rest) = visit first orelse remaining first rest
+           and remaining _ [] = false
+             | remaining prior (child :: rest) =
+                 (not (Portable.pointer_eq (prior, child)) andalso visit child)
+                 orelse remaining child rest
+         in any args end)
+
   (* Does [ty], a function component, or a native sequence element type
      satisfy [pred]? Other arguments, such as word widths, do not contribute
-     features here. The built-in predicates need only test a shared child
-     once. Preserve occurrence-by-occurrence calls for arbitrary predicates. *)
+     features here. Preserve occurrence-by-occurrence calls for arbitrary
+     predicates. *)
   local
-    fun contains skip_duplicate pred root =
-      let
-        fun visit ty = pred ty orelse
-          (case Lib.total Type.dest_type ty of
-             SOME ("fun", [dom, rng]) => visit dom orelse
-               (not (skip_duplicate andalso Portable.pointer_eq (dom, rng))
-                andalso visit rng)
-           | SOME ("list", [element]) => visit element
-           | _ => false)
-      in visit root end
+    fun feature_children ty =
+      case Lib.total Type.dest_type ty of
+        SOME ("fun", args as [_, _]) => args
+      | SOME ("list", args as [_]) => args
+      | _ => []
   in
-  fun type_contains pred ty = contains false pred ty
-  fun type_contains_pure pred ty = contains true pred ty
+  fun type_contains pred =
+    let fun visit ty = pred ty orelse List.exists visit (feature_children ty)
+    in visit end
+  fun type_contains_pure pred = type_contains_pure_with feature_children pred
 
   fun type_contains_int ty =
     type_contains_pure (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
@@ -1475,7 +1501,8 @@ struct
       (fn (_, subterm) => if predicate subterm then SOME () else NONE) tm)
 
   local
-  fun exists_subterm_with_sharing descend_abs test_app test_abs test_atom tm =
+  fun exists_subterm_pruned
+        descend_abs skip_app test_app test_abs test_atom tm =
     let
       fun compound term = Term.is_comb term orelse Term.is_abs term
       val recent = ref boolSyntax.T
@@ -1486,6 +1513,7 @@ struct
       fun walk fork [] finish = finish ()
         | walk fork (term :: rest) finish =
             if Term.is_comb term then
+              if skip_app term then walk fork rest finish else
               test_app term orelse
               (let val (rator, rand) = Term.dest_comb term
                in if compound rand then follow fork term rator rand rest finish
@@ -1502,8 +1530,9 @@ struct
             (* Visiting the rator already checks its immediate children.
                This also handles diamonds over large unshared bases. *)
             if compound lhs orelse compound head then
-              if Portable.pointer_eq (lhs, rand) orelse
-                  Portable.pointer_eq (head, rand) then
+              if (Portable.pointer_eq (lhs, rand) orelse
+                  Portable.pointer_eq (head, rand)) andalso
+                 not (skip_app rator) then
                 walk fork (rator :: rest) finish
               else fork term rator rand rest finish
             else walk fork (rator :: rand :: rest) finish
@@ -1547,10 +1576,17 @@ struct
          is idempotent and quantifier detection may end either walk early. *)
       quick 32768 [tm] handle PauseQuick pending => race pending
     end
+
+  fun exists_subterm_with_sharing descend_abs =
+    exists_subterm_pruned descend_abs (fn _ => false)
   in
   (* Predicates must give the same answer wherever a subterm is visited. *)
   fun exists_shared_subterm predicate =
     exists_subterm_with_sharing true predicate predicate predicate
+
+  fun exists_shared_atom skip_app predicate =
+    exists_subterm_pruned true skip_app (fn _ => false)
+      (predicate o Term.bvar) predicate
 
   (* Rewrites contributed by the rows of a goal-directed fact table whose
      head constant occurs in the goal. Identify constants by theory and name,
@@ -1594,6 +1630,72 @@ struct
       fun real_type term = contains_real (Term.type_of term)
     in exists_subterm_with_sharing false (fn _ => false) real_type real_type tm
     end
+
+  local
+    fun word_type tm = type_contains_word (Term.type_of tm)
+    (* Application types are ranges of function types. Atoms and binder
+       annotations suffice to rule out a word anywhere in the term. *)
+    val has_word_type = exists_subterm_with_sharing true (fn _ => false)
+      (word_type o Term.bvar) word_type
+    fun is_num ty = Type.compare (ty, numSyntax.num) = EQUAL
+  in
+  fun term_entangles_num_and_word tm =
+    has_word_type tm andalso
+    let
+      exception Entangled
+      val memo = Portable.HOLSusp.delay (fn () => SmtPointerTable.new
+        {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093})
+      fun compound t = Term.is_comb t orelse Term.is_abs t
+      (* An application's prefix supplies the head and the accumulated
+         argument properties. The LENGTH barrier applies to the entire
+         spine, but its argument still needs its own entanglement check. *)
+      fun scan t =
+        if Term.is_comb t then
+          let val (f,x) = Term.dest_comb t in
+            if compound x andalso
+               (Term.is_abs f orelse
+                (Term.is_comb f andalso
+                 (compound (Term.rator f) orelse compound (Term.rand f))))
+            then
+              let val table = Portable.HOLSusp.force memo in
+                case SmtPointerTable.lookup table t of
+                  SOME result => result
+                | NONE =>
+                    let val result = application f x in
+                      SmtPointerTable.insert table t result; result
+                    end
+              end
+            else application f x
+          end
+        else
+          let
+            val ty = Term.type_of t
+            val word = type_contains_word ty
+            val length = same_const listSyntax.length_tm t
+            val _ = if Term.is_abs t then ignore (scan (Term.body t)) else ()
+          in
+            {ty=ty,word_below=word andalso not length,length_head=length,
+             head_has_word=word,word_args=false,num_args=false}
+          end
+      and application f x =
+        let
+          val {ty=fty,length_head,head_has_word,word_args,num_args,...} = scan f
+          val {ty=xty,word_below,...} = scan x
+          val (_,ty) = Type.dom_rng fty
+          val word_args = word_args orelse word_below
+          val num_args = num_args orelse is_num xty
+          val word_below = not length_head andalso
+            (word_args orelse (head_has_word andalso type_contains_word ty))
+        in
+          if (is_num ty andalso word_below) orelse
+             (head_has_word andalso num_args)
+          then raise Entangled
+          else
+            {ty=ty,word_below=word_below,length_head=length_head,
+             head_has_word=head_has_word,word_args=word_args,num_args=num_args}
+        end
+    in (ignore (scan tm); false) handle Entangled => true end
+  end
   end
 
   (***************************************************************************)

@@ -268,6 +268,36 @@ struct
     | QueryGetInfo of string
     | QueryGetOption of string
 
+  (* Check the bodies and parameter sorts of definitions. The quantifier
+     and left-hand application used to encode a definition are synthetic.
+     Consecutive check-sat commands may share their assertion and
+     definition snapshots, but each can supply its own assumptions. *)
+  fun query_fragment_terms queries =
+    let
+      fun definition_terms definition =
+        let
+          val (vars, body) = boolSyntax.strip_forall definition
+          val definiens = Lib.snd (boolSyntax.dest_eq body)
+            handle Feedback.HOL_ERR _ => body
+        in definiens :: vars end
+      fun add [] chunks = chunks
+        | add terms chunks = terms :: chunks
+      fun collect (QueryCheckSat {assumptions, assertions,
+                     local_definitions, ...},
+                   (old_assertions, old_defs, chunks)) =
+            let
+              val chunks = if Portable.pointer_eq (local_definitions, old_defs)
+                then chunks
+                else add (List.concat (List.map definition_terms
+                  local_definitions)) chunks
+              val chunks = if Portable.pointer_eq (assertions, old_assertions)
+                then chunks else add assertions chunks
+            in (assertions, local_definitions, add assumptions chunks) end
+        | collect (_, saved) = saved
+      val (_, _, reversed) = List.foldl collect ([], [], []) queries
+    in case List.rev reversed of [terms] => terms
+      | chunks => List.concat chunks end
+
   type surface_flags = SmtLib_Logics.surface_flags
 
   type command_state_snapshot = {
@@ -5056,21 +5086,15 @@ local
   datatype checked_sort_tree =
     CheckedSort of Type.hol_type * checked_sort_tree list
 
-  fun index_term_from_ast_with_options elaborate_datatypes context
-      (tydict, tmdict, sigdict) term_ast =
+  fun index_term_from_ast check term_ast =
     case node_of term_ast of
       TermIdentifier token =>
         (index_numeral_term token
          handle Feedback.HOL_ERR _ =>
-           ((checked_term o
-               typecheck_term_with_options elaborate_datatypes context
-                 (tydict, tmdict, sigdict)) term_ast
+           (checked_term (check ())
             handle Feedback.HOL_ERR _ =>
               Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
-    | _ =>
-        checked_term
-          (typecheck_term_with_options elaborate_datatypes context
-            (tydict, tmdict, sigdict) term_ast)
+    | _ => checked_term (check ())
 
   and typecheck_sort context tydict sort_ast =
     typecheck_sort_with (List.map (typecheck_sort context tydict))
@@ -5164,24 +5188,24 @@ local
           subst surface
         end
 
-  and surface_sort_of_ast context tydict sort_ast =
+  and typecheck_sort_tree context tydict ast =
+    let
+      val children = ref []
+      fun arg_sorts args =
+        let val checked = List.map (typecheck_sort_tree context tydict) args
+        in
+          children := checked;
+          List.map (fn CheckedSort (ty, _) => ty) checked
+        end
+      val ty = typecheck_sort_with arg_sorts context tydict ast
+    in
+      CheckedSort (ty, !children)
+    end
+
+  and surface_sort_of_checked_ast context tydict checked sort_ast =
     let
       (* A constructor validates its complete sort before its surface
          children are elaborated. Retain those child types for that pass. *)
-      fun check ast =
-        let
-          val children = ref []
-          fun arg_sorts args =
-            let val checked = List.map check args
-            in
-              children := checked;
-              List.map (fn CheckedSort (ty, _) => ty) checked
-            end
-          val ty = typecheck_sort_with arg_sorts context tydict ast
-        in
-          CheckedSort (ty, !children)
-        end
-
       fun checked_type checked ast =
         case checked of
           NONE => typecheck_sort context tydict ast
@@ -5221,29 +5245,35 @@ local
                   | NONE =>
                       let
                         val tree as CheckedSort (ty, _) =
-                          case checked of NONE => check ast | SOME tree => tree
+                          case checked of
+                            NONE => typecheck_sort_tree context tydict ast
+                          | SOME tree => tree
                       in ConstructorSort (ty, surfaces (SOME tree) args) end
               end
           | _ => RigidSort (checked_type checked ast)
         end
     in
-      surface NONE sort_ast
+      surface checked sort_ast
     end
 
-  and typecheck_sorted_var context tydict sorted_var =
-    case node_of sorted_var of
-      SortedVar (name, sort) =>
-        (located_string_node name, typecheck_sort context tydict sort)
+  and surface_sort_of_ast context tydict sort_ast =
+    surface_sort_of_checked_ast context tydict NONE sort_ast
+
+  and typecheck_sort_and_surface context tydict sort_ast =
+    let val tree as CheckedSort (ty, _) =
+      typecheck_sort_tree context tydict sort_ast
+    in
+      (ty, surface_sort_of_checked_ast context tydict (SOME tree) sort_ast)
+    end
 
   (* Typecheck a `SortedVar` into its bound HOL variable together with the
      surface sort of its declared type; used by binders, lambdas, and the
      define-fun family. *)
   and checked_sorted_var context tydict sorted_var =
     let
-      val (name, ty) = typecheck_sorted_var context tydict sorted_var
-      val surface_sort =
-        case node_of sorted_var of
-          SortedVar (_, sort) => surface_sort_of_ast context tydict sort
+      val SortedVar (name, sort) = node_of sorted_var
+      val (ty, surface_sort) = typecheck_sort_and_surface context tydict sort
+      val name = located_string_node name
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface surface_sort then
@@ -5429,6 +5459,10 @@ local
   and apply_symbol fn_name context loc (tydict, tmdict, sigdict)
       name indices args =
     let
+      val builtin =
+        if #solver context = NONE then
+          SmtLib_Logics.neutral_term_spelling tmdict name
+        else name
       fun arity_mismatch symbol expected actual =
         type_error fn_name context loc NONE NONE
           ("ArraysEx " ^ symbol ^ " arity mismatch: expected " ^
@@ -5443,7 +5477,7 @@ local
       fun check_array_builtin arg_sorts =
         if not (List.null indices) then ()
         else
-          case (name, arg_sorts) of
+          case (builtin, arg_sorts) of
             ("select", [array_sort, index_sort]) =>
               let val (expected_index, _) =
                     valOf (array_dom_rng "select" array_sort)
@@ -5489,8 +5523,6 @@ local
               MapSort _ => ()
             | _ => type_error fn_name context loc NONE NONE
                 (operator ^ " requires a function sort")
-          fun require_set_args operator surfaces =
-            List.app (require_set operator) surfaces
           val surfaces = List.map checked_surface_sort args
           fun require_same_surfaces operator surfaces =
             case surfaces of
@@ -5499,16 +5531,19 @@ local
                 if List.all (dialect_sorts_equivalent surface) rest then ()
                 else type_error fn_name context loc NONE NONE
                   (operator ^ " arguments must have the same surface sort")
+          fun require_set_args surfaces =
+            (List.app (require_set name) surfaces;
+             require_same_surfaces name surfaces)
           fun check_sets () =
-            case (name, surfaces) of
+            case (builtin, surfaces) of
               ("set.member", [_ , set]) => require_set "set.member" set
             | ("set.insert", _ :: rest) =>
                 (case List.rev rest of set :: _ =>
                    require_set "set.insert" set | [] => ())
-            | ("set.union", sets) => require_set_args "set.union" sets
-            | ("set.inter", sets) => require_set_args "set.inter" sets
-            | ("set.minus", sets) => require_set_args "set.minus" sets
-            | ("set.subset", sets) => require_set_args "set.subset" sets
+            | ("set.union", sets) => require_set_args sets
+            | ("set.inter", sets) => require_set_args sets
+            | ("set.minus", sets) => require_set_args sets
+            | ("set.subset", sets) => require_set_args sets
             | ("set.complement", [set]) => require_set "set.complement" set
             | ("set.choose", [set]) => require_set "set.choose" set
             | ("set.card", [set]) => require_set "set.card" set
@@ -5529,7 +5564,7 @@ local
         in
           if not (List.null indices) then () else
           (check_sets ();
-          (case name of
+          (case builtin of
              "=" => require_same_surfaces "=" surfaces
            | "distinct" => require_same_surfaces "distinct" surfaces
            | "seq.++" => require_same_surfaces "seq.++" surfaces
@@ -5548,7 +5583,7 @@ local
            | "seq.replace_all" => require_same_surfaces "seq.replace_all"
                surfaces
            | _ => ());
-          case (name, surfaces) of
+          case (builtin, surfaces) of
             ("select", [set_surface, actual_index]) =>
               if is_bag_surface set_surface then
                 type_error fn_name context loc NONE NONE
@@ -5625,7 +5660,7 @@ local
           MapSort (_, range) => terminal_map_surface range
         | _ => surface
       fun result_surface_sort sort =
-        case (name, args) of
+        case (builtin, args) of
           ("set.filter", _ :: set :: _) => checked_surface_sort set
         | ("bag.filter", _ :: bag :: _) => checked_surface_sort bag
         | ("set.map", map :: _) =>
@@ -5706,7 +5741,7 @@ local
                val _ = check_array_builtin arg_sorts
                val _ = check_surface_builtin ()
                val t =
-                 (case (name, args) of
+                 (case (builtin, args) of
                     ("select", [set_tm, element]) =>
                       if is_set_surface (checked_surface_sort set_tm) andalso
                          #solver context <> SOME "cvc5" then
@@ -5747,7 +5782,7 @@ local
                         | _ => true)
                    | _ => false
                in
-                 if name = "set.comprehension" andalso
+                 if builtin = "set.comprehension" andalso
                     #solver context = SOME "cvc5" andalso
                     not (List.all (finite_binder o checked_surface_sort) args)
                  then type_error fn_name context loc NONE NONE
@@ -6101,8 +6136,6 @@ local
     let
       val (tydict, tmdict, sigdict) = env
       fun check t = typecheck_term_with_options elaborate_datatypes context env t
-      fun check_index t =
-        index_term_from_ast_with_options elaborate_datatypes context env t
       fun apply_operator loc operator head args =
         if not (apply_operator_available context operator) then
           type_error "typecheck_term" context loc NONE NONE
@@ -6138,39 +6171,61 @@ local
 
       fun indexed_or_apply loc name indices outer_args =
         let
-          val indexed_result =
+          val symbol = located_string_node name
+          fun indexed check_indices check_args =
             if List.null indices then
               raise ERR "typecheck_term"
                 "indexed identifier requires at least one index"
             else
-              apply_symbol "typecheck_term" context loc env
-                (located_string_node name) (List.map check_index indices)
-                (List.map check outer_args)
+              let
+                val indices = check_indices ()
+                val arguments = check_args ()
+              in
+                apply_symbol "typecheck_term" context loc env
+                  symbol indices arguments
+              end
         in
-          indexed_result
-        end
-        handle original as Feedback.HOL_ERR _ =>
-          if indexed_term_family context (located_string_node name) orelse
-             located_string_node name = "is" then
-            raise original
+          if symbol = "is" orelse indexed_term_family context symbol then
+            indexed (fn () => List.map (fn term =>
+              index_term_from_ast (fn () => check term) term) indices)
+              (fn () => List.map check outer_args)
           else
-            (case Lib.total
-                (fn () =>
-                  apply_symbol "typecheck_term" context (loc_of name) env
-                    (located_string_node name) [] []) () of
-             SOME head =>
-               if (case checked_surface_sort head of MapSort _ => true
-                   | _ => false) then
-                 let
-                   val explicit = apply_operator loc "_" head
-                     (List.map check indices)
-                 in
-                   apply_checked_args "typecheck_term" context loc
-                     "higher-order application" explicit
-                     (List.map check outer_args)
-                 end
-               else raise original
-           | NONE => raise original)
+            let
+              (* The two interpretations share ordinary operand elaboration.
+                 Index numerals still use the index-specific representation. *)
+              fun defer term =
+                let
+                  val result = Susp.delay (fn () =>
+                    Exn.Res (check term)
+                    handle error as Feedback.HOL_ERR _ => Exn.Exn error)
+                in fn () => Exn.release (Susp.force result) end
+              val checked_indices = List.map defer indices
+              val checked_args = List.map defer outer_args
+              fun force_args () = List.map (fn force => force ()) checked_args
+              fun force_indices () =
+                ListPair.mapEq (fn (term, force) =>
+                  index_term_from_ast force term) (indices, checked_indices)
+            in
+              indexed force_indices force_args
+              handle original as Feedback.HOL_ERR _ =>
+                (case Lib.total
+                    (fn () =>
+                      apply_symbol "typecheck_term" context (loc_of name) env
+                        symbol [] []) () of
+                   SOME head =>
+                     if (case checked_surface_sort head of MapSort _ => true
+                         | _ => false) then
+                       let
+                         val explicit = apply_operator loc "_" head
+                           (List.map (fn force => force ()) checked_indices)
+                       in
+                         apply_checked_args "typecheck_term" context loc
+                           "higher-order application" explicit (force_args ())
+                       end
+                     else raise original
+                 | NONE => raise original)
+            end
+        end
 
       fun z3_or_neutral () =
         case #solver context of SOME "cvc5" => false | _ => true
@@ -6179,8 +6234,8 @@ local
       fun shadowed name = Option.isSome (peek_signatures (sigdict, name))
       fun as_const_array_or_set sort payload =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val payload = check payload
           val _ =
             case expected_surface of
@@ -6218,8 +6273,8 @@ local
         end
       fun as_cvc5_set_constant name sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val _ = reject_nested_cvc5_collection context (loc_of term_ast)
             expected_surface
           val _ =
@@ -6243,8 +6298,8 @@ local
         end
       fun as_seq_empty sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val smtstr_ty =
             Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
           val empty =
@@ -6261,8 +6316,8 @@ local
         end
       fun as_cvc5_bag_empty sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val _ = reject_nested_cvc5_collection context (loc_of term_ast)
             expected_surface
           val _ =
@@ -6385,8 +6440,8 @@ local
           else
           let
             val checked = check ascribed
-            val expected = typecheck_sort context tydict sort
-            val expected_surface = surface_sort_of_ast context tydict sort
+            val (expected, expected_surface) =
+              typecheck_sort_and_surface context tydict sort
             val _ =
               if checked_sort checked = expected andalso
                  surface_sort_compatible expected_surface
@@ -6402,8 +6457,8 @@ local
       | TermAscribed (term, sort) =>
           let
             val checked = check term
-            val expected = typecheck_sort context tydict sort
-            val expected_surface = surface_sort_of_ast context tydict sort
+            val (expected, expected_surface) =
+              typecheck_sort_and_surface context tydict sort
             val _ =
               if checked_sort checked = expected andalso
                  surface_sort_compatible expected_surface
@@ -6586,10 +6641,12 @@ local
       val (temp_tydict, param_tys) =
         List.foldl add_param (tydict, []) params
       val param_tys = List.rev param_tys
-      val body_ty = typecheck_sort context temp_tydict body
+      val body_tree as CheckedSort (body_ty, _) =
+        typecheck_sort_tree context temp_tydict body
       (* Parameters shadow aliases in both sort representations. *)
       val body_surface = with_shadowed_surface_aliases shadowed_names
-        (fn () => surface_sort_of_ast context temp_tydict body)
+        (fn () => surface_sort_of_checked_ast context temp_tydict
+          (SOME body_tree) body)
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface body_surface then
@@ -6721,13 +6778,11 @@ local
                 case node_of selector of
                   DatatypeSelector (selector_name, selector_sort) =>
                     let
-                      val selector_ty =
-                        typecheck_sort context tydict selector_sort
-                      val selector_surface = polymorphic_surface
-                        (surface_sort_of_ast context tydict selector_sort)
+                      val (selector_ty, selector_surface) =
+                        typecheck_sort_and_surface context tydict selector_sort
                     in
                       (located_string_node selector_name, selector_ty,
-                       selector_surface)
+                       polymorphic_surface selector_surface)
                     end
               val selectors = List.map selector_info selectors
               val arg_tys = List.map #2 selectors
@@ -7087,8 +7142,8 @@ local
       val name_loc = loc_of name
       val name = located_string_node name
       val _ = reject_duplicate_definition context name_loc name sigdict
-      val range_type = typecheck_sort context tydict sort
-      val range_surface = surface_sort_of_ast context tydict sort
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict sort
       val _ = reject_nested_cvc5_collection context (loc_of sort) range_surface
       val body_checked =
         typecheck_term_with_options elaborate_datatypes context
@@ -7142,8 +7197,8 @@ local
           type_error "typecheck_define_fun" context (loc_of body) NONE NONE
             "recursive self-reference"
         else ()
-      val range_type = typecheck_sort context tydict range
-      val range_surface = surface_sort_of_ast context tydict range
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict range
       val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val body_term =
@@ -7164,8 +7219,8 @@ local
       val name_loc = loc_of name
       val name = located_string_node name
       val _ = reject_duplicate_definition context name_loc name sigdict
-      val range_type = typecheck_sort context tydict range
-      val range_surface = surface_sort_of_ast context tydict range
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict range
       val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val domain_types = List.map (Term.type_of o #2) vars
@@ -7196,8 +7251,8 @@ local
               val name_loc = loc_of name
               val name = located_string_node name
               val _ = reject_duplicate_definition context name_loc name sigdict
-              val range_type = typecheck_sort context tydict range
-              val range_surface = surface_sort_of_ast context tydict range
+              val (range_type, range_surface) =
+                typecheck_sort_and_surface context tydict range
               val _ = reject_nested_cvc5_collection context (loc_of range)
                 range_surface
               val vars =

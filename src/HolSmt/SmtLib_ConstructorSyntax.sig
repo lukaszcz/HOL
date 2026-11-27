@@ -19,6 +19,8 @@ sig
     (syntax * syntax) option
   (* Lexical dependencies only; private atom names are not free variables. *)
   val free_variables : (IntInf.int -> unit) -> syntax -> Term.term list
+  (* Reuse charged observations across related syntax in a single query. *)
+  val free_variables_reader : (IntInf.int -> unit) -> syntax -> Term.term list
   (* Charged, query-local source alpha comparison. Private atoms compare
      only with atoms, independently of lexical binder environments. *)
   val aconv : (IntInf.int -> unit) -> syntax * syntax -> bool

@@ -1176,29 +1176,31 @@ local
       raise ERR "dest_smtfp_bits" "smtfp_bits expected"
   end
 
-  fun bit_decomposition_of_rewrite version vars equation =
+  fun bit_decomposition_of_rewrite mentions_fp version vars equation =
     let
       fun decomposition_shape () =
         let
           val (fp_var, fields) = boolSyntax.dest_eq equation
-          val _ = SmtFpProve.type_mentions_fp (Term.type_of fp_var) orelse
-            raise ERR "bit_decomposition_of_rewrite" "FP term expected"
-          val (sign, exponent, significand) = dest_smtfp_bits fields
-          fun extract_source field =
-            let val (_, _, source, _) = wordsSyntax.dest_word_extract field
-            in source end
-          val sources = List.map extract_source [sign, exponent, significand]
-          val bv_var = List.hd sources
-          val _ = List.all (Term.aconv bv_var) (List.tl sources) orelse
-            raise ERR "bit_decomposition_of_rewrite"
-              "extracts do not share a source"
         in
-          (fp_var, bv_var)
+          if not (mentions_fp (Term.type_of fp_var)) then NONE
+          else
+            let
+              val (sign, exponent, significand) = dest_smtfp_bits fields
+              fun extract_source field =
+                let val (_, _, source, _) = wordsSyntax.dest_word_extract field
+                in source end
+              val bv_var = extract_source sign
+              val high = extract_source exponent
+              val low = extract_source significand
+            in
+              if Term.aconv bv_var high andalso Term.aconv bv_var low then
+                SOME (fp_var, bv_var)
+              else NONE
+            end
         end
     in
       case Lib.total decomposition_shape () of
-        NONE => NONE
-      | SOME (fp_var, bv_var) =>
+        SOME (SOME (fp_var, bv_var)) =>
           let
             (* This registry lookup deliberately sits outside the shape
                probe: once a private fpa2bv decomposition is recognized, a
@@ -1213,6 +1215,7 @@ local
           in
             SOME {fp_var = fp_var, bv_var = bv_var, equation = equation}
           end
+      | _ => NONE
     end
 
   fun discover_bit_decompositions_with_work proof =
@@ -1220,6 +1223,7 @@ local
     val work = ref 0
     val vars = proof_vars proof
     val version = proof_version proof
+    val mentions_fp = SmtFpProve.new_type_mentions_fp ()
     val equations = ref (Redblackmap.mkDict Term.compare)
     fun add_decomposition (decomposition : bit_decomposition) decompositions =
       let
@@ -1242,7 +1246,8 @@ local
         val decompositions =
           case pt of
             REWRITE equation =>
-              (case bit_decomposition_of_rewrite version vars equation of
+              (case bit_decomposition_of_rewrite
+                  mentions_fp version vars equation of
                  SOME decomposition =>
                    add_decomposition decomposition decompositions
                | NONE => decompositions)

@@ -44,16 +44,29 @@ fun large_type 0=Type.bool
 val ty=large_type 21
 val large_atom=boolSyntax.mk_eq
   (Term.mk_var ("cnf_hidden_type",ty),boolSyntax.mk_arb ty)
-fun unknown source=case SmtCnfProve.prove (Array.fromList [source]) of
+fun unknown sources=case SmtCnfProve.prove (Array.fromList sources) of
   SmtCnfProve.Unknown=>()
  | _=>raise Fail "native CNF optional guard did not delegate"
-val _=unknown large_atom
+val _=unknown [large_atom]
 val binder=boolSyntax.mk_forall
   (Term.mk_var ("cnf_binder",Type.bool),boolSyntax.T)
-val _=unknown binder
+val _=unknown [binder]
 val _=case SmtCnfProve.prove (Array.array (2049,p)) of
   SmtCnfProve.Unknown=>()
  | _=>raise Fail "native CNF optional inventory did not delegate"
+(* T, F, the large clause's atom and 45 unit atoms give a budget of
+   200000 div 48 = 4166. The large clause costs 4098, even though its
+   unfolded size is 4197, and the 68 unit clauses consume the remainder. *)
+val model_function=Term.mk_var ("model_f",Type.bool --> Type.bool)
+val model_atom=List.foldl (fn (_,term)=>Term.mk_comb (model_function,term))
+  p (List.tabulate (12,Lib.I))
+val model_clause=boolSyntax.list_mk_disj (List.tabulate (150,fn _=>model_atom))
+val model_units=List.tabulate (45,fn i=>
+  Term.mk_var ("model_unit_" ^ Int.toString i,Type.bool))
+val model_boundary=model_clause :: (model_units @
+  List.tabulate (23,fn _=>hd model_units))
+val _=classify true model_boundary
+val _=unknown (hd model_units :: model_boundary)
 val word=Term.mk_var ("cnf_word",wordsSyntax.mk_int_word_type 3)
 val bit=wordsSyntax.mk_index (word,numSyntax.zero_tm)
 val _=classify false [bit,boolSyntax.mk_neg bit]
