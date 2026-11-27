@@ -364,11 +364,28 @@ local
                       end
                   | ConjunctionProvenance (source, operands) =>
                       let
-                        val summaries = List.map summarize operands
+                        fun ordinary () =
+                          let val summaries = List.map summarize operands in
+                            (ConjunctionProvenance
+                               (source, List.map #1 summaries), false,
+                             List.exists #3 summaries)
+                          end
                       in
-                        (ConjunctionProvenance
-                           (source, List.map #1 summaries), false,
-                         List.exists #3 summaries)
+                        case operands of
+                          (first as ConjunctionProvenance (_, shared)) ::
+                            rest =>
+                            (* Recovery can make the outer tail identical to
+                               the inner operand list. Its compacted operands
+                               and binder summary already cover that tail. *)
+                            if Portable.pointer_eq (shared, rest) then
+                              (case summarize first of
+                                 (first' as ConjunctionProvenance (_, tail),
+                                  _, block) =>
+                                   (ConjunctionProvenance
+                                      (source, first' :: tail), false, block)
+                               | _ => ordinary ())
+                            else ordinary ()
+                        | _ => ordinary ()
                       end
                   | ApplicationProvenance (head, operands) =>
                       let
@@ -399,29 +416,27 @@ local
         end
     in #1 (summarize provenance) end
 
-  fun term_contains_conjunction term =
-    let
-      val seen = Array.array (2039, [] : Term.term list)
-      fun visit [] = false
-        | visit (term :: pending) =
-            let
-              val bucket = SmtReplayImport.pointer_bucket 4 2039 term
-              val prior = Array.sub (seen,bucket)
-            in
-              if List.exists (fn old => Portable.pointer_eq (term,old)) prior
-              then visit pending
-              else if boolSyntax.is_conj term then true
-              else
-                (Array.update (seen,bucket,term :: prior);
-                 case Lib.total Term.dest_comb term of
-                   SOME (operator,operand) =>
+  fun term_contains_conjunction root =
+    if not (Term.is_comb root orelse Term.is_abs root) then false
+    else
+      let
+        val seen = SmtPointerTable.new
+          {hint = SmtReplayImport.pointer_bucket 4,
+           initial = 7, ceiling = 4093}
+        fun visit [] = false
+          | visit (term :: pending) =
+              if Term.is_comb term then
+                boolSyntax.is_conj term orelse
+                (if SmtPointerTable.mark seen term then
+                   let val (operator, operand) = Term.dest_comb term in
                      visit (operator :: operand :: pending)
-                 | NONE =>
-                     (case Lib.total Term.dest_abs term of
-                        SOME (_,body) => visit (body :: pending)
-                      | NONE => visit pending))
-            end
-    in visit [term] end
+                   end
+                 else visit pending)
+              else if Term.is_abs term andalso
+                      SmtPointerTable.mark seen term then
+                visit (Term.body term :: pending)
+              else visit pending
+      in visit [root] end
 
   (* CPC's n-ary [and] elaborates to [list_mk_conj], hence to this
      right-associated HOL shape.  Unlike source-occurrence provenance, these
@@ -434,6 +449,32 @@ local
        | NONE => [right])
     end
 
+  (* Sharing in recovered metadata follows actual term pointers. For an
+     atomic result there is no table to allocate. *)
+  fun new_semantic_provenance_memo () =
+    let
+      val pending = ref NONE
+      fun lookup term = case !pending of
+          NONE => NONE
+        | SOME memo => SmtPointerTable.lookup memo term
+      fun reuse term build =
+        case lookup term of
+          SOME saved => saved
+        | NONE =>
+            let
+              val provenance = build ()
+              val memo = case !pending of SOME saved => saved
+                | NONE =>
+                    let val fresh = SmtPointerTable.new
+                      {hint = SmtReplayImport.pointer_bucket 4,
+                       initial = 7, ceiling = 4093}
+                    in pending := SOME fresh; fresh end
+            in
+              SmtPointerTable.insert memo term provenance;
+              provenance
+            end
+    in {lookup = lookup, reuse = reuse} end
+
   (* A proof step can legitimately omit its raw source occurrence after the
      theorem has been kernel-checked.  The only topology that a later
      conclusion-less CPC rule needs to recover is an AND operand boundary;
@@ -444,29 +485,47 @@ local
      retained by compact_live_provenance, including its AND boundaries. *)
   fun recovered_checked_provenance reason term =
     let
+      val {lookup, reuse} = new_semantic_provenance_memo ()
+      val leaf = UnavailableProvenance
+        ("checked result has no recoverable AND boundary: " ^ reason)
       fun recover term =
         case Lib.total boolSyntax.dest_conj term of
-          SOME _ =>
-            ConjunctionProvenance
-              (ParsedConjunction,
-               List.map recover (right_associated_conjuncts term))
-        | NONE => UnavailableProvenance
-            ("checked result has no recoverable AND boundary: " ^ reason)
+          SOME children => #1 (reuse term (fn () =>
+            let val parts = operands children in
+              (ConjunctionProvenance (ParsedConjunction, parts), parts)
+            end))
+        | NONE => leaf
+      and operands (left, right) =
+        let
+          val first = recover left
+          (* Only cache actual nested operand provenance. The suffix of a
+             plain right-associated chain need not have its own record. *)
+          val rest = case Lib.total boolSyntax.dest_conj right of
+              NONE => [leaf]
+            | SOME children =>
+                (case lookup right of
+                   SOME (_, parts) => parts
+                 | NONE => operands children)
+        in first :: rest end
     in recover term end
 
-  (* A successful kernel theorem proves when no conjunction occurrence is
-     present at all.  In that case Atomic is exact, while equality boundaries
-     remain visible in HOL and can be retained recursively.  Any theorem that
-     does contain a conjunction needs occurrence-specific parsed/semantic
-     provenance; never guess its erased n-ary grouping here. *)
+  (* After checking conjunction freedom, retain the equality boundaries
+     with the same sharing as the source term DAG. *)
+  fun semantic_equality_provenance term =
+    let
+      val {reuse, ...} = new_semantic_provenance_memo ()
+      fun recover term =
+        case Lib.total boolSyntax.dest_eq term of
+          SOME (left, right) => reuse term (fn () =>
+            EqualityProvenance (recover left, recover right))
+        | NONE => AtomicProvenance
+    in recover term end
+
+  (* A theorem containing a conjunction needs occurrence-specific
+     provenance to recover its source grouping. *)
   fun conjunction_free_semantic_provenance reason term =
     if term_contains_conjunction term then UnavailableProvenance reason
-    else
-      case Lib.total boolSyntax.dest_eq term of
-        SOME (left, right) => EqualityProvenance
-          (conjunction_free_semantic_provenance reason left,
-           conjunction_free_semantic_provenance reason right)
-      | NONE => AtomicProvenance
+    else semantic_equality_provenance term
 
   (* E1(c): repeated-conclusion theorem reuse is a redundant performance
      cache.  It is opt-in because Net matching is structural and can dominate
@@ -587,7 +646,7 @@ local
                max_exact_provenance_dag_nodes orelse
                term_contains_conjunction term then
               AmbiguousProvenance reason
-            else conjunction_free_semantic_provenance reason term
+            else semantic_equality_provenance term
         | AtomicProvenance => AtomicProvenance
         | exact =>
             if not (use_compact_provenance term) andalso

@@ -9572,8 +9572,11 @@ in
     POP_ASSUM_LIST (MAP_EVERY cleanup o List.rev) g
   end
 
-  val has_set_complement =
-    Library.exists_subterm (Lib.can pred_setSyntax.dest_compl)
+  fun has_applied_constant head =
+    Library.exists_shared_subterm (fn tm =>
+      Term.is_comb tm andalso Term.same_const (Term.rator tm) head)
+
+  val has_set_complement = has_applied_constant pred_setSyntax.compl_tm
 
   (* Checked CARD keeps finite set atoms native, while unrelated non-finite
      atoms still lower to predicates. Native-by-default mode only lowers
@@ -9645,7 +9648,7 @@ in
 
   fun CHECKED_SET_SIMP_TAC preserve_native_card g =
     if preserve_native_card andalso
-        List.exists (Lib.can (HolKernel.find_term pred_setSyntax.is_card))
+        List.exists (has_applied_constant pred_setSyntax.card_tm)
           (#1 g @ [#2 g]) then
       let
         val finite_terms = List.mapPartial finite_set_hypothesis (#1 g)

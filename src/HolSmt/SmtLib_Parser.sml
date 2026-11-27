@@ -268,6 +268,36 @@ struct
     | QueryGetInfo of string
     | QueryGetOption of string
 
+  (* Check the bodies and parameter sorts of definitions. The quantifier
+     and left-hand application used to encode a definition are synthetic.
+     Consecutive check-sat commands may share their assertion and
+     definition snapshots, but each can supply its own assumptions. *)
+  fun query_fragment_terms queries =
+    let
+      fun definition_terms definition =
+        let
+          val (vars, body) = boolSyntax.strip_forall definition
+          val definiens = Lib.snd (boolSyntax.dest_eq body)
+            handle Feedback.HOL_ERR _ => body
+        in definiens :: vars end
+      fun add [] chunks = chunks
+        | add terms chunks = terms :: chunks
+      fun collect (QueryCheckSat {assumptions, assertions,
+                     local_definitions, ...},
+                   (old_assertions, old_defs, chunks)) =
+            let
+              val chunks = if Portable.pointer_eq (local_definitions, old_defs)
+                then chunks
+                else add (List.concat (List.map definition_terms
+                  local_definitions)) chunks
+              val chunks = if Portable.pointer_eq (assertions, old_assertions)
+                then chunks else add assertions chunks
+            in (assertions, local_definitions, add assumptions chunks) end
+        | collect (_, saved) = saved
+      val (_, _, reversed) = List.foldl collect ([], [], []) queries
+    in case List.rev reversed of [terms] => terms
+      | chunks => List.concat chunks end
+
   type surface_flags = SmtLib_Logics.surface_flags
 
   type command_state_snapshot = {

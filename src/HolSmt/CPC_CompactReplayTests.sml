@@ -202,6 +202,63 @@ struct
     end
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
+  fun shared_provenance operator depth =
+    let
+      open CPC_Proof
+      fun alias index = "@e" ^ Int.toString index
+      fun definition index =
+        let val child = alias index in
+          "(define " ^ alias (index + 1) ^ " () (" ^ operator ^ " " ^
+          child ^ " " ^ child ^ "))"
+        end
+      val text = "((declare-const p Bool)(define @e0 () p)" ^
+        String.concat (List.tabulate (depth, definition)) ^
+        "(assume @source " ^ alias depth ^ ")" ^
+        "(step @intro :rule true_intro :premises (@source))" ^
+        "(step @elim :rule true_elim :premises (@intro)))"
+      val stream = TextIO.openString text
+      val proof = Portable.finally (fn () => TextIO.closeIn stream)
+        (Q.parse_stream_with_version
+          (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4") stream
+      val source = case proof_commands proof of
+          ASSUME (_, {term, ...}) :: _ => term
+        | _ => raise Fail "missing shared assumption"
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+      val _ = exact source [source] theorem
+    in CPC_ProofReplay.replay_step_provenance_for_test proof "@elim" end
+
+  fun shared_equality_provenance () =
+    let
+      open CPC_Proof
+      val depth = 24
+      fun check 0 AtomicProvenance = ()
+        | check n (EqualityProvenance (left, right)) =
+            (require "expected a shared equality suffix"
+               (n > 0 andalso Portable.pointer_eq (left, right));
+             check (n - 1) left)
+        | check _ _ = raise Fail "wrong equality provenance"
+    in check depth (shared_provenance "=" depth) end
+
+  fun shared_conjunction_provenance () =
+    let
+      open CPC_Proof
+      val depth = 24
+      fun check 0 (UnavailableProvenance _) = ()
+        | check n (ConjunctionProvenance
+            (ParsedConjunction, left :: rest)) =
+            (require "wrong recovered AND arity" (List.length rest = n);
+             (case left of
+                ConjunctionProvenance (ParsedConjunction, operands) =>
+                  require "expected shared right-associated AND operands"
+                    (Portable.pointer_eq (rest, operands))
+              | UnavailableProvenance _ =>
+                  require "wrong recovered AND leaf"
+                    (case rest of [UnavailableProvenance _] => true
+                     | _ => false)
+              | _ => raise Fail "wrong recovered AND operand");
+             check (n - 1) left)
+        | check _ _ = raise Fail "wrong conjunction provenance"
+    in check depth (shared_provenance "and" depth) end
   fun indexed_cnf () =
     let
       val count = 64
@@ -300,7 +357,11 @@ struct
         end
     in check count true; check (count+1) false end
   fun run () =
-    (test "CPC indexed CNF reuses validated definition operands" indexed_cnf;
+    (test "CPC replay preserves shared equality provenance"
+       shared_equality_provenance;
+     test "CPC replay preserves shared right-associated AND provenance"
+       shared_conjunction_provenance;
+     test "CPC indexed CNF reuses validated definition operands" indexed_cnf;
      test "CPC indexed transitivity matches exact reachability and kind"
        exact_transitivity_path;
      test "CPC fitting law drops all unused original Sources"

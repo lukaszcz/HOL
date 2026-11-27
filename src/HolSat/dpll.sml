@@ -97,6 +97,25 @@ val simplify_constants =
 
 fun search prove_units initial =
   let
+    (* Rewriting preserves the initial hypotheses. Variables fixed there
+       cannot become schematic in later unit proofs. *)
+    val fixed_atom =
+        if prove_units then
+          let
+            val vars = Portable.HOLSusp.delay (fn () => hyp_frees initial)
+            val types = Portable.HOLSusp.delay (fn () => Thm.hyp_tyvars initial)
+            fun fixed_var v =
+              HOLset.member (Portable.HOLSusp.force vars,v)
+            fun fixed_type ty =
+              HOLset.member (Portable.HOLSusp.force types,ty)
+            fun fixed atom =
+              if is_var atom then fixed_var atom
+              else
+                not (isSome (HOLset.find (not o fixed_var)
+                  (Term.FVL [atom] Term.empty_tmset))) andalso
+                List.all fixed_type (Term.type_vars_in_term atom)
+          in fixed end
+        else K false
     fun project (Left,th) = CONJUNCT1 th
       | project (Right,th) = CONJUNCT2 th
     fun combine v l_false r_false =
@@ -109,9 +128,8 @@ fun search prove_units initial =
           case find_split true c of
               Unit (_,path) => prove_unit path
             | Choice _ => raise Fail "DPLL unit projection"
-        (* Keep the chosen equality as a hypothesis on the model path.
-           If that branch refutes, the unit proves the equality and there
-           is no need to rewrite the CNF with the opposite assignment. *)
+        (* Rewrite with just the assignment hypothesis. On refutation, the
+           unit proof discharges it without rewriting the opposite branch. *)
         fun force_unit atom value prove_equality =
           case recurse (split_branch atom value th) of
               Refutation refutation =>
@@ -132,7 +150,12 @@ fun search prove_units initial =
                     if is_T atom orelse is_F atom then
                       recurse (simplify_constants th)
                     else if prove_units then
-                      recurse (REWRITE_RULE [EQF_INTRO (prove ())] th)
+                      let val equality = EQF_INTRO (prove ())
+                      in
+                        if fixed_atom atom then
+                          force_unit atom boolSyntax.F (fn () => equality)
+                        else recurse (REWRITE_RULE [equality] th)
+                      end
                     else force_unit atom boolSyntax.F (EQF_INTRO o prove)
                   end
                 else

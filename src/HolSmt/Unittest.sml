@@ -3944,12 +3944,15 @@ let
     parse_smtlib_state
       ("(set-logic QF_UF)\n" ^
        "(declare-const a Bool)\n" ^
+       "(declare-const b Bool)\n" ^
        "(define-fun id ((p Bool)) Bool p)\n" ^
        "(assert a)\n" ^
        "(check-sat)\n" ^
        "(declare-fun unused (Bool) Bool)\n" ^
        "(check-sat-assuming (a))\n" ^
+       "(check-sat-assuming (b))\n" ^
        "(push 1)\n" ^
+       "(define-fun later () Bool true)\n" ^
        "(assert false)\n" ^
        "(check-sat)\n" ^
        "(pop 1)\n" ^
@@ -3979,8 +3982,8 @@ let
     | _ => die "unexpected sequence of finite check-sat queries"
 in
   case queries of
-    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat pushed,
-     QueryCheckSat popped, QueryCheckSat reset] =>
+    [QueryCheckSat first, QueryCheckSat repeated, QueryCheckSat other,
+     QueryCheckSat pushed, QueryCheckSat popped, QueryCheckSat reset] =>
       (assert (Portable.pointer_eq (#assertions first, #assertions repeated),
          "repeated check copied the assertions");
        assert (List.length (#local_definitions first) = 1 andalso
@@ -3990,6 +3993,14 @@ in
        assert (null (#assumptions first) andalso
          List.exists (term_is_var_named "a") (#assumptions repeated),
          "repeated check did not record its assumptions");
+       let val terms = query_fragment_terms
+             (List.map QueryCheckSat [first, repeated, other, pushed])
+           fun variable name = Term.mk_var (name, Type.bool)
+           val (a, b, p) = (variable "a", variable "b", variable "p")
+       in assert (ListPair.allEq (fn (left, right) => Term.aconv left right)
+             (terms, [p, p, a, a, b, p, p, boolSyntax.T, a, boolSyntax.F]),
+           "fragment terms duplicated snapshots or omitted a query change")
+       end;
        assert (case #assertions pushed of
            [outer, inner] => term_is_var_named "a" outer andalso
              Term.term_eq inner boolSyntax.F
@@ -5094,7 +5105,21 @@ fun smtlib_logic_fragment_diagnostics () =
           let val child = shared_sum (depth - 1)
           in intSyntax.mk_plus (child, child) end
     val shared_int_atom = intSyntax.mk_less (shared_sum 28, ``y:int``)
+    val chain_depth = 100
+    val equality_chain = List.foldl (fn (_, body) =>
+      "(= true " ^ body ^ " true)") "true"
+      (List.tabulate (chain_depth, Lib.I))
+    val {assertions = chain_assertions, ...} = parse_smtlib_state
+      (script "QF_UF" ("(assert " ^ equality_chain ^ ")\n"))
+    val application_visits = ref 0
+    fun count_application term =
+      (if Term.is_comb term then application_visits := !application_visits + 1
+       else ();
+       SmtLib_Logics.term_children term)
+    val () = SmtLib_Logics.walk_terms count_application chain_assertions
   in
+    assert (!application_visits = 6 * chain_depth,
+      "fragment scan revisited a chainable equality operand after eviction");
     expect_no_term_fragment "shared Boolean assertion" "QF_UF" shared_assertion;
     expect_term_fragment "quantifier after shared Boolean assertion" "QF_UF"
       (boolSyntax.mk_conj (shared_assertion, ``!n:num. n = n``))
@@ -5103,6 +5128,21 @@ fun smtlib_logic_fragment_diagnostics () =
       "difference logic atom shape";
     expect_term_fragment "shared pure integer atom" "QF_BV" shared_int_atom
       "integer atom";
+    (let
+       val arguments = List.tabulate (128, fn i =>
+         Term.mk_var ("arg" ^ Int.toString i, Type.bool))
+       fun apply_bools range =
+         let val sort = List.foldl
+               (fn (_, result) => Type.--> (Type.bool, result)) range arguments
+         in Term.list_mk_comb (Term.mk_var ("wide", sort), arguments) end
+     in
+       expect_no_term_fragment "wide Boolean application" "QF_UF"
+         (apply_bools Type.bool);
+       expect_term_fragment "datatype in a partial application sort" "QF_UF"
+         (apply_bools (Type.--> (oneSyntax.one_ty, Type.bool))) "datatype sort";
+       expect_term_fragment "integer sort on an unused abstraction binder"
+         "QF_UF" ``\unused:int. T`` "integer term sort"
+     end);
     expect_fragment_with_options "nested Seq datatype unavailable"
       all_elaborated "QF_S"
       (script "QF_S"
