@@ -9342,10 +9342,13 @@ in
     fun TRANSFER_SIMP_TAC (asl, w) =
       let
         val guard_rewrites =
-          List.map Thm.ASSUME (List.filter is_num_guard asl)
+          List.map Thm.ASSUME
+            (List.filter (fn a => not (Lib.op_mem Term.aconv a held)
+                                andalso is_num_guard a) asl)
         val rewrites = guard_rewrites @ num_transfer_rewrites
         fun simplify thm =
-          if Lib.op_mem Term.aconv (Thm.concl thm) held then
+          if Lib.op_mem Term.aconv (Thm.concl thm) held orelse
+             is_num_guard (Thm.concl thm) then
             ASSUME_TAC thm
           else
             ASSUME_TAC
