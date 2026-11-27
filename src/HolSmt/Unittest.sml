@@ -2736,7 +2736,7 @@ let
   val equality = ``(n:num) = m``
   val application_equality = ``f (n:num) = f (m:num)``
   val lifted_equality = ``(k:num->int) n = r n``
-  val lifted_application = ``(p:int->bool) (k n)``
+  val lifted_application = ``(p:int->bool) ((k:num->int) (n:num))``
   val held = ``0 <= (x:int)``
   fun arguments_differ [] [] = false
     | arguments_differ (left :: left_tail) (right :: right_tail) =
@@ -2838,8 +2838,10 @@ let
     end
 in
   List.app check
-    [[equality, held, application_equality, lifted_equality, lifted_application],
-     [equality, held, lifted_application, lifted_equality, application_equality]]
+    [[equality, held, application_equality, lifted_equality,
+      lifted_application],
+     [application_equality, equality, held, lifted_application,
+      lifted_equality]]
 end
 
 fun num_bridge_axioms_retired_success () =
