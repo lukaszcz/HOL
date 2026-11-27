@@ -972,13 +972,11 @@ local
   val replay_reglan_refl = SmtRegLanProve.refl
   val replay_reglan_sym = SmtRegLanProve.sym
   val replay_reglan_trans = SmtRegLanProve.trans
-  val reglan_congruence_theorems = SmtRegLanProve.congruence_theorems
-
-  fun replay_reglan_cong conclusion prems =
-    case conclusion of
-      SOME target => metis_prove (prems @ reglan_congruence_theorems) target
-    | NONE => raise ERR "cong"
-        "RegLan congruence requires a declared exact conclusion"
+  (* Use the shared bounded prover even for explicitly named conclusions. *)
+  fun replay_reglan_cong target prems =
+    SmtRegLanProve.congruence prems target
+    handle Feedback.HOL_ERR _ => raise ERR "cong"
+      "no respectful RegLan congruence law matches the conclusion and premises"
 
   fun replay_reglan_cong_from_source source prems =
     let
@@ -1061,7 +1059,7 @@ local
           val target = Term.list_mk_comb
             (reglan_equiv_tm, [source, destination])
         in
-          metis_prove (prems @ reglan_congruence_theorems) target
+          replay_reglan_cong target prems
         end
       val (head, operands) = boolSyntax.strip_comb source
       fun unary make =
@@ -21138,9 +21136,9 @@ local
                      (Option.map is_reglan_equiv conclusion, false) orelse
                    List.exists (is_reglan_equiv o Thm.concl) prems then
                   (case conclusion of
-                     SOME _ => unavailable_result
+                     SOME target => unavailable_result
                        "RegLan congruence uses semantic language equivalence"
-                       (replay_reglan_cong conclusion prems)
+                       (replay_reglan_cong target prems)
                    | NONE =>
                        let val source = expect_one_arg "cong" args in
                          unavailable_result

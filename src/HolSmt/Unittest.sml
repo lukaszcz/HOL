@@ -15107,11 +15107,21 @@ let
       \ :rule cong :premises (@p1) :args ((ite c re.none re.none))))")
   val membership = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string
-      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      "((assume @p1 (= (re.union re.none re.none) re.none)) \
       \ (step @p2 (= (str.in_re \"a\" re.none) \
       \               (str.in_re \"a\" (re.union re.none re.none))) \
       \ :rule cong :premises (@p1) \
       \ :args ((str.in_re \"a\" re.none))))")
+  fun changed_membership conclusion =
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string
+      ("((declare-const s String) (declare-const t String) \
+       \ (assume @p1 (= t s)) \
+       \ (assume @p2 (= (re.union re.none re.none) re.none)) \
+       \ (step @p3 " ^ conclusion ^
+       " :rule cong :premises (@p1 @p2) :args ((str.in_re s re.none))))"))
+  val explicit_membership = changed_membership
+    "(= (str.in_re s re.none) (str.in_re t (re.union re.none re.none)))"
+  val omitted_membership = changed_membership ""
   val distinct = parse_cpc_proof_string
     "((assume @p (distinct re.none (re.union re.none re.none))))"
   val distinct_symm = CPC_ProofReplay.replay_root_for_test
@@ -15133,7 +15143,7 @@ let
   val omitted_conditional = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string
       "((declare-const c Bool) (declare-const d Bool) \
-      \ (assume @p0 (= c d)) \
+      \ (assume @p0 (= d c)) \
       \ (assume @p1 (= re.none (re.union re.none re.none))) \
       \ (assume @p2 (= re.none (re.inter re.none re.none))) \
       \ (step @p3 :rule nary_cong :premises (@p0 @p1 @p2) \
@@ -15158,6 +15168,10 @@ in
   expect_conclusion "CPC RegLan membership consumer" membership
     ``smt_in_re (SmtStr [97]) ^left =
       smt_in_re (SmtStr [97]) ^middle``;
+  List.app (fn (label, theorem) => expect_conclusion label theorem
+    ``smt_in_re s ^left = smt_in_re t ^middle``)
+    [("CPC explicit membership changes both operands", explicit_membership),
+     ("CPC omitted membership changes both operands", omitted_membership)];
   expect_conclusion "CPC negated RegLan symm" distinct_symm
     ``~reglan_equiv ^middle ^left``;
   expect_conclusion "CPC omitted RegLan star congruence" omitted_star
@@ -15181,10 +15195,11 @@ end
 fun cpc_reglan_nonrespectful_congruence_rejected () =
 let
   fun reject label proof =
-    (ignore (CPC_ProofReplay.replay_root_for_test
-       (parse_cpc_proof_string proof));
-     die ("CPC accepted non-respectful RegLan context: " ^ label))
-    handle Feedback.HOL_ERR _ => ()
+    let val parsed = parse_cpc_proof_string proof in
+      expect_hol_error_contains label
+        "no respectful RegLan congruence law matches"
+        (fn () => ignore (CPC_ProofReplay.replay_root_for_test parsed))
+    end
 in
   reject "RegLan result"
     "((declare-fun f (RegLan) RegLan) \
