@@ -260,11 +260,13 @@ type safe_scan =
        option ref,
    postponed : aesopTree.rapp_data list ref}
 
+(* A yielded goal goes back into the queue, so scans of equal-priority
+   goals can remain suspended at the same time. *)
 type safe_scan_cache =
-  {scans : safe_scan list ref, active : bool ref}
+  {scans : safe_scan Inttab.table ref, active : bool ref}
 
 fun empty_safe_scan_cache () : safe_scan_cache =
-  {scans = ref [], active = ref false}
+  {scans = ref Inttab.empty, active = ref false}
 
 fun same_safe_rules (previous, rules) =
   let
@@ -283,10 +285,7 @@ fun new_safe_scan goal rules resume_key : safe_scan =
    postponed = ref []}
 
 fun forget_safe_scan (cache : safe_scan_cache) id =
-  (#scans cache :=
-     List.filter
-       (fn ({goal, ...} : safe_scan) => #id goal <> id)
-       (!(#scans cache));
+  (#scans cache := Inttab.delete_safe id (!(#scans cache));
    #active cache := false)
 
 fun safe_phase ctxt level budget (cache : safe_scan_cache)
@@ -309,7 +308,8 @@ fun safe_phase ctxt level budget (cache : safe_scan_cache)
                     same_safe_rules (previous_rules, rules)
                 | matches _ = false
             in
-              case List.find matches (!(#scans cache)) of
+              case Option.mapPartial (Option.filter matches)
+                     (Inttab.lookup (!(#scans cache)) id) of
                   SOME saved => saved
                 | NONE =>
                     let
@@ -317,11 +317,7 @@ fun safe_phase ctxt level budget (cache : safe_scan_cache)
                         new_safe_scan goal rules (SOME (generation, rules))
                     in
                       #scans cache :=
-                        fresh ::
-                        List.filter
-                          (fn ({goal = previous, ...} : safe_scan) =>
-                            #id previous <> id)
-                          (!(#scans cache));
+                        Inttab.update (id, fresh) (!(#scans cache));
                       fresh
                     end
             end
@@ -614,10 +610,10 @@ type unsafe_scan =
    reversed : aesopTree.rapp_data list ref}
 
 type scan_cache =
-  {scans : unsafe_scan list ref, active : unsafe_scan option ref}
+  {scans : unsafe_scan Inttab.table ref, active : unsafe_scan option ref}
 
 fun empty_scan_cache () : scan_cache =
-  {scans = ref [], active = ref NONE}
+  {scans = ref Inttab.empty, active = ref NONE}
 
 fun new_unsafe_scan ctxt generation goal rule : unsafe_scan =
   let
@@ -654,10 +650,7 @@ fun finish_unsafe_scan budget
   end
 
 fun forget_unsafe_scan (cache : scan_cache) id =
-  (#scans cache :=
-     List.filter
-       (fn ({goal, ...} : unsafe_scan) => #id goal <> id)
-       (!(#scans cache));
+  (#scans cache := Inttab.delete_safe id (!(#scans cache));
    #active cache := NONE)
 
 fun resumable_unsafe_applications ctxt budget (cache : scan_cache) goal rule =
@@ -666,8 +659,6 @@ fun resumable_unsafe_applications ctxt budget (cache : scan_cache) goal rule =
     (* Restarted rule assembly makes a fresh closure, so pointer identity
        does not identify it.  The store, rendered node and tactic-registry
        generation identify a resumable rule scan. *)
-    fun same_goal ({goal = previous, ...} : unsafe_scan) =
-      #id previous = #id goal
     fun matches
           ({goal = previous_goal, rule = previous_rule,
             registry_generation = previous_generation, ...} :
@@ -678,14 +669,14 @@ fun resumable_unsafe_applications ctxt budget (cache : scan_cache) goal rule =
       #phase previous_rule = #phase rule andalso
       #once previous_rule = #once rule
     val scan =
-      case List.find matches (!(#scans cache)) of
+      case Option.mapPartial (Option.filter matches)
+             (Inttab.lookup (!(#scans cache)) (#id goal)) of
           SOME saved => saved
         | NONE =>
             let val fresh = new_unsafe_scan ctxt generation goal rule
             in
               #scans cache :=
-                fresh :: List.filter (not o same_goal)
-                  (!(#scans cache));
+                Inttab.update (#id goal, fresh) (!(#scans cache));
               fresh
             end
     val _ = #active cache := SOME scan
@@ -1071,8 +1062,8 @@ fun resume_budget_session
                 checkpoint :=
                   {tree = initial, depth_limited = false,
                    rapp_limited = false};
-                #scans cache := [];
-                #scans safe_cache := [];
+                #scans cache := Inttab.empty;
+                #scans safe_cache := Inttab.empty;
                 traceUtil.trace level 2
                   (fn () =>
                     "registered tactic rules changed; " ^

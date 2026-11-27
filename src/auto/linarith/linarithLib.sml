@@ -546,9 +546,13 @@ fun literal_bounds_with work instance operator tm (left, right) =
         (left, right)
       else
         (right, left)
-    fun ground relation goal ctxt =
-      Tactic.ACCEPT_TAC
-        (EQT_ELIM (Conv.QCONV (#norm_conv instance) relation)) goal ctxt
+    fun ground relation (goal as (_, target)) ctxt =
+      (* ACCEPT_TAC requires this match. Check it before normalization,
+         while keeping the original attempts for alpha-equivalent terms. *)
+      if Term.aconv relation target then
+        Tactic.ACCEPT_TAC
+          (EQT_ELIM (Conv.QCONV (#norm_conv instance) relation)) goal ctxt
+      else raise ERR "literal_bounds" "different case goal"
     val branches =
       [leq (lower, left), leq (lower, right),
        leq (left, upper), leq (right, upper)]

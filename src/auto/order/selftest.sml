@@ -935,6 +935,42 @@ val _ =
          closes [concrete] andalso closes [axiom]
        end)
 
+val _ =
+  check
+    ("ORDER_ss reuses specialized strict-edge proofs in one context",
+     fn () =>
+       let
+         val axiom = relationTheory.RSUBSET_WeakOrder
+         val strict =
+           ``relation$STRORD relation$RSUBSET
+               (r:num->num->bool) (s:num->num->bool)``
+         val goal =
+           ``relation$RSUBSET (r:num->num->bool) (s:num->num->bool)``
+         val {dprocs, ...} = simpLib.dest_ssfrag ORDER_ss
+         val {addcontext, apply, initial, ...} =
+           Traverse.dest_reducer (hd dprocs)
+         fun warmed fact =
+           let
+             val context = addcontext (initial, [axiom, Thm.ASSUME fact])
+             fun prove tm = apply
+               {solver = K Thm.REFL, conv = K Thm.REFL, context = context,
+                stack = [], relation = (boolSyntax.equality, Thm.REFL)} tm
+             val _ = prove goal
+           in
+             count_primitives prove goal
+           end
+         val (_, weak_cost) = warmed goal
+         val (result, strict_cost) = warmed strict
+       in
+         Term.aconv (boolSyntax.mk_eq (goal, boolSyntax.T))
+           (Thm.concl result) andalso
+         (case Thm.hyp result of
+              [hyp] => Term.aconv hyp strict
+            | _ => false) andalso
+         (not (Portable.pointer_eq (goal, goal)) orelse
+          strict_cost <= weak_cost)
+       end)
+
 (* The decision procedure sees an atom the rewriting has left standing,
    which the tactic cannot: it is asked about the goal's subterms with
    the assumptions as its context. *)

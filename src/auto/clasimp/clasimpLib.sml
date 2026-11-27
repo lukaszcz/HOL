@@ -994,8 +994,8 @@ type rewrite_pattern_index = (converse_rewriter * hol_type) Net.net
 datatype lhs_view_table = LHSViewTable of
   {simpset : simpLib.simpset, base : view_base,
    sources : simpLib.rewrite_source list, entries : lhs_view_entry list,
-   index : source_index,
-   heads : dependency_index,
+   index : source_index Susp.susp,
+   heads : dependency_index Susp.susp,
    rewrite_patterns : rewrite_pattern_index Susp.susp,
    positions : abstraction_position HOLset.set,
    generation : int, derived : int, reused : int, rebuild : bool,
@@ -1031,9 +1031,15 @@ fun rewrite_pattern_index sources = List.foldl
     in Net.insert (left,((source,rewrite),type_of left)) index end)
   Net.empty sources
 
-fun table_indices entries =
+fun table_source_index entries =
+  List.foldl
+    (fn (entry : lhs_view_entry,sources) =>
+      Binarymap.insert (sources,#origin entry,entry))
+    (Binarymap.mkDict source_compare) entries
+
+fun table_dependency_index entries =
   let
-    fun entry (entry : lhs_view_entry,(sources,heads)) =
+    fun entry (entry : lhs_view_entry,heads) =
       let
         val origin = #origin entry
         fun add tm found =
@@ -1046,13 +1052,11 @@ fun table_indices entries =
                 in Binarymap.insert (found,Name,HOLset.add (previous,origin))
                 end
       in
-        (Binarymap.insert (sources,origin,entry),
-         List.foldl (fn (tm,index) => add tm index) heads (#footprint entry))
+        List.foldl (fn (tm,index) => add tm index) heads (#footprint entry)
       end
   in
     List.foldl entry
-      (Binarymap.mkDict source_compare,Binarymap.mkDict KernelSig.id_compare)
-      entries
+      (Binarymap.mkDict KernelSig.id_compare) entries
   end
 
 (* Opaque reducers can change answers when their primed context changes. *)
@@ -1094,6 +1098,7 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
           NONE => (Binarymap.mkDict source_compare,NONE,true)
         | SOME (LHSViewTable old) =>
             let
+              val index = Susp.force (#index old)
               val context = simpLib.rewrite_context_changes
                 (Susp.force (#base old),Susp.force base)
               (* Append-mostly inventories share their unchanged suffix. *)
@@ -1108,11 +1113,11 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
                     SOME added =>
                       (* A shared suffix still has the last entry at
                          each old origin, including repeated origins. *)
-                      (added, if Binarymap.numItems (#index old) =
+                      (added, if Binarymap.numItems index =
                                  #derived old + #reused old
                               then []
                               else List.filter
-                                (not o Option.isSome o retained (#index old))
+                                (not o Option.isSome o retained index)
                                 (#sources old))
                   | NONE =>
                       let
@@ -1121,7 +1126,7 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
                             Binarymap.insert (index,source,source))
                           (Binarymap.mkDict source_compare) sources
                         val added = List.filter
-                          (not o Option.isSome o retained (#index old)) sources
+                          (not o Option.isSome o retained index) sources
                         val removed = List.filter
                           (fn source =>
                             case Binarymap.peek (new_index,source) of
@@ -1136,9 +1141,12 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
                 not (HOLset.equal (#positions old,positions)) orelse
                 (#context_sensitive context andalso
                  not (null added andalso null removed andalso null keys))
-              val selected = if full then NONE else affected (#heads old) keys
+              val selected =
+                if full then NONE
+                else if null keys then SOME no_sources
+                else affected (Susp.force (#heads old)) keys
             in
-              (#index old,selected,full orelse not (Option.isSome selected))
+              (index,selected,full orelse not (Option.isSome selected))
             end
     fun reusable source =
       case dirty of
@@ -1161,7 +1169,9 @@ fun update_lhs_view_table_with_positions caller_charge previous base ss
            abstraction_positions= #abstraction_positions old,
            normalization= #normalization old}
     val entries = map obtain sources
-    val (index,heads) = table_indices entries
+    (* Only predecessor reuse needs these indices. *)
+    val index = Susp.delay (fn () => table_source_index entries)
+    val heads = Susp.delay (fn () => table_dependency_index entries)
     (* Only converse detection needs this index. Most table consumers use
        the views directly, and a prior converse binding can be reused. *)
     val rewrite_patterns = Susp.delay (fn () => rewrite_pattern_index sources)
@@ -1192,7 +1202,8 @@ fun make_lhs_view_cache_of_base caller_charge =
   let
     val tables = ref ([] : lhs_view_table list)
     fun base_of (LHSViewTable data) = Susp.force (#base data)
-    fun previous base ss sources =
+    fun previous [] _ _ = NONE
+      | previous prior base sources =
       let
         (* Several tables can share the same native inventory while their
            conversions or decision procedures differ. Break that tie by
@@ -1210,7 +1221,7 @@ fun make_lhs_view_cache_of_base caller_charge =
         (* Only ties need context inspection, and one table can win many. *)
         val ranked = map
           (fn table => (table, Susp.delay (fn () => context_rank table)))
-          (!tables)
+          prior
         fun prefer (candidate as (_, rank), old as (_, old_rank)) =
           if rank_compare (Susp.force rank, Susp.force old_rank) = LESS
           then candidate else old
@@ -1223,9 +1234,10 @@ fun make_lhs_view_cache_of_base caller_charge =
             | [] => case remaining of [] => NONE | _::rest => suffix rest
         fun score (candidate as (LHSViewTable data, _),(best,count)) =
           let
+            val index = Susp.force (#index data)
             val reused = List.foldl
               (fn (source,n) =>
-                case Binarymap.peek (#index data,source) of
+                case Binarymap.peek (index,source) of
                     NONE => n
                   | SOME entry =>
                       if simpLib.same_rewrite_source (source,#origin entry)
@@ -1250,7 +1262,8 @@ fun make_lhs_view_cache_of_base caller_charge =
         | NONE =>
             let
               val table = update_lhs_view_table caller_charge
-                (previous base ss (simpLib.rewrite_source_handles ss)) base ss
+                (previous (!tables) base (simpLib.rewrite_source_handles ss))
+                base ss
               val kept = List.take (!tables,Int.min (7,length (!tables)))
             in tables := table::kept; table end
   in get end

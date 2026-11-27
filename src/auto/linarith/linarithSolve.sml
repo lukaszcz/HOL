@@ -346,9 +346,18 @@ fun eliminate_pairs (work : work) drop_column independent pos neg =
        row :: rev_rows)
       handle DuplicateRow => acc
     fun finish (_, rev_rows) = Rows (List.rev rev_rows)
+    (* A consecutive copy of the current positive row would derive
+       exactly the same rows. Skip it after the current row has been
+       processed, so the first certificates and early exit are retained. *)
+    fun skip_copies _ [] = []
+      | skip_copies key (rest as (next, _) :: others) =
+          if compare_key (key, row_key next) = EQUAL then
+            skip_copies key others
+          else rest
     fun positives [] kept = finish kept
       | positives (p :: ps) kept = negatives p ps neg kept
-    and negatives p ps [] kept = positives ps kept
+    and negatives (p, _) ps [] kept =
+          positives (skip_copies (row_key p) ps) kept
       | negatives p ps (n :: ns) kept =
           let val row as Lineq (_, _, _, just) = derive p n
           in

@@ -502,10 +502,13 @@ fun remove_rule name (CS {decls, wrappers, index, distinct}) =
         index = List.foldl delete index old_decls}
   end
 
-fun merge_alists left right =
-  left @ List.filter
-    (fn (name, _) => not (List.exists (fn (name', _) => name = name') left))
-    right
+fun merge_alists left [] = left
+  | merge_alists [] right = right
+  | merge_alists left right =
+      left @ List.filter
+        (fn (name, _) =>
+          not (List.exists (fn (name', _) => name = name') left))
+        right
 
 (* The left claset's derived components are the accumulator: only the
    declarations the merge newly admits are indexed again. *)

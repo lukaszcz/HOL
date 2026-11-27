@@ -260,13 +260,11 @@ fun cases_rule_for ty =
 
     fun cases_tac (assumptions, target) =
       let
-        val candidates =
-          List.filter (type_candidate ty)
-            (free_varsl (target :: assumptions))
         val variable =
-          case candidates of
-              candidate :: _ => candidate
-            | [] =>
+          case List.find (type_candidate ty)
+                 (free_varsl (target :: assumptions)) of
+              SOME candidate => candidate
+            | NONE =>
                 raise ERR "cases_rule_for"
                   "the goal has no free variable of the requested type"
       in
@@ -418,13 +416,8 @@ fun unique_declarations declarations =
   listUtil.distinct_by String.compare (#name : candidate -> string)
     declarations
 
-(* Assembling a rule set inspects a retrieved declaration more than once:
-   once per safe-class filter, and once more when its rule is built.  Each
-   inspection wants the declaration's classical rule forms, which cost real
-   kernel derivations -- CLASSICAL_RULE, MAKE_ELIM_RULE, DUP_ELIM_RULE,
-   SWAP_INTRO_RULE.  The claset derived them once when the rule was
-   declared and hands them back with the candidate, so no goal expansion
-   derives them again. *)
+(* Classifying and building rules uses canonical forms the claset
+   already derived when the declarations were installed. *)
 fun candidate_declarations budget claset conclusion assumptions qvars =
   let
     val checkpoint =
@@ -463,11 +456,6 @@ fun candidate_declarations budget claset conclusion assumptions qvars =
     unique_declarations (target @ List.concat hypotheses)
   end
 
-fun ordinary_kind clasetRules.Intro = true
-  | ordinary_kind clasetRules.Elim = true
-  | ordinary_kind clasetRules.Dest = true
-  | ordinary_kind _ = false
-
 fun canonical_source ({info, ...} : candidate) = #1 (#rl info)
 
 fun declaration_rule budget mode
@@ -498,25 +486,27 @@ fun declaration_rule budget mode
       end
   end
 
-fun safe_classes candidates =
+fun declaration_classes candidates =
   let
-    fun add (candidate as {spec, info, ...} : candidate, (safe0, safep)) =
-      case clasetRules.safe_class_of spec info of
-          SOME clasetRules.Safe0 => (candidate :: safe0, safep)
-        | SOME clasetRules.SafeP => (safe0, candidate :: safep)
-        | NONE => (safe0, safep)
-    val (safe0, safep) = List.foldl add ([], []) candidates
+    fun add (candidate as {spec, info, ...} : candidate,
+             classes as (safe0, safep, forwards, unsafe)) =
+      if #kind spec = clasetRules.Norm then classes
+      else if not (#safe spec) then
+        (safe0, safep, forwards, candidate :: unsafe)
+      else if #kind spec = clasetRules.Forward then
+        (safe0, safep, candidate :: forwards, unsafe)
+      else
+        case clasetRules.safe_class_of spec info of
+            SOME clasetRules.Safe0 =>
+              (candidate :: safe0, safep, forwards, unsafe)
+          | SOME clasetRules.SafeP =>
+              (safe0, candidate :: safep, forwards, unsafe)
+          | NONE => classes
+    val (safe0, safep, forwards, unsafe) =
+      List.foldl add ([], [], [], []) candidates
   in
-    (List.rev safe0, List.rev safep)
+    (List.rev safe0, List.rev safep, List.rev forwards, List.rev unsafe)
   end
-
-fun unsafe_declaration ({spec, ...} : candidate) =
-  (ordinary_kind (#kind spec) orelse
-   #kind spec = clasetRules.Forward) andalso
-  not (#safe spec)
-
-fun safe_forward_declaration ({spec, ...} : candidate) =
-  #kind spec = clasetRules.Forward andalso #safe spec
 
 fun unsafe_percent ({phase, ...} : rule) =
   case phase of
@@ -546,15 +536,12 @@ fun claset_rules_core
   let
     val candidates =
       candidate_declarations budget claset conclusion assumptions qvars
-    val (safe0_candidates, safep_candidates) = safe_classes candidates
+    val (safe0_candidates, safep_candidates, forward_candidates,
+         unsafe_candidates) = declaration_classes candidates
     val safe0 = map (declaration_rule budget mode) safe0_candidates
     val safep = map (declaration_rule budget mode) safep_candidates
-    val forwards =
-      map (declaration_rule budget mode)
-        (List.filter safe_forward_declaration candidates)
-    val unsafe_claset =
-      map (declaration_rule budget mode)
-        (List.filter unsafe_declaration candidates)
+    val forwards = map (declaration_rule budget mode) forward_candidates
+    val unsafe_claset = map (declaration_rule budget mode) unsafe_candidates
     val norm_declarations =
       map (declaration_rule budget clasetUnify.Match)
         (clasetLib.norm_rules claset)

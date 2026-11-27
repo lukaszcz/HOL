@@ -5600,6 +5600,35 @@ val _ =
 
 val _ =
   test
+    ("BLAST reports claset conflicts in its elimination declaration order",
+     fn () =>
+       let
+         val p = mk_var ("blast_selim_conflict", Type.bool)
+         val cs = clasetLib.add_sintros
+           [("blast_not_imp", boolTheory.TRUTH),
+            ("already_intro", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
+           clasetLib.empty_cs
+         val warnings = ref []
+         fun collect warning = warnings := warning :: !warnings
+         val solved =
+           Lib.with_flag (Feedback.WARNING_outstream, collect)
+             (fn () =>
+               blast_solves (tableauLib.CS_BLAST_DEPTH_TAC cs 0) ([p], p))
+             ()
+       in
+         solved andalso
+         (case rev (!warnings) of
+              [duplicate, cross_kind] =>
+                String.isSubstring "Ignoring duplicate safe elimination rule"
+                  duplicate andalso
+                String.isSubstring
+                  "Rule already declared as a different safe introduction"
+                  cross_kind
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("Table-1 depth accounting rejects shallower bounds",
      fn () =>
        blast_fails (tableauLib.BLAST_DEPTH_TAC 2 [])

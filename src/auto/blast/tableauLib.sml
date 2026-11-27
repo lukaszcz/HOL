@@ -12,13 +12,15 @@ type try_result =
 val depth_limit = blastSearch.depth_limit
 
 (* The safe elimination rules the tableau engine needs to decompose a
-   negated implication or a negated universal.  Every search goes through
-   run_depths, which is where they are added, so no caller can hand the
-   engine a claset that lacks them. *)
-val add_blast_selims =
+   negated implication or a negated universal. Both have one minor
+   premise, so merging replays them in declaration order. *)
+val blast_selims =
   clasetLib.add_selims
     [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
      ("blast_not_forall", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
+    clasetLib.empty_cs
+
+fun add_blast_selims cs = clasetLib.merge_cs (cs, blast_selims)
 
 val invoke = clasetLib.with_context_claset clasetLib.TableauFacts
 
@@ -111,29 +113,33 @@ fun failed_stats summary search_time reconstruction_time =
 fun run_depths base_cs initial_depth next_depth goal ctxt =
   let
     val cs = add_blast_selims base_cs
-    val started = Time.now ()
-    val reconstruction_time = ref Time.zeroTime
     (* Ordinary public tactics retain the uninstrumented search path.  The
-       documented level-2 statistics trace explicitly opts into counters.
-       Keep the summary absent in the quiet path so it allocates and updates
-       none of the expanded per-run/cumulative statistic refs. *)
+       documented level-2 statistics trace opts into counters and timing. *)
     val summary =
       if traceUtil.enabled (traceUtil.level_of blastRule.tracer ctxt) 2 then
-        SOME (new_run_statistics ())
+        SOME {statistics = new_run_statistics (), started = Time.now (),
+              reconstruction_time = ref Time.zeroTime}
       else NONE
 
+    val reconstruct = blastReconstruct.reconstructWith ctxt cs goal
+    val reconstruct =
+      case summary of
+          NONE => reconstruct
+        | SOME {reconstruction_time, ...} =>
+            fn proof =>
+              let
+                val started = Time.now ()
+                val result = reconstruct proof
+                val elapsed = Time.- (Time.now (), started)
+                val _ = add_time elapsed reconstruction_time
+              in
+                result
+              end
+
     fun accept proof =
-      let
-        val reconstruction_started = Time.now ()
-        val result =
-          blastReconstruct.reconstructWith ctxt cs goal proof
-        val elapsed = Time.- (Time.now (), reconstruction_started)
-        val _ = add_time elapsed reconstruction_time
-      in
-        case result of
-            SOME tactic_result => (proof, tactic_result)
-          | NONE => raise blastSearch.PROOF_FAILED
-      end
+      case reconstruct proof of
+          SOME tactic_result => (proof, tactic_result)
+        | NONE => raise blastSearch.PROOF_FAILED
 
     fun search NONE = NONE
       | search (SOME depth) =
@@ -143,7 +149,7 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
             val _ =
               case summary of
                   NONE => ()
-                | SOME statistics => add_statistics statistics
+                | SOME {statistics, ...} => add_statistics statistics
                     (#statistics report)
           in
             case #result report of
@@ -152,19 +158,20 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
           end
 
     val result = search initial_depth
-    val total_time = Time.- (Time.now (), started)
-    val search_time = Time.- (total_time, !reconstruction_time)
     val _ =
       case summary of
           NONE => ()
-        | SOME statistics =>
-            (case result of
-                 SOME (proof, _) =>
-                   stats proof statistics search_time
-                     (!reconstruction_time)
-               | NONE =>
-                   failed_stats statistics search_time
-                     (!reconstruction_time))
+        | SOME {statistics, started, reconstruction_time} =>
+            let
+              val total_time = Time.- (Time.now (), started)
+              val search_time = Time.- (total_time, !reconstruction_time)
+            in
+              case result of
+                  SOME (proof, _) =>
+                    stats proof statistics search_time (!reconstruction_time)
+                | NONE =>
+                    failed_stats statistics search_time (!reconstruction_time)
+            end
   in
     case result of
         SOME (_, tactic_result) => tactic_result

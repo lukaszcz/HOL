@@ -4451,7 +4451,7 @@ val _ =
 
 (* The first pull offers a proof; the second certifies that it is unique.
    Yielding between them must retain the first result in both phases. *)
-fun counted_alternative_rule budget phase : aesopRule.rule =
+fun counted_alternative_rule_with theorem budget phase : aesopRule.rule =
   let
     fun step input =
       let
@@ -4459,7 +4459,7 @@ fun counted_alternative_rule budget phase : aesopRule.rule =
           Option.map #1
             (seq.cases
               ((clasetStep.rule_step traceUtil.silent
-                 {theorem = boolTheory.TRUTH, elim = false,
+                 {theorem = theorem, elim = false,
                   mode = clasetUnify.Match}) input))
         val first = ref true
         fun next () =
@@ -4472,6 +4472,9 @@ fun counted_alternative_rule budget phase : aesopRule.rule =
     {name = "counted-alternative", phase = phase,
      apply = aesopRule.EngineStep step, once = false}
   end
+
+val counted_alternative_rule =
+  counted_alternative_rule_with boolTheory.TRUTH
 
 fun counted_safe_source budget =
   search_source []
@@ -4520,6 +4523,58 @@ val _ =
   check
     ("safe uniqueness resumes after its first alternative",
      fn () => counted_resume counted_safe_source)
+
+fun resume_siblings phase =
+  let
+    val width = 32
+    val variables = List.tabulate
+      (width, fn i => Term.mk_var ("sibling" ^ Int.toString i, Type.bool))
+    val leaves = map (fn v => boolSyntax.mk_eq (v, v)) variables
+    val conjunction = Drule.LIST_CONJ (map ASSUME leaves)
+    val target = concl conjunction
+    val opener =
+      aesopRule.apply_rule
+        {name = "open-siblings", phase = aesopRule.RSafe,
+         theorem = List.foldr (fn (leaf, th) => DISCH leaf th)
+           conjunction leaves,
+         mode = clasetUnify.Match}
+    val v = hd variables
+    val reflexive = GEN v (REFL v)
+    fun make_source budget (input as {cgoal, ...}) =
+      let val closer = counted_alternative_rule_with reflexive budget phase
+      in
+        if aconv (#w cgoal) target then search_source [] (K [opener]) [] input
+        else
+          case phase of
+              aesopRule.RSafe => search_source [] (K [closer]) [] input
+            | _ => search_source [] (K []) [closer] input
+      end
+    val budget = searchBudget.create
+      {candidates = SOME 1, applications = NONE, normalization = NONE}
+    val tree = new_tree clasetMeta.empty (tree_cgoal [] [] target) []
+    val session = aesopSearch.new_budget_session budget
+      {max_rapps = width + 1, max_depth = 3} make_source tree
+    fun resume expected =
+      case aesopSearch.resume_budget_session session of
+          aesopSearch.ResumedYielded {kind = searchBudget.Candidate, usage, ...}
+            => expected < 2 * width andalso #candidates usage = expected andalso
+               (searchBudget.extend budget searchBudget.Candidate 1;
+                resume (expected + 1))
+        | aesopSearch.ResumedFinished (aesopSearch.SearchProved proved) =>
+            expected = 2 * width andalso
+            #candidates (searchBudget.usage budget) = expected andalso
+            closes_goal (aesopSearch.REPLAY_TAC proved) ([], target)
+        | _ => false
+  in
+    resume 1
+  end
+
+val _ =
+  check
+    ("budgeted Aesop resumes interleaved sibling scans and replays the proof",
+     fn () =>
+       resume_siblings aesopRule.RSafe andalso
+       resume_siblings (aesopRule.RUnsafe 50))
 
 fun registry_replacement_resumes phase =
   let
