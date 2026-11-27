@@ -9297,22 +9297,6 @@ in
         Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
                         Tactic.ASSUME_TAC th])
 
-  (* [tac] on the goal without the assumptions in [held], which come back
-     unchanged at the end of every subgoal's assumptions.  [tac] must not
-     introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
-     withheld assumption. *)
-  fun WITHHOLDING_TAC held (tac : Tactical.tactic) : Tactical.tactic =
-    fn (asl, w) =>
-      fn ctxt =>
-        let
-          val (withheld, kept) =
-            List.partition (fn a => Lib.op_mem Term.aconv a held) asl
-          val (goals, validation) = tac (kept, w) ctxt
-        in
-          (List.map (fn (asl', w') => (asl' @ withheld, w')) goals,
-           validation)
-        end
-
   (* Runs the proved num-to-int transfer on the conclusion and the
      assumptions that mention num.  These assumptions are first moved into
      the conclusion so free num variables anywhere in them are made explicit
