@@ -2801,27 +2801,32 @@ let
               "num transfer let one premise rewrite another to true: " ^
               String.concatWith "; " (List.map Hol_pp.term_to_string asl))
         | SOME tm =>
-            let
-              val SOME (left_args, right_args) = transferred_applied_equality tm
-              val left_argument = List.hd left_args
-              val right_argument = List.hd right_args
-              fun contains argument term =
-                Lib.can (HolKernel.find_term (fn candidate =>
-                  Term.aconv candidate argument)) term
-              fun retains_argument_equality candidate =
-                case Lib.total boolSyntax.dest_eq candidate of
-                    SOME (left, right) =>
-                      not (Term.aconv candidate tm) andalso
-                      ((contains left_argument left andalso
-                        contains right_argument right) orelse
-                       (contains left_argument right andalso
-                        contains right_argument left))
-                  | NONE => false
-            in
-              assert (List.exists retains_argument_equality asl,
-                "num transfer dropped the equality between transferred arguments: " ^
-                String.concatWith "; " (List.map Hol_pp.term_to_string asl))
-            end;
+            case transferred_applied_equality tm of
+                NONE =>
+                  assert (false,
+                    "num transfer lost its transferred application equality: " ^
+                    String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+              | SOME (left_args, right_args) =>
+                  let
+                    val left_argument = List.hd left_args
+                    val right_argument = List.hd right_args
+                    fun contains argument term =
+                      Lib.can (HolKernel.find_term (fn candidate =>
+                        Term.aconv candidate argument)) term
+                    fun retains_argument_equality candidate =
+                      case Lib.total boolSyntax.dest_eq candidate of
+                          SOME (left, right) =>
+                            not (Term.aconv candidate tm) andalso
+                            ((contains left_argument left andalso
+                              contains right_argument right) orelse
+                             (contains left_argument right andalso
+                              contains right_argument left))
+                        | NONE => false
+                  in
+                    assert (List.exists retains_argument_equality asl,
+                      "num transfer dropped the equality between transferred arguments: " ^
+                      String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+                  end;
       assert (List.exists is_lifted_equality asl,
         "num transfer dropped a lifted equality premise: " ^
         String.concatWith "; " (List.map Hol_pp.term_to_string asl));
