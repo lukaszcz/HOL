@@ -2731,6 +2731,31 @@ in
      SmtLib.CVC_SIMP_TAC true, SmtLib.CVC_SIMP_TAC false]
 end
 
+fun num_transfer_assumptions_do_not_rewrite_each_other_success () =
+let
+  val equality = ``(n:num) = m``
+  val application_equality = ``f n = f m``
+  val held = ``0 <= (x:int)``
+  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([equality, held, application_equality], ``g n = h m``)
+  fun is_applied_equality tm =
+    case Lib.total boolSyntax.dest_eq tm of
+        SOME (left, right) =>
+          let
+            val (head, args) = boolSyntax.strip_comb left
+          in
+            Term.is_var head andalso not (List.null args) andalso
+            Term.is_comb right
+          end
+      | NONE => false
+in
+  assert (List.exists is_applied_equality asl,
+    "num transfer let one premise rewrite another to true: " ^
+    String.concatWith "; " (List.map Hol_pp.term_to_string asl));
+  assert (Lib.op_mem Term.aconv held asl,
+    "num transfer rewrote a held integer bound")
+end
+
 fun num_bridge_axioms_retired_success () =
 let
   val text = transferred_smtlib_text ``(1:int) + 2 = 3``
@@ -40747,6 +40772,8 @@ let
       num_transfer_assumption_free_var_success),
     ("num_transfer_duplicate_assumptions_success",
       num_transfer_duplicate_assumptions_success),
+    ("num_transfer_assumptions_do_not_rewrite_each_other_success",
+      num_transfer_assumptions_do_not_rewrite_each_other_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
     ("int_literal_mentions_no_num_success",
