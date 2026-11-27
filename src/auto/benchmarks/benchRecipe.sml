@@ -245,17 +245,21 @@ fun parse_method source tokens =
 fun parse source =
   let
     val tokens = scan source
+    fun gather groups =
+      List.foldl
+        (fn (names, []) => names | (names, tail) => names @ tail)
+        [] groups
     fun prefix tokens facts unfolded =
       case tokens of
           Word "using" :: rest =>
             let val (names, rest') = words rest
-            in prefix rest' (facts @ names) unfolded
+            in prefix rest' (names :: facts) unfolded
             end
         | Word "unfolding" :: rest =>
             let val (names, rest') = words rest
-            in prefix rest' facts (unfolded @ names)
+            in prefix rest' facts (names :: unfolded)
             end
-        | Word "by" :: rest => (facts, unfolded, rest)
+        | Word "by" :: rest => (gather facts, gather unfolded, rest)
         | _ => raise Unparseable (source, "no [by] method")
     val (facts, unfolded, rest) = prefix tokens [] []
     fun methods_of [] acc = List.rev acc
@@ -327,15 +331,13 @@ fun modifier_names modifier =
     | Cong names => names
     | Facts names => names
 
-fun distinct [] = []
-  | distinct (item :: rest) =
-      item :: distinct (List.filter (not o equal item) rest)
-
 fun cited_names ({facts, unfolded, methods} : parsed) =
-  distinct
-    (facts @ unfolded @
-     List.concat
-       (map (List.concat o map modifier_names o #modifiers) methods))
+  case facts @ unfolded @
+       List.concat
+         (map (List.concat o map modifier_names o #modifiers) methods) of
+      [] => []
+    | names as [_] => names
+    | names => listUtil.distinct_by String.compare Lib.I names
 
 fun method_heads ({methods, ...} : parsed) = map #name methods
 

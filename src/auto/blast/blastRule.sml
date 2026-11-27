@@ -41,6 +41,7 @@ datatype head_tag =
   | HConst of KernelSig.kernelname
   | HFvar of string
   | HGoal
+  | HGoalBody of head_tag
   | HFalse
   | HSkolem of string
   | HVar
@@ -52,9 +53,10 @@ fun head_tag_rank HAbs = 0
   | head_tag_rank (HConst _) = 2
   | head_tag_rank (HFvar _) = 3
   | head_tag_rank HGoal = 4
-  | head_tag_rank HFalse = 5
-  | head_tag_rank (HSkolem _) = 6
-  | head_tag_rank HVar = 7
+  | head_tag_rank (HGoalBody _) = 5
+  | head_tag_rank HFalse = 6
+  | head_tag_rank (HSkolem _) = 7
+  | head_tag_rank HVar = 8
 
 fun head_tag_compare (left, right) =
   case Int.compare (head_tag_rank left, head_tag_rank right) of
@@ -63,6 +65,7 @@ fun head_tag_compare (left, right) =
              (HBound i, HBound j) => Int.compare (i, j)
            | (HConst a, HConst b) => KernelSig.name_compare (a, b)
            | (HFvar a, HFvar b) => String.compare (a, b)
+           | (HGoalBody a, HGoalBody b) => head_tag_compare (a, b)
            | (HSkolem a, HSkolem b) => String.compare (a, b)
            | _ => EQUAL)
     | order => order
@@ -105,20 +108,36 @@ fun resolved_head_tag formula =
            | SOME assigned => resolved_head_tag assigned)
     | head => stable_head_tag head
 
+fun dereference (term as Var variable) =
+      (case !variable of
+           NONE => term
+         | SOME assigned => dereference assigned)
+  | dereference term = term
+
+fun formula_tag view head_tag formula =
+  case view formula of
+      left $ body =>
+        (case view left of
+             Goal => HGoalBody (head_tag body)
+           | _ => head_tag formula)
+    | _ => head_tag formula
+
 fun containsZeroMeasured checkpoint =
   existsMeasured checkpoint (fn i => i = 0)
 
 datatype cache = Cache of
-  {entries : (cache_key, entry list) Redblackmap.dict ref,
+  {contents :
+     {entries : (cache_key, entry list) Redblackmap.dict,
+      newest : entry option} ref,
    conversions : int ref,
    hits : int ref,
-   next_stamp : int ref,
    level : traceUtil.level}
 
 fun newCache level =
   Cache
-    {entries = ref (Redblackmap.mkDict cache_key_compare),
-     conversions = ref 0, hits = ref 0, next_stamp = ref 0,
+    {contents = ref
+       {entries = Redblackmap.mkDict cache_key_compare, newest = NONE},
+     conversions = ref 0, hits = ref 0,
      level = level}
 
 fun cache_level (Cache {level, ...}) = level
@@ -625,16 +644,27 @@ fun bucket entries key =
 fun lookup_keys safe vars formula =
   let
     val count = length vars
-    val stable = stable_head_tag formula
-    val primary = (safe, count, stable)
-    val variable = (safe, count, HVar)
+    val stable = formula_tag Lib.I stable_head_tag formula
+    fun resolved () = formula_tag dereference resolved_head_tag formula
+    fun key tag = (safe, count, tag)
+    (* A variable at the root or under the goal marker can become equal
+       to a more specific entry without changing its insertion key. *)
+    val compatible =
+      case stable of
+          HVar =>
+            (case resolved () of
+                 HVar => []
+               | HGoalBody HVar => [key (HGoalBody HVar)]
+               | goal as HGoalBody _ => [key goal, key (HGoalBody HVar)]
+               | tag => [key tag])
+        | HGoalBody HVar =>
+            (case resolved () of
+                 HGoalBody HVar => [key HVar]
+               | goal => [key goal, key HVar])
+        | HGoalBody _ => [key (HGoalBody HVar), key HVar]
+        | _ => [key HVar]
   in
-    case stable of
-        HVar =>
-          (case resolved_head_tag formula of
-               HVar => (primary, NONE)
-             | resolved => (primary, SOME (safe, count, resolved)))
-      | _ => (primary, SOME variable)
+    (key stable, compatible)
   end
 
 fun newest (NONE, right) = right
@@ -642,34 +672,40 @@ fun newest (NONE, right) = right
   | newest (left as SOME first, right as SOME second) =
       if #stamp first > #stamp second then left else right
 
-fun find_cached find entries (primary, fallback) =
-  let
-    val first = find (bucket entries primary)
-    val second =
-      case fallback of
-          NONE => NONE
-        | SOME key => find (bucket entries key)
-  in
-    newest (first, second)
-  end
+fun find_cached find entries keys =
+  List.foldl
+    (fn (key, found) => newest (found, find (bucket entries key)))
+    NONE keys
 
-(* Each bucket is newest first.  Visit the two buckets in stamp order so
+(* Each bucket is newest first.  Visit the buckets in stamp order so
    an ordinary lookup can stop as soon as it finds a matching entry. *)
-fun find_newest_cached matches entries (primary, fallback) =
+fun find_newest_cached matches entries keys =
   let
-    val first = bucket entries primary
-    val second = case fallback of NONE => [] | SOME key => bucket entries key
-    fun find [] right = List.find matches right
-      | find left [] = List.find matches left
-      | find (left as (x : entry) :: xs) (right as (y : entry) :: ys) =
+    fun find [] right [] = List.find matches right
+      | find left [] [] = List.find matches left
+      | find [] right third = find right third []
+      | find left [] third = find left third []
+      | find (left as (x : entry) :: xs) (right as (y : entry) :: ys) [] =
           if #stamp x > #stamp y then
-            if matches x then SOME x else find xs right
-          else if matches y then SOME y else find left ys
+            if matches x then SOME x else find xs right []
+          else if matches y then SOME y else find left ys []
+      | find (left as x :: xs) (right as y :: ys) (third as z :: zs) =
+          if #stamp x > #stamp y andalso #stamp x > #stamp z then
+            if matches x then SOME x else find xs right third
+          else if #stamp y > #stamp z then
+            if matches y then SOME y else find left ys third
+          else if matches z then SOME z else find left right zs
   in
-    find first second
+    case map (bucket entries) keys of
+        [first] => List.find matches first
+      | [first, second] => find first second []
+      | [first, second, third] => find first second third
+      | _ => raise Fail "blastRule.find_newest_cached"
   end
 
-fun cachedWith measured checkpoint (Cache {entries, hits, ...})
+datatype lookup_result = Cached of tableau_rule list | Uncached of cache_key
+
+fun cachedWith measured checkpoint (Cache {contents, hits, ...})
       safe vars formula =
   let
     fun same_measured ([], []) = true
@@ -683,32 +719,47 @@ fun cachedWith measured checkpoint (Cache {entries, hits, ...})
       #safe entry = safe andalso
       same (#vars entry, vars) andalso
       equal (#formula entry, formula)
-    val keys as (primary, _) = lookup_keys safe vars formula
-    val found =
-      if measured then
-        find_cached (findMeasured checkpoint matches) (!entries) keys
-      else find_newest_cached matches (!entries) keys
+    val {entries, newest} = !contents
+    fun hit entry =
+      (hits := !hits + 1; Cached (#rules (entry : entry)))
+
+    (* Red-black lookup itself is indivisible. Measured lookup polls
+       once for every visited member of a compatible head bucket. *)
+    fun lookup () =
+      let
+        val (primary, fallback) = lookup_keys safe vars formula
+        val keys = primary :: fallback
+        val found =
+          if measured then
+            find_cached (findMeasured checkpoint matches) entries keys
+          else find_newest_cached matches entries keys
+      in
+        case found of
+            NONE => Uncached primary
+          | SOME entry => hit entry
+      end
   in
-    (* Red-black lookup itself is indivisible.  Poll once for every member
-       of the selected head bucket (and the variable-head fallback), rather
-       than once for every entry in the whole search cache. *)
-    case found of
-        NONE => (primary, NONE)
-      | SOME entry =>
-          (hits := !hits + 1;
-           (primary, SOME (#rules entry)))
+    (* An identical newest formula wins regardless of its insertion key. *)
+    case (measured, newest) of
+        (false, SOME entry) =>
+          if Portable.pointer_eq (#formula entry, formula) andalso
+             #safe entry = safe andalso same (#vars entry, vars)
+          then hit entry else lookup ()
+      | _ => lookup ()
   end
 
-fun remember (Cache {entries, next_stamp, ...}) key safe vars formula rules =
+fun remember (Cache {contents, ...}) key safe vars formula rules =
   let
-    val stamp = !next_stamp
+    val {entries, newest} = !contents
+    val stamp = case newest of NONE => 0 | SOME entry => #stamp entry + 1
     val entry =
       {formula = formula, safe = safe, vars = vars, rules = rules,
        stamp = stamp}
-    val values = bucket (!entries) key
+    val values = bucket entries key
   in
-    next_stamp := stamp + 1;
-    entries := Redblackmap.insert (!entries, key, entry :: values)
+    contents :=
+      {entries = Redblackmap.insert (entries, key, entry :: values),
+       newest = SOME entry}
   end
 
 fun query_skeleton_measured checkpoint measured normalize need_distinct_query
@@ -1097,8 +1148,8 @@ fun copyRulesWith checkpoint eager_external_skolems
 fun acquireWith (monitor as {candidate, conversion, checkpoint}) measured
       cache claset safe vars formula use_templates =
   case cachedWith measured checkpoint cache safe vars formula of
-      (_, SOME rules) => use_templates rules
-    | (primary, NONE) =>
+      Cached rules => use_templates rules
+    | Uncached primary =>
         let
           val tagged = candidatesMeasured monitor measured claset safe formula
           val _ =

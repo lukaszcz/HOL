@@ -108,10 +108,12 @@ fun conjuncts_with meter theorem =
   let
     fun collect theorem reversed =
       (normalization meter;
-       case Lib.total dest_conj (concl theorem) of
-           SOME _ =>
-             let val left = collect (CONJUNCT1 theorem) reversed
-             in collect (CONJUNCT2 theorem) left end
+       case dest_pair (concl theorem) of
+           SOME (head, _, _) =>
+             if same_const conjunction head then
+               let val left = collect (CONJUNCT1 theorem) reversed
+               in collect (CONJUNCT2 theorem) left end
+             else theorem :: reversed
          | NONE => theorem :: reversed)
   in
     List.rev (collect theorem [])
@@ -119,14 +121,16 @@ fun conjuncts_with meter theorem =
 
 (* One atomic axiom: the predicate's name and the relation it is about. *)
 fun dest_axiom theorem =
-  case Lib.total dest_comb (concl theorem) of
+  case combination (concl theorem) of
       NONE => NONE
     | SOME (predicate, relation) =>
-        (case Lib.total dest_thy_const predicate of
-             SOME {Thy = "relation", Name, ...} =>
+        if is_const predicate then
+          (case dest_thy_const predicate of
+               {Thy = "relation", Name, ...} =>
                if Lib.mem Name axiom_names then SOME (Name, relation, theorem)
                else NONE
-           | _ => NONE)
+             | _ => NONE)
+        else NONE
 
 fun axioms_of_with meter theorems =
   let
@@ -355,7 +359,7 @@ fun is_literal context tm =
     fun positive t = Option.isSome (literal_of_term context t)
   in
     positive tm orelse
-    (case Lib.total dest_neg tm of
+    (case negated_body tm of
          SOME body => positive body
        | NONE => false)
   end

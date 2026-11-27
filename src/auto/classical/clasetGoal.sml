@@ -337,6 +337,12 @@ fun delete_assumption pos ({params, asl, w} : cgoal) =
 fun append_fresh params [] = params
   | append_fresh params reversed = params @ List.rev reversed
 
+(* Every premise contributes to freshness, but none need scanning unless
+   a child actually introduces a parameter. *)
+fun premise_avoids premises initial_avoids NONE =
+      Term.FVL premises initial_avoids
+  | premise_avoids _ _ (SOME avoids) = avoids
+
 fun children_from initial_avoids
   {parent, premises, consumed, store} =
   let
@@ -345,14 +351,14 @@ fun children_from initial_avoids
         NONE => parent
       | SOME pos => delete_assumption pos parent
     val normalized = map (norm_term store) premises
-    val initial_avoids = Term.FVL normalized initial_avoids
 
-    fun freshen_bound (bound, (avoids, subst, reversed, current_store)) =
+    fun freshen_bound (bound, (previous, subst, reversed, current_store)) =
       let
+        val avoids = premise_avoids normalized initial_avoids previous
         val (fresh, next_store) =
           register_fresh bound avoids current_store
       in
-        (HOLset.add (avoids, fresh),
+        (SOME (HOLset.add (avoids, fresh)),
          {redex = bound, residue = fresh} :: subst,
          fresh :: reversed, next_store)
       end
@@ -373,7 +379,7 @@ fun children_from initial_avoids
       end
 
     val (rev_children, _, final_store) =
-      List.foldl make_child ([], initial_avoids, store) normalized
+      List.foldl make_child ([], NONE, store) normalized
   in
     (List.rev rev_children, final_store)
   end
@@ -391,14 +397,14 @@ fun exact_blast_children node {pos, premises, prefixes, consumed} =
           NONE => parent
         | SOME assumption => delete_assumption assumption parent
     val normalized = map (norm_term (store node)) premises
-    val initial_avoids = Term.FVL normalized (avoids node)
 
-    fun freshen_bound (bound, (avoids, fresh, current_store)) =
+    fun freshen_bound (bound, (previous, fresh, current_store)) =
       let
+        val avoids = premise_avoids normalized (avoids node) previous
         val (variable, next_store) =
           register_fresh bound avoids current_store
       in
-        (HOLset.add (avoids, variable), variable :: fresh, next_store)
+        (SOME (HOLset.add (avoids, variable)), variable :: fresh, next_store)
       end
 
     fun make_child
@@ -429,7 +435,7 @@ fun exact_blast_children node {pos, premises, prefixes, consumed} =
         raise mk_HOL_ERR "clasetGoal" "exact_blast_children"
           "premise and prefix-descriptor arities differ"
     val (rev_children, rev_rebuilds, _, final_store) =
-      List.foldl make_child ([], [], initial_avoids, store node)
+      List.foldl make_child ([], [], NONE, store node)
         (ListPair.zip (normalized, prefixes))
   in
     (List.rev rev_children, final_store, List.rev rev_rebuilds)

@@ -641,6 +641,26 @@ fun mknonneg width (index, atom) =
          List.tabulate (width, fn i => if i = index then one else zero),
          Nonneg atom)
 
+fun nonnegative_rows width atoms =
+  let
+    fun zeros 0 tail = tail
+      | zeros n tail = zeros (n - 1) (zero :: tail)
+    (* Extend the shared all-zero suffix from the next eligible column. *)
+    fun build [] = (width - 1, [], [])
+      | build ((index, atom) :: rest) =
+          let
+            val (next, tail, rows) = build rest
+            val suffix = zeros (next - index) tail
+            val row =
+              Lineq (zero, Le, zeros index (one :: suffix), Nonneg atom)
+          in
+            (index, suffix, row :: rows)
+          end
+    val (_, _, rows) = build atoms
+  in
+    rows
+  end
+
 fun is_neq (Decomp {rel, ...}) = rel = REL_NEQ
 
 fun is_discrete (Decomp {discrete, ...}) = discrete
@@ -790,7 +810,8 @@ fun refute_system_with (work : work) is_nonnegative items justs =
              contradiction. Unit rows are already nontrivial. *)
           fun collect kept [] =
                 elim_rows_with work Lib.I true
-                  (List.revAppend (kept, List.map nonneg_row eligible_atoms))
+                  (List.revAppend
+                    (kept, nonnegative_rows (#width index) eligible_atoms))
             | collect kept (item :: rest) =
                 let
                   val row as Lineq (_, _, _, just) =

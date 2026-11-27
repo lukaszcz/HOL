@@ -2064,6 +2064,22 @@ val _ =
          map #name methods = ["fastforce"]
        end)
 
+val _ =
+  check
+    ("the parser preserves clause order and the first citation occurrence",
+     fn () =>
+       let
+         val parsed =
+           parses
+             ("using first shared unfolding def1 shared " ^
+              "using second first unfolding def2 by (simp add: def1 extra)")
+       in
+         #facts parsed = ["first", "shared", "second", "first"] andalso
+         #unfolded parsed = ["def1", "shared", "def2"] andalso
+         benchRecipe.cited_names parsed =
+           ["first", "shared", "second", "def1", "def2", "extra"]
+       end)
+
 (* [OF assms] cites the fact resolved against the enclosing lemma's
    assumptions, which the translation states as the goal's leading
    antecedents.  The goals below are not corpus entries: the corpus

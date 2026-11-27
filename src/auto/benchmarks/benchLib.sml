@@ -918,12 +918,17 @@ fun argument_reaches identifier argument =
     consults_claset identifier orelse consults_simpset identifier
   else consults_simpset identifier
 
-fun recipe_arguments (Invoke (_, arguments)) = arguments
-  | recipe_arguments (Then (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-  | recipe_arguments (AllGoals (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-  | recipe_arguments (Repeat inner) = recipe_arguments inner
+fun recipe_arguments recipe =
+  let
+    fun collect (Invoke (_, arguments)) [] = arguments
+      | collect (Invoke (_, arguments)) tail = arguments @ tail
+      | collect (Then (left, right)) tail = collect left (collect right tail)
+      | collect (AllGoals (left, right)) tail =
+          collect left (collect right tail)
+      | collect (Repeat inner) tail = collect inner tail
+  in
+    collect recipe []
+  end
 
 fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
   List.filter (not o permitted_for goal) (recipe_arguments recipe)

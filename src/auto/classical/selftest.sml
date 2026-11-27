@@ -1689,6 +1689,30 @@ val _ =
 
 val _ =
   test
+    ("fresh premise parameters avoid free variables in later premises",
+     fn () =>
+       let
+         val x = Term.mk_var ("premise_parameter", bool_ty)
+         val premises = [boolSyntax.mk_forall (x, x), x]
+         val prefixes = map clasetReplay.exact_prefix_descriptor premises
+         val node = clasetGoal.from_goal ([], goal_p)
+         val (ordinary, _) = clasetGoal.children node
+           {pos = 1, premises = premises, consumed = NONE}
+         val (exact, _, _) = clasetGoal.exact_blast_children node
+           {pos = 1, premises = premises, prefixes = prefixes,
+            consumed = NONE}
+         fun freshened
+               ([{params = [fresh], w, ...},
+                 {params = [], w = later, ...}] : clasetGoal.cgoal list) =
+               not (Term.aconv fresh x) andalso Term.aconv fresh w andalso
+               Term.aconv later x
+           | freshened _ = false
+       in
+         freshened ordinary andalso freshened exact
+       end)
+
+val _ =
+  test
     ("eigenvariable names avoid removed goals even at a different type",
      fn () =>
        let

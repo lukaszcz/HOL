@@ -235,21 +235,21 @@ fun registered_tactic_rules () =
   List.foldl (fn ((rule, _), ordered) => rule :: ordered) []
     (#newest (Sref.value tactic_registry))
 
-fun applicable_tactic_rules conclusion assumptions =
-  List.foldl
-    (fn ((rule, index), ordered) =>
-      if goal_matches_index index (assumptions, conclusion)
-      then rule :: ordered else ordered)
-    [] (#newest (Sref.value tactic_registry))
-
-fun norm_phase_rule ({phase, ...} : rule) =
-  case phase of RNorm _ => true | _ => false
-
-fun safe_phase_rule ({phase, ...} : rule) =
-  phase = RSafe
-
-fun unsafe_phase_rule ({phase, ...} : rule) =
-  case phase of RUnsafe _ => true | _ => false
+fun tactic_rules_for goal =
+  let
+    fun add ((rule : rule, index), rules as (norm, safe, unsafe)) =
+      case #phase rule of
+          (* Normalisation can reach an index match after a rewrite. *)
+          RNorm _ => (rule :: norm, safe, unsafe)
+        | RSafe =>
+            if goal_matches_index index goal then (norm, rule :: safe, unsafe)
+            else rules
+        | RUnsafe _ =>
+            if goal_matches_index index goal then (norm, safe, rule :: unsafe)
+            else rules
+  in
+    List.foldl add ([], [], []) (#newest (Sref.value tactic_registry))
+  end
 
 fun type_candidate ty variable =
   can (Type.match_type ty) (type_of variable)
@@ -559,14 +559,8 @@ fun claset_rules_core
       map (declaration_rule budget clasetUnify.Match)
         (clasetLib.norm_rules claset)
     val splits = split_rules ctxt
-    val tactics =
-      applicable_tactic_rules conclusion assumptions
-    val norm_tactics =
-      List.filter norm_phase_rule (registered_tactic_rules ())
-    val safe_tactics =
-      List.filter safe_phase_rule tactics
-    val unsafe_tactics =
-      List.filter unsafe_phase_rule tactics
+    val (norm_tactics, safe_tactics, unsafe_tactics) =
+      tactic_rules_for (assumptions, conclusion)
     val safe =
       {closers = closers (),
        safe0_claset = safe0,

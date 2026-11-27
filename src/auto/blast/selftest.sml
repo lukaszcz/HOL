@@ -2312,6 +2312,54 @@ val _ =
 
 val _ =
   test
+    ("rule cache finds the newest goal across variable-head buckets",
+     fn () =>
+       let
+         val monitor : blastRule.monitor =
+           {checkpoint = fn () => (), candidate = fn () => (),
+            conversion = fn () => ()}
+         val p = mk_var ("cache_goal_p", bool)
+         val body = blastRule.fromGoalTerm (mk_imp (p, p))
+         val rigid = mkGoal body
+         fun check acquire order =
+           let
+             val head = ref NONE
+             val root = ref NONE
+             val variable_head = mkGoal (Var head)
+             val variable_root = Var root
+             val cache = blastRule.newCache traceUtil.silent
+             fun lookup formula = acquire cache clasetLib.empty_cs [] formula
+             val inputs = order (rigid, variable_head, variable_root)
+             val _ = List.app (ignore o lookup) inputs
+             val rigid_newest = aconv (hd (rev inputs), rigid)
+             val _ = head := SOME body
+             val _ = root := SOME rigid
+             val agrees =
+               List.all
+                 (fn formula => (not (null (lookup formula))) = rigid_newest)
+                 [rigid, variable_head, variable_root]
+             val _ = root := NONE
+             val _ = head := NONE
+           in
+             agrees andalso not (null (lookup rigid)) andalso
+             null (lookup variable_head) andalso
+             null (lookup variable_root) andalso
+             blastRule.hitCount cache = 6
+           end
+         val orders =
+           [fn (rigid, head, root) => [head, root, rigid],
+            fn (rigid, head, root) => [rigid, root, head],
+            fn (rigid, head, root) => [head, rigid, root]]
+       in
+         List.all
+           (fn order =>
+             check blastRule.safeRules order andalso
+             check (blastRule.safeRulesMeasured monitor) order)
+           orders
+       end)
+
+val _ =
+  test
     ("rule alpha comparison preserves sharing, types and dependencies",
      fn () =>
        let
@@ -5782,15 +5830,17 @@ val _ =
       ("rule-cache lookup probes scale below the linear baseline",
        fn () =>
          let
-           fun run size =
+           fun run wrap size =
              let
                val formulas =
                  List.tabulate
                    (size,
                     fn index =>
-                      Const
-                        (test_name
-                           ("cache-benchmark-" ^ Int.toString index), []))
+                      wrap
+                        (Const
+                           (test_name
+                              ("cache-benchmark-" ^ Int.toString index),
+                            [])))
                val cache = blastRule.newCache traceUtil.silent
                val _ =
                  List.app
@@ -5837,13 +5887,18 @@ val _ =
                 blastRule.hitCount cache - hits_before = size)
              end
 
-           val (small, linear_small, small_ok) = run 256
-           val (large, linear_large, large_ok) = run 512
+           fun scales wrap =
+             let
+               val (small, linear_small, small_ok) = run wrap 256
+               val (large, linear_large, large_ok) = run wrap 512
+             in
+               small_ok andalso large_ok andalso small > 0 andalso
+               large <= 3 * small andalso
+               linear_large > 3 * linear_small andalso
+               linear_large > 32 * large
+             end
          in
-           small_ok andalso large_ok andalso small > 0 andalso
-           large <= 3 * small andalso
-           linear_large > 3 * linear_small andalso
-           linear_large > 32 * large
+           scales I andalso scales mkGoal
          end)
   else ()
 

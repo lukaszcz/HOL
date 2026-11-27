@@ -110,9 +110,9 @@ fun generalise_parameters checkpoint th =
   let
     val _ = checkpoint ()
     val (bound, body) = strip_forall (concl th)
-    val pinned = bound @ free_varsl (hyp th)
+    val pinned = HOLset.addList (hyp_frees th, bound)
     val rigid =
-      List.filter (fn v => not (tmem v pinned)) (free_vars body)
+      List.filter (fn v => not (HOLset.member (pinned, v))) (free_vars body)
     val _ = checkpoint ()
   in
     if List.null rigid then th else GENL rigid th

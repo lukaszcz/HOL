@@ -726,6 +726,36 @@ val _ =
 
 val _ =
   check
+    ("FM nonnegative rows keep sparse eligible column positions",
+     fn () =>
+       let
+         val atoms = List.tabulate (5, fn i =>
+           Term.mk_var ("fm_unit_" ^ Int.toString i, numSyntax.num))
+         val second = List.nth (atoms, 1)
+         val fourth = List.nth (atoms, 3)
+         fun eligible atom =
+           Term.aconv atom second orelse Term.aconv atom fourth
+         val indexed = fm_le (no_atoms, fm_rat 0)
+           (map (fn atom => (atom, fm_rat 0)) atoms, fm_rat 0)
+         fun refutes target =
+           let
+             val negative = fm_le (no_atoms, fm_rat 1)
+               ([(target, fm_rat ~1)], fm_rat 0)
+             val items = map (fn row => (fm_conclusion, SOME row))
+               [indexed, negative]
+           in
+             case prove_decomposed traceUtil.silent fm_config (fn _ => NONE)
+                    eligible items fm_conclusion of
+                 (_, SOME [Added (Nonneg atom, Asm 1)]) =>
+                   Term.aconv atom target
+               | _ => false
+           end
+       in
+         refutes second andalso refutes fourth
+       end)
+
+val _ =
+  check
     ("FM equation elimination keeps the first constant contradiction",
      fn () =>
        let
