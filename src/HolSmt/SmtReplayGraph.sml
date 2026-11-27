@@ -2270,7 +2270,7 @@ struct
             end
     in record end
 
-  fun checked_closure_child g caller child =
+  fun check_closure_step g caller parent_result child =
     let
       val (effective,node) = case child of
           ClosureRoot {owner,caller = held,node} =>
@@ -2278,7 +2278,7 @@ struct
                raise ERR "closure_child" "different graph or caller scope";
              check_scope g caller;usable g caller node;(caller,node))
         | ClosureApplicationChild {parent,operator,node} =>
-            let val (effective,root) = checked_closure_child g caller parent
+            let val (effective,root) = parent_result parent
                 val actual = case view g root of Application (f,x) =>
                     if operator then f else x
                   | _ => raise ERR "closure_child" "parent not application"
@@ -2286,7 +2286,7 @@ struct
                   raise ERR "closure_child" "application child changed"
             in (effective,node) end
         | ClosureBodyChild {parent,record} =>
-            let val (_,parent_node) = checked_closure_child g caller parent
+            let val (_,parent_node) = parent_result parent
                 val ClosureRecord {node = captured,creation,...} =
                   checked_closure_record g record
                 val _ = if parent_node = captured then () else
@@ -2299,6 +2299,30 @@ struct
         | _ => ()
     in (effective,node) end
 
+  fun checked_closure_child g caller child =
+    let fun check current = check_closure_step g caller check current
+    in check child end
+
+  (* These handles are in depth-first preorder. Guard each exact incoming
+     path, sharing only the parent checks performed during this validation.
+     Popping a completed branch releases its path state. *)
+  fun check_closure_paths g caller roots =
+    let
+      fun seek parent [] = (checked_closure_child g caller parent,[])
+        | seek parent (path as (held,result) :: older) =
+            if Portable.pointer_eq (held,parent) then (result,path)
+            else seek parent older
+      fun visit [] _ = ()
+        | visit (child :: rest) parents =
+            let
+              val active = ref parents
+              fun parent_result parent =
+                let val (result,path) = seek parent parents
+                in active := path; result end
+              val result = check_closure_step g caller parent_result child
+            in visit rest ((child,result) :: !active) end
+    in visit roots [] end
+
   fun closure_root g caller node =
     let val root = ClosureRoot {owner = #owner g,caller = caller,node = node}
         val _ = checked_closure_child g caller root
@@ -2307,23 +2331,28 @@ struct
   fun closure_child_node g caller child =
     #2 (checked_closure_child g caller child)
 
-  fun closure_application_children g caller parent =
+  fun closure_application_children_using g check parent =
     let
-      val (_,node) = checked_closure_child g caller parent
+      val (_,node) = check parent
       val (f,x) = case view g node of Application pair => pair
         | _ => raise ERR "closure_application_children" "not application"
       val left = ClosureApplicationChild
         {parent = parent,operator = true,node = f}
       val right = ClosureApplicationChild
         {parent = parent,operator = false,node = x}
-      val _ = checked_closure_child g caller left
-      val _ = checked_closure_child g caller right
+      val _ = check left
+      val _ = check right
     in (left,right) end
+  fun closure_application_children g caller parent =
+    closure_application_children_using g (checked_closure_child g caller)
+      parent
 
-  fun closure_child_binder g caller child =
-    let val (_,node) = checked_closure_child g caller child
+  fun closure_child_binder_using g check child =
+    let val (_,node) = check child
         val record = checked_closure_record g (indexed_closure g node)
     in BinderClosure {child = child,record = record} end
+  fun closure_child_binder g caller child =
+    closure_child_binder_using g (checked_closure_child g caller) child
 
   fun binder_closure g caller node =
     closure_child_binder g caller (closure_root g caller node)
@@ -2334,8 +2363,8 @@ struct
        NONE => NONE
      | SOME _ => SOME (binder_closure g caller node))
 
-  fun checked_binder_closure g caller (BinderClosure {child,record}) =
-    let val (_,node) = checked_closure_child g caller child
+  fun checked_binder_closure_using g check (BinderClosure {child,record}) =
+    let val (_,node) = check child
         val (held as ClosureRecord {node = captured,...}) =
           checked_closure_record g record
         val _ = if node = captured then () else
@@ -2344,7 +2373,8 @@ struct
 
   fun binder_closure_data g caller closure =
     let val ClosureRecord {node,node_frame,creation,backing,...} =
-          checked_binder_closure g caller closure
+          checked_binder_closure_using g (checked_closure_child g caller)
+            closure
         val {node = first,declaring_scope,binder,binder_term,binder_frame,
              body,body_frame,...} = creation
     in {node = node,node_frame = node_frame,creation_node = first,
@@ -2352,12 +2382,14 @@ struct
         binder_term = binder_term,binder_frame = binder_frame,body = body,
         body_frame = body_frame,rehomed = Option.isSome backing} end
 
-  fun binder_closure_body g caller
+  fun binder_closure_body_using g check
       (closure as BinderClosure {child,record}) =
-    let val _ = checked_binder_closure g caller closure
+    let val _ = checked_binder_closure_using g check closure
         val result = ClosureBodyChild {parent = child,record = record}
-        val _ = checked_closure_child g caller result
+        val _ = check result
     in result end
+  fun binder_closure_body g caller closure =
+    binder_closure_body_using g (checked_closure_child g caller) closure
 
   fun same_opened_recipe (OpenedAtom,OpenedAtom) = true
     | same_opened_recipe (OpenedApplication (f,x),OpenedApplication (g,y)) =
@@ -2401,8 +2433,10 @@ struct
       (* Every incoming handle is retained before semantic-node memoization.
          Its parent path is guarded even when descendants were visited once.
          Indexed binder records recursively guard creation/rehome backings. *)
-      val _ = List.app (fn child =>
-        ignore (checked_closure_child g scope child)) roots
+      val _ = case #indices g of
+          LegacyIndices _ => check_closure_paths g scope roots
+        | PaidIndices _ => List.app (fn child =>
+            ignore (checked_closure_child g scope child)) roots
       val _ = if #2 (checked_closure_child g scope annotation) = #node source
           andalso same_source (cached_opened_view g scope original) source
           andalso visits > 0 then () else
@@ -2410,7 +2444,8 @@ struct
       val _ = guard ()
     in receipt end
 
-  fun discovered_alpha_program (g : graph) scope spend visits original =
+  fun discovered_alpha_program (g : graph) scope share_parents spend visits
+      original =
     let
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       val rows = ref ([] : (node * opened_record) list)
@@ -2432,18 +2467,31 @@ struct
              case #recipe record of OpenedApplication (f,x) => (raw f;raw x)
                | _ => ())
         end
-      fun rich child =
-        let val _ = spend ()
-            val (_,node) = checked_closure_child g scope child
-            val _ = roots := child :: !roots
+      val check_full = checked_closure_child g scope
+      fun rich check child =
+        let
+          val _ = spend ()
+          val result as (_,node) = check child
+          val _ = roots := child :: !roots
+          (* Only the legacy internal allowance can reuse a checked parent
+             across a spend. Its decrement cannot alter the graph. *)
+          fun parent_result parent =
+            if Portable.pointer_eq (parent,child) then result
+            else check_full parent
+          fun check_local current =
+            if Portable.pointer_eq (current,child) then result
+            else check_closure_step g scope parent_result current
+          val check_child = if share_parents then check_local else check_full
         in case Redblackmap.peek (!rich_seen,node_id node) of SOME () => ()
           | NONE =>
             (rich_seen := Redblackmap.insert (!rich_seen,node_id node,());
              case view g node of Application _ =>
-                 let val (f,x) = closure_application_children g scope child
-                 in rich f;rich x end
-               | AdmittedBinder _ => rich (binder_closure_body g scope
-                   (closure_child_binder g scope child))
+                 let val (f,x) =
+                       closure_application_children_using g check_child child
+                 in rich check_child f;rich check_child x end
+               | AdmittedBinder _ =>
+                   rich check_child (binder_closure_body_using g check_child
+                     (closure_child_binder_using g check_child child))
                | OpaqueRetained => raise ERR "discovered_alpha"
                    "incomplete canonical annotation recipe"
                | _ => ())
@@ -2451,9 +2499,12 @@ struct
       val _ = raw original
       val source = cached_opened_view g scope original
       val annotation = closure_root g scope (#node source)
-      val _ = rich annotation
+      val _ = rich check_full annotation
+      val paths = case #indices g of
+          LegacyIndices _ => List.rev (!roots)
+        | PaidIndices _ => !roots
       val receipt = DiscoveredAlpha {owner = #owner g,scope = scope,
-        original = original,source = source,rows = !rows,roots = !roots,
+        original = original,source = source,rows = !rows,roots = paths,
         annotation = annotation,epoch = epoch,symbols = symbols,
         visits = visits ()}
       val _ = checked_discovered_alpha g scope receipt
@@ -2468,7 +2519,9 @@ struct
       fun spend () =
         if !remaining > 0 then remaining := !remaining-1 else
           raise ERR "discovered_alpha" "metadata visit allowance exhausted"
-    in discovered_alpha_program g scope spend
+      val share_parents = case #indices g of LegacyIndices _ => true
+        | PaidIndices _ => false
+    in discovered_alpha_program g scope share_parents spend
       (fn () => maximum - !remaining) original end
 
   fun validate_discovered_alpha g scope receipt =
@@ -3503,7 +3556,8 @@ struct
       fun spend () = (step ();visits := !visits+1)
       fun discover node =
         (check_scope g scope;
-         discovered_alpha_program g scope spend (fn () => !visits) node)
+         discovered_alpha_program g scope false spend (fn () => !visits)
+           node)
     in carrier_alpha_program g scope (fn () => ()) discover
       {original=original,source=source} end
 

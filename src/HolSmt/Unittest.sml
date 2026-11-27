@@ -8817,6 +8817,15 @@ let
     ([], ``(x:int) IN ((s:int set) UNION (t:int set))``)
   val cvc_quantified_fallback_text = cvc
     ([], ``!s t:int set. (x:int) IN (s UNION t)``)
+  val evidence = [pred_setSyntax.mk_finite s,pred_setSyntax.mk_finite t]
+  val shared_set = Lib.funpow 5 (fn set => pred_setSyntax.mk_union (set,set))
+    (pred_setSyntax.mk_union (s,t))
+  val shared_goal = member shared_set
+  val cvc_shared_native = cvc (evidence,shared_goal)
+  val cvc_shared_fallback = cvc ([],shared_goal)
+  val cvc_shared_shadow = cvc (evidence,boolSyntax.mk_conj
+    (shared_goal,boolSyntax.mk_forall (s,shared_goal)))
+  val cvc_shared_native_again = cvc (evidence,shared_goal)
   val cvc_surface_text = cvc
     ([``FINITE (s:int set)``, ``FINITE (t:int set)``],
      boolSyntax.list_mk_conj native_surface_atoms)
@@ -8886,6 +8895,12 @@ in
       contains "(forall ((set_x" cvc_fallback_text,
     "non-finite cvc5 set translation did not use quantified arrays:\n" ^
     cvc_fallback_text);
+  assert (contains "set.union" cvc_shared_native andalso
+      cvc_shared_native = cvc_shared_native_again andalso
+      List.all (fn text => contains "(Array Int Bool)" text andalso
+        not (contains "set.union" text))
+        [cvc_shared_fallback,cvc_shared_shadow],
+    "shared cvc5 Set changed backend across evidence or binder scopes");
   (ignore (SmtLib_Parser.typecheck_script_string_with_options
       {dict_logic = NONE, solver = SOME "cvc5",
        elaborate_datatypes = false}

@@ -2569,10 +2569,21 @@ local
       val heads = ref []
       val binder_lists = ref []
       val lexical = ref NONE
-      fun prefix tail pending =
-        if Portable.pointer_eq (tail,pending) then []
-        else case pending of x::xs => x :: prefix tail xs
-          | [] => raise Fail "index source history"
+      fun reversed_prefix tail pending =
+        let
+          fun collect pending reversed =
+            if Portable.pointer_eq (tail,pending) then reversed
+            else case pending of x::xs => collect xs (x::reversed)
+              | [] => raise Fail "index source history"
+        in collect pending [] end
+      fun prefix [] pending = pending
+        | prefix tail pending =
+            let
+              fun copy pending =
+                if Portable.pointer_eq (tail,pending) then []
+                else case pending of x::xs => x :: copy xs
+                  | [] => raise Fail "index source history"
+            in copy pending end
       fun get_token () =
         let val token = original_token ()
         in if !depth = 0 then () else history := token :: !history;
@@ -2611,7 +2622,7 @@ local
           val after_tokens = !history
           val after_heads = !heads
           val after_lists = !binder_lists
-          fun tokens () = token :: List.rev (prefix before_tokens after_tokens)
+          fun tokens () = token :: reversed_prefix before_tokens after_tokens
           val _ = depth := !depth - 1
           val _ = if !depth = 0 then
             (history := []; heads := []; binder_lists := []) else ()

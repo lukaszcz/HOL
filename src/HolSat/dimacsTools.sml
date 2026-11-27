@@ -259,7 +259,7 @@ val tmp_name = ref "undefined";
 *)
 
 local
-fun number_clause sva clause svm =
+fun fold_numbered_clause sva collect clause initial svm =
     let
       fun walk literal pending numbered svm =
           if is_comb literal then
@@ -278,19 +278,26 @@ fun number_clause sva clause svm =
       and add literal negative atom pending numbered svm =
           let
             val (number,svm') = number_literal svm sva literal negative atom
+            val numbered' = collect (number,numbered)
           in
             case pending of
-                [] => (number :: numbered,svm')
-              | next :: rest => walk next rest (number :: numbered) svm'
+                [] => (numbered',svm')
+              | next :: rest => walk next rest numbered' svm'
           end
     (* Visit from the right to preserve the existing variable numbering. *)
-    in walk clause [] [] svm end
+    in walk clause [] initial svm end
+
+fun number_clause sva clause svm =
+    fold_numbered_clause sva (op ::) clause [] svm
 
 fun fold_clauses count clause_at step initial =
     let fun loop i state =
           if i = count then state
           else loop (i+1) (step (i,clause_at i,state))
     in loop 0 initial end
+
+fun numbering var_count =
+    ((1,SVM.mkDict rbmcomp),Array.array (var_count+1,T))
 
 fun number_clauses count clause_at svm sva numclauses =
     fold_clauses count clause_at
@@ -340,8 +347,7 @@ fun write_dimacs fname clause_count var_count sva write_clauses =
 
 fun term_to_dimacs_file fname clause_count var_count count clause_at =
     let
-      val svm = (1,SVM.mkDict rbmcomp)
-      val sva = Array.array (var_count+1,T)
+      val (svm,sva) = numbering var_count
       fun stream add_clause buffer =
           fold_clauses count clause_at
             (fn (_,clause,(svm,pending)) =>
@@ -372,6 +378,15 @@ fun termToDimacs svm sva clauses numclauses =
 fun termToDimacsFile fname clause_count var_count clauses =
     term_to_dimacs_file fname clause_count var_count (Array.length clauses)
       (fn i => Array.sub (clauses,i))
+
+(* Explicit certificates use the solver's numbering without a CNF file. *)
+fun number_dimacs_clauses var_count clauses =
+    let
+      val (svm,sva) = numbering var_count
+      fun number ((clause,_),svm) =
+          #2 (fold_numbered_clause sva (fn _ => ()) clause () svm)
+      val _ = Array.foldl number svm clauses
+    in sva end
 
 (*Write out DIMACS file and build svm and sva*)
 fun generateDimacs vc t clauseth nr =

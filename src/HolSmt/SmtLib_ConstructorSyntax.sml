@@ -149,7 +149,7 @@ struct
              (String.size Thy + String.size Tyop))
        in List.app (type_work observe) Args end)
 
-  fun same_variable (observe : IntInf.int -> unit) (left, right) =
+  fun compare_variable (observe : IntInf.int -> unit) (left, right) =
     let
       val _ = observe 1
       val (left_name, left_type) = Term.dest_var left
@@ -157,10 +157,14 @@ struct
       val _ = observe (IntInf.fromInt
         (String.size left_name + String.size right_name))
     in
-      left_name = right_name andalso
-      (type_work observe left_type; type_work observe right_type;
-       Type.compare (left_type, right_type) = EQUAL)
+      case String.compare (left_name, right_name) of
+        EQUAL =>
+          (type_work observe left_type; type_work observe right_type;
+           Type.compare (left_type, right_type))
+      | order => order
     end
+
+  fun same_variable observe pair = compare_variable observe pair = EQUAL
 
   (* Expand only an admitted native template, never actual operands.
      Expansion is query-local; the query's source-identity memo shares its
@@ -230,26 +234,20 @@ struct
   fun variable_of (Free variable) = variable
     | variable_of (Bound variable) = variable
     | variable_of (Opaque variable) = variable
-  fun same_occurrence observe (Free left, Free right) =
-        same_variable observe (left, right)
-    | same_occurrence observe (Bound left, Bound right) =
-        same_variable observe (left, right)
-    | same_occurrence observe (Opaque left, Opaque right) =
-        same_variable observe (left, right)
-    | same_occurrence observe _ = (observe 1; false)
+  fun compare_occurrence observe (Free left, Free right) =
+        compare_variable observe (left, right)
+    | compare_occurrence observe (Bound left, Bound right) =
+        compare_variable observe (left, right)
+    | compare_occurrence observe (Opaque left, Opaque right) =
+        compare_variable observe (left, right)
+    | compare_occurrence observe (Free _, _) = (observe 1; LESS)
+    | compare_occurrence observe (_, Free _) = (observe 1; GREATER)
+    | compare_occurrence observe (Bound _, _) = (observe 1; LESS)
+    | compare_occurrence observe (_, Bound _) = (observe 1; GREATER)
 
   fun member equal value [] = false
     | member equal value (head :: rest) =
         equal (value, head) orelse member equal value rest
-
-  fun unique (observe : IntInf.int -> unit) equal entries =
-    let
-      fun loop [] result = (observe 1; List.rev result)
-        | loop (entry :: rest) result =
-            (observe 1;
-             loop rest (if member equal entry result then result
-                        else entry :: result))
-    in loop entries [] end
 
   fun free_occurrences (observe : IntInf.int -> unit) entries =
     List.foldr (fn (Free variable, rest) =>
@@ -484,12 +482,29 @@ struct
     let
       val resolve = private_reader observe
       val memo = ref (dictionary observe)
-      fun merge (left, right) =
-        (observe (IntInf.fromInt (List.length left));
-         unique observe (same_occurrence observe) (left @ right))
+      val empty = (Redblackset.empty (compare_occurrence observe), [])
+      (* Pair the index with reversed first-occurrence order so that an
+         application can extend its operator's observations persistently. *)
+      fun insert (entry, result as (seen, reversed)) =
+        (observe 1;
+         if Redblackset.member (seen, entry) then result
+         else (Redblackset.add (seen, entry), entry :: reversed))
+      fun singleton entry = insert (entry, empty)
+      fun fold_occurrences step initial (seen, reversed) =
+        (observe (IntInf.fromInt (Redblackset.numItems seen));
+         List.foldr step initial reversed)
+      fun merge ((_, []), right) = (observe 1; right)
+        | merge (left, right) = fold_occurrences insert left right
+      fun abstract stored binder entries =
+        fold_occurrences (fn (entry, result) =>
+          case entry of
+            Free variable =>
+              if same_variable observe (binder, variable) then result
+              else insert (entry, result)
+          | _ => insert (entry, result)) (singleton (Bound stored)) entries
       fun native_variables term =
         (observe 1;
-         if Term.is_var term then [Free term]
+         if Term.is_var term then singleton (Free term)
          else if Term.is_comb term then
            let val (operator, operand) = Term.dest_comb term
            in merge (native_variables operator, native_variables operand) end
@@ -497,12 +512,8 @@ struct
            let
              val stored = stored_binder observe term
              val (opened, body) = Term.dest_abs term
-             val entries = List.filter
-               (fn Free variable =>
-                     not (same_variable observe (opened, variable))
-                 | _ => (observe 1; true)) (native_variables body)
-           in merge ([Bound stored], entries) end
-         else [])
+           in abstract stored opened (native_variables body) end
+         else empty)
       fun visit (source as Syntax {id, node, ...}) =
         (observe 1;
          case Redblackmap.peek (!memo, id) of
@@ -512,29 +523,26 @@ struct
              val entries =
                case node of
                  Native term => native_variables term
-               | Private term => [Opaque term]
+               | Private term => singleton (Opaque term)
                | PrivateBinding _ => visit (resolve source)
                | Template source => visit (expand_template observe source)
                | Application (operator, operand) =>
                    merge (visit operator, visit operand)
                | Abstraction (stored, binder, body) =>
-                   let
-                     val entries = List.filter
-                       (fn Free variable =>
-                             not (same_variable observe (binder, variable))
-                         | _ => (observe 1; true)) (visit body)
-                   in merge ([Bound stored], entries) end
+                   abstract stored binder (visit body)
                | Renaming (body, replacements) =>
-                   unique observe (same_occurrence observe)
-                     (List.map
-                       (fn Free variable =>
-                             (observe 1;
-                              Free (replace observe replacements variable))
-                         | entry => (observe 1; entry)) (visit body))
+                   fold_occurrences (fn (entry, result) =>
+                     insert ((case entry of Free variable =>
+                         Free (replace observe replacements variable)
+                       | _ => entry), result)) empty (visit body)
              val _ = observe 1
              val _ = memo := Redblackmap.insert (!memo, id, entries)
            in entries end)
-    in fn source => visit (resolve source) end
+    in fn source =>
+      let val (seen, reversed) = visit (resolve source)
+          val _ = observe (IntInf.fromInt (Redblackset.numItems seen))
+      in List.rev reversed end
+    end
 
   (* Construction never inspects the body or retains the charging callback. *)
   fun private_abstraction observe (descriptor, body) =

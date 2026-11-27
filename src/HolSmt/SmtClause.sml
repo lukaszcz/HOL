@@ -81,13 +81,15 @@ struct
     case Lib.total boolSyntax.dest_neg literal of
       SOME atom => {literal = literal, negative = true, atom = atom}
     | NONE => {literal = literal, negative = false, atom = literal}
+  fun check_endpoint endpoint thm =
+    (if same endpoint (Thm.concl thm) then ()
+     else raise ERR "from_literals" "clause/theorem endpoint mismatch";
+     Library.check_oracle_tags "SmtClause" "clause" thm)
   fun from_literals literals thm =
     let
       val _ = List.all (fn tm => Term.type_of tm = Type.bool) literals orelse
         raise ERR "from_literals" "non-Boolean literal occurrence"
-      val _ = same (term literals) (Thm.concl thm) orelse
-        raise ERR "from_literals" "clause/theorem endpoint mismatch"
-      val _ = Library.check_oracle_tags "SmtClause" "clause" thm
+      val _ = check_endpoint (term literals) thm
       (* Prepend from right to left so lookup can stop at the first
          matching source occurrence, including in duplicate-heavy clauses. *)
       fun add (literal, (position, index)) =
@@ -100,6 +102,12 @@ struct
         (List.length literals, Redblackmap.mkDict Int.compare) literals
     in observe #clause_objects;
       Clause {literals = literals, thm = thm, index = index} end
+  (* The occurrence list and its Boolean types were checked when indexed.
+     Check the replacement theorem against that same typed endpoint. *)
+  fun replace_theorem (Clause {literals,thm = previous,index}) thm =
+    (check_endpoint (Thm.concl previous) thm;
+     observe #clause_objects;
+     Clause {literals = literals,thm = thm,index = index})
   fun find literal (Clause {index, ...}) =
     let val key = hash 6 literal in
       let val _ = observe #clause_accesses
@@ -209,19 +217,18 @@ struct
         let
           val {negative, atom, ...} = occurrence pivot
           val opposite = if negative then atom else boolSyntax.mk_neg atom
+          fun retain projection clause =
+            (observe #clause_accesses;
+             replace_theorem clause
+               ((rule1 projection) ((rule2 SmtReplayRuleObservation.CONJ)
+                 (theorem first) (theorem second))))
         in
           case resolve opposite first second of
             SOME result => result
           | NONE =>
               if not (contains pivot first) then
-                from_literals (literals first)
-                  ((rule1 SmtReplayRuleObservation.CONJUNCT1)
-                    ((rule2 SmtReplayRuleObservation.CONJ)
-                      (theorem first) (theorem second)))
-              else from_literals (literals second)
-                ((rule1 SmtReplayRuleObservation.CONJUNCT2)
-                  ((rule2 SmtReplayRuleObservation.CONJ)
-                    (theorem first) (theorem second)))
+                retain SmtReplayRuleObservation.CONJUNCT1 first
+              else retain SmtReplayRuleObservation.CONJUNCT2 second
         end
 
   (* Reordering, contraction and weakening are checked by mapping each
@@ -271,7 +278,7 @@ struct
             List.map same boolSyntax.F find destination source_literals
         in
           if List.all Option.isSome mapping then
-            SOME (from_literals target
+            SOME (replace_theorem destination
               (derive source_literals mapping source_thm))
           else NONE
         end

@@ -465,6 +465,40 @@ struct
       in (binder::binders,body) end
     else ([],term)
 
+  fun occurrence_index () =
+    let
+      val variables = List.tabulate (128, fn i =>
+        Term.mk_var ("occurrence_" ^ Int.toString i, Type.bool))
+      val ty = List.foldl (fn (_, range) => Type.--> (Type.bool, range))
+        Type.bool variables
+      val head = Term.mk_var ("occurrence_head", ty)
+      val source = List.foldl (fn (variable, operator) =>
+        C.application (operator, C.variable variable))
+        (C.variable head) variables
+      val spent = ref (0 : IntInf.int)
+      fun observe debit =
+        (spent := !spent + debit;
+         ensure "occurrence index exceeded work bound" (!spent < 1000000))
+      val actual = C.free_variables observe source
+      val _ = ensure "occurrence index reordered variables"
+        (ListPair.allEq (Lib.uncurry Term.aconv)
+          (actual, head :: variables))
+      val x = hd variables
+      val y = Term.mk_var (#1 (Term.dest_var x), intSyntax.int_ty)
+      val conjunction = C.native boolSyntax.conjunction
+      fun conjoin (left, right) =
+        C.application (C.application (conjunction, left), right)
+      val source = conjoin (C.private_atom x,
+        conjoin (C.variable x, C.native (boolSyntax.mk_eq (y,y))))
+      val free = C.free_variables observe source
+      val closed = C.free_variables observe (C.abstraction (x,source))
+    in
+      ensure "private atom or type collision erased a lexical variable"
+        (ListPair.allEq (Lib.uncurry Term.aconv) (free, [x,y]));
+      ensure "abstraction erased a lexical namesake of a different type"
+        (ListPair.allEq (Lib.uncurry Term.aconv) (closed, [y]))
+    end
+
   fun binder_invariants () =
     let
       val x=Term.mk_var ("task33_x",Type.bool)
@@ -1926,6 +1960,9 @@ struct
       val _=OK ()
       val _=tprint "Structured public binder/native/abstraction/template laws"
       val _=binder_invariants ()
+      val _=OK ()
+      val _=tprint "Structured indexed variable occurrence order and work"
+      val _=occurrence_index ()
       val _=OK ()
       val _=tprint "Structured shared binder substitution remains compact"
       val _=substitution_sharing ()

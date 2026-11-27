@@ -120,10 +120,23 @@ fun refute source_clauses =
     val _=if !model_size<=200000 div assignment_count then ()
       else decline "model-witness"
     val atoms=Redblackmap.listItems (!reverse)
-    val avoid=ref (List.concat (List.map (Term.free_vars o #2) atoms))
+    fun add_name (variable,names) =
+      Redblackset.add (names,#1 (Term.dest_var variable))
+    val avoid=ref (List.foldl (fn ((_,atom),names)=>
+      List.foldl add_name names (Term.free_vars atom))
+      (Redblackset.empty String.compare) atoms)
+    (* Let the kernel skip constant names. The set also excludes source
+       and previously chosen proxy names, independently of their types. *)
+    fun variant candidate =
+      let val variable=Term.variant [] candidate
+          val (name,ty)=Term.dest_var variable
+      in if Redblackset.member (!avoid,name) then
+           variant (Term.mk_var (name ^ "'",ty))
+         else variable
+      end
     fun fresh (n,atom) =
-      let val v=Term.variant (!avoid) (Term.genvar Type.bool)
-          val _=avoid:=v:: !avoid
+      let val v=variant (Term.genvar Type.bool)
+          val _=avoid:=add_name (v,!avoid)
       in (n,atom,v) end
     val bindings=List.map fresh atoms
     val proxies=List.foldl (fn ((n,_,v),table)=>

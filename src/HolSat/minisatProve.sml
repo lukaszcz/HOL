@@ -277,15 +277,23 @@ fun GEN_SAT_WITH check_sat_model conf =
             case input of
                 SOME files => solve files
               | NONE =>
-                  let val (tmpname,in_name,sva,svm) = profile_stage "dimacs"
-                            (generateDimacs (SOME vc) tm (SOME clauseth))
-                            (SOME nr)
-                  in with_cleanup
-                       (fn () => cleanup_solver_files trace_files solver
-                                                      tmpname in_name)
-                       solve (in_name,sva,
-                              if complete_model then SOME svm else NONE)
-                  end
+                  if isSome proof andalso not (isSome (getSolverPostExe solver))
+                  then
+                    let val sva = profile_stage "dimacs"
+                          (number_dimacs_clauses vc) clauseth
+                    in with_cleanup (fn () => clean_files trace_files)
+                         solve ("",sva,NONE)
+                    end
+                  else
+                    let val (tmpname,in_name,sva,svm) = profile_stage "dimacs"
+                              (generateDimacs (SOME vc) tm (SOME clauseth))
+                              (SOME nr)
+                    in with_cleanup
+                         (fn () => cleanup_solver_files trace_files solver
+                                                        tmpname in_name)
+                         solve (in_name,sva,
+                                if complete_model then SOME svm else NONE)
+                    end
           else with_cleanup (fn () => clean_files trace_files)
                             solve_internal ()
       in check_endpoint ntm th

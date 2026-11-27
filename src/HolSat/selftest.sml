@@ -821,6 +821,15 @@ local
       trace_proves (roots @ backward) cnf andalso
       trace_proves (roots @ forward) ``(p \/ p) /\ ~p`` andalso
       trace_proves (roots @ [3,0] @ forward) cnf)
+  val _ = control "explicit certificate reuses DIMACS numbering without a file"
+    (fn () =>
+      let
+        val previous = !dimacsTools.tmp_name
+        (* The first clause numbers q before p. Resolve p, then q. *)
+        val bytes = [2,0,2,0,4,3,0,6,1,0,7,4,2,2,1,0]
+      in trace_proves bytes ``(p \/ q) /\ (~p /\ ~q)`` andalso
+         !dimacsTools.tmp_name = previous
+      end)
   val _ = control "binary resolution: malformed/incomplete traces reject"
     (fn () => List.all (fn bytes => bad_trace bytes cnf)
       [[], [128], [2,0], [2,0,0], [0,0,0], [6,0,0],

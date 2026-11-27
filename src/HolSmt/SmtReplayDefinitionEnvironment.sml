@@ -148,21 +148,24 @@ struct
            anchor = List.hd (definitions id),definitions = definitions id}
         | [] => let
             val parts = components names adjacency
-            fun self id = Redblackset.member
-              (Redblackset.addList (set (),get adjacency id),id)
-            fun distinct_definitions id = Redblackset.numItems
-              (Redblackset.addList (set (),List.map
-                (fn (row : definition,_) => G.node_id (#stored row))
-                (get by_name id)))
+            fun self id = List.exists (fn dependency => dependency = id)
+              (get adjacency id)
+            fun multiple_definitions [] = false
+              | multiple_definitions ((first : definition,_) :: rest) =
+                  List.exists (fn (row : definition,_) =>
+                    #stored row <> #stored first) rest
             fun candidate id =
-              if self id orelse distinct_definitions id <= 1 then NONE
-              else let val part = Redblackmap.find (parts,id) in
-                case List.find (fn (_,ids) => List.all
-                    (fn dependency =>
-                      not (Redblackset.member (part,dependency)))
-                    ids) (get by_name id) of
-                  SOME (anchor,_) => SOME (id,anchor,part)
-                | NONE => NONE
+              if self id then NONE
+              else let val entries = get by_name id in
+                if not (multiple_definitions entries) then NONE
+                else let val part = Redblackmap.find (parts,id) in
+                  case List.find (fn (_,ids) => List.all
+                      (fn dependency =>
+                        not (Redblackset.member (part,dependency)))
+                      ids) entries of
+                    SOME (anchor,_) => SOME (id,anchor,part)
+                  | NONE => NONE
+                end
               end
             fun first_candidate [] = NONE
               | first_candidate (id :: rest) =

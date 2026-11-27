@@ -2013,7 +2013,7 @@ local
   fun backend_selection_with operations =
     backend_selection_with_finite_trace operations (fn _ => ())
 
-  val term_backend_selection_operations :
+  fun term_backend_selection_operations_with memoize :
       Term.term backend_selection_operations =
     {view=fn current => case Term.dest_term current of
          Term.VAR _ => BackendVariable | Term.CONST _ => BackendConstant
@@ -2027,13 +2027,59 @@ local
      is_empty_bag=bagSyntax.is_empty,
      is_parsed_bag_literal=is_parsed_bag_literal,
      set_element_type=set_element_type,bag_element_type=bag_element_type,
-     memoize=fn _ => fn _ => fn _ => fn compute => compute ()}
-  val (choose_term_backends,term_backend_selection) =
+     memoize=memoize}
+  val term_backend_selection_operations =
+    term_backend_selection_operations_with
+      (fn _ => fn _ => fn _ => fn compute => compute ())
+  val uncached_term_backend_selection as (_,term_backend_selection) =
     backend_selection_parts term_backend_selection_operations (fn _ => ())
-  val native_set_term = #native_set_term term_backend_selection
-  val cvc5_native_bags = #cvc5_native_bags term_backend_selection
-  val finite_set_term = #finite_set_term term_backend_selection
-  val finite_bag_term = #finite_bag_term term_backend_selection
+
+  fun application_fork compound (operator,operand) =
+    compound operand andalso Term.is_comb operator andalso
+    let val (head,first) = Term.dest_comb operator
+    in compound first orelse compound head end
+
+  fun new_term_backend_selection () =
+    let
+      val uncached = ref 32
+      val cache = Portable.HOLSusp.delay (fn () => SmtPointerTable.new
+        {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093})
+      fun compound tm = Term.is_comb tm orelse Term.is_abs tm
+      (* Skip ordinary application spines so recursive walks of them stay
+         tail recursive. Shared branches have two compound children. *)
+      fun branches tm = Term.is_comb tm andalso
+        let val (opr,arg) = Term.dest_comb tm
+        in application_fork compound (opr,arg) orelse
+           (Term.is_abs opr andalso compound arg)
+        end
+      fun memoize tag contexts current compute =
+        if !uncached > 0 then (uncached := !uncached - 1; compute ())
+        else if not (branches current) then compute ()
+        else
+          let
+            val table = Portable.HOLSusp.force cache
+            val rows = case SmtPointerTable.lookup table current of
+                SOME rows => rows
+              | NONE =>
+                  let val rows = ref [] in
+                    SmtPointerTable.insert table current rows; rows
+                  end
+            fun matches (saved,scopes,_) =
+              tag = saved andalso ListPair.allEq Portable.pointer_eq
+                (contexts,scopes)
+          in
+            case List.find matches (!rows) of
+                SOME (_,_,result) => result
+              | NONE =>
+                  let val result = compute () in
+                    rows := (tag,contexts,result) :: !rows;
+                    result
+                  end
+          end
+    in backend_selection_parts
+         (term_backend_selection_operations_with memoize) (fn _ => ())
+    end
+
   fun finite_set_hypothesis current =
     case (#finite_sets term_backend_selection) [current] of
       [term] => SOME term | _ => NONE
@@ -3614,11 +3660,6 @@ local
      native_set_backend=fn () => !current_set_backend = CVC5NativeSet,
      has_bag_terms=fn () => not (Redblackset.isEmpty (!current_bag_terms)),
      native_bag_backend=fn () => !current_bag_backend = CVC5NativeBag}
-
-  fun application_fork compound (operator,operand) =
-    compound operand andalso Term.is_comb operator andalso
-    let val (head,first) = Term.dest_comb operator
-    in compound first orelse compound head end
 
   (* Cache completed compound terms so a subsequent sibling can reuse them.
      The initial atom cannot match any compound caller. *)
@@ -6935,6 +6976,10 @@ local
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
     val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
+    val (choose_term_backends, term_backend_selection) =
+      if cvc5 then new_term_backend_selection ()
+      else uncached_term_backend_selection
+    val {finite_set_term,finite_bag_term,...} = term_backend_selection
     val refused_assumption = assumption_membership refused
     (* dropping, an assumption the solver preflight refused ([refused]),
        with a bound function over a cvc5 collection, or with a card the
@@ -9578,10 +9623,15 @@ in
 
   val has_set_complement = has_applied_constant pred_setSyntax.compl_tm
 
+  val card_operand_cong = Thm.REFL (pred_setSyntax.mk_card
+    (Term.mk_var ("card_set", pred_setSyntax.mk_set_type Type.alpha)))
+
+local
   (* Checked CARD keeps finite set atoms native, while unrelated non-finite
      atoms still lower to predicates. Native-by-default mode only lowers
      operands outside the printer's native grammar. *)
-  fun set_atom_needs_predicate_expansion expand_native finite_terms tm =
+  fun needs_set_expansion (native_set_term,finite_set_term) expand_native
+      finite_terms tm =
   let
     val (rator, rands) = boolSyntax.strip_comb tm
     fun unsupported set = is_set_type set andalso
@@ -9605,28 +9655,40 @@ in
       false
   end
 
-  val card_operand_cong = Thm.REFL (pred_setSyntax.mk_card
-    (Term.mk_var ("card_set", pred_setSyntax.mk_set_type Type.alpha)))
+  fun new_set_expansion_test () =
+    let val (_, {native_set_term,finite_set_term,...}) =
+          new_term_backend_selection ()
+    in needs_set_expansion (native_set_term,finite_set_term) end
+
+  fun new_set_preprocess_conv expand_native finite_terms =
+    let
+      val needs_expansion = new_set_expansion_test () expand_native finite_terms
+      fun convert tm =
+        if needs_expansion tm then
+          simpLib.SIMP_CONV
+            (simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss])
+            [simpLib.Cong card_operand_cong,
+             pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+             pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+             pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF] tm
+        else
+          raise Conv.UNCHANGED
+    in convert end
+in
+  fun set_atom_needs_predicate_expansion expand_native finite_terms tm =
+    new_set_expansion_test () expand_native finite_terms tm
 
   fun native_set_preprocess_conv expand_native finite_terms tm =
-    if set_atom_needs_predicate_expansion expand_native finite_terms tm then
-      simpLib.SIMP_CONV
-        (simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss])
-        [simpLib.Cong card_operand_cong,
-         pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
-         pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
-         pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF] tm
-    else
-      raise Conv.UNCHANGED
+    new_set_preprocess_conv expand_native finite_terms tm
 
   (* Set simplification rewrites the assumptions too.  An assumption left
      with IN or a bare EMPTY would mark a set as an SMT Array while the
      simplified conclusion uses the same set as a function. *)
-  val NATIVE_SET_SIMP_TAC =
+  fun NATIVE_SET_SIMP_TAC g =
     let val conv =
-          Conv.TOP_DEPTH_CONV (native_set_preprocess_conv false []) in
+          Conv.TOP_DEPTH_CONV (new_set_preprocess_conv false []) in
       Tactical.THEN
-        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv)
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv) g
     end
 
   (* The predicate encoding of checked mode, on the assumptions as well.
@@ -9653,7 +9715,7 @@ in
       let
         val finite_terms = List.mapPartial finite_set_hypothesis (#1 g)
         val conv =
-          Conv.TOP_DEPTH_CONV (native_set_preprocess_conv true finite_terms)
+          Conv.TOP_DEPTH_CONV (new_set_preprocess_conv true finite_terms)
       in
         Tactical.THEN
           (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv) g
@@ -9662,6 +9724,7 @@ in
       NATIVE_SET_SIMP_TAC g
     else
       PREDICATE_SET_SIMP_TAC g
+end
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into
      a predicate equality before collection discovery can select Set or Bag. *)
@@ -9681,6 +9744,7 @@ in
 
   fun cvc_native_bag_goal goal =
   let
+    val (_, {cvc5_native_bags,...}) = new_term_backend_selection ()
     val bag_terms = List.foldl
       (fn (term, terms) => collect_native_bag_terms term terms) []
       (Lib.fst goal @ [Lib.snd goal])
