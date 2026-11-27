@@ -149,25 +149,48 @@ local
         max_exact_provenance_dag_nodes term
     in has_abs orelse complete end
 
-  fun provenance_shape AtomicProvenance = "atom"
-    | provenance_shape (ApplicationProvenance (head, operands)) =
-        "application(" ^ head ^ "," ^
-        String.concatWith "," (List.map provenance_shape operands) ^ ")"
-    | provenance_shape (BinderProvenance (head, body)) =
-        "binder(" ^ head ^ "," ^ provenance_shape body ^ ")"
-    | provenance_shape (BinderBlockProvenance (head, size, body)) =
-        "binder-block(" ^ head ^ "," ^ Int.toString size ^ "," ^
-        provenance_shape body ^ ")"
-    | provenance_shape (EqualityProvenance (left, right)) =
-        "equality(" ^ provenance_shape left ^ "," ^
-        provenance_shape right ^ ")"
-    | provenance_shape (ConjunctionProvenance (_, operands)) =
-        "conjunction(" ^
-        String.concatWith "," (List.map provenance_shape operands) ^ ")"
-    | provenance_shape (UnavailableProvenance reason) =
-        "unavailable(" ^ reason ^ ")"
-    | provenance_shape (AmbiguousProvenance reason) =
-        "ambiguous(" ^ reason ^ ")"
+  fun provenance_shape root =
+    let
+      (* An alias DAG can have an exponentially large unfolded rendering.
+         Stop visiting it as soon as the diagnostic reaches its byte cap. *)
+      val maximum = 4096
+      val remaining = ref maximum
+      val pieces = ref []
+      exception Truncated
+      fun emit text =
+        let val size = String.size text in
+          if size <= !remaining then
+            (pieces := text :: !pieces; remaining := !remaining - size)
+          else
+            (pieces := String.substring (text, 0, !remaining) :: !pieces;
+             raise Truncated)
+        end
+      fun visit AtomicProvenance = emit "atom"
+        | visit (ApplicationProvenance (head, operands)) =
+            (emit "application("; emit head; emit ",";
+             visit_operands operands; emit ")")
+        | visit (BinderProvenance (head, body)) =
+            (emit "binder("; emit head; emit ","; visit body; emit ")")
+        | visit (BinderBlockProvenance (head, size, body)) =
+            (emit "binder-block("; emit head; emit ","; emit (Int.toString size);
+             emit ","; visit body; emit ")")
+        | visit (EqualityProvenance (left, right)) =
+            (emit "equality("; visit left; emit ","; visit right; emit ")")
+        | visit (ConjunctionProvenance (_, operands)) =
+            (emit "conjunction("; visit_operands operands; emit ")")
+        | visit (UnavailableProvenance reason) =
+            (emit "unavailable("; emit reason; emit ")")
+        | visit (AmbiguousProvenance reason) =
+            (emit "ambiguous("; emit reason; emit ")")
+      and visit_operands [] = ()
+        | visit_operands [last] = visit last
+        | visit_operands (first :: rest) =
+            (visit first; emit ","; visit_operands rest)
+      fun finish suffix = String.concat (List.revAppend (!pieces, suffix))
+    in
+      (visit root; finish [])
+      handle Truncated => SmtResource.bounded_text maximum (finish ["..."])
+    end
 
   (* Exact provenance that proves an occurrence contains no conjunction can
      be represented by the atomic no-conjunction marker once it enters the
@@ -175,95 +198,119 @@ local
      so a later CONG still has the exact source tree it must rewrite.  An
      unavailable or ambiguous occurrence is deliberately not compacted: it
      may contain a conjunction and must continue to fail closed. *)
-  fun definitely_no_conjunction AtomicProvenance = true
-    | definitely_no_conjunction (ApplicationProvenance (_, operands)) =
-        List.all definitely_no_conjunction operands
-    | definitely_no_conjunction (BinderProvenance (_, body)) =
-        definitely_no_conjunction body
-    | definitely_no_conjunction (BinderBlockProvenance (_, _, body)) =
-        definitely_no_conjunction body
-    | definitely_no_conjunction (EqualityProvenance (left, right)) =
-        definitely_no_conjunction left andalso
-        definitely_no_conjunction right
-    | definitely_no_conjunction (ConjunctionProvenance _) = false
-    | definitely_no_conjunction (UnavailableProvenance _) = false
-    | definitely_no_conjunction (AmbiguousProvenance _) = false
+  val provenance_bucket_count = 4093
 
-  fun contains_binder_block provenance =
-    case provenance of
-      BinderBlockProvenance _ => true
-    | ApplicationProvenance (_, operands) =>
-        List.exists contains_binder_block operands
-    | BinderProvenance (_, body) => contains_binder_block body
-    | EqualityProvenance (left, right) =>
-        contains_binder_block left orelse contains_binder_block right
-    | ConjunctionProvenance (_, operands) =>
-        List.exists contains_binder_block operands
-    | _ => false
-
-  fun provenance_exists_dag predicate root =
+  fun provenance_bucket item =
     let
-      val bucket_count = 4093
-      val seen = Array.array
-        (bucket_count, [] : term_provenance list)
+      (* Bucket hints must stay cheap on wide occurrences or long names:
+         a shared occurrence can be looked up once per incoming edge. *)
       fun string_hash string =
         let
+          val limit = Int.min (String.size string, 32)
           fun loop index hash =
-            if index = String.size string then hash
+            if index = limit then hash
             else loop (index + 1)
               ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
+               provenance_bucket_count)
         in loop 0 5381 end
-      fun index item =
-        case item of
+      fun arity 0 _ = 0
+        | arity _ [] = 0
+        | arity left (_ :: rest) = 1 + arity (left - 1) rest
+      val code = case item of
           AtomicProvenance => 0
         | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod bucket_count
-        | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod bucket_count
+            17 * string_hash head + arity 8 operands
+        | BinderProvenance (head, _) => 31 * string_hash head + 1
         | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod bucket_count
+            37 * string_hash head + size
         | EqualityProvenance _ => 41
-        | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod bucket_count
-        | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod bucket_count
-        | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod bucket_count
-      fun known item =
+        | ConjunctionProvenance (_, operands) => 43 + arity 8 operands
+        | UnavailableProvenance reason => 47 * string_hash reason
+        | AmbiguousProvenance reason => 53 * string_hash reason
+    in code mod provenance_bucket_count end
+
+  datatype provenance_query = BinderBlock | PossiblyConjunction
+
+  fun provenance_exists query root =
+    let
+      fun matches (BinderBlockProvenance _) = query = BinderBlock
+        | matches (ConjunctionProvenance _) = query = PossiblyConjunction
+        | matches (UnavailableProvenance _) = query = PossiblyConjunction
+        | matches (AmbiguousProvenance _) = query = PossiblyConjunction
+        | matches _ = false
+      exception UseDAG
+      val branches = ref 16
+      fun branch () =
+        if !branches = 0 then raise UseDAG
+        else branches := !branches - 1
+      fun visit_small item =
+        case item of
+           ApplicationProvenance (_, [child]) => visit_small child
+         | BinderProvenance (_, body) => visit_small body
+         | BinderBlockProvenance (_, _, body) =>
+             query = BinderBlock orelse visit_small body
+         | ApplicationProvenance (_, operands) => visit_children operands
+         | ConjunctionProvenance (_, operands) =>
+             query = PossiblyConjunction orelse visit_children operands
+         | EqualityProvenance (left, right) => visit_pair left right
+         | _ => matches item
+      and visit_children [left, right] = visit_pair left right
+        | visit_children children = (branch (); List.exists visit_small children)
+      and visit_pair left right =
+        if Portable.pointer_eq (left, right) then visit_small left
+        else (branch (); visit_small left orelse visit_small right)
+      fun children item =
+        case item of
+          ApplicationProvenance (_, operands) => operands
+        | BinderProvenance (_, body) => [body]
+        | BinderBlockProvenance (_, _, body) => [body]
+        | EqualityProvenance (left, right) => [left, right]
+        | ConjunctionProvenance (_, operands) => operands
+        | _ => []
+      fun visit_dag () =
         let
-          val bucket = index item
-          val entries = Array.sub (seen, bucket)
-        in
-          if List.exists
-               (fn saved => Portable.pointer_eq (item, saved)) entries then true
-          else
-            (Array.update (seen, bucket, item :: entries); false)
-        end
-      fun visit item =
-        if known item then false
-        else if predicate item then true
-        else
-          case item of
-            ApplicationProvenance (_, operands) => List.exists visit operands
-          | BinderProvenance (_, body) => visit body
-          | BinderBlockProvenance (_, _, body) => visit body
-          | EqualityProvenance (left, right) =>
-              visit left orelse visit right
-          | ConjunctionProvenance (_, operands) => List.exists visit operands
-          | _ => false
-    in visit root end
+          (* Keep the unfolded walk advancing on memo lookups and
+             collisions. Identical bucket hints cannot force quadratic
+             work on an unshared tree. *)
+          exception TreeComplete of bool
+          val pending = ref [[root]]
+          fun push [] rest = rest
+            | push items rest = items :: rest
+          fun advance () =
+            let
+              fun step 0 rest = pending := rest
+                | step _ [] = raise TreeComplete false
+                | step n ((item :: siblings) :: rest) =
+                    if matches item then raise TreeComplete true
+                    else step (n - 1)
+                      (push (children item) (push siblings rest))
+                | step n ([] :: rest) = step n rest
+            in step 4 (!pending) end
+          val {peek,put} = SmtSkeletonProve.new_sparse_buckets
+            provenance_bucket_count
+          fun visit AtomicProvenance = false
+            | visit item =
+                let
+                  val _ = advance ()
+                  val bucket = provenance_bucket item
+                  fun entries () = Option.getOpt (peek bucket, [])
+                  fun same saved =
+                    (advance (); Portable.pointer_eq (item, saved))
+                in
+                  if List.exists same (entries ()) then false
+                  else if matches item orelse
+                          List.exists visit (children item) then true
+                  else (put (bucket, item :: entries ()); false)
+                end
+        in visit root handle TreeComplete found => found end
+    in visit_small root handle UseDAG => visit_dag () end
 
-  fun contains_binder_block_dag AtomicProvenance = false
-    | contains_binder_block_dag root = provenance_exists_dag
-        (fn BinderBlockProvenance _ => true | _ => false) root
+  fun contains_binder_block AtomicProvenance = false
+    | contains_binder_block root = provenance_exists BinderBlock root
 
-  fun definitely_no_conjunction_dag AtomicProvenance = true
-    | definitely_no_conjunction_dag root = not (provenance_exists_dag
-        (fn ConjunctionProvenance _ => true
-          | UnavailableProvenance _ => true
-          | AmbiguousProvenance _ => true
-          | _ => false) root)
+  fun definitely_no_conjunction AtomicProvenance = true
+    | definitely_no_conjunction root = not
+        (provenance_exists PossiblyConjunction root)
 
   fun has_binder_shell provenance =
     case provenance of
@@ -280,44 +327,21 @@ local
   fun compact_live_provenance AtomicProvenance = AtomicProvenance
     | compact_live_provenance (item as UnavailableProvenance _) = item
     | compact_live_provenance (item as AmbiguousProvenance _) = item
+    | compact_live_provenance
+        (item as EqualityProvenance (AtomicProvenance, AtomicProvenance)) =
+        item
     | compact_live_provenance provenance =
     let
-      type summary = term_provenance * bool * bool
-      val bucket_count = 4093
-      val {peek,put} = SmtSkeletonProve.new_sparse_buckets bucket_count
-      fun entries bucket : (term_provenance * summary) list =
-        Option.getOpt (peek bucket, [])
-      fun string_hash string =
-        let
-          fun loop index hash =
-            if index = String.size string then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
-        in loop 0 5381 end
-      fun tag item =
-        case item of
-          AtomicProvenance => 0
-        | ApplicationProvenance (head, operands) =>
-            (17 * string_hash head + List.length operands) mod bucket_count
-        | BinderProvenance (head, _) =>
-            (31 * string_hash head + 1) mod bucket_count
-        | BinderBlockProvenance (head, size, _) =>
-            (37 * string_hash head + size) mod bucket_count
-        | EqualityProvenance _ => 41
-        | ConjunctionProvenance (_, operands) =>
-            (43 + List.length operands) mod bucket_count
-        | UnavailableProvenance reason =>
-            (47 * string_hash reason) mod bucket_count
-        | AmbiguousProvenance reason =>
-            (53 * string_hash reason) mod bucket_count
+      val {peek,put} = SmtSkeletonProve.new_sparse_buckets
+        provenance_bucket_count
+      fun entries bucket = Option.getOpt (peek bucket, [])
       fun lookup [] _ = NONE
         | lookup ((saved, result) :: rest) item =
             if Portable.pointer_eq (saved, item) then SOME result
             else lookup rest item
       fun summarize item =
         let
-          val bucket = tag item
+          val bucket = provenance_bucket item
         in
           case lookup (entries bucket) item of
             SOME result => result
@@ -567,7 +591,7 @@ local
         | AtomicProvenance => AtomicProvenance
         | exact =>
             if not (use_compact_provenance term) andalso
-               not (contains_binder_block_dag exact) then
+               not (contains_binder_block exact) then
               compact_live_provenance exact
             else exact
     in
@@ -21141,11 +21165,11 @@ local
                                occurs. *)
                             val keep = exact_small andalso
                               List.all (exact_small_term o Thm.concl) prems
-                              andalso (contains_binder_block_dag
+                              andalso (contains_binder_block
                                 (#provenance source) orelse
-                              not (definitely_no_conjunction_dag
+                              not (definitely_no_conjunction
                                 (#provenance source) andalso List.all
-                                  (definitely_no_conjunction_dag o
+                                  (definitely_no_conjunction o
                                     step_provenance) premise_steps))
                             fun retained () =
                               SmtResource.or_else
@@ -21562,7 +21586,7 @@ local
                         (max_exact_provenance_dag_nodes + 1) (#term target)
                     in
                       if dag_nodes > max_exact_provenance_dag_nodes andalso
-                         not (contains_binder_block_dag
+                         not (contains_binder_block
                            (#provenance target)) then
                         raw_unavailable_result
                           "ACI provenance exceeds the replay tree budget"

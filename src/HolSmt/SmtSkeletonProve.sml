@@ -1897,12 +1897,15 @@ struct
          Library.check_oracle_tags "SmtSkeletonProve"
            "schematic SAT certificate" theorem;
          exact_conclusion target theorem)
-      fun find [] _ = NONE
-        | find ((entry as (saved, theorem, _)) :: rest) prior =
+      val current = !(#proofs context)
+      fun find _ [] = NONE
+        | find skipped ((entry as (saved, theorem, _)) :: rest) =
             if term_order (saved, target) = EQUAL then
-              ( #proofs context := entry :: List.revAppend (prior, rest);
-                SOME theorem)
-            else find rest (entry :: prior)
+              (if skipped = 0 then ()
+               else #proofs context :=
+                 entry :: (List.take (current, skipped) @ rest);
+               SOME theorem)
+            else find (skipped + 1) rest
       fun retain theorem =
         (#refresh_caches context ();
         (* Never publish a certificate captured across a signature change.
@@ -1920,15 +1923,20 @@ struct
             if cost > maximum orelse
                 not (new_cache_live_check () (Thm.concl theorem)) then ()
             else
-              let val (oldest_first,nodes) = fit
-                    (List.rev (!(#proofs context))) (!(#nodes context))
+              let val nodes = !(#nodes context)
+                  val proofs = !(#proofs context)
+                  val (older, nodes) =
+                      if nodes + cost <= maximum then (proofs, nodes)
+                      else
+                        let val (oldest_first, nodes) =
+                              fit (List.rev proofs) nodes
+                        in (List.rev oldest_first, nodes) end
               in
-                #proofs context := (target,theorem,cost) ::
-                  List.rev oldest_first;
+                #proofs context := (target,theorem,cost) :: older;
                 #nodes context := nodes+cost
               end
           end)
-      val theorem = case find (!(#proofs context)) [] of
+      val theorem = case find 0 current of
           SOME theorem => phase "skeleton/schematic-certificate-hit"
             validate theorem
         | NONE => let val theorem = validate (prove ())

@@ -109,6 +109,14 @@ fun refute source_clauses =
   val plan_nodes=ref 0
   fun checked_model () =
    let
+    (* T and F are assigned before search. The remaining budget counts only
+       assigned variables, before constructing any fresh proxy terms. *)
+    val assignment_count=Array.foldl (fn (value,n)=>
+      if value=0 then n else n+1) 0 values
+    val _=Vector.foldl (fn (clause,budget)=>
+      let val cost=SmtResource.term_nodes_up_to (Int.min (4097,budget)) clause
+      in if cost<=budget then budget-cost else decline "model-witness" end)
+      (200000 div assignment_count) source_clauses
     val atoms=Redblackmap.listItems (!reverse)
     val avoid=ref (List.concat (List.map (Term.free_vars o #2) atoms))
     fun fresh (n,atom) =
@@ -134,10 +142,6 @@ fun refute source_clauses =
       if Array.sub (values,n)=0 then NONE else SOME
        (v |-> (if Array.sub (values,n)= ~1 then boolSyntax.F
                else boolSyntax.T))) bindings
-    val source_nodes=Vector.foldl (fn (clause,n)=>
-      n+SmtResource.term_nodes_up_to 4097 clause) 0 source_clauses
-    val _=if source_nodes*length assignments<=200000 then ()
-      else decline "model-witness"
     val decode=Term.subst inverse
     val assign_values=Term.subst assignments
     fun check clause =

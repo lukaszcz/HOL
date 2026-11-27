@@ -84,12 +84,15 @@ fun cached_conversion kind allowed worker source =
  let
   val _=refresh ()
   val key=Option.map (fn id=>(kind,id)) ((!index) source)
-  fun find _ [] _=NONE
-    | find wanted ((entry as (id,law,cost))::rest) prior =
+  val current= !entries
+  fun find _ _ []=NONE
+    | find wanted skipped ((entry as (id,law,_))::rest) =
       if wanted=id then
-       (entries:=entry::List.revAppend (prior,rest);SOME law)
-      else find wanted rest (entry::prior)
-  val cached=case key of NONE=>NONE | SOME id=>find id (!entries) []
+       (if skipped=0 then ()
+        else entries:=entry::(List.take (current,skipped) @ rest);
+        SOME law)
+      else find wanted (skipped+1) rest
+  val cached=case key of NONE=>NONE | SOME id=>find id 0 current
  in case cached of SOME theorem=>
     (cache_hits:= !cache_hits+1;
      SmtSkeletonProve.nodewise_exact_left source theorem)
@@ -103,16 +106,20 @@ fun cached_conversion kind allowed worker source =
      val theorem=SmtSkeletonProve.nodewise_exact_left source theorem
      val cost=SmtResource.dag_nodes_up_to 8193 (Thm.concl theorem)
      fun fit [] nodes=([],nodes)
-       | fit ((entry as (_,_,old_cost))::rest) nodes =
-         if nodes+cost<=8192 then (entry::rest,nodes)
+       | fit (older as (_,_,old_cost)::rest) nodes =
+         if nodes+cost<=8192 then (older,nodes)
          else (cache_evictions:= !cache_evictions+1;
                fit rest (nodes-old_cost))
      val _=refresh ()
      val _=case key of NONE=>() | SOME id=>
       if cost>8192 orelse
         not (SmtSkeletonProve.cache_signature_matches witness) then () else
-       let val (older,nodes)=fit (List.rev (!entries)) (!retained)
-       in entries:=(id,theorem,cost)::List.rev older;
+       let
+        val nodes= !retained
+        val (older,nodes)=if nodes+cost<=8192 then (!entries,nodes)
+          else let val (oldest_first,nodes)=fit (List.rev (!entries)) nodes
+               in (List.rev oldest_first,nodes) end
+       in entries:=(id,theorem,cost)::older;
           retained:=nodes+cost end
     in theorem end
  end;

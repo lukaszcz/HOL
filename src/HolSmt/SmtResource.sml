@@ -394,14 +394,15 @@ struct
      structural equality or context-dependent classifier as a cache key. *)
   fun recent_pointer_lookup cache key =
     let
+      val current = !cache
       fun seek _ [] = NONE
-        | seek previous ((entry as (saved, value)) :: rest) =
+        | seek skipped ((entry as (saved, value)) :: rest) =
             if Portable.pointer_eq (key, saved) then
-              (if List.null previous then ()
-               else cache := entry :: List.revAppend (previous, rest);
+              (if skipped = 0 then ()
+               else cache := entry :: (List.take (current, skipped) @ rest);
                SOME value)
-            else seek (entry :: previous) rest
-    in seek [] (!cache) end
+            else seek (skipped + 1) rest
+    in seek 0 current end
 
   (* Preserve the binder-inclusive unfolded-tree metric, but compute each
      shared compound node's size once.  Summaries saturate at limit + 1;

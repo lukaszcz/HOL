@@ -5158,24 +5158,24 @@ local
           subst surface
         end
 
-  and surface_sort_of_ast context tydict sort_ast =
+  and typecheck_sort_tree context tydict ast =
+    let
+      val children = ref []
+      fun arg_sorts args =
+        let val checked = List.map (typecheck_sort_tree context tydict) args
+        in
+          children := checked;
+          List.map (fn CheckedSort (ty, _) => ty) checked
+        end
+      val ty = typecheck_sort_with arg_sorts context tydict ast
+    in
+      CheckedSort (ty, !children)
+    end
+
+  and surface_sort_of_checked_ast context tydict checked sort_ast =
     let
       (* A constructor validates its complete sort before its surface
          children are elaborated. Retain those child types for that pass. *)
-      fun check ast =
-        let
-          val children = ref []
-          fun arg_sorts args =
-            let val checked = List.map check args
-            in
-              children := checked;
-              List.map (fn CheckedSort (ty, _) => ty) checked
-            end
-          val ty = typecheck_sort_with arg_sorts context tydict ast
-        in
-          CheckedSort (ty, !children)
-        end
-
       fun checked_type checked ast =
         case checked of
           NONE => typecheck_sort context tydict ast
@@ -5215,29 +5215,35 @@ local
                   | NONE =>
                       let
                         val tree as CheckedSort (ty, _) =
-                          case checked of NONE => check ast | SOME tree => tree
+                          case checked of
+                            NONE => typecheck_sort_tree context tydict ast
+                          | SOME tree => tree
                       in ConstructorSort (ty, surfaces (SOME tree) args) end
               end
           | _ => RigidSort (checked_type checked ast)
         end
     in
-      surface NONE sort_ast
+      surface checked sort_ast
     end
 
-  and typecheck_sorted_var context tydict sorted_var =
-    case node_of sorted_var of
-      SortedVar (name, sort) =>
-        (located_string_node name, typecheck_sort context tydict sort)
+  and surface_sort_of_ast context tydict sort_ast =
+    surface_sort_of_checked_ast context tydict NONE sort_ast
+
+  and typecheck_sort_and_surface context tydict sort_ast =
+    let val tree as CheckedSort (ty, _) =
+      typecheck_sort_tree context tydict sort_ast
+    in
+      (ty, surface_sort_of_checked_ast context tydict (SOME tree) sort_ast)
+    end
 
   (* Typecheck a `SortedVar` into its bound HOL variable together with the
      surface sort of its declared type; used by binders, lambdas, and the
      define-fun family. *)
   and checked_sorted_var context tydict sorted_var =
     let
-      val (name, ty) = typecheck_sorted_var context tydict sorted_var
-      val surface_sort =
-        case node_of sorted_var of
-          SortedVar (_, sort) => surface_sort_of_ast context tydict sort
+      val SortedVar (name, sort) = node_of sorted_var
+      val (ty, surface_sort) = typecheck_sort_and_surface context tydict sort
+      val name = located_string_node name
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface surface_sort then
@@ -6198,8 +6204,8 @@ local
       fun shadowed name = Option.isSome (peek_signatures (sigdict, name))
       fun as_const_array_or_set sort payload =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val payload = check payload
           val _ =
             case expected_surface of
@@ -6237,8 +6243,8 @@ local
         end
       fun as_cvc5_set_constant name sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val _ = reject_nested_cvc5_collection context (loc_of term_ast)
             expected_surface
           val _ =
@@ -6262,8 +6268,8 @@ local
         end
       fun as_seq_empty sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val smtstr_ty =
             Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
           val empty =
@@ -6280,8 +6286,8 @@ local
         end
       fun as_cvc5_bag_empty sort =
         let
-          val expected = typecheck_sort context tydict sort
-          val expected_surface = surface_sort_of_ast context tydict sort
+          val (expected, expected_surface) =
+            typecheck_sort_and_surface context tydict sort
           val _ = reject_nested_cvc5_collection context (loc_of term_ast)
             expected_surface
           val _ =
@@ -6404,8 +6410,8 @@ local
           else
           let
             val checked = check ascribed
-            val expected = typecheck_sort context tydict sort
-            val expected_surface = surface_sort_of_ast context tydict sort
+            val (expected, expected_surface) =
+              typecheck_sort_and_surface context tydict sort
             val _ =
               if checked_sort checked = expected andalso
                  surface_sort_compatible expected_surface
@@ -6421,8 +6427,8 @@ local
       | TermAscribed (term, sort) =>
           let
             val checked = check term
-            val expected = typecheck_sort context tydict sort
-            val expected_surface = surface_sort_of_ast context tydict sort
+            val (expected, expected_surface) =
+              typecheck_sort_and_surface context tydict sort
             val _ =
               if checked_sort checked = expected andalso
                  surface_sort_compatible expected_surface
@@ -6605,10 +6611,12 @@ local
       val (temp_tydict, param_tys) =
         List.foldl add_param (tydict, []) params
       val param_tys = List.rev param_tys
-      val body_ty = typecheck_sort context temp_tydict body
+      val body_tree as CheckedSort (body_ty, _) =
+        typecheck_sort_tree context temp_tydict body
       (* Parameters shadow aliases in both sort representations. *)
       val body_surface = with_shadowed_surface_aliases shadowed_names
-        (fn () => surface_sort_of_ast context temp_tydict body)
+        (fn () => surface_sort_of_checked_ast context temp_tydict
+          (SOME body_tree) body)
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface body_surface then
@@ -6740,13 +6748,11 @@ local
                 case node_of selector of
                   DatatypeSelector (selector_name, selector_sort) =>
                     let
-                      val selector_ty =
-                        typecheck_sort context tydict selector_sort
-                      val selector_surface = polymorphic_surface
-                        (surface_sort_of_ast context tydict selector_sort)
+                      val (selector_ty, selector_surface) =
+                        typecheck_sort_and_surface context tydict selector_sort
                     in
                       (located_string_node selector_name, selector_ty,
-                       selector_surface)
+                       polymorphic_surface selector_surface)
                     end
               val selectors = List.map selector_info selectors
               val arg_tys = List.map #2 selectors
@@ -7106,8 +7112,8 @@ local
       val name_loc = loc_of name
       val name = located_string_node name
       val _ = reject_duplicate_definition context name_loc name sigdict
-      val range_type = typecheck_sort context tydict sort
-      val range_surface = surface_sort_of_ast context tydict sort
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict sort
       val _ = reject_nested_cvc5_collection context (loc_of sort) range_surface
       val body_checked =
         typecheck_term_with_options elaborate_datatypes context
@@ -7161,8 +7167,8 @@ local
           type_error "typecheck_define_fun" context (loc_of body) NONE NONE
             "recursive self-reference"
         else ()
-      val range_type = typecheck_sort context tydict range
-      val range_surface = surface_sort_of_ast context tydict range
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict range
       val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val body_term =
@@ -7183,8 +7189,8 @@ local
       val name_loc = loc_of name
       val name = located_string_node name
       val _ = reject_duplicate_definition context name_loc name sigdict
-      val range_type = typecheck_sort context tydict range
-      val range_surface = surface_sort_of_ast context tydict range
+      val (range_type, range_surface) =
+        typecheck_sort_and_surface context tydict range
       val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val domain_types = List.map (Term.type_of o #2) vars
@@ -7215,8 +7221,8 @@ local
               val name_loc = loc_of name
               val name = located_string_node name
               val _ = reject_duplicate_definition context name_loc name sigdict
-              val range_type = typecheck_sort context tydict range
-              val range_surface = surface_sort_of_ast context tydict range
+              val (range_type, range_surface) =
+                typecheck_sort_and_surface context tydict range
               val _ = reject_nested_cvc5_collection context (loc_of range)
                 range_surface
               val vars =

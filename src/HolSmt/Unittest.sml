@@ -4146,8 +4146,11 @@ let
     parse_smtlib_state
       ("(set-logic ALL)\n" ^
        "(define-sort WordPair (T) (Array T (_ BitVec 8)))\n" ^
-       "(declare-const a (Array Int (_ BitVec 8)))\n" ^
-       "(assert (= (select a 0) #x00))\n" ^
+       "(define-sort KeepSort (WordPair) WordPair)\n" ^
+       "(declare-const a (WordPair (KeepSort Int)))\n" ^
+       "(define-fun first ((a (WordPair Int))) (_ BitVec 8)\n" ^
+       "  (select (as a (WordPair Int)) 0))\n" ^
+       "(assert (and (= (select a 0) #x00) (= (first a) #x00)))\n" ^
        "(exit)\n")
   val {assertions = fp_assertions, ...} =
     parse_smtlib_state
@@ -14310,6 +14313,7 @@ end
    antecedent builds no conjunction constructor; two build one. *)
 fun cpc_process_scope_boundary_matches_plain () =
 let
+  open CPC_Proof
   val a = Term.mk_var ("scope_a", Type.bool)
   val b = Term.mk_var ("scope_b", Type.bool)
   val r = Term.mk_var ("scope_r", Type.bool)
@@ -14322,7 +14326,7 @@ let
      result = {thm = theorem,
                located = {term = Thm.concl theorem, provenance = provenance},
                clause = NONE}}
-  fun check_with r label antecedents incoming expected =
+  fun check_result r label antecedents incoming expected =
     let
       val premise = Thm.ASSUME
         (List.foldr boolSyntax.mk_imp r antecedents)
@@ -14338,9 +14342,25 @@ let
                 (Thm.hypset theorem, Thm.hypset plain)) andalso
               Tag.dest_tag (Thm.tag plain) = Tag.dest_tag (Thm.tag theorem),
         label ^ ": plain and boundary theorems differ");
-      assert (provenance = expected,
+      assert (expected provenance,
         label ^ ": unexpected boundary provenance")
     end
+  fun check_with r label antecedents incoming expected =
+    check_result r label antecedents incoming (fn actual => actual = expected)
+  (* A wrapper distinguishes the two outgoing occurrences, so skipping
+     pointer-identical siblings alone cannot flatten this shared DAG. *)
+  fun share 0 node = node
+    | share n node = share (n - 1)
+        (ApplicationProvenance ("f",
+          [ApplicationProvenance ("g", [node]), node]))
+  val dag = share 30 AtomicProvenance
+  val marked = BinderBlockProvenance ("forall", 1,
+    ConjunctionProvenance (ParsedConjunction, [dag, dag]))
+  fun retains_marked (ApplicationProvenance ("=>", [
+        BinderBlockProvenance ("forall", 1,
+          ConjunctionProvenance (ParsedConjunction, [left, right])), _])) =
+      Portable.pointer_eq (left, dag) andalso Portable.pointer_eq (right, dag)
+    | retains_marked _ = false
 in
   check_with boolSyntax.F "one antecedent, F result" [a]
     (imp_prov (pa, pr)) (CPC_Proof.ApplicationProvenance ("not", [pa]));
@@ -14353,7 +14373,15 @@ in
     (imp_prov (pa, body));
   check_with r "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
     (imp_prov (CPC_Proof.ConjunctionProvenance
-                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body))
+                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body));
+  check_with r "opaque shared occurrence" [a] dag
+    (imp_prov (AtomicProvenance, body));
+  check_with r "opaque shared occurrence with a conjunction" [a]
+    (ApplicationProvenance ("f", [dag, marked]))
+    (imp_prov (UnavailableProvenance
+      "actual scope antecedent has no retained child boundary", body));
+  check_result r "exact binder and conjunction after scope" [a]
+    (imp_prov (marked, pr)) retains_marked
 end
 
 fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
@@ -18872,6 +18900,30 @@ in
     (fn () => CPC_ProofReplay.replay_result_alignment_for_test
       (Thm.ASSUME ``T``)
       {term = ``F``, provenance = CPC_Proof.AtomicProvenance})
+end
+
+fun cpc_proof_replay_shared_provenance_diagnostic () =
+let
+  open CPC_Proof
+  val premise = Thm.ASSUME ``p:bool``
+  val prefix = "CPC and_elim premise has no recoverable conjunction: "
+  fun diagnostic provenance =
+    (ignore (CPC_ProofReplay.replay_and_elim_provenance_for_test
+       premise provenance 0 NONE);
+     die "FAIL: and_elim accepted a non-conjunction")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
+  fun share 0 node = node
+    | share n node = share (n - 1) (ApplicationProvenance ("f", [node, node]))
+  val one = ApplicationProvenance ("f",
+    [AtomicProvenance, AmbiguousProvenance "example"])
+  val large = diagnostic (share 30 AtomicProvenance)
+in
+  assert (diagnostic one = prefix ^ "application(f,atom,ambiguous(example))",
+    "CPC short occurrence diagnostic changed");
+  assert (String.isPrefix (prefix ^ "application(f,application(f,") large
+      andalso String.size large = String.size prefix + 4096
+      andalso String.isSuffix "..." large,
+    "CPC shared occurrence diagnostic was not truncated at its byte cap")
 end
 
 fun cpc_proof_replay_large_conjunction_provenance_success () =
@@ -41455,6 +41507,8 @@ let
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
       cpc_proof_replay_and_elim_success),
+    ("cpc_proof_replay_shared_provenance_diagnostic",
+      cpc_proof_replay_shared_provenance_diagnostic),
     ("cpc_proof_replay_large_conjunction_provenance_success",
       cpc_proof_replay_large_conjunction_provenance_success),
     ("cpc_proof_replay_boolean_rewrites_success",

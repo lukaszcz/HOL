@@ -1326,6 +1326,19 @@ local
     join = String.concatWith
   }
 
+  val fragment_output_operations
+      : SmtLib_OutputFragments.doc output_operations =
+    {text = SmtLib_OutputFragments.text,
+     concat = SmtLib_OutputFragments.concat,
+     join = SmtLib_OutputFragments.join}
+
+  fun render_output document =
+    let
+      val reversed = ref []
+      val _ = SmtLib_OutputFragments.render
+        (fn fragment => reversed := fragment :: !reversed) document
+    in String.concat (List.rev (!reversed)) end
+
   fun generated_forall_with (output : 'doc output_operations)
       declarations body =
     (current_generated_forall_emissions :=
@@ -6452,18 +6465,9 @@ local
       (fn (_,document) => document) operations store translate
       regime apply_operator input
 
-  fun translate_term_step_with_carrier operations store translate regime
-      apply_operator input =
-    translate_term_step_with_output string_output_operations operations
-      store translate regime apply_operator input
-
-  fun translate_term_step_with_store store translate regime
-      apply_operator input =
-    translate_term_step_with_carrier term_translation_operations store
-      translate regime apply_operator input
-
   fun translate_term_step translate regime apply_operator input =
-    translate_term_step_with_store legacy_term_store_operations translate
+    translate_term_step_with_output fragment_output_operations
+      term_translation_operations legacy_term_store_operations translate
       regime apply_operator input
 
   (* Translation failures of the current goal, keyed by subterm and lexical
@@ -6826,6 +6830,12 @@ local
       if get_proof then [text "(get-proof)\n",text "(exit)\n"]
       else [text "(exit)\n"] end
 
+  fun assumption_membership [] = Lib.K false
+    | assumption_membership [assumption] = Term.aconv assumption
+    | assumption_membership assumptions =
+        let val indexed = HOLset.addList (Term.empty_tmset, assumptions)
+        in fn assumption => HOLset.member (indexed, assumption) end
+
   fun goal_to_SmtLib_aux_inner request apply_operator
       (policy : logic_selection_policy) target emit_sequences
       inventory refused (goal as (original_ts, t))
@@ -6874,11 +6884,12 @@ local
         collection_operations
         (fn term => Redblackset.member (marked, term)) roots
     val cvc5 = case target of SOME {solver="cvc5",...} => true | _ => false
+    val refused_assumption = assumption_membership refused
     (* dropping, an assumption the solver preflight refused ([refused]),
        with a bound function over a cvc5 collection, or with a card the
        selected cvc5 array encoding lacks is left out of the translation *)
     fun left_out backends tm =
-      List.exists (fn other => Term.aconv other tm) refused orelse
+      refused_assumption tm orelse
       (dropping_untranslatable () andalso cvc5 andalso
        (bound_collection_application [tm] marked_sets orelse
         bound_collection_application [tm] marked_bags orelse
@@ -7015,7 +7026,13 @@ local
     val _ = current_translation_failures := no_translation_failures
     val _ = current_eta_expansions := []
     fun translate (acc, tm) =
-      translate_term regime apply_operator (acc, (bounds, tm))
+      let
+        val (acc, (declarations, expression)) =
+          translate_term regime apply_operator (acc, (bounds, tm))
+      in
+        (* Keep each declaration and assertion in its original query chunk. *)
+        (acc, (List.map render_output declarations, render_output expression))
+      end
       handle NestedTranslation e => raise e
     (* Dropping, an assumption that fails to translate leaves the
        accumulator and the emission cells as they were before it.  No
@@ -8637,10 +8654,12 @@ in
 
   (* [goal] without the assumptions [translation] left out: replay may use
      only those the solver was given *)
-  fun sent_goal ({dropped, ...} : translation) (assumptions, conclusion) =
-    (List.filter (fn assumption =>
-       not (List.exists (fn other => Term.aconv other assumption) dropped))
-       assumptions, conclusion)
+  fun sent_goal ({dropped, ...} : translation)
+      (goal as (assumptions, conclusion)) =
+    if null dropped then goal
+    else
+      (List.filter (not o assumption_membership dropped) assumptions,
+       conclusion)
 
   (* The immutable Task06 view, also used by bounded checked adapters. *)
   val replay_datatype_destructor_theorems = datatype_destructor_theorems
@@ -8963,9 +8982,17 @@ in
          same_const actual expected} application
 
   fun reject_reglan_hol_equalities (assumptions, conclusion) =
-    let
-      (* Check each shared branch once without comparing entire subterms.
-         The bucket hint only selects candidates for pointer equality. *)
+    if null assumptions then
+      let
+        fun check tm =
+          (if Term.is_comb tm then check_reglan_application (Term.dest_comb tm)
+           else ();
+           false)
+      in
+        ignore (Library.exists_shared_subterm check conclusion)
+      end
+    else let
+      (* Retain sharing across roots, including repeated unary spines. *)
       val seen = SmtPointerTable.new
         {hint=SmtReplayImport.pointer_bucket 4,initial=31,ceiling=4093}
       fun visit [] = ()
@@ -9006,7 +9033,7 @@ in
            sequence emission chosen for the whole goal; those refused are
            left out of the translation *)
         fun refuses asm =
-          (check (([asm], boolSyntax.T), inventory_of [asm]); false)
+          (check (([], asm), inventory_of [asm]); false)
           handle Feedback.HOL_ERR _ => true
         val refused =
           if dropping_untranslatable () then

@@ -212,34 +212,44 @@ exception satCheckError;
 local
 (* Use the same template substitution as SUBST_CONV, with an ordered set
    to keep the last equality for duplicate atoms in large models. *)
-fun substitute_model conjuncts t =
+fun substitute_model model t =
     let
-      fun retain (th, state as (seen,placeholders,replacements)) =
+      fun project premise left = if left then CONJUNCT1 premise else premise
+
+      fun retain premise left atom implication
+          (state as (seen,placeholders,replacements)) =
           let
-            val literal = concl th
-            val (atom,implication) =
-                if is_comb literal then
-                  let val (operator,operand) = dest_comb literal in
-                    if Term.same_const boolSyntax.negation operator then
-                      (operand,EQF_Imp1)
-                    else (literal,EQT_Imp1)
-                  end
-                else (literal,EQT_Imp1)
             (* Test for a new atom with a single tree traversal. *)
             val seen' = HOLset.add (seen,atom)
           in
             if HOLset.numItems seen' = HOLset.numItems seen then state
             else
               let
-                val equality = MP (SPEC atom implication) th
+                val equality = MP (SPEC atom implication) (project premise left)
                 val variable = genvar (type_of atom)
               in
                 (seen', (atom |-> variable) :: placeholders,
                  (variable |-> equality) :: replacements)
               end
           end
+      (* Descend right first so the last assignment wins. Keep each leaf's
+         projection deferred until its assignment is needed. *)
+      fun collect literal premise left state =
+          if is_comb literal then
+            let val (operator,operand) = dest_comb literal in
+              if is_comb operator andalso
+                 Term.same_const boolSyntax.conjunction (rator operator) then
+                let val th = project premise left
+                    val right = CONJUNCT2 th
+                    val state' = collect operand right false state
+                in collect (rand operator) th true state' end
+              else if Term.same_const boolSyntax.negation operator then
+                retain premise left operand EQF_Imp1 state
+              else retain premise left literal EQT_Imp1 state
+            end
+          else retain premise left literal EQT_Imp1 state
       val (_,placeholders,replacements) =
-          List.foldr retain (Term.empty_tmset,[],[]) conjuncts
+          collect (concl model) model false (Term.empty_tmset,[],[])
     in SUBST replacements (mk_eq (t,Term.subst placeholders t)) (REFL t) end
 
 in
@@ -247,7 +257,7 @@ fun satCheck model t =
    let
       val mtm  = list_mk_conj model (*  (l1 /\ ... /\ ln) *)
       val th1  = ASSUME mtm (* l1 /\ ... /\ ln |- l1 /\ ... /\ ln *)
-      val th2 = substitute_model (CONJUNCTS th1) t
+      val th2 = substitute_model th1 t
                 (* l1 /\ ... /\ ln |- t = t[l1/T,...] *)
       val th3 = CONV_RULE (RHS_CONV computeLib.EVAL_CONV) th2
                 (* l1 /\ ... /\ ln |- t = T *)

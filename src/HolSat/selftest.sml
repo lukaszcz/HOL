@@ -328,7 +328,9 @@ local
       in checks [first, second] first andalso
          checks [first, negative] (mk_neg first) andalso
          checks [negative, first] second andalso
-         checks [inner, outer] (mk_conj (outer,inner))
+         checks [inner, outer] (mk_conj (outer,inner)) andalso
+         checks [mk_conj (first,negative), outer]
+           (mk_conj (mk_neg first,outer))
       end)
 
   val _ = control "SAT observation scopes retire on failure and reject reentry"
