@@ -19782,6 +19782,29 @@ in
       "CPC private marker index changed retained proof metadata")) ()
 end
 
+local
+  structure C = SmtLib_ConstructorSyntax
+in
+fun constructor_source_alpha_short_circuit () =
+let
+  val atom = C.native boolSyntax.T
+  val conjunction = C.native boolSyntax.conjunction
+  fun share 0 body = body
+    | share n body =
+        share (n - 1) (C.application (C.application (conjunction, body), body))
+  val body = share 24 atom
+  val f = C.variable (Term.mk_var ("f", Type.--> (Type.bool, Type.bool)))
+  val g = C.variable (Term.mk_var ("g", Type.--> (Type.bool, Type.bool)))
+  val spent = ref (0 : IntInf.int)
+  fun charge work = spent := !spent + work
+in
+  assert (not (C.aconv charge (C.application (f, body),
+                               C.application (g, body))),
+    "source alpha compared terms with distinct free application heads");
+  assert (!spent < 128, "source alpha visited operands after a head mismatch")
+end
+end
+
 (* Retained proof metadata, not the most recent parse or a name prefix,
    selects the real native TRUST deferral used by the graph force tests. *)
 fun cpc_fp_private_proof_scope_success () =
@@ -35034,6 +35057,32 @@ in
   assert (!calls = 3, "generic type_contains skipped an occurrence")
 end
 
+fun native_feature_shared_branches () =
+let
+  val x = Term.mk_var ("feature_left", Type.bool)
+  val y = Term.mk_var ("feature_right", Type.bool)
+  fun shared 0 (left, _) = left
+    | shared n (left, right) =
+        shared (n - 1) (boolSyntax.mk_conj (left, right), left)
+  fun off () = false
+  val state : SmtLib.outbound_feature_state =
+    {generated_forall = off, sequence_emission = off, has_set_terms = off,
+     native_set_backend = off, has_bag_terms = off, native_bag_backend = off}
+  fun infer root = SmtLib.outbound_infer_features_with_state
+    state SmtLib.FirstOrder [root] (Redblackmap.mkDict Type.compare)
+    (Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare)))
+  val root = shared 26 (x, y)
+  val expected = infer (shared 4 (x, y))
+  val actual = within_mutator_seconds 2 infer root
+  val SmtLib.LogicFeatures {quantifiers, ...} =
+    infer (boolSyntax.mk_conj (root, boolSyntax.mk_forall (x, x)))
+in
+  assert (actual = expected,
+    "native inference changed the features of shared Boolean branches");
+  assert (quantifiers,
+    "native inference missed a feature after shared Boolean branches")
+end
+
 fun binder_opening_resource_success () =
 let
   val x = Term.mk_var ("binder_resource_x", Type.bool)
@@ -40876,6 +40925,7 @@ let
       checked_smt_tac_rejects_unsat_without_theorem),
     ("library_type_contains_nested_arguments_success",
       library_type_contains_nested_arguments_success),
+    ("native_feature_shared_branches", native_feature_shared_branches),
     ("smtlib_string_literal_codec_success",
       smtlib_string_literal_codec_success),
     ("smtlib_string_literal_typecheck_success",
@@ -41541,6 +41591,8 @@ let
       cpc_boolean_circuit_shared_projection_success),
     ("cpc_true_elim_shared_normal_form", cpc_true_elim_shared_normal_form),
     ("cpc_fp_private_alpha_index", cpc_fp_private_alpha_index),
+    ("constructor_source_alpha_short_circuit",
+      constructor_source_alpha_short_circuit),
     ("cpc_fp_private_proof_scope_success",
       cpc_fp_private_proof_scope_success),
     ("cpc_fp_private_witness_search_success",

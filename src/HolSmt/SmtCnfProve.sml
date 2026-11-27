@@ -55,11 +55,15 @@ fun refute source_clauses =
   fun signed_id id term = if boolSyntax.is_neg term then
     ~(id (boolSyntax.dest_neg term)) else id term
   val literal_count=ref 0
+  val model_size=ref 0
   val clauses=Array.tabulate (Vector.length source_clauses,fn i=>
     let
       val clause=Vector.sub (source_clauses,i)
-      val _=if SmtResource.term_nodes_up_to 8193 clause<=8192 then ()
+      val size=SmtResource.term_nodes_up_to 8193 clause
+      val _=if size<=8192 then ()
         else decline "clause-size"
+      (* A witness walk capped at 4097 charged 4098 for larger clauses. *)
+      val _=model_size:= !model_size+Int.min (4098,size)
       val literals=if Term.term_eq clause boolSyntax.F then []
         else boolSyntax.strip_disj clause
       val _=literal_count:= !literal_count+length literals
@@ -113,10 +117,8 @@ fun refute source_clauses =
        assigned variables, before constructing any fresh proxy terms. *)
     val assignment_count=Array.foldl (fn (value,n)=>
       if value=0 then n else n+1) 0 values
-    val _=Vector.foldl (fn (clause,budget)=>
-      let val cost=SmtResource.term_nodes_up_to (Int.min (4097,budget)) clause
-      in if cost<=budget then budget-cost else decline "model-witness" end)
-      (200000 div assignment_count) source_clauses
+    val _=if !model_size<=200000 div assignment_count then ()
+      else decline "model-witness"
     val atoms=Redblackmap.listItems (!reverse)
     val avoid=ref (List.concat (List.map (Term.free_vars o #2) atoms))
     fun fresh (n,atom) =

@@ -1114,29 +1114,29 @@ struct
             "word-graph-schema-output"
             (boolSyntax.rhs (Thm.concl theorem))
           val allowed = Term.free_vars schematic
-          val seen = ref ([] : (term * unit) list)
+          (* A scan may cover one bit even when the input circuit is large. *)
+          val seen = SmtPointerTable.new
+            {hint = SmtResource.pointer_bucket, initial = 17,
+             ceiling = bucket_count}
           fun visit term =
-            case SmtPointerTable.peek (!seen) term of
-              SOME () => true
-            | NONE =>
-                let
-                  val _ = seen := (term, ()) :: !seen
-                  val locally_closed =
-                    if word_relation term then false
-                    else if is_word_projection term then
-                      let val word = Lib.fst (wordsSyntax.dest_index term)
-                      in
-                        if Term.is_var word andalso
-                           List.exists (fn variable =>
-                             Term.aconv variable word) allowed orelse
-                          wordsSyntax.is_word_literal word then true
-                        else false
-                      end
-                    else true
-                in
-                  locally_closed andalso
-                  List.all visit (SmtResource.term_children term)
-                end
+            if not (SmtPointerTable.mark seen term) then true
+            else let
+              val locally_closed =
+                if word_relation term then false
+                else if is_word_projection term then
+                  let val word = Lib.fst (wordsSyntax.dest_index term)
+                  in
+                    if Term.is_var word andalso
+                       List.exists (fn variable =>
+                         Term.aconv variable word) allowed orelse
+                      wordsSyntax.is_word_literal word then true
+                    else false
+                  end
+                else true
+            in
+              locally_closed andalso
+              List.all visit (SmtResource.term_children term)
+            end
         in visit (boolSyntax.rhs (Thm.concl theorem)) end
 
       fun relation_conversion term =

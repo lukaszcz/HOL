@@ -3588,7 +3588,8 @@ local
        infer=infer}
     end
 
-  val term_feature_operations : Term.term feature_operations =
+  fun term_feature_operations memo_quantifier memo_bitvector :
+      Term.term feature_operations =
     {type_of=Term.type_of,is_var=Term.is_var,is_comb=Term.is_comb,
      is_abs=Term.is_abs,dest_comb=Term.dest_comb,dest_abs=Term.dest_abs,
      strip_comb=boolSyntax.strip_comb,
@@ -3605,9 +3606,7 @@ local
      is_shape_error=fn Feedback.HOL_ERR _ => true | _ => false,
      is_optional_error=fn Portable.Interrupt => false | _ => true,
      metadata_error=fn primary => primary,syntax_error=ERR,
-     memo_quantifier=fn _ => fn compute => compute (),
-     memo_bitvector=fn _ => fn compute => compute ()}
-  val term_feature_analysis = feature_analysis_with term_feature_operations
+     memo_quantifier=memo_quantifier,memo_bitvector=memo_bitvector}
   val current_feature_state : feature_state =
     {generated_forall=fn () => !current_generated_forall_emissions > 0,
      sequence_emission=fn () => !current_native_sequence_emission,
@@ -3616,10 +3615,65 @@ local
      has_bag_terms=fn () => not (Redblackset.isEmpty (!current_bag_terms)),
      native_bag_backend=fn () => !current_bag_backend = CVC5NativeBag}
 
+  fun application_fork compound (operator,operand) =
+    compound operand andalso Term.is_comb operator andalso
+    let val (head,first) = Term.dest_comb operator
+    in compound first orelse compound head end
+
+  (* Cache completed compound terms so a subsequent sibling can reuse them.
+     The initial atom cannot match any compound caller. *)
+  fun remember_recent_compounds default =
+    let
+      val recent = ref (boolSyntax.T,default)
+      val previous = ref (!recent)
+    in fn term => fn compute =>
+      let val (first,first_result) = !recent
+          val (second,second_result) = !previous
+      in
+        if Portable.pointer_eq (term,first) then first_result
+        else if Portable.pointer_eq (term,second) then second_result
+        else
+          let val result = compute ()
+          in previous := !recent; recent := (term,result); result end
+      end
+    end
+
   fun infer_features_with_state state regime terms tydict tmdict =
-    let val all_subterms = List.concat (List.map
-          (#encoding_subterms term_feature_analysis) terms)
-    in (#infer term_feature_analysis) state regime
+    let
+      (* Memoize only forks where both paths can have descendants. Keep
+         recent completed siblings without hashing each ordinary node. *)
+      val branches = application_fork Term.is_comb
+      fun new_memo () =
+        let val remember = remember_recent_compounds false in
+          fn term => fn compute =>
+            if Term.is_comb term andalso branches (Term.dest_comb term)
+            then remember term compute else compute ()
+        end
+      val analysis = feature_analysis_with
+        (term_feature_operations (new_memo ()) (new_memo ()))
+      val remember = remember_recent_compounds ()
+      val inventory = ref []
+      (* Retain the first visit in encoding order. Distinct list literals
+         still select the shared dispatcher's special children. *)
+      fun visit term =
+        if Term.is_comb term then
+          let
+            val (operator,operand) = Term.dest_comb term
+            fun descend () =
+              (inventory := term :: !inventory;
+               if listSyntax.is_all_distinct term then
+                 List.app visit (#encoding_children analysis term)
+               else (visit operator; visit operand))
+          in
+            if branches (operator,operand) then remember term descend
+            else descend ()
+          end
+        else
+          (inventory := term :: !inventory;
+           if Term.is_abs term then visit (#2 (Term.dest_abs term)) else ())
+      val _ = List.app visit terms
+      val all_subterms = List.rev (!inventory)
+    in (#infer analysis) state regime
       all_subterms terms
       (fn predicate => Redblackmap.foldl
         (fn (ty,_,found) => found orelse predicate ty) false tydict)
@@ -3852,10 +3906,7 @@ local
           else ()
         end
       fun compound tm = Term.is_comb tm orelse Term.is_abs tm
-      fun branching (rator,rand) =
-        compound rand andalso Term.is_comb rator andalso
-        let val (head,left) = Term.dest_comb rator
-        in compound left orelse compound head end
+      val branching = application_fork compound
       (* Publish after visiting children so a sibling can hit. *)
       fun remember tm visit =
         if Portable.pointer_eq (tm,!recent) orelse

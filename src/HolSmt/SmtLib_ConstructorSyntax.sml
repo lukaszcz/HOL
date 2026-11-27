@@ -965,14 +965,20 @@ struct
           in #Thy x = #Thy y andalso #Name x = #Name y andalso
              Type.compare (#Ty x,#Ty y) = EQUAL end
         else (observe 1; false)
+      fun relevant _ _ [] = []
+        | relevant left right environment =
+          let val lf = free left
+              val rf = free right
+          in List.filter (fn (a,b,_) =>
+            (observe 1; member equal a lf orelse member equal b rf))
+            environment
+          end
       fun walk environment (left,right) =
         let
           val _ = observe 1
-          val lf = free left
-          val rf = free right
-          val environment = List.filter (fn (a,b,_) =>
-            (observe 1; member equal a lf orelse member equal b rf))
-            environment
+          (* With no binders in scope, comparing the heads may reject the
+             pair before either operand needs to be visited. *)
+          val environment = relevant left right environment
           val key = (identity left,identity right,
             List.map (fn (_,_,id) => (observe 1; id)) environment)
         in case Redblackmap.peek (!memo,key) of SOME result => result
