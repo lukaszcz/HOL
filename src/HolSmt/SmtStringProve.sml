@@ -297,35 +297,32 @@ struct
 
   fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
-  (* Refute inconsistent concat decompositions by exposing their finite list
-     representations.  The simplifier considers exactly the constructor
-     splits present in the literal/unit lists in the goal, so the work is
-     bounded by those input lengths rather than a recorded 2+2-versus-3
-     theorem. *)
+  (* Refute inconsistent string equalities by taking lengths. Z3 supplies
+     these equalities as conjuncts or as successive premises of a clause. *)
   fun bounded_concat_split_refute t =
     let
-      val (antecedent, consequence) = boolSyntax.dest_imp t
-      val _ = Term.aconv consequence boolSyntax.F orelse
+      val (antecedents, consequence) = boolSyntax.strip_imp_only t
+      val _ = not (null antecedents) andalso
+        Term.aconv consequence boolSyntax.F orelse
         raise ERR "bounded_concat_split_refute"
-          "concat split goal does not conclude false"
-      val antecedent_thm = Thm.ASSUME antecedent
+          "expected hypotheses implying false"
       val length_tm = Term.prim_mk_const
         {Thy = "smtstring", Name = "smtstr_len"}
-      fun length_equality conjunct =
-        let
-          val equality = simpLib.SIMP_RULE boolSimps.bool_ss
-            [smtstringz3Theory.seq_eq_def]
-            (Library.conj_elim (antecedent_thm, conjunct))
-          val length_equality = Thm.AP_TERM length_tm equality
-        in
-          simpLib.SIMP_RULE
-            (simpLib.++ (bossLib.srw_ss(), numSimps.REDUCE_ss))
-            [smtstringz3Theory.seq_unit_length,
-             smtstringTheory.smtstr_len_concat]
-            length_equality
-        end
-      val length_equalities =
-        List.map length_equality (boolSyntax.strip_conj antecedent)
+      fun length_equality premise =
+        Thm.AP_TERM length_tm (simpLib.SIMP_RULE boolSimps.bool_ss
+          [smtstringz3Theory.seq_eq_def] premise)
+      val congruences =
+        List.concat (List.map (List.map length_equality o
+          Drule.CONJUNCTS o Thm.ASSUME) antecedents)
+      val normalize_length = simpLib.SIMP_RULE
+        (simpLib.++ (simpLib.++ (bossLib.srw_ss(), numSimps.REDUCE_ss),
+                     wordsLib.WORD_ss))
+        [smtstringz3Theory.char_word18_w2n_n2w,
+         smtstringz3Theory.seq_nth_i_mod_2exp18,
+         smtstringz3Theory.seq_nth_i_bound,
+         smtstringz3Theory.seq_unit_length,
+         smtstringTheory.smtstr_len_concat]
+      val length_equalities = List.map normalize_length congruences
       val contradiction = Tactical.TAC_PROOF
         ((List.map Thm.concl length_equalities, boolSyntax.F),
          intLib.ARITH_TAC)
@@ -333,7 +330,8 @@ struct
         (fn (premise, proof) => Drule.PROVE_HYP premise proof)
         contradiction length_equalities
     in
-      Thm.DISCH antecedent contradiction
+      List.foldr (fn (premise, proof) => Thm.DISCH premise proof)
+        contradiction antecedents
     end
 
   (* Certificate numerals select one length schema and four position schemas.

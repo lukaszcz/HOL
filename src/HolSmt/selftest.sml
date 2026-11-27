@@ -538,6 +538,9 @@ val graph_expect_thm = expect_thm
         STRLEN s = STRLEN t + STRLEN u``, [thm_Z3, thm_CVC]),
 
     (* Native SMT-LIB Unicode strings exercise checked Z3 replay end to end. *)
+    (``~((smtstring$smtstr_concat x y = smtstring$SmtStr [97; 98; 99] /\
+          smtstring$smtstr_len x = 2) /\ smtstring$smtstr_len y = 2)``,
+      [thm_Z3p_v4]),
     (``smtstring$smtstr_len
          (smtstring$smtstr_concat
             (smtstring$SmtStr [97]) (smtstring$SmtStr [98])) =

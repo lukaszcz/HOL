@@ -2111,6 +2111,17 @@ local
       wordsLib.WORD_EVAL_CONV target
     else raise ERR "assertion_word_literal_conv" "not a literal word cast"
 
+  (* Z3 echoes an indexed character as a one-character string literal. *)
+  val assertion_char_head = Term.prim_mk_const
+    {Thy = "smtstring", Name = "smtstr_char"}
+  val assertion_char_rewrite = Conv.REWR_CONV smtstringTheory.smtstr_char_def
+  fun assertion_char_literal_conv target =
+    if Term.is_comb target andalso
+       Term.same_const (Term.rator target) assertion_char_head andalso
+       numSyntax.is_numeral (Term.rand target) then
+      assertion_char_rewrite target
+    else raise ERR "assertion_char_literal_conv" "not a character literal"
+
   (* The Z3 set encoding writes membership as select and INSERT and DELETE
      as stores, which parse back as application and update.  Always toward
      that form: the reverse direction would match any Boolean
@@ -2128,6 +2139,7 @@ local
   val assertion_encoding_conv =
     Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
       (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
+       assertion_char_literal_conv ::
        List.map Conv.REWR_CONV
          (wordsTheory.w2w_id :: assertion_unit_rewrites @
           assertion_set_rewrites @ assertion_sequence_rewrites))))
@@ -5486,9 +5498,6 @@ local
   fun rewrite_fp_packed_atom_in context target =
     rewrite_fp_packed_atom_internal false context target
 
-  fun rewrite_fp_packed_atom target =
-    rewrite_fp_packed_atom_in (new_fp_context ()) target
-
   (* A Z3 definition axiom may be a shared Boolean circuit over word
      operations.  Normalize those operations by checked word theorems, then
      replay the remaining propositional circuit with a checked SAT proof.
@@ -8485,7 +8494,7 @@ local
   case Lib.total rewrite_boolean_constant_schema target of
     SOME theorem => (state, theorem)
   | NONE =>
-  (case SOME (rewrite_fp_packed_atom target)
+  (case SOME (rewrite_fp_packed_atom_in (#fp_context state) target)
       handle Feedback.HOL_ERR holerr =>
         if SmtResource.is_resource_gate holerr then
           raise Feedback.HOL_ERR holerr

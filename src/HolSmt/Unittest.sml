@@ -20595,6 +20595,7 @@ let
     (Term.prim_mk_const {Thy = "HolSmt", Name = name}, args)
   val aliases =
     [(``(x:int) <> y``, ``ALL_DISTINCT [x:int; y]``),
+     (``smtstr_char 65 = s``, ``SmtStr [65] = s``),
      (``(x:int) <> y``, ``ALL_DISTINCT [x:int; y] /\ T``),
      (``(x:int) <> y \/ y <> z``,
       ``(ALL_DISTINCT [x:int; y] /\ T) \/
@@ -20649,7 +20650,10 @@ in
     val first = boolSyntax.mk_conj (p, ``q:bool``)
     val second = boolSyntax.mk_conj (p, ``r:bool``)
   in check [second, not_p, first] [not_p, first] end;
-  List.app check_encoding aliases
+  List.app check_encoding aliases;
+  expect_hol_error_contains "asserted literal with a different character"
+    Z3_ProofReplay.asserted_membership_diagnostic
+    (fn () => check_encoding (``smtstr_char 65 = s``, ``SmtStr [66] = s``))
 end
 
 fun z3_asserted_regrouping_rejects_new_atom () =
