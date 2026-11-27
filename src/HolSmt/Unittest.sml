@@ -2783,8 +2783,7 @@ let
             let
               val (inner_head, inner_args) = boolSyntax.strip_comb argument
             in
-              Term.is_var inner_head andalso length inner_args = 1 andalso
-              not (SmtLib.goal_mentions_num ([], tm))
+              Term.is_var inner_head andalso length inner_args = 1
             end
         | _ => false
     end
@@ -2804,11 +2803,22 @@ let
         | SOME tm =>
             let
               val SOME (left_args, right_args) = transferred_applied_equality tm
-              val argument_equality = boolSyntax.mk_eq
-                (List.hd left_args, List.hd right_args)
+              val left_argument = List.hd left_args
+              val right_argument = List.hd right_args
+              fun contains argument term =
+                Lib.can (HolKernel.find_term (fn candidate =>
+                  Term.aconv candidate argument)) term
+              fun retains_argument_equality candidate =
+                case Lib.total boolSyntax.dest_eq candidate of
+                    SOME (left, right) =>
+                      not (Term.aconv candidate tm) andalso
+                      ((contains left_argument left andalso
+                        contains right_argument right) orelse
+                       (contains left_argument right andalso
+                        contains right_argument left))
+                  | NONE => false
             in
-              assert (List.exists (fn candidate =>
-                Term.aconv candidate argument_equality) asl,
+              assert (List.exists retains_argument_equality asl,
                 "num transfer dropped the equality between transferred arguments: " ^
                 String.concatWith "; " (List.map Hol_pp.term_to_string asl))
             end;
