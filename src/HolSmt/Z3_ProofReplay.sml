@@ -5498,6 +5498,9 @@ local
   fun rewrite_fp_packed_atom_in context target =
     rewrite_fp_packed_atom_internal false context target
 
+  fun rewrite_fp_packed_atom target =
+    rewrite_fp_packed_atom_in (new_fp_context ()) target
+
   (* A Z3 definition axiom may be a shared Boolean circuit over word
      operations.  Normalize those operations by checked word theorems, then
      replay the remaining propositional circuit with a checked SAT proof.
@@ -8494,7 +8497,7 @@ local
   case Lib.total rewrite_boolean_constant_schema target of
     SOME theorem => (state, theorem)
   | NONE =>
-  (case SOME (rewrite_fp_packed_atom_in (#fp_context state) target)
+  (case SOME (rewrite_fp_packed_atom target)
       handle Feedback.HOL_ERR holerr =>
         if SmtResource.is_resource_gate holerr then
           raise Feedback.HOL_ERR holerr
