@@ -9331,6 +9331,29 @@ in
       MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
         (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
         (asl, w)
+    (* The transfer introduces 0 <= i guards before this point.  Keep those
+       guards as rewrite rules, without letting a transferred premise rewrite
+       any other premise. *)
+    fun is_num_guard tm =
+      case Lib.total intSyntax.dest_leq tm of
+          SOME (left, right) =>
+            Term.aconv left intSyntax.zero_tm andalso Term.is_var right
+        | NONE => false
+    fun TRANSFER_SIMP_TAC (asl, w) =
+      let
+        val guard_rewrites =
+          List.map Thm.ASSUME (List.filter is_num_guard asl)
+        val rewrites = guard_rewrites @ num_transfer_rewrites
+        fun simplify thm =
+          if Lib.op_mem Term.aconv (Thm.concl thm) held then
+            ASSUME_TAC thm
+          else
+            ASSUME_TAC
+              (simpLib.SIMP_RULE pureSimps.pure_ss rewrites thm)
+      in
+        (POP_ASSUM_LIST (MAP_EVERY simplify o List.rev) THEN
+         CONV_TAC (simpLib.SIMP_CONV pureSimps.pure_ss rewrites)) (asl, w)
+      end
   in
     if goal_mentions_num_or_int_literal g andalso
        not (goal_entangles_num_and_word g)
@@ -9339,11 +9362,7 @@ in
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
-       (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
-          would case-split disjunctive assumptions into several subgoals. *)
-       WITHHOLDING_TAC held
-         (simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
-            num_transfer_rewrites) THEN
+       TRANSFER_SIMP_TAC THEN
        STRIP_TRANSFERRED_TAC) g
     else
       ALL_TAC g
