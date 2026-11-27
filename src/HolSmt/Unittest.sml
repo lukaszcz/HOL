@@ -2735,34 +2735,96 @@ fun num_transfer_assumptions_do_not_rewrite_each_other_success () =
 let
   val equality = ``(n:num) = m``
   val application_equality = ``f (n:num) = f (m:num)``
+  val lifted_equality = ``(k:num->int) n = r n``
+  val lifted_application = ``(p:int->bool) (k n)``
   val held = ``0 <= (x:int)``
-  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
-    ([equality, held, application_equality], ``g (n:num) = h (m:num)``)
   fun arguments_differ [] [] = false
     | arguments_differ (left :: left_tail) (right :: right_tail) =
         not (Term.aconv left right) orelse
         arguments_differ left_tail right_tail
     | arguments_differ _ _ = false
-  fun is_transferred_applied_equality tm =
+  fun transferred_applied_equality tm =
     case Lib.total boolSyntax.dest_eq tm of
         SOME (left, right) =>
           let
             val (left_head, left_args) = boolSyntax.strip_comb left
             val (right_head, right_args) = boolSyntax.strip_comb right
           in
-            Term.is_var left_head andalso Term.aconv left_head right_head andalso
-            not (List.null left_args) andalso
-            length left_args = length right_args andalso
-            arguments_differ left_args right_args andalso
+            if Term.is_var left_head andalso Term.aconv left_head right_head andalso
+               not (List.null left_args) andalso
+               length left_args = length right_args andalso
+               arguments_differ left_args right_args andalso
+               not (SmtLib.goal_mentions_num ([], tm)) then
+              SOME (left_args, right_args)
+            else
+              NONE
+          end
+      | NONE => NONE
+  fun is_lifted_equality tm =
+    case Lib.total boolSyntax.dest_eq tm of
+        SOME (left, right) =>
+          let
+            val (left_head, left_args) = boolSyntax.strip_comb left
+            val (right_head, right_args) = boolSyntax.strip_comb right
+          in
+            Term.is_var left_head andalso Term.is_var right_head andalso
+            not (Term.aconv left_head right_head) andalso
+            length left_args = 1 andalso length right_args = 1 andalso
             not (SmtLib.goal_mentions_num ([], tm))
           end
       | NONE => false
+  fun is_lifted_application tm =
+    let
+      val (head, args) = boolSyntax.strip_comb tm
+    in
+      Term.is_var head andalso
+      case args of
+          [argument] =>
+            let
+              val (inner_head, inner_args) = boolSyntax.strip_comb argument
+            in
+              Term.is_var inner_head andalso length inner_args = 1 andalso
+              not (SmtLib.goal_mentions_num ([], tm))
+            end
+        | _ => false
+    end
+  fun check assumptions =
+    let
+      val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+        (assumptions, ``g (n:num) = h (m:num)``)
+      val transferred = List.find (fn tm =>
+        case transferred_applied_equality tm of NONE => false | SOME _ => true)
+        asl
+    in
+      case transferred of
+          NONE =>
+            assert (false,
+              "num transfer let one premise rewrite another to true: " ^
+              String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+        | SOME tm =>
+            let
+              val SOME (left_args, right_args) = transferred_applied_equality tm
+              val argument_equality = boolSyntax.mk_eq
+                (List.hd left_args, List.hd right_args)
+            in
+              assert (List.exists (fn candidate =>
+                Term.aconv candidate argument_equality) asl,
+                "num transfer dropped the equality between transferred arguments: " ^
+                String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+            end;
+      assert (List.exists is_lifted_equality asl,
+        "num transfer dropped a lifted equality premise: " ^
+        String.concatWith "; " (List.map Hol_pp.term_to_string asl));
+      assert (List.exists is_lifted_application asl,
+        "num transfer dropped a lifted application premise: " ^
+        String.concatWith "; " (List.map Hol_pp.term_to_string asl));
+      assert (Lib.op_mem Term.aconv held asl,
+        "num transfer rewrote a held integer bound")
+    end
 in
-  assert (List.exists is_transferred_applied_equality asl,
-    "num transfer let one premise rewrite another to true: " ^
-    String.concatWith "; " (List.map Hol_pp.term_to_string asl));
-  assert (Lib.op_mem Term.aconv held asl,
-    "num transfer rewrote a held integer bound")
+  List.app check
+    [[equality, held, application_equality, lifted_equality, lifted_application],
+     [equality, held, lifted_application, lifted_equality, application_equality]]
 end
 
 fun num_bridge_axioms_retired_success () =
