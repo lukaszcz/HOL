@@ -2750,7 +2750,8 @@ let
             val (left_head, left_args) = boolSyntax.strip_comb left
             val (right_head, right_args) = boolSyntax.strip_comb right
           in
-            if Term.is_var left_head andalso Term.aconv left_head right_head andalso
+            if Term.is_var left_head andalso
+               Term.aconv left_head right_head andalso
                not (List.null left_args) andalso
                length left_args = length right_args andalso
                arguments_differ left_args right_args andalso
@@ -2791,6 +2792,8 @@ let
     let
       val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
         (assumptions, ``g (n:num) = h (m:num)``)
+      val asl_text = String.concatWith "; "
+        (List.map Hol_pp.term_to_string asl)
       val transferred = List.find (fn tm =>
         case transferred_applied_equality tm of NONE => false | SOME _ => true)
         asl
@@ -2799,13 +2802,13 @@ let
           NONE =>
             assert (false,
               "num transfer let one premise rewrite another to true: " ^
-              String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+              asl_text)
         | SOME tm =>
             case transferred_applied_equality tm of
                 NONE =>
                   assert (false,
                     "num transfer lost its transferred application equality: " ^
-                    String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+                    asl_text)
               | SOME (left_args, right_args) =>
                   let
                     val left_argument = List.hd left_args
@@ -2824,15 +2827,13 @@ let
                         | NONE => false
                   in
                     assert (List.exists retains_argument_equality asl,
-                      "num transfer dropped the equality between transferred arguments: " ^
-                      String.concatWith "; " (List.map Hol_pp.term_to_string asl))
+                      "num transfer dropped the equality between transferred " ^
+                      "arguments: " ^ asl_text)
                   end;
       assert (List.exists is_lifted_equality asl,
-        "num transfer dropped a lifted equality premise: " ^
-        String.concatWith "; " (List.map Hol_pp.term_to_string asl));
+        "num transfer dropped a lifted equality premise: " ^ asl_text);
       assert (List.exists is_lifted_application asl,
-        "num transfer dropped a lifted application premise: " ^
-        String.concatWith "; " (List.map Hol_pp.term_to_string asl));
+        "num transfer dropped a lifted application premise: " ^ asl_text);
       assert (Lib.op_mem Term.aconv held asl,
         "num transfer rewrote a held integer bound")
     end
