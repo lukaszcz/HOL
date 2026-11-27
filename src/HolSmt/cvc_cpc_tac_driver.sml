@@ -60,14 +60,7 @@ fun cvc_cpc_run path expected_logic =
     val _ = HOLFlags.set_flag (Library.trace_flag, 0)
     val script = SmtLib_Parser.parse_script_file path
     val (state, scoped_parse_error) =
-      (SmtLib_Parser.typecheck_script_with_options
-         {dict_logic = NONE, solver = SOME "cvc5",
-          elaborate_datatypes = true} script, NONE)
-      handle Feedback.HOL_ERR holerr =>
-        (SmtLib_Parser.typecheck_script_with_options
-           {dict_logic = SOME "ALL", solver = SOME "cvc5",
-            elaborate_datatypes = true} script,
-         SOME holerr)
+      SmtLib_Parser.typecheck_script_for_checked_driver "cvc5" script
     val observed_logic = #logic state
     val fragment_diagnostic =
       SmtLib_Logics.fragment_violation_diagnostic observed_logic

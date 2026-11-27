@@ -7775,6 +7775,31 @@ local
       loop script NONE
     end
 
+  (* Checked drivers use the wider dictionary only to report fragment
+     violations. Keep the original failure if the wider check also fails,
+     and avoid repeating datatype elaboration that may have defined names. *)
+  fun typecheck_script_for_checked_driver solver script =
+    let
+      fun check dict_logic = typecheck_script_with_options
+        {dict_logic = dict_logic, solver = SOME solver,
+         elaborate_datatypes = true} script
+      fun restricted_logic [] = false
+        | restricted_logic (command :: rest) =
+            case node_of command of
+              CmdExit => false
+            | CmdSetLogic name =>
+                node_of name <> "ALL" orelse restricted_logic rest
+            | _ => restricted_logic rest
+    in
+      (check NONE, NONE)
+      handle primary as Feedback.HOL_ERR holerr =>
+        if Feedback.top_structure_of holerr = "SmtLib_Datatypes" orelse
+           not (restricted_logic script) then raise primary
+        else
+          ((check (SOME "ALL"), SOME holerr)
+           handle Feedback.HOL_ERR _ => raise primary)
+    end
+
   fun typecheck_script_with_dict_logic dict_logic script =
     typecheck_script_with_options
       {dict_logic = dict_logic, solver = NONE, elaborate_datatypes = false} script
@@ -7854,6 +7879,7 @@ in
   val default_typecheck_options = default_typecheck_options
   val typecheck_script = typecheck_script
   val typecheck_script_with_options = typecheck_script_with_options
+  val typecheck_script_for_checked_driver = typecheck_script_for_checked_driver
   val typecheck_script_with_dict_logic = typecheck_script_with_dict_logic
   val typecheck_script_string = typecheck_script_string
   val typecheck_script_string_with_options =

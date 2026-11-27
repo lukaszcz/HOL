@@ -825,7 +825,8 @@ in
 
     fun ieee_bv_to_fp fp_ty x =
       let
-        val _ = wordsSyntax.dest_word_type (Term.type_of x)
+        val _ = if wordsSyntax.is_word_type (Term.type_of x) then ()
+                else decline "<to_fp>" "IEEE bit-vector operand expected"
         val const = smtfloat_const_result "smtfp_from_ieee_bv" fp_ty
         val (domains, _) = boolSyntax.strip_fun (Term.type_of const)
         val domain =

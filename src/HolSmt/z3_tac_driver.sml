@@ -33,12 +33,6 @@ val _ =
 
 val _ = SmtLib_Datatypes.empty_name_map
 
-val z3_tac_datatype_options =
-  {dict_logic = NONE, solver = SOME "Z3", elaborate_datatypes = true}
-
-fun z3_tac_datatype_options_with_logic logic =
-  {dict_logic = SOME logic, solver = SOME "Z3", elaborate_datatypes = true}
-
 fun z3_tac_query_name query =
   case query of
     SmtLib_Parser.QueryCheckSat {assumptions = [], ...} => "check-sat"
@@ -459,12 +453,7 @@ let
            "diagnostic=" ^ diagnostic]
     | NONE => ()
   val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
-    (SmtLib_Parser.typecheck_script_with_options
-       z3_tac_datatype_options script, NONE)
-    handle Feedback.HOL_ERR holerr =>
-      (SmtLib_Parser.typecheck_script_with_options
-         (z3_tac_datatype_options_with_logic "ALL") script,
-       SOME holerr)
+    SmtLib_Parser.typecheck_script_for_checked_driver "Z3" script
   val observed_logic = #logic state
   val queries = #queries state
   val assertions = z3_tac_query_assertions queries
