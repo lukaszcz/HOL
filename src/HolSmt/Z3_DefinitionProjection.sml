@@ -100,7 +100,6 @@ struct
       else if b > budget div a then raise NotApplicable else a*b
 
     fun member terms term = List.exists (Term.term_eq term) terms
-    fun disjoint xs ys = not (List.exists (member xs) ys)
     fun same_variables xs ys =
       List.all (member xs) ys andalso List.all (member ys) xs
 
@@ -176,11 +175,9 @@ struct
           admit_variable (#redex a)) assignments
         val () = List.app (fn (d : definition) =>
           List.app admit_variable (#free d)) definitions
-        val assigned = List.map #redex assignments
-        fun distinct [] = ()
-          | distinct (v::vs) =
-              (require (not (member vs v)); distinct vs)
-        val () = distinct assigned
+        val assigned = HOLset.fromList Term.compare
+          (List.map #redex assignments)
+        val () = require (HOLset.numItems assigned = List.length assignments)
         val images = List.map (fn (a : assignment) =>
           (a, raw (#residue a))) assignments
 
@@ -191,47 +188,72 @@ struct
         val original_operand_cost =
           sum (List.map (small o raw) original_operands)
         val operand_free = List.map Term.free_vars original_operands
-        fun in_operands v = List.exists (fn vs => member vs v) operand_free
-        fun unsafe_definition v = List.exists
-          (fn ((d : definition),sb,pb) =>
-             (not (is_small sb) orelse not (is_small pb)) andalso
-             member (#free d) v) measured_definitions
+        val operand_variables = HOLset.fromList Term.compare
+          (List.concat operand_free)
+        val unsafe_free = HOLset.fromList Term.compare
+          (List.concat (List.mapPartial (fn ((d : definition),sb,pb) =>
+            if is_small sb andalso is_small pb then NONE else SOME (#free d))
+            measured_definitions))
         val candidates = List.mapPartial
           (fn ((a : assignment),image_bound) =>
             if is_small image_bound andalso
-               not (in_operands (#redex a)) andalso
-               not (unsafe_definition (#redex a))
+               not (HOLset.member (operand_variables,#redex a)) andalso
+               not (HOLset.member (unsafe_free,#redex a))
             then SOME (#redex a) else NONE) images
 
-        (* Remove whole connected original-definition components, including
-           connections through variables that were removed on an earlier
-           pass.  Unassigned parameters do not connect assignment groups. *)
-        fun isolate candidates =
+        (* Rejected assignments disqualify every candidate connected to them
+           through original definitions. Unassigned parameters do not connect
+           groups. Each definition propagates rejection only once. *)
+        fun isolate kept =
+          if HOLset.isEmpty kept orelse HOLset.numItems kept =
+              HOLset.numItems assigned then kept
+          else
           let
-            fun external free = List.exists
-              (fn v => member assigned v andalso
-                       not (member candidates v)) free
-            val next = List.foldl
-              (fn ((d : definition),kept) =>
-                if external (#free d) then
-                  List.filter (fn v => not (member (#free d) v)) kept
-                else kept) candidates definitions
+            val rejected = HOLset.listItems (HOLset.difference (assigned,kept))
+            fun index ((d : definition),table) =
+              let
+                val variables = List.filter
+                  (fn v => HOLset.member (assigned,v)) (#free d)
+                val visited = ref false
+                val entry = (visited,variables)
+                fun add (v,table) = Redblackmap.insert (table,v,entry ::
+                  Option.getOpt (Redblackmap.peek (table,v),[]))
+              in List.foldl add table variables end
+            val incidence =
+              List.foldl index (Redblackmap.mkDict Term.compare) definitions
+            fun reject (variable,(kept,pending)) =
+              if HOLset.member (kept,variable) then
+                (HOLset.delete (kept,variable),variable::pending)
+              else (kept,pending)
+            fun visit ((visited,variables),state) =
+              if !visited then state
+              else (visited := true; List.foldl reject state variables)
+            fun propagate kept [] = kept
+              | propagate kept (variable::pending) =
+                  let
+                    val adjacent = Option.getOpt
+                      (Redblackmap.peek (incidence,variable),[])
+                    val (kept,pending) = List.foldl visit
+                      (kept,pending) adjacent
+                  in propagate kept pending end
           in
-            if List.length next = List.length candidates then next
-            else isolate next
+            propagate kept rejected
           end
-        val candidates = isolate candidates
+        val survivors = isolate (HOLset.fromList Term.compare candidates)
         fun touches (d : definition) =
-          not (disjoint candidates (#free d))
+          List.exists (fn v => HOLset.member (survivors,v)) (#free d)
         val group = List.filter (fn (d,_,_) => touches d)
           measured_definitions
         val () = require (not (null group))
         (* Do not quantify irrelevant assignment redexes. *)
-        val variables = List.filter
-          (fn v => List.exists
-            (fn ((d : definition),_,_) => member (#free d) v) group)
-          candidates
-        fun delayed (a : assignment) = member variables (#redex a)
+        val group_variables = List.foldl
+          (fn ((d : definition,_,_),used) => HOLset.addList (used,#free d))
+          (HOLset.empty Term.compare) group
+        val delayed_variables = HOLset.intersection
+          (survivors,group_variables)
+        fun is_delayed v = HOLset.member (delayed_variables,v)
+        val variables = List.filter is_delayed candidates
+        fun delayed (a : assignment) = is_delayed (#redex a)
         val delayed_images = List.filter (fn (a,_) => delayed a) images
         val delayed_substitution = List.map #1 delayed_images
         val early_images = List.filter (fn (a,_) => not (delayed a)) images
@@ -301,13 +323,13 @@ struct
             if not (same_variables actual (#free d)) then
               invariant "prepare" "inexact original dependency summary"
             else if List.exists
-              (fn v => member assigned v andalso not (member variables v))
+              (fn v => HOLset.member (assigned,v) andalso not (is_delayed v))
               actual then
               invariant "prepare" "definition group is not isolated"
             else ()
           end) group
         val () = List.app (fn ((a : assignment),_) =>
-          if disjoint variables (Term.free_vars (#residue a)) then ()
+          if not (List.exists is_delayed (Term.free_vars (#residue a))) then ()
           else invariant "prepare" "witness residue contains a delayed redex")
           delayed_images
 
@@ -317,7 +339,7 @@ struct
               (fn (a : assignment) => member free (#redex a)) substitution
             val result = Term.subst used tm
           in
-            if disjoint variables (Term.free_vars result) then result
+            if not (List.exists is_delayed (Term.free_vars result)) then result
             else invariant "prepare"
               "resolved retained operand contains a delayed redex"
           end
@@ -351,7 +373,8 @@ struct
               end
         val existence = introduce [] delayed_substitution
         val () =
-          if disjoint variables (Term.free_vars (Thm.concl existence)) then ()
+          if not (List.exists is_delayed
+            (Term.free_vars (Thm.concl existence))) then ()
           else invariant "prepare" "existential witness leaks a delayed redex"
         val early = List.map #proof
           (List.filter (fn d => not (touches d)) definitions)

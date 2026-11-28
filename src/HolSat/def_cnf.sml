@@ -174,8 +174,8 @@ val GCONJUNCTS  =
           let open Uref
               val conjuncts =
                   if is_neg tm andalso is_neg (rand tm) then
-                    List.concat (List.map (fn th => GCONJUNCTS' th [])
-                      (CONJUNCTSR (CONV_RULE NOT_NOT_CONV th)))
+                    List.foldr (fn (th,acc) => GCONJUNCTS' th acc) []
+                      (CONJUNCTSR (CONV_RULE NOT_NOT_CONV th))
                   else GCONJUNCTS' th []
               val is_cnf = Uref.new true
               (* A clause of variable literals contains no T or F. *)

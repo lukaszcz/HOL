@@ -149,13 +149,8 @@ fun search prove_units initial =
                   let val atom = dest_neg clause in
                     if is_T atom orelse is_F atom then
                       recurse (simplify_constants th)
-                    else if prove_units then
-                      let val equality = EQF_INTRO (prove ())
-                      in
-                        if fixed_atom atom then
-                          force_unit atom boolSyntax.F (fn () => equality)
-                        else recurse (REWRITE_RULE [equality] th)
-                      end
+                    else if prove_units andalso not (fixed_atom atom) then
+                      recurse (REWRITE_RULE [EQF_INTRO (prove ())] th)
                     else force_unit atom boolSyntax.F (EQF_INTRO o prove)
                   end
                 else

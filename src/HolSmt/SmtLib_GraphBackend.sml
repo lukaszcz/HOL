@@ -1075,20 +1075,35 @@ struct
       val _ = List.app (fn hole => if Term.is_var hole then () else
         raise ERR "compile_recipe" "operand hole is not a typed variable")
         holes
-      val _ = List.foldl (fn (hole, previous) =>
-        if List.exists (Term.aconv hole) previous then
-          raise ERR "compile_recipe" "duplicate typed operand hole"
-        else hole :: previous) [] holes
-      fun index variable terms =
-        let fun seek [] _ = NONE
-              | seek (term :: rest) i =
-                  if Term.aconv variable term then SOME i else seek rest (i+1)
-        in seek terms 0 end
+      fun add_hole (hole, (indices, position)) =
+        case Redblackmap.peek (indices, hole) of
+          SOME _ => raise ERR "compile_recipe" "duplicate typed operand hole"
+        | NONE => (Redblackmap.insert (indices, hole, position), position + 1)
+      fun variable_index _ [] _ = NONE
+        | variable_index variable (term :: rest) i =
+            if Term.aconv variable term then SOME i
+            else variable_index variable rest (i + 1)
+      val hole_index =
+        if List.length holes <= 8 then
+          let
+            fun check [] = ()
+              | check (hole :: rest) =
+                  case variable_index hole rest 0 of
+                    SOME _ =>
+                      raise ERR "compile_recipe" "duplicate typed operand hole"
+                  | NONE => check rest
+            val _ = check holes
+          in fn term => variable_index term holes 0 end
+        else
+          let
+            val (indices, _) =
+              List.foldl add_hole (Redblackmap.mkDict Term.compare, 0) holes
+          in fn term => Redblackmap.peek (indices, term) end
       fun compile binders term =
         if Term.is_var term then
-          (case index term binders of
+          (case variable_index term binders 0 of
              SOME i => BoundVariable i
-           | NONE => case index term holes of
+           | NONE => case hole_index term of
                SOME i => if List.null binders then Hole i else
                  raise ERR "compile_recipe" "operand insertion below binder"
              | NONE => raise ERR "compile_recipe" "unowned schema variable")

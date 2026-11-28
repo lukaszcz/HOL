@@ -37718,6 +37718,24 @@ let
   val _ = ensure "duplicate typed operand holes accepted"
     (rejected (fn () => ignore (B.compile_recipe
       {template = hole, holes = [hole, hole], template_limit = 100})))
+  val _ =
+    let
+      fun variables prefix = List.tabulate (12, fn i =>
+        Term.mk_var (prefix ^ Int.toString i, Type.bool))
+      val holes = variables "wide_hole"
+      val operands = variables "wide_operand"
+      val template = boolSyntax.list_mk_conj (List.rev holes)
+      fun compile holes = B.compile_recipe
+        {template = template, holes = holes, template_limit = 100}
+      val result = B.construct backend root (compile holes)
+        (List.map (B.source backend root) operands)
+    in
+      ensure "wide recipe changed operand indices"
+        (Term.aconv (G.representative graph result)
+          (boolSyntax.list_mk_conj (List.rev operands)));
+      ensure "wide recipe accepted duplicate typed operand holes"
+        (rejected (fn () => ignore (compile (holes @ [hd holes]))))
+    end
   val _ = ensure "opaque unknown binder body treated as admitted"
     (let val retained = B.source backend root (Term.mk_abs (x, x))
      in rejected (fn () => ignore (B.abstraction backend root

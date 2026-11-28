@@ -10,7 +10,7 @@ struct
   structure S = SmtReplaySource
   exception Adapter
   val ERR = Feedback.mk_HOL_ERR "CPC_GraphLexicalTransport"
-  fun member term = List.exists (fn other => Term.aconv term other)
+  val variable_set = HOLset.fromList Term.compare
   fun same_object left right = Portable.pointer_eq (left,right)
   fun raw limit term = case SmtReplayImport.bounded_raw_size limit term of
       SOME count => count | NONE => raise Adapter
@@ -62,14 +62,14 @@ struct
      limit : int, check_type : Type.hol_type -> unit,
      forward : (Term.term,Term.term) Lib.subst,
      reverse : (Term.term,Term.term) Lib.subst,
-     allocated_scopes : G.scope list, owned_variables : Term.term list,
+     allocated_scopes : G.scope list, owned_variables : Term.term HOLset.set,
      sources : S.sources, source_roots : G.node list,
      source_goal : Term.term}
   datatype prepared = Prepared of
     {plan : plan, original_target : Term.term, lexical_target : Term.term,
      original_premises : CPC_Proof.located_term list,
      lexical_premises : CPC_Proof.located_term list,
-     lexical_step : CPC_Proof.step, input_variables : Term.term list}
+     lexical_step : CPC_Proof.step, input_variables : Term.term HOLset.set}
   fun visible graph scope node =
     if G.scope_visible graph scope (G.node_scope graph node) then () else
       raise ERR "ownership" "unavailable allocated or source variable"
@@ -119,13 +119,11 @@ struct
              | _ => raise ERR "new" "descriptor is not allocated solver ID")
         val _ = List.app descriptor descriptors
         fun unique terms =
-          let fun loop [] = ()
-                | loop (term :: rest) =
-                    if member term rest then
-                      raise ERR "new" "noninjective allocated descriptor map"
-                    else loop rest
-          in loop terms end
-        val _ = unique owned val _ = unique lexical
+          let val variables = variable_set terms in
+            if HOLset.numItems variables = List.length terms then variables
+            else raise ERR "new" "noninjective allocated descriptor map"
+          end
+        val owned_set = unique owned val _ = unique lexical
         fun source_variables node =
           case G.free_variable_nodes graph node of NONE => raise Adapter
             | SOME nodes => List.map (fn variable =>
@@ -134,9 +132,11 @@ struct
                      G.Variable (G.RigidSource,term) => term
                    | _ => raise ERR "new"
                        "original Source contains a nonrigid variable")) nodes
-        val rigid = List.concat (List.map source_variables source_nodes)
-        val _ = if List.exists (fn term => member term rigid) lexical
-            orelse List.exists (fn term => member term rigid) owned then
+        val rigid = variable_set
+          (List.concat (List.map source_variables source_nodes))
+        fun is_rigid term = HOLset.member (rigid,term)
+        val _ = if List.exists is_rigid lexical orelse
+            List.exists is_rigid owned then
           raise ERR "new" "allocated typed name collides with original Source"
           else ()
         val forward = ListPair.mapEq (fn (owned,lexical) =>
@@ -146,7 +146,7 @@ struct
         val plan = Plan {graph = graph,scope = scope,validate = validate,
           limit = ordinary_limit,check_type = check_type,forward = forward,
           reverse = reverse,allocated_scopes = List.map #scope descriptors,
-          owned_variables = owned @ rigid,sources = sources,
+          owned_variables = HOLset.union (owned_set,rigid),sources = sources,
           source_roots = source_nodes,source_goal = source_goal}
         val _ = active plan
     in plan end
@@ -169,7 +169,8 @@ struct
           raise ERR "prepare" "target and immediate Hyp must be propositions"
         val inputs = expected :: operands @ antecedents
         val free = List.concat (List.map Term.free_vars inputs)
-        val _ = if List.all (fn term => member term owned_variables) free
+        val _ = if List.all (fn term => HOLset.member (owned_variables,term))
+            free
           then () else raise ERR "prepare" "input has an unowned free variable"
         val memo = ref ([] : (Term.term * Term.term) list)
         fun translated term =
@@ -184,8 +185,8 @@ struct
           premises = #premises step,args = List.map translate (#args step),
           conclusion = SOME (translate conclusion)}
         val lexical_premises = List.map translate premises
-        val input_variables = List.concat
-          (List.map Term.free_vars (List.map translated inputs))
+        val input_variables = variable_set (List.concat
+          (List.map Term.free_vars (List.map translated inputs)))
         val _ = active plan
     in Prepared {plan = plan,original_target = expected,
          lexical_target = lexical_target,original_premises = premises,
@@ -228,7 +229,7 @@ struct
         val _ = if Term.aconv actual lexical_target andalso
             Term.aconv reported lexical_target then () else
           raise ERR "restore" "actual worker changed the recorded endpoint"
-        val _ = if List.all (fn term => member term input_variables)
+        val _ = if List.all (fn term => HOLset.member (input_variables,term))
           (List.concat (List.map Term.free_vars (actual :: hypotheses)))
           then () else raise ERR "restore" "worker invented a free variable"
         fun canonical hypothesis =

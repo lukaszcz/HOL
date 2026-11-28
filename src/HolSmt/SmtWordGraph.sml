@@ -2221,9 +2221,6 @@ struct
 
   fun prove_graph_using_in (context : context) node_conversion target =
     let
-      val input = SmtResource.dag_nodes_up_to maximum target
-      val _ = SmtResource.check_dag_size_for
-        "BitVector" "word-circuit-replay" input
       val graph = G.new ()
       val scope = G.root_scope graph
       val source = #node (G.import graph scope maximum target)
@@ -2258,14 +2255,12 @@ struct
   (* Retain the cheap completed-schema route for shallow word identities.
      The whole schema proof (word lowering AND SAT) closes on holes. Its
      typed root law is itself the complete compact proof, so no unused
-     operand-interior definitions need to be assembled. *)
+     operand-interior definitions need to be assembled. The callers check
+     the target's DAG size before selecting this proof path. *)
   fun prove_using_in (context : context) node_conversion target =
     let
       val _ = #refresh_caches context ()
       val context = proof_context context
-      val input = SmtResource.dag_nodes_up_to maximum target
-      val _ = SmtResource.check_dag_size_for
-        "BitVector" "word-circuit-replay" input
       exception WidePrefix
       fun root_schema () =
         let
