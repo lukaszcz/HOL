@@ -2793,8 +2793,12 @@ let
     let
       val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
         (assumptions, ``g (n:num) = h (m:num)``)
+      val ((standalone_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+        ([equality], ``g (n:num) = h (m:num)``)
       val asl_text = String.concatWith "; "
         (List.map Hol_pp.term_to_string asl)
+      val standalone_equalities = List.filter (fn candidate =>
+        Lib.can boolSyntax.dest_eq candidate) standalone_asl
       val transferred = List.find (fn tm =>
         case transferred_applied_equality tm of NONE => false | SOME _ => true)
         asl
@@ -2810,24 +2814,12 @@ let
                   assert (false,
                     "num transfer lost its transferred application equality: " ^
                     asl_text)
-              | SOME (left_args, right_args) =>
+              | SOME _ =>
                   let
-                    val left_argument = List.hd left_args
-                    val right_argument = List.hd right_args
                     fun retains_argument_equality candidate =
-                      case Lib.total boolSyntax.dest_eq candidate of
-                          SOME (left, right) =>
-                            let
-                              val expected =
-                                boolSyntax.mk_eq (left_argument, right_argument)
-                              val reversed =
-                                boolSyntax.mk_eq (right_argument, left_argument)
-                            in
-                              not (Term.aconv candidate tm) andalso
-                              (Term.aconv candidate expected orelse
-                               Term.aconv candidate reversed)
-                            end
-                        | NONE => false
+                      not (Term.aconv candidate tm) andalso
+                      List.exists (fn expected => Term.aconv candidate expected)
+                        standalone_equalities
                   in
                     assert (List.exists retains_argument_equality asl,
                       "num transfer dropped the equality between transferred " ^
