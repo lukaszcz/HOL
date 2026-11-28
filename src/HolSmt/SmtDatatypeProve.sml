@@ -996,7 +996,7 @@ struct
       if not fallback then raise primary
       else with_exported_rewrites (fn ss => prove ss thms)
 
-  fun datatype_simp_with_fallback fallback t =
+  fun datatype_simp_with_rewrites rewrites fallback t =
     let
       val _ = admit t
       (* Enum disjointness needs only two small representation equations,
@@ -1008,7 +1008,7 @@ struct
           | Conv.UNCHANGED => NONE)
         (HolKernel.find_terms boolSyntax.is_eq t)
       fun ordinary () =
-        let val thms = datatype_rewrite_thms t
+        let val thms = rewrites ()
         in if List.null thms then unsupported t
            else with_rewrite_fallback fallback
              (fn ss => fn facts => simpLib.SIMP_PROVE ss facts t) thms
@@ -1019,7 +1019,8 @@ struct
         handle Feedback.HOL_ERR _ => ordinary ())
     end
 
-  fun datatype_simp_prove t = datatype_simp_with_fallback true t
+  fun datatype_simp_prove t =
+    datatype_simp_with_rewrites (fn () => datatype_rewrite_thms t) true t
 
   fun constructor_headed tm =
     let
@@ -1134,10 +1135,10 @@ struct
                   datatype_split_fixpoint_tac ss thms cap splits (budget - 1))
                  simplified))) goal)
 
-  fun exhaustiveness_with_fallback fallback t =
+  fun exhaustiveness_with_rewrites rewrites fallback t =
     let
       val _ = admit t
-      val thms = datatype_rewrite_thms t
+      val thms = rewrites ()
       val budget = List.length (datatype_split_terms t)
       val cap = exhaustiveness_split_cap t
     in
@@ -1150,6 +1151,9 @@ struct
       else Tactical.prove (t,
         datatype_split_fixpoint_tac numLib.std_ss thms cap (ref 0) budget)
     end
+
+  fun exhaustiveness_with_fallback fallback t =
+    exhaustiveness_with_rewrites (fn () => datatype_rewrite_thms t) fallback t
 
   fun exhaustiveness_prove t = exhaustiveness_with_fallback true t
 
@@ -1268,11 +1272,16 @@ struct
         val _ = profile "datatype(fragment-precondition)"
           require_datatype_fragment t
         val immediate = not (constructor_only t)
+        (* These rungs start from the same term. Reuse its checked rewrite
+           facts after a successful collection and retry failed collections. *)
+        val collected = Susp.delay (fn () => datatype_rewrite_thms t)
+        fun rewrites () = Susp.force collected
         fun simplify fallback =
-          profile "datatype(simp)" (datatype_simp_with_fallback fallback) t
+          profile "datatype(simp)"
+            (datatype_simp_with_rewrites rewrites fallback) t
           handle Feedback.HOL_ERR _ =>
           profile "datatype(exhaustiveness)"
-            (exhaustiveness_with_fallback fallback) t
+            (exhaustiveness_with_rewrites rewrites fallback) t
         fun finish () =
           if use_metis then profile "datatype(metis)" metis_datatype_prove t
           else unsupported t
