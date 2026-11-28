@@ -9476,27 +9476,9 @@ in
         Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
                         Tactic.ASSUME_TAC th])
 
-  (* [tac] on the goal without the assumptions in [held], which come back
-     unchanged at the end of every subgoal's assumptions.  [tac] must not
-     introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
-     withheld assumption. *)
-  fun withholding_tac is_held (tac : Tactical.tactic) : Tactical.tactic =
-    fn (asl, w) =>
-      fn ctxt =>
-        let
-          val (withheld, kept) = List.partition is_held asl
-          val (goals, validation) = tac (kept, w) ctxt
-        in
-          (List.map (fn (asl', w') => (asl' @ withheld, w')) goals,
-           validation)
-        end
-
   fun held_assumption held =
     let val set = Redblackset.addList (Redblackset.empty Term.compare, held)
     in fn a => Redblackset.member (set, a) end
-
-  fun WITHHOLDING_TAC held tac = withholding_tac (held_assumption held) tac
-
   (* Runs the proved num-to-int transfer on the conclusion and the
      assumptions that mention num.  These assumptions are first moved into
      the conclusion so free num variables anywhere in them are made explicit
@@ -9516,16 +9498,41 @@ in
       fun STRIP_TRANSFERRED_TAC (asl, w) =
         MAP_EVERY (fn a => Thm_cont.UNDISCH_THEN a NO_SPLIT_STRIP_ASSUME_TAC)
           (List.filter (not o is_held) asl) (asl, w)
+      (* Transfer-generated or discharged-antecedent guards can rewrite the
+         conclusion, but no transferred premise or held assumption rewrites
+         another premise. *)
+      fun is_num_guard tm =
+        case Lib.total intSyntax.dest_leq tm of
+            SOME (left, right) =>
+              Term.aconv left intSyntax.zero_tm andalso Term.is_var right
+          | NONE => false
+      fun TRANSFER_SIMP_TAC (asl, w) =
+        let
+          val guard_rewrites =
+            List.map Thm.ASSUME
+              (List.filter (fn a => not (is_held a) andalso
+                                  is_num_guard a) asl)
+          val assumption_rewrites = num_transfer_rewrites
+          val goal_rewrites = guard_rewrites @ num_transfer_rewrites
+          fun simplify thm =
+            if is_held (Thm.concl thm) orelse
+               is_num_guard (Thm.concl thm) then
+              ASSUME_TAC thm
+            else
+              ASSUME_TAC
+                (simpLib.SIMP_RULE pureSimps.pure_ss
+                   assumption_rewrites thm)
+        in
+          (POP_ASSUM_LIST (MAP_EVERY simplify o List.rev) THEN
+           CONV_TAC
+             (simpLib.SIMP_CONV pureSimps.pure_ss goal_rewrites)) (asl, w)
+        end
     in
       (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
-       (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
-          would case-split disjunctive assumptions into several subgoals. *)
-       withholding_tac is_held
-         (simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
-            num_transfer_rewrites) THEN
+       TRANSFER_SIMP_TAC THEN
        STRIP_TRANSFERRED_TAC) g
     end
     else
