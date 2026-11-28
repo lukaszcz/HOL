@@ -39083,9 +39083,12 @@ in
               (if one_shot then "/one-shot" else "/always")
           in
             (case result of
-               Exn.Exn exn => assert (matches exn,
-                 "word graph changed terminal " ^ name ^ " exception: " ^
-                 General.exnMessage exn)
+               Exn.Exn exn =>
+                 if matches exn then ()
+                 else die ("word graph changed terminal " ^ name ^
+                   " exception: " ^
+                   (case exn of Feedback.HOL_ERR _ => Feedback.exn_to_string exn
+                    | _ => General.exnMessage exn))
              | Exn.Res _ => die ("word graph swallowed terminal " ^ name));
             assert (!calls = 1,
               "word graph retried terminal callback " ^ name)
@@ -39100,9 +39103,11 @@ in
   in
     expect "resource"
       resource
-      (fn exn as Feedback.HOL_ERR holerr =>
+      (fn Feedback.HOL_ERR holerr =>
           SmtResource.is_resource_gate holerr andalso
-          General.exnMessage exn = General.exnMessage resource
+          (case resource of
+             Feedback.HOL_ERR expected => Portable.pointer_eq (holerr,expected)
+           | _ => false)
         | _ => false);
     expect "HOL_ERR" unexpected
       (fn Feedback.HOL_ERR holerr =>
