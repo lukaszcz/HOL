@@ -2737,7 +2737,7 @@ let
   val application_equality = ``f (n:num) = f (m:num)``
   val lifted_equality = ``(k:num->int) n = r n``
   val lifted_application = ``(p:int->bool) ((k:num->int) (n:num))``
-  val held = ``0 <= (x:int)``
+  val held = ``0 <= (n:int)``
   fun arguments_differ [] [] = false
     | arguments_differ (left :: left_tail) (right :: right_tail) =
         not (Term.aconv left right) orelse
@@ -2784,7 +2784,8 @@ let
             let
               val (inner_head, inner_args) = boolSyntax.strip_comb argument
             in
-              Term.is_var inner_head andalso length inner_args = 1
+              Term.is_var inner_head andalso length inner_args = 1 andalso
+              not (SmtLib.goal_mentions_num ([], tm))
             end
         | _ => false
     end
@@ -2813,17 +2814,19 @@ let
                   let
                     val left_argument = List.hd left_args
                     val right_argument = List.hd right_args
-                    fun contains argument term =
-                      Lib.can (HolKernel.find_term (fn candidate =>
-                        Term.aconv candidate argument)) term
                     fun retains_argument_equality candidate =
                       case Lib.total boolSyntax.dest_eq candidate of
                           SOME (left, right) =>
-                            not (Term.aconv candidate tm) andalso
-                            ((contains left_argument left andalso
-                              contains right_argument right) orelse
-                             (contains left_argument right andalso
-                              contains right_argument left))
+                            let
+                              val expected =
+                                boolSyntax.mk_eq (left_argument, right_argument)
+                              val reversed =
+                                boolSyntax.mk_eq (right_argument, left_argument)
+                            in
+                              not (Term.aconv candidate tm) andalso
+                              (Term.aconv candidate expected orelse
+                               Term.aconv candidate reversed)
+                            end
                         | NONE => false
                   in
                     assert (List.exists retains_argument_equality asl,
